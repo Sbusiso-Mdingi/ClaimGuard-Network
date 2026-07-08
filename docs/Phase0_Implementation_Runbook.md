@@ -70,7 +70,8 @@ uv run pytest tests --cov=src/claimguard --cov-report=xml
 ### Codecov
 
 1. Install Codecov GitHub app for this repository.
-2. If token-based upload is required, add `CODECOV_TOKEN` in repository secrets.
+2. Add the repository secret `CODECOV_TOKEN` in GitHub Actions secrets and variables.
+3. The CI workflow uploads `packages/data-generator/coverage.xml` to Codecov after tests run.
 
 ### Doppler
 

@@ -42,8 +42,8 @@ jobs:
       - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./packages/data-generator/coverage.xml
           flags: python
-          use_oidc: true
           fail_ci_if_error: true
           verbose: true
