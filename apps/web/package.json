@@ -1,0 +1,10 @@
+{
+  "name": "@claimguard/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "mkdir -p dist && cp src/index.html dist/index.html && cp src/sentry-smoke.js dist/sentry-smoke.js",
+    "lint": "node -e \"console.log('web lint placeholder')\"",
+    "test": "node src/sentry-smoke.js"
+  }
+}

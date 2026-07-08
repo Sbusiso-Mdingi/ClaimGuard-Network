@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Python
+**/__pycache__/
+**/*.pyc
+.venv/
+
+# Node
+node_modules/
+.pnpm-store/
+.turbo/
+
+# Coverage artifacts
+coverage.xml
+coverage/
+
+# Build artifacts
+dist/
+build/
+
+# Generated data outputs
+packages/data-generator/data/
+
+# Env files
+.env
+.env.*

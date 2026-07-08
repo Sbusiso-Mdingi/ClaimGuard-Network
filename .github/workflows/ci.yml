@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Install Python deps for data-generator
+        run: |
+          cd packages/data-generator
+          uv sync --all-groups
+
+      - name: Lint, test, build affected packages
+        run: |
+          BASE_REF="${{ github.base_ref || 'main' }}"
+          pnpm turbo run lint test build --filter=...[origin/${BASE_REF}]
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./packages/data-generator/coverage.xml
+          flags: python
+          fail_ci_if_error: true
+          verbose: true

@@ -1,0 +1,10 @@
+{
+  "name": "@claimguard/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "mkdir -p dist && cp src/index.js dist/index.js",
+    "lint": "node -e \"console.log('api lint placeholder')\"",
+    "test": "node src/sentry-smoke.js"
+  }
+}

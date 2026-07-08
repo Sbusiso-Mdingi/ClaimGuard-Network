@@ -1,0 +1,9 @@
+{
+  "name": "@claimguard/shared-schema",
+  "private": true,
+  "scripts": {
+    "build": "echo 'shared-schema build placeholder'",
+    "lint": "echo 'shared-schema lint placeholder'",
+    "test": "echo 'shared-schema test placeholder'"
+  }
+}

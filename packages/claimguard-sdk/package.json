@@ -1,0 +1,9 @@
+{
+  "name": "@claimguard/claimguard-sdk",
+  "private": true,
+  "scripts": {
+    "build": "echo 'sdk build placeholder'",
+    "lint": "echo 'sdk lint placeholder'",
+    "test": "echo 'sdk test placeholder'"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@claimguard/detection-engine",
+  "private": true,
+  "scripts": {
+    "build": "echo 'detection-engine build placeholder'",
+    "lint": "echo 'detection-engine lint placeholder'",
+    "test": "echo 'detection-engine test placeholder'"
+  }
+}

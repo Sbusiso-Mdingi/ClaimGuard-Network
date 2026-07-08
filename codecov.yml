@@ -1,0 +1,22 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 0.70
+        threshold: 0.01
+    patch:
+      default:
+        target: 0.70
+
+flags:
+  python:
+    paths:
+      - packages/data-generator
+  typescript:
+    paths:
+      - apps
+      - packages/shared-schema
+
+comment:
+  layout: "reach,diff,flags,tree"
+  require_changes: true
