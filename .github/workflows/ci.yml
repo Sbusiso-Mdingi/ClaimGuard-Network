@@ -5,22 +5,26 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v4
 
       - name: Install JS deps
         run: pnpm install --frozen-lockfile=false
@@ -36,9 +40,10 @@ jobs:
           pnpm turbo run lint test build --filter=...[origin/${BASE_REF}]
 
       - name: Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: ./packages/data-generator/coverage.xml
           flags: python
+          use_oidc: true
           fail_ci_if_error: true
           verbose: true
