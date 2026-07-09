@@ -40,6 +40,7 @@ jobs:
           pnpm turbo run lint test build --filter=...[origin/${BASE_REF}]
 
       - name: Upload Python coverage to Codecov
+        if: ${{ hashFiles('packages/data-generator/coverage.xml') != '' }}
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
