@@ -39,8 +39,12 @@ jobs:
           BASE_REF="${{ github.base_ref || 'main' }}"
           pnpm turbo run lint test build --filter=...[origin/${BASE_REF}]
 
+      - name: Run Python tests with coverage
+        run: |
+          cd packages/data-generator
+          pnpm test
+
       - name: Upload Python coverage to Codecov
-        if: ${{ hashFiles('packages/data-generator/coverage.xml') != '' }}
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
