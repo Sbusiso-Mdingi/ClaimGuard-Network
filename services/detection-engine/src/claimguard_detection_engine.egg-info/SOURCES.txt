@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/claimguard_detection_engine/__init__.py
+src/claimguard_detection_engine/__main__.py
+src/claimguard_detection_engine/cli.py
+src/claimguard_detection_engine/detector.py
+src/claimguard_detection_engine.egg-info/PKG-INFO
+src/claimguard_detection_engine.egg-info/SOURCES.txt
+src/claimguard_detection_engine.egg-info/dependency_links.txt
+src/claimguard_detection_engine.egg-info/entry_points.txt
+src/claimguard_detection_engine.egg-info/top_level.txt
+tests/test_detector.py
