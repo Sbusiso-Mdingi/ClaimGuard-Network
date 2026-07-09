@@ -2,9 +2,13 @@
   "name": "@claimguard/web",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@sentry/browser": "^8.0.0"
+  },
   "scripts": {
     "build": "mkdir -p dist && cp src/index.html dist/index.html && cp src/sentry-smoke.js dist/sentry-smoke.js",
-    "lint": "node -e \"console.log('web lint placeholder')\"",
+    "lint": "node --check src/app.js && node --check src/server.js && node --check src/sentry-smoke.js",
+    "serve": "node src/server.js",
     "test": "node src/sentry-smoke.js"
   }
 }

@@ -27,6 +27,7 @@ packages/
   data-generator/
   claimguard-sdk/
   shared-schema/
+  database/
 .github/workflows/
 ```
 
@@ -85,13 +86,30 @@ uv run pytest tests --cov=src/claimguard --cov-report=xml
    - `NEW_RELIC_LICENSE_KEY`
    - `NEW_RELIC_APP_NAME`
    - `NODE_ENV`
-4. Validate locally:
+4. If you use Azure for MySQL, set `MYSQL_URL` to the Azure Database for MySQL connection string and keep it pointed at the synthetic seed data for now.
+5. If `COSMOSDB_CONNECTION_STRING` is not needed for your current phase, leave it empty until you actually add a Cosmos-backed service.
+6. Validate locally:
 
 ```bash
 doppler setup
 doppler configs
 doppler run -- env
 ```
+
+### Azure Database for MySQL
+
+1. Create an Azure Database for MySQL Flexible Server.
+2. Create a database for ClaimGuard and a dedicated user.
+3. Allow your local IP address through the Azure firewall so you can run migrations and seed data.
+4. Copy the Azure MySQL connection string into Doppler as `MYSQL_URL`.
+5. Run the database setup from `packages/database`:
+
+```bash
+pnpm migrate
+pnpm seed
+```
+
+6. Start the API with `MYSQL_URL` set and check `GET /ledger/latest`.
 
 ### Sentry
 
@@ -104,13 +122,93 @@ node apps/api/src/index.js
 # open /test-error on localhost:3001
 ```
 
-4. Trigger web test error by wiring SDK in the future web framework and raising one error event.
+4. Trigger web test error:
+
+```bash
+cd apps/web
+doppler run -- node src/server.js
+# open http://127.0.0.1:3002/
+# click "Throw Test Error"
+```
 
 ### New Relic
 
 1. Create an APM app entity for API service.
 2. Add license/app values to Doppler.
-3. Wire Node agent when Phase 3 API framework is introduced.
+3. Run the smoke server through Doppler:
+
+```bash
+cd apps/api
+doppler run -- node src/newrelic-smoke.cjs
+```
+
+4. In another terminal, trigger the smoke transaction:
+
+```bash
+curl -i http://127.0.0.1:3003/newrelic-test
+```
+
+5. Check the New Relic APM UI for the `ClaimGuard API` app and the custom `ClaimGuardSmoke` event.
+
+## 8) Phase 3 backend foundation
+
+The Phase 3 backend slice now includes a shared contract package and a persistence-focused API foundation:
+
+- `packages/shared-schema/` for shared backend response shapes
+- `packages/database/` for Drizzle schema and hash-chained ledger helpers
+- `apps/api/` for Hono, tRPC, and the `/ledger/preview` route
+
+Local validation commands:
+
+```bash
+cd packages/database
+pnpm test
+
+cd apps/api
+pnpm test:backend
+```
+
+Useful backend endpoints:
+
+- `GET /health`
+- `GET /meta`
+- `GET /ledger/preview`
+- `GET /trpc/ping`
+
+## 9) Phase 3 MySQL migration and seed flow
+
+The development MySQL database is meant to be populated from the Phase 1 synthetic exports for now, then swapped later for real client or medical-aid integrations when the project matures.
+
+Database package commands:
+
+```bash
+cd packages/database
+pnpm migrate
+pnpm seed
+```
+
+What the seed flow does:
+
+- applies the initial MySQL schema from `packages/database/migrations/0001_initial.sql`
+- loads `packages/data-generator/data/scheme_*/` CSV exports
+- inserts schemes, members, providers, claims, and a bootstrap ledger entry
+- keeps the data source synthetic until real integrations replace it later
+
+### Manual steps for the runtime MySQL path
+
+You need to do these by hand before the API can read from the seeded database:
+
+1. Provision a MySQL database. If you are using Azure, use Azure Database for MySQL Flexible Server.
+2. Paste its connection string into `MYSQL_URL`.
+3. Run the migration and seed commands from `packages/database`:
+
+```bash
+pnpm migrate
+pnpm seed
+```
+
+4. Start the API with `MYSQL_URL` set so `/ledger/latest` can use the runtime repository.
+5. If you change the synthetic CSV exports later, rerun `pnpm seed` to refresh the MySQL data.
 
 ## 7) Security boundary
 

@@ -1,0 +1,22 @@
+[project]
+name = "claimguard-sdk"
+version = "0.1.0"
+description = "ClaimGuard Phase 2 edge SDK for local tokenization"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+claimguard-tokenize = "claimguard_sdk.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.5.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claimguard_sdk"]

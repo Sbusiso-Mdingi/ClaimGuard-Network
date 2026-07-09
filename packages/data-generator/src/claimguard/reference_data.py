@@ -11,6 +11,7 @@ that define "what a GP claim looks like" live here.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -37,9 +38,6 @@ class Specialty:
     @property
     def code_weights(self) -> dict[str, float]:
         return {c.code: c.weight for c in self.codes}
-
-
-import math
 
 SPECIALTIES: dict[str, Specialty] = {
     "GP": Specialty(

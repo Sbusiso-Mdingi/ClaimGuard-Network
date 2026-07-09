@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "uv run python -m compileall src",
-    "lint": "uv run ruff check src tests --exit-zero",
+    "lint": "uv run ruff check src tests",
     "test": "uv run claimguard-generate --config generation_config.yaml && uv run pytest tests --cov=src/claimguard --cov-report=xml"
   }
 }

@@ -2,8 +2,8 @@
   "name": "@claimguard/claimguard-sdk",
   "private": true,
   "scripts": {
-    "build": "echo 'sdk build placeholder'",
-    "lint": "echo 'sdk lint placeholder'",
-    "test": "echo 'sdk test placeholder'"
+    "build": "uv run python -m compileall src",
+    "lint": "uv run ruff check src tests",
+    "test": "uv run pytest tests"
   }
 }

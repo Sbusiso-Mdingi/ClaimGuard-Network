@@ -65,7 +65,6 @@ def _random_active_month(rng: np.random.Generator, member: Member, ctx: RunConte
 
 
 def _draw_claim_for_provider(rng, ctx, scheme_id, member, provider, service_date, claim_id_seq) -> dict:
-    spec_def = SPECIALTIES[provider.specialty]
     codes = list(provider.billing_fingerprint.keys())
     weights = list(provider.billing_fingerprint.values())
     code = codes[rng.choice(len(codes), p=weights)]

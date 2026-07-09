@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import datetime as dt
 
-import numpy as np
-
 from ..config import RunContext
 from ..identifiers import SequentialId
 from ..members import Member

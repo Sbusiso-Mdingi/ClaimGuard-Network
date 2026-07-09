@@ -2,8 +2,9 @@
   "name": "@claimguard/detection-engine",
   "private": true,
   "scripts": {
-    "build": "echo 'detection-engine build placeholder'",
-    "lint": "echo 'detection-engine lint placeholder'",
-    "test": "echo 'detection-engine test placeholder'"
+    "build": "uv run python -m compileall src tests",
+    "lint": "uv run python -m compileall src tests",
+    "report": "mkdir -p reports && uv run claimguard-detect --data-dir ../../packages/data-generator/data --top-n 10 --output reports/latest-report.json",
+    "test": "uv run python -m unittest discover -s tests -p 'test_*.py'"
   }
 }

@@ -14,14 +14,14 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
-from itertools import combinations
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
+
+# ruff: noqa: E402
 
 from claimguard.config import load_config
 from claimguard.geography import Location, haversine_km

@@ -2,9 +2,22 @@
   "name": "@claimguard/api",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@claimguard/shared-schema": "workspace:*",
+    "@claimguard/database": "workspace:*",
+    "@hono/node-server": "^1.14.0",
+    "@sentry/node": "^8.0.0",
+    "@trpc/server": "^11.0.0",
+    "hono": "^4.0.0",
+    "newrelic": "^11.0.0",
+    "zod": "^3.24.0"
+  },
   "scripts": {
-    "build": "mkdir -p dist && cp src/index.js dist/index.js",
-    "lint": "node -e \"console.log('api lint placeholder')\"",
-    "test": "node src/sentry-smoke.js"
+    "build": "mkdir -p dist && cp src/*.js src/*.cjs dist/",
+    "lint": "node -e \"import('./src/backend.js')\"",
+    "test": "node src/sentry-smoke.js",
+    "test:backend": "node --test tests",
+    "dev:backend": "node src/backend-server.js",
+    "smoke:newrelic": "node src/newrelic-smoke.cjs"
   }
 }
