@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createDatabase, createLedgerRepository } from "@claimguard/database";
+import { createClaimIngestionRepository, createDatabase, createLedgerRepository } from "@claimguard/database";
 
 import { createBackendApp } from "./backend.js";
 import { createReportStorageFromEnvironment } from "./report-storage.js";
@@ -14,11 +14,13 @@ const repoRoot = path.resolve(moduleDir, "../../..");
 const detectionAnalyzeProxyUrl = process.env.DETECTION_ANALYZE_PROXY_URL || null;
 
 let ledgerRepository = null;
+let claimIngestionService = null;
 let databasePool = null;
 
 if (databaseUrl) {
   const database = createDatabase(databaseUrl);
   ledgerRepository = createLedgerRepository(database.db);
+  claimIngestionService = createClaimIngestionRepository(database.pool);
   databasePool = database.pool;
 }
 
@@ -28,7 +30,7 @@ const reportStorage = await createReportStorageFromEnvironment({
   repoRoot,
 });
 
-const app = createBackendApp({ ledgerRepository, reportStorage, detectionAnalyzeProxyUrl });
+const app = createBackendApp({ ledgerRepository, claimIngestionService, reportStorage, detectionAnalyzeProxyUrl });
 
 serve({
   fetch: app.fetch,

@@ -9,25 +9,38 @@ function createFakeDb() {
   return {
     entries,
     select() {
+      let filteredEntries = entries;
+
       const query = {
         from() {
           return {
             orderBy() {
               return {
                 limit(limitCount) {
-                  return Promise.resolve(entries.slice(-limitCount));
+                  return Promise.resolve(filteredEntries.slice(-limitCount));
                 },
               };
             },
-            where() {
+            where(condition) {
+              const rightValue = condition?.right?.value;
+              if (rightValue !== undefined) {
+                filteredEntries = entries.filter((entry) => entry.entryType === rightValue);
+              }
               return {
+                orderBy() {
+                  return {
+                    limit(limitCount) {
+                      return Promise.resolve(filteredEntries.slice(-limitCount));
+                    },
+                  };
+                },
                 limit(limitCount) {
-                  return Promise.resolve(entries.slice(0, limitCount));
+                  return Promise.resolve(filteredEntries.slice(0, limitCount));
                 },
               };
             },
             limit(limitCount) {
-              return Promise.resolve(entries.slice(0, limitCount));
+              return Promise.resolve(filteredEntries.slice(0, limitCount));
             },
           };
         },
@@ -64,4 +77,29 @@ test("ledger repository creates chained entries", async () => {
   assert.equal(second.sequenceNumber, 2);
   assert.equal(second.previousHash, first.entryHash);
   assert.equal(db.entries.length, 2);
+});
+
+test("ledger repository records and returns latest confirmed fraud entry", async () => {
+  const db = createFakeDb();
+  const repository = createLedgerRepository(db);
+
+  await repository.createEntry({
+    entryType: "DATA_SEEDED",
+    payload: { source: "seed" },
+  });
+
+  const confirmed = await repository.createConfirmedFraudEntry({
+    claimId: "C-900",
+    investigatorId: "INV-7",
+    reason: "Member denied service",
+    schemeId: "scheme_a",
+    reportVersion: "v1",
+  });
+
+  const latestConfirmed = await repository.getLatestConfirmedFraudEntry();
+
+  assert.equal(confirmed.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
+  assert.equal(confirmed.payload.claimId, "C-900");
+  assert.equal(latestConfirmed?.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
+  assert.equal(latestConfirmed?.payload.investigatorId, "INV-7");
 });

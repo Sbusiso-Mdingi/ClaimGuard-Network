@@ -83,16 +83,30 @@ async function buildRuntimeLedgerReference(ledgerRepository) {
     return null;
   }
 
-  const latestEntry = await ledgerRepository.getLatestEntry();
+  const latestEntry =
+    typeof ledgerRepository.getLatestConfirmedFraudEntry === "function"
+      ? await ledgerRepository.getLatestConfirmedFraudEntry()
+      : await ledgerRepository.getLatestEntry();
+
+  if (!latestEntry) {
+    return {
+      type: "runtime-ledger",
+      available: false,
+      entry: null,
+      message: "No investigator-confirmed fraud entries exist yet.",
+    };
+  }
+
   return {
     type: "runtime-ledger",
     available: true,
-    entry: latestEntry || null,
+    entry: latestEntry,
   };
 }
 
 export function createBackendApp({
   ledgerRepository = null,
+  claimIngestionService = null,
   reportStorage = null,
   detectionAnalyzeProxyUrl = null,
   detectionReportPath = null,
@@ -247,6 +261,96 @@ export function createBackendApp({
           message: "Detection producer proxy is unavailable.",
         },
         502,
+      );
+    }
+  });
+
+  app.post("/claims/ingest", async (c) => {
+    const payload = await c.req.json().catch(() => null);
+    const claims = payload?.claims;
+
+    if (!Array.isArray(claims) || claims.length === 0) {
+      return c.json(
+        {
+          available: false,
+          message: "Request body must include a non-empty claims array.",
+        },
+        400,
+      );
+    }
+
+    if (!claimIngestionService || typeof claimIngestionService.ingestClaims !== "function") {
+      return c.json(
+        {
+          available: false,
+          message: "Claim ingestion service is not configured.",
+        },
+        503,
+      );
+    }
+
+    try {
+      const summary = await claimIngestionService.ingestClaims({
+        claims,
+        source: payload?.source || "api",
+      });
+
+      return c.json({ available: true, ingestion: summary }, 202);
+    } catch (error) {
+      return c.json(
+        {
+          available: false,
+          message: error?.message || "Claim ingestion failed.",
+        },
+        400,
+      );
+    }
+  });
+
+  app.post("/investigations/confirm-fraud", async (c) => {
+    if (!ledgerRepository || typeof ledgerRepository.createConfirmedFraudEntry !== "function") {
+      return c.json(
+        {
+          available: false,
+          message: "Ledger repository is not configured for investigator confirmation writes.",
+        },
+        503,
+      );
+    }
+
+    const payload = await c.req.json().catch(() => null);
+    const claimId = payload?.claimId;
+    const investigatorId = payload?.investigatorId;
+    const reason = payload?.reason;
+
+    if (!claimId || !investigatorId || !reason) {
+      return c.json(
+        {
+          available: false,
+          message: "claimId, investigatorId, and reason are required.",
+        },
+        400,
+      );
+    }
+
+    try {
+      const entry = await ledgerRepository.createConfirmedFraudEntry({
+        claimId,
+        investigatorId,
+        reason,
+        schemeId: payload?.schemeId || null,
+        reportVersion: payload?.reportVersion || null,
+        notes: payload?.notes || null,
+      });
+
+      return c.json({ available: true, entry }, 201);
+    } catch (error) {
+      return c.json(
+        {
+          available: false,
+          message: error?.message || "Failed to persist confirmed fraud decision.",
+        },
+        400,
       );
     }
   });

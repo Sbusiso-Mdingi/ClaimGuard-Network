@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { int, json, mysqlTable, varchar } from "drizzle-orm/mysql-core";
 
 export { createDatabase, createMysqlConnection } from "./client.js";
+export { createClaimIngestionRepository } from "./claim-ingestion-repository.js";
 export { createLedgerRepository } from "./ledger-repository.js";
 export { applyMigrations, defaultMigrationPath } from "./migrate.js";
 export { loadSyntheticPhase1Data, seedSyntheticDatabase } from "./seed.js";

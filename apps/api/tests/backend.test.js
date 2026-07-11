@@ -115,6 +115,32 @@ test("detection report endpoint includes runtime ledger reference when available
   assert.equal(json.report.detection.ledger_reference.entry.sequenceNumber, 9);
 });
 
+test("detection report endpoint marks ledger unavailable when no confirmed fraud entries exist", async () => {
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub({
+      detection: {
+        risk_score: {
+          riskScore: 12,
+          severity: "Low",
+          reasons: ["none"],
+        },
+      },
+    }),
+    ledgerRepository: {
+      async getLatestConfirmedFraudEntry() {
+        return null;
+      },
+    },
+  });
+
+  const response = await app.request("http://localhost/detection/report");
+  const json = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(json.report.detection.ledger_reference.available, false);
+  assert.equal(json.report.detection.ledger_reference.entry, null);
+});
+
 test("detection graph endpoint returns graph payload", async () => {
   const app = createBackendApp({
     reportStorage: createReportStorageStub({
@@ -259,4 +285,91 @@ test("detection report endpoint is unavailable without configured report storage
 
   assert.equal(response.status, 503);
   assert.equal(json.available, false);
+});
+
+test("claims ingestion endpoint requires configured ingestion service", async () => {
+  const app = createBackendApp();
+  const response = await app.request("http://localhost/claims/ingest", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ claims: [{ claim_id: "C1" }] }),
+  });
+
+  const json = await response.json();
+  assert.equal(response.status, 503);
+  assert.equal(json.available, false);
+});
+
+test("claims ingestion endpoint accepts claims via ingestion service", async () => {
+  const app = createBackendApp({
+    claimIngestionService: {
+      async ingestClaims({ claims, source }) {
+        return {
+          received: claims.length,
+          inserted: claims.length,
+          updated: 0,
+          source,
+        };
+      },
+    },
+  });
+
+  const response = await app.request("http://localhost/claims/ingest", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      source: "synthetic-loader",
+      claims: [
+        {
+          claim_id: "C-200",
+          scheme_id: "scheme_a",
+          member_id: "M-10",
+          provider_id: "P-20",
+          service_date: "2025-02-01",
+          billing_code: "CONSULT",
+          amount: 91.4,
+        },
+      ],
+    }),
+  });
+
+  const json = await response.json();
+  assert.equal(response.status, 202);
+  assert.equal(json.available, true);
+  assert.equal(json.ingestion.received, 1);
+  assert.equal(json.ingestion.source, "synthetic-loader");
+});
+
+test("investigation confirm-fraud endpoint writes confirmed ledger entry", async () => {
+  const app = createBackendApp({
+    ledgerRepository: {
+      async createConfirmedFraudEntry(payload) {
+        return {
+          sequenceNumber: 3,
+          entryType: "INVESTIGATOR_CONFIRMED_FRAUD",
+          previousHash: "a".repeat(64),
+          entryHash: "b".repeat(64),
+          payload,
+        };
+      },
+    },
+  });
+
+  const response = await app.request("http://localhost/investigations/confirm-fraud", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      claimId: "C-300",
+      investigatorId: "INV-1",
+      reason: "Patient denied receiving treatment",
+      schemeId: "scheme_a",
+      reportVersion: "v20250101",
+    }),
+  });
+
+  const json = await response.json();
+  assert.equal(response.status, 201);
+  assert.equal(json.available, true);
+  assert.equal(json.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
+  assert.equal(json.entry.payload.claimId, "C-300");
 });
