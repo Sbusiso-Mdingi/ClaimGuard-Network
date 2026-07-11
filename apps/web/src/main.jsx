@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import * as Sentry from "@sentry/react";
 import App from "./AppRoot";
+import "./styles.css";
 
 if (window.__CLAIMGUARD_WEB_SENTRY_READY__ !== true) {
   window.__CLAIMGUARD_WEB_SENTRY_READY__ = true;

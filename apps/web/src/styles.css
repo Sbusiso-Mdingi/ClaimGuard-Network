@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 215 35% 98%;
+    --foreground: 224 31% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 31% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 31% 10%;
+    --primary: 212 75% 45%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 35% 94%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 35% 92%;
+    --muted-foreground: 215 15% 40%;
+    --accent: 168 72% 38%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 215 25% 84%;
+    --input: 215 25% 84%;
+    --ring: 212 75% 45%;
+  }
+
+  .dark {
+    --background: 216 34% 8%;
+    --foreground: 213 31% 92%;
+    --card: 216 30% 12%;
+    --card-foreground: 213 31% 92%;
+    --popover: 216 30% 12%;
+    --popover-foreground: 213 31% 92%;
+    --primary: 201 90% 58%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 216 24% 18%;
+    --secondary-foreground: 213 31% 92%;
+    --muted: 216 20% 20%;
+    --muted-foreground: 215 20% 70%;
+    --accent: 168 72% 45%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 216 20% 23%;
+    --input: 216 20% 23%;
+    --ring: 201 90% 58%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+.react-flow__node {
+  @apply rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
+}
+
+.react-flow__controls button {
+  @apply border-border bg-card text-foreground;
+}
