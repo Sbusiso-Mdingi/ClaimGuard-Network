@@ -58,6 +58,8 @@ uv run pytest tests --cov=src/claimguard --cov-report=xml
 - Codecov config: `codecov.yml`
 - Coverage target: 70%
 - Separate flags: `python`, `typescript`
+- API packaging rule: keep the untouched `pnpm --filter ./apps/api deploy` output, zip it with `zip -y`, and do not flatten pnpm symlinks with `rsync -aL`. Flattening caused runtime `ERR_MODULE_NOT_FOUND` failures for workspace and transitive packages such as `mysql2`.
+- Only `.github/workflows/ci.yml` should deploy on push; the legacy API workflow stays manual-only via `workflow_dispatch`.
 
 ## 6) External setup (manual, outside repo)
 

@@ -130,6 +130,15 @@ jobs:
                "reports/*" \
                "*.log"
 
+      - name: Verify API artifact preserves pnpm symlinks
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          rm -rf /tmp/claimguard-api-deploy-check
+          mkdir -p /tmp/claimguard-api-deploy-check
+          unzip -q /tmp/claimguard-api-deploy.zip -d /tmp/claimguard-api-deploy-check
+          test -L /tmp/claimguard-api-deploy-check/node_modules/hono
+          test -L /tmp/claimguard-api-deploy-check/node_modules/@claimguard/database
+
       - name: Upload deployable artifacts
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
