@@ -5,6 +5,7 @@ export default function FilterBar({
   schemes,
   onChange,
   onClear,
+  resultCount,
 }) {
   const { search, schemeId, risk, detectionStatus, sortBy } = filters;
 
@@ -63,7 +64,7 @@ export default function FilterBar({
       <button onClick={onClear}>Clear filters</button>
 
       <div style={{ marginLeft: "auto" }}>
-        <strong>{filters.resultCount ?? 0}</strong> results
+        <strong>{resultCount ?? 0}</strong> results
       </div>
     </div>
   );

@@ -69,7 +69,6 @@ export default function AppRoot() {
     risk: "all",
     detectionStatus: null,
     sortBy: "score_desc",
-    resultCount: 0,
   });
 
   useEffect(() => {
@@ -199,11 +198,10 @@ export default function AppRoot() {
       return 0;
     });
 
-    // update count for toolbar display
-    setFilters((prev) => ({ ...prev, resultCount: out.length }));
-
     return out;
   }, [allFindings, filters]);
+
+  const resultCount = filteredFindings.length;
 
   if (state.status === "loading") {
     return (
@@ -259,7 +257,7 @@ export default function AppRoot() {
     const scheme = schemes.find((s) => s.scheme_id === route.params.schemeId) || null;
     return (
       <div>
-        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
+        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc" })} />
         <section className="hero fade-in">
           <p className="eyebrow">ClaimGuard Network</p>
           <h1>Network risk, surfaced.</h1>
@@ -292,7 +290,7 @@ export default function AppRoot() {
     if (!scheme) return <div className="panel">Scheme not found</div>;
     return (
       <div>
-        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
+        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc" })} />
         <ProviderDetail scheme={scheme} providerId={route.params.providerId} onSelectEntity={(entityId) => goToEntity(route.params.schemeId, route.params.providerId, entityId)} onBack={() => goToScheme(route.params.schemeId)} />
       </div>
     );
@@ -303,7 +301,7 @@ export default function AppRoot() {
     if (!scheme) return <div className="panel">Scheme not found</div>;
     return (
       <div>
-        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
+        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc" })} />
         <EntityDetail scheme={scheme} providerId={route.params.providerId} entityId={route.params.entityId} onSelectFinding={(detectionId) => goToFinding(route.params.schemeId, route.params.providerId, route.params.entityId, detectionId)} onBack={() => goToProvider(route.params.schemeId, route.params.providerId)} />
       </div>
     );
@@ -314,7 +312,7 @@ export default function AppRoot() {
     if (!scheme) return <div className="panel">Scheme not found</div>;
     return (
       <div>
-        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
+        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc" })} />
         <MemberDetail scheme={scheme} detectionId={route.params.detectionId} onBack={() => goToEntity(route.params.schemeId, route.params.providerId, route.params.entityId)} />
       </div>
     );
