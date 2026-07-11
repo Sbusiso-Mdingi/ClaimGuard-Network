@@ -13,38 +13,71 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
+      - name: Setup Node.js + pnpm
+        uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: pnpm
+          cache: 'pnpm'
 
-      - uses: astral-sh/setup-uv@v4
+      - name: Setup pnpm CLI
+        uses: pnpm/action-setup@v6
 
-      - name: Install JS deps
-        run: pnpm install --frozen-lockfile=false
+      - name: Restore pnpm store cache
+        uses: actions/cache@v4
+        id: pnpm-store-cache
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install JS dependencies (root workspace)
+        run: pnpm install --frozen-lockfile
 
       - name: Install Python deps for data-generator
         run: |
           cd packages/data-generator
           uv sync --all-groups
 
-      - name: Lint, test, build affected packages
+      - name: Run monorepo tasks (lint/test/build affected)
         run: |
           BASE_REF="${{ github.base_ref || 'main' }}"
           pnpm turbo run lint test build --filter=...[origin/${BASE_REF}]
 
-      - name: Run Python tests with coverage
+      - name: Build and test web app
+        working-directory: ./
+        run: |
+          pnpm --filter ./apps/web run build
+          pnpm --filter ./apps/web run test --silent -- --run
+
+      - name: Build and test api package (if present)
+        run: |
+          if [ -f "apps/api/package.json" ]; then
+            pnpm --filter ./apps/api run build
+            pnpm --filter ./apps/api run test || exit 1
+          else
+            echo "apps/api not present; skipping"
+          fi
+
+      - name: Upload web build artifact for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+
+      - name: Run Python tests with coverage (data-generator)
         run: |
           cd packages/data-generator
           pnpm test
 
       - name: Upload Python coverage to Codecov
+        if: success() && env.CODECOV_TOKEN
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

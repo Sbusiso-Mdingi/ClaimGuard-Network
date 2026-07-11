@@ -2,8 +2,11 @@ README.md
 pyproject.toml
 src/claimguard_detection_engine/__init__.py
 src/claimguard_detection_engine/__main__.py
+src/claimguard_detection_engine/analytics.py
 src/claimguard_detection_engine/cli.py
 src/claimguard_detection_engine/detector.py
+src/claimguard_detection_engine/loader.py
+src/claimguard_detection_engine/reference_data.py
 src/claimguard_detection_engine.egg-info/PKG-INFO
 src/claimguard_detection_engine.egg-info/SOURCES.txt
 src/claimguard_detection_engine.egg-info/dependency_links.txt

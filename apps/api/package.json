@@ -15,8 +15,9 @@
   "scripts": {
     "build": "mkdir -p dist && cp src/*.js src/*.cjs dist/",
     "lint": "node -e \"import('./src/backend.js')\"",
-    "test": "node src/sentry-smoke.js",
+    "test": "node --test tests",
     "test:backend": "node --test tests",
+    "test:sentry": "node src/sentry-smoke.js",
     "dev:backend": "node src/backend-server.js",
     "smoke:newrelic": "node src/newrelic-smoke.cjs"
   }
