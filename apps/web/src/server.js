@@ -4,8 +4,10 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const port = Number(process.env.PORT || 3002);
-const root = fileURLToPath(new URL(".", import.meta.url));
+const srcRoot = fileURLToPath(new URL(".", import.meta.url));
+const distRoot = join(srcRoot, "..", "dist");
 const apiBaseUrl = process.env.CLAIMGUARD_API_BASE_URL || "http://127.0.0.1:3004";
+const root = process.env.NODE_ENV === "production" ? distRoot : srcRoot;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -55,8 +57,17 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "content-type": mimeTypes[extname(filePath)] || "application/octet-stream" });
     res.end(content);
   } catch {
-    res.writeHead(404, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "not_found" }));
+    // If the file isn't found, assume this is a client-side route and
+    // serve index.html so SPA routing works when served by the backend.
+    try {
+      const indexPath = join(root, "index.html");
+      const indexContent = await readFile(indexPath, "utf8");
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(indexContent);
+    } catch {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "not_found" }));
+    }
   }
 });
 

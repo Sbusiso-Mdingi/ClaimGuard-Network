@@ -3,11 +3,17 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@sentry/browser": "^8.0.0"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@sentry/react": "^7.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
   },
   "scripts": {
-    "build": "mkdir -p dist && cp src/index.html dist/index.html && cp src/sentry-smoke.js dist/sentry-smoke.js",
-    "lint": "node --check src/app.js && node --check src/server.js && node --check src/sentry-smoke.js",
+    "dev": "cd src && vite",
+    "build": "cd src && vite build --outDir ../dist --emptyOutDir",
+    "lint": "node --check src/server.js && node --check src/sentry-smoke.js",
     "serve": "node src/server.js",
     "test": "node src/sentry-smoke.js"
   }
