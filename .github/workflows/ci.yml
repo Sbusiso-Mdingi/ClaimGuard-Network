@@ -164,4 +164,5 @@ jobs:
             --name "$AZURE_WEBAPP_API" \
             --type zip \
             --src-path /tmp/claimguard-deploy-packages/claimguard-api-deploy.zip \
+            --timeout 900000 \
             --clean true
