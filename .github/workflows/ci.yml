@@ -39,6 +39,12 @@ jobs:
       - name: Install JS dependencies (root workspace)
         run: pnpm install --frozen-lockfile
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: packages/data-generator/uv.lock
+
       - name: Install Python deps for data-generator
         run: |
           cd packages/data-generator
