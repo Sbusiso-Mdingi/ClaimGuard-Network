@@ -19,6 +19,15 @@ coverage/
 dist/
 build/
 
+# Deployment-package build artifacts
+.azure-deploy/api/
+.azure-deploy/**/dist/
+.azure-deploy/**/node_modules/
+.azure-deploy/**/.turbo/
+.azure-deploy/**/*.zip
+.azure-deploy/zi*
+webapp_logs.zip
+
 # Generated data outputs
 packages/data-generator/data/
 services/detection-engine/reports/
