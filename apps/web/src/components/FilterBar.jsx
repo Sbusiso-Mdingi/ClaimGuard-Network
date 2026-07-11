@@ -8,6 +8,7 @@ export default function FilterBar({
   resultCount,
 }) {
   const { search, schemeId, risk, detectionStatus, sortBy } = filters;
+  const pageSize = filters.pageSize || 25;
 
   const uniqueStatuses = React.useMemo(() => {
     const set = new Set();
@@ -60,6 +61,16 @@ export default function FilterBar({
         <option value="claims_asc">Sort: claims asc</option>
         <option value="id_asc">Sort: id asc</option>
       </select>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>Page size</span>
+        <select value={pageSize} onChange={(e) => onChange({ ...filters, pageSize: Number(e.target.value), page: 1 })}>
+          <option value={10}>10</option>
+          <option value={25}>25</option>
+          <option value={50}>50</option>
+          <option value={100}>100</option>
+        </select>
+      </label>
 
       <button onClick={onClear}>Clear filters</button>
 

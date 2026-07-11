@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import DetailPanel from "./DetailPanel";
 
-export default function ProviderDetail({ scheme, providerId, onSelectEntity, onBack }) {
+export default function ProviderDetail({ scheme, providerId, onSelectEntity, onBack, filters, setFilters }) {
   const findings = useMemo(() => (scheme.provider_findings || []).filter((f) => f.provider_id === providerId), [scheme, providerId]);
 
   const entities = useMemo(() => {
@@ -31,14 +31,26 @@ export default function ProviderDetail({ scheme, providerId, onSelectEntity, onB
         {entities.length === 0 ? (
           <div className="empty">No entities for this provider.</div>
         ) : (
-          <ul className="finding-list">
-            {entities.map((e) => (
-              <li key={e.entity_id} className="finding" onClick={() => onSelectEntity(e.entity_id)} style={{ cursor: "pointer" }}>
-                <strong>{e.entity_id} · score {e.avgScore.toFixed(2)}</strong>
-                <p>{`${e.findings.length} findings`}</p>
-              </li>
-            ))}
-          </ul>
+          <div>
+            {/* simple pagination for entities list */}
+            {(() => {
+              const page = filters?.page || 1;
+              const pageSize = filters?.pageSize || 25;
+              const start = (page - 1) * pageSize;
+              return entities.slice(start, start + pageSize).map((e) => (
+                <li key={e.entity_id} className="finding" onClick={() => onSelectEntity(e.entity_id)} style={{ cursor: "pointer" }}>
+                  <strong>{e.entity_id} · score {e.avgScore.toFixed(2)}</strong>
+                  <p>{`${e.findings.length} findings`}</p>
+                </li>
+              ));
+            })()}
+            <div style={{ marginTop: 8 }}>
+              <button onClick={() => setFilters({ ...filters, page: 1 })}>First</button>
+              <button onClick={() => setFilters({ ...filters, page: Math.max(1, (filters.page || 1) - 1) })}>Prev</button>
+              <span style={{ margin: '0 8px' }}>Page {filters?.page || 1}</span>
+              <button onClick={() => setFilters({ ...filters, page: (filters.page || 1) + 1 })}>Next</button>
+            </div>
+          </div>
         )}
       </DetailPanel>
     </div>

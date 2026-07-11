@@ -44,16 +44,19 @@ function RenderFindings({ title, findings }) {
       {findings.length === 0 ? (
         <div className="empty">No findings in the top-N slice for this scheme.</div>
       ) : (
-        <ul className="finding-list">
-          {findings.map((finding, i) => (
-            <li className="finding" key={i}>
-              <strong>{`${finding.entity_id} · score ${finding.score}`}</strong>
-              <p>
-                {`claims: ${finding.metrics?.claim_count ?? "n/a"} · avg amount: ${finding.metrics?.average_amount ?? finding.metrics?.total_amount ?? "n/a"} · note: ${finding.reasons?.join(" ") ?? "No textual explanation recorded."}`}
-              </p>
-            </li>
-          ))}
-        </ul>
+        <div>
+          {/* Paginated rendering should be controlled by parent via filters */}
+          <ul className="finding-list">
+            {findings.map((finding, i) => (
+              <li className="finding" key={i}>
+                <strong>{`${finding.entity_id} · score ${finding.score}`}</strong>
+                <p>
+                  {`claims: ${finding.metrics?.claim_count ?? "n/a"} · avg amount: ${finding.metrics?.average_amount ?? finding.metrics?.total_amount ?? "n/a"} · note: ${finding.reasons?.join(" ") ?? "No textual explanation recorded."}`}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   );
@@ -70,6 +73,8 @@ export default function AppRoot() {
     risk: "all",
     detectionStatus: null,
     sortBy: "score_desc",
+    page: 1,
+    pageSize: 25,
   });
 
   useEffect(() => {
@@ -280,12 +285,25 @@ export default function AppRoot() {
           <section className="panel">
             <h3>Filtered Results</h3>
             <div className="finding-list">
-              {filteredFindings.filter((f) => f._scheme_id === route.params.schemeId).slice(0, 200).map((f, i) => (
-                <div key={i} className="finding">
-                  <strong>{f.entity_id || f.provider_id || "n/a"} · score {f.score}</strong>
-                  <p>{f.reasons?.join(" ") || f.description}</p>
-                </div>
-              ))}
+              {/* Paginate filteredFindings for scheme */}
+              {(() => {
+                const items = filteredFindings.filter((f) => f._scheme_id === route.params.schemeId);
+                const page = filters.page || 1;
+                const pageSize = filters.pageSize || 25;
+                const start = (page - 1) * pageSize;
+                return items.slice(start, start + pageSize).map((f, i) => (
+                  <div key={i} className="finding">
+                    <strong>{f.entity_id || f.provider_id || "n/a"} · score {f.score}</strong>
+                    <p>{f.reasons?.join(" ") || f.description}</p>
+                  </div>
+                ));
+              })()}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <button onClick={() => setFilters({ ...filters, page: 1 })}>First</button>
+              <button onClick={() => setFilters({ ...filters, page: Math.max(1, (filters.page || 1) - 1) })}>Prev</button>
+              <span style={{ margin: '0 8px' }}>Page {filters.page || 1}</span>
+              <button onClick={() => setFilters({ ...filters, page: (filters.page || 1) + 1 })}>Next</button>
             </div>
           </section>
         </section>
@@ -298,8 +316,8 @@ export default function AppRoot() {
     if (!scheme) return <div className="panel">Scheme not found</div>;
     return (
       <div>
-        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc" })} />
-        <ProviderDetail scheme={scheme} providerId={route.params.providerId} onSelectEntity={(entityId) => goToEntity(route.params.schemeId, route.params.providerId, entityId)} onBack={() => goToScheme(route.params.schemeId)} />
+        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", page: 1 })} />
+        <ProviderDetail scheme={scheme} providerId={route.params.providerId} onSelectEntity={(entityId) => goToEntity(route.params.schemeId, route.params.providerId, entityId)} onBack={() => goToScheme(route.params.schemeId)} filters={filters} setFilters={setFilters} />
       </div>
     );
   }
@@ -309,8 +327,8 @@ export default function AppRoot() {
     if (!scheme) return <div className="panel">Scheme not found</div>;
     return (
       <div>
-        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc" })} />
-        <EntityDetail scheme={scheme} providerId={route.params.providerId} entityId={route.params.entityId} onSelectFinding={(detectionId) => goToFinding(route.params.schemeId, route.params.providerId, route.params.entityId, detectionId)} onBack={() => goToProvider(route.params.schemeId, route.params.providerId)} />
+        <FilterBar filters={filters} schemes={report?.schemes} resultCount={resultCount} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", page: 1 })} />
+        <EntityDetail scheme={scheme} providerId={route.params.providerId} entityId={route.params.entityId} onSelectFinding={(detectionId) => goToFinding(route.params.schemeId, route.params.providerId, route.params.entityId, detectionId)} onBack={() => goToProvider(route.params.schemeId, route.params.providerId)} filters={filters} setFilters={setFilters} />
       </div>
     );
   }
