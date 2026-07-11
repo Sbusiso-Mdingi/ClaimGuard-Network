@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import * as Sentry from "@sentry/react";
+import FilterBar from "./components/FilterBar";
 
 function createMetric(label, value) {
   return (
@@ -78,6 +79,14 @@ function SchemeDetail({ scheme }) {
 export default function AppRoot() {
   const [state, setState] = useState({ status: "loading", report: null, message: null });
   const [route, setRoute] = useState({ name: "overview", params: {} });
+  const [filters, setFilters] = useState({
+    search: "",
+    schemeId: null,
+    risk: "all",
+    detectionStatus: null,
+    sortBy: "score_desc",
+    resultCount: 0,
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -121,6 +130,77 @@ export default function AppRoot() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  // derive a flat list of findings with context for efficient client-side filtering
+  const allFindings = useMemo(() => {
+    const list = [];
+    const report = state.report;
+    if (!report?.schemes) return list;
+    for (const scheme of report.schemes) {
+      const schemeId = scheme.scheme_id;
+      for (const f of scheme.provider_findings || []) {
+        list.push({
+          ...f,
+          _scheme_id: schemeId,
+          _scheme_name: scheme.scheme_name || schemeId,
+          _type: "provider",
+        });
+      }
+      for (const f of scheme.member_findings || []) {
+        list.push({
+          ...f,
+          _scheme_id: schemeId,
+          _scheme_name: scheme.scheme_name || schemeId,
+          _type: "member",
+        });
+      }
+    }
+    return list;
+  }, [state.report]);
+
+  const filteredFindings = useMemo(() => {
+    const s = (filters.search || "").trim().toLowerCase();
+    const schemeFilter = filters.schemeId || null;
+    const risk = filters.risk || "all";
+    const status = filters.detectionStatus || null;
+
+    const scoreFilter = (score) => {
+      if (score == null) return true;
+      if (risk === "all") return true;
+      if (risk === "low") return score < 0.3;
+      if (risk === "medium") return score >= 0.3 && score < 0.7;
+      if (risk === "high") return score >= 0.7;
+      return true;
+    };
+
+    let out = allFindings.filter((item) => {
+      if (schemeFilter && item._scheme_id !== schemeFilter) return false;
+      if (status && item.status !== status) return false;
+      if (!scoreFilter(item.score)) return false;
+
+      if (!s) return true;
+
+      // fields to search: scheme name/id, provider/member/display fields, detection id
+      const fields = [item._scheme_id, item._scheme_name, item.provider_id, item.entity_id, item.member_id, item.detection_id, item.title, item.description, item.reasons?.join(" ")];
+      return fields.some((f) => (f || "").toString().toLowerCase().includes(s));
+    });
+
+    // sorting
+    const sortBy = filters.sortBy || "score_desc";
+    out.sort((a, b) => {
+      if (sortBy === "score_desc") return (b.score || 0) - (a.score || 0);
+      if (sortBy === "score_asc") return (a.score || 0) - (b.score || 0);
+      if (sortBy === "claims_desc") return (b.metrics?.claim_count || 0) - (a.metrics?.claim_count || 0);
+      if (sortBy === "claims_asc") return (a.metrics?.claim_count || 0) - (b.metrics?.claim_count || 0);
+      if (sortBy === "id_asc") return (a.entity_id || "").localeCompare(b.entity_id || "");
+      return 0;
+    });
+
+    // update count for toolbar display
+    setFilters((prev) => ({ ...prev, resultCount: out.length }));
+
+    return out;
+  }, [allFindings, filters]);
+
   if (state.status === "loading") {
     return (
       <div id="app-root">
@@ -163,6 +243,7 @@ export default function AppRoot() {
     const scheme = schemes.find((s) => s.scheme_id === route.params.schemeId) || null;
     return (
       <div>
+        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
         <section className="hero fade-in">
           <p className="eyebrow">ClaimGuard Network</p>
           <h1>Network risk, surfaced.</h1>
@@ -173,6 +254,17 @@ export default function AppRoot() {
         </section>
         <section className="grid fade-in">
           <SchemeDetail scheme={scheme} />
+          <section className="panel">
+            <h3>Filtered Results</h3>
+            <div className="finding-list">
+              {filteredFindings.filter(f => f._scheme_id === route.params.schemeId).slice(0, 200).map((f, i) => (
+                <div key={i} className="finding">
+                  <strong>{f.entity_id || f.provider_id || "n/a"} · score {f.score}</strong>
+                  <p>{f.reasons?.join(" ") || f.description}</p>
+                </div>
+              ))}
+            </div>
+          </section>
         </section>
       </div>
     );
@@ -180,6 +272,7 @@ export default function AppRoot() {
 
   return (
     <div>
+      <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
       <section className="hero fade-in">
         <p className="eyebrow">ClaimGuard Network</p>
         <h1>Network risk, surfaced.</h1>
@@ -227,6 +320,18 @@ export default function AppRoot() {
             <RenderFindings title="Member findings" findings={scheme.member_findings || []} />
           </section>
         ))}
+
+        <section className="panel">
+          <h3>Filtered Results</h3>
+          <div className="finding-list">
+            {filteredFindings.slice(0, 200).map((f, i) => (
+              <div key={i} className="finding">
+                <strong>{f._scheme_id} · {f.entity_id || f.provider_id || "n/a"} · score {f.score}</strong>
+                <p>{f.reasons?.join(" ") || f.description}</p>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {report?.network && (
           (() => {
