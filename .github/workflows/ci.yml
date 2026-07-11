@@ -18,14 +18,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup pnpm CLI
+        uses: pnpm/action-setup@v6
+
       - name: Setup Node.js + pnpm
         uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'pnpm'
-
-      - name: Setup pnpm CLI
-        uses: pnpm/action-setup@v6
 
       - name: Restore pnpm store cache
         uses: actions/cache@v4
@@ -38,12 +38,6 @@ jobs:
 
       - name: Install JS dependencies (root workspace)
         run: pnpm install --frozen-lockfile
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: packages/data-generator/uv.lock
 
       - name: Install Python deps for data-generator
         run: |
@@ -83,7 +77,7 @@ jobs:
           pnpm test
 
       - name: Upload Python coverage to Codecov
-        if: success() && env.CODECOV_TOKEN
+        if: success() && env.CODECOV_TOKEN && hashFiles('packages/data-generator/coverage.xml') != ''
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
