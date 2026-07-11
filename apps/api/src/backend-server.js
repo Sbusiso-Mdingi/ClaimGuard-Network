@@ -6,7 +6,7 @@ import { createDatabase, createLedgerRepository } from "@claimguard/database";
 
 import { createBackendApp } from "./backend.js";
 
-const port = Number(process.env.PORT || 3004);
+const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
 const moduleDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
