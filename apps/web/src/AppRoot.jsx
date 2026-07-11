@@ -1,6 +1,11 @@
 import React, { useEffect, useState, useMemo } from "react";
 import * as Sentry from "@sentry/react";
 import FilterBar from "./components/FilterBar";
+import SchemeDetail from "./components/SchemeDetail";
+import ProviderList from "./components/ProviderList";
+import ProviderDetail from "./components/ProviderDetail";
+import EntityDetail from "./components/EntityDetail";
+import MemberDetail from "./components/MemberDetail";
 
 function createMetric(label, value) {
   return (
@@ -53,28 +58,7 @@ function RenderFindings({ title, findings }) {
   );
 }
 
-function SchemeDetail({ scheme }) {
-  if (!scheme) return <div className="panel">Scheme not found</div>;
 
-  return (
-    <section className="panel">
-      <header className="section-header">
-        <h2>{scheme.scheme_id}</h2>
-        <span className="pill">providers {scheme.provider_count} · claims {scheme.claim_count}</span>
-      </header>
-
-      <div className="metrics">
-        {createMetric("Provider score median", scheme.summary?.provider_score_median ?? 0)}
-        {createMetric("Member score median", scheme.summary?.member_score_median ?? 0)}
-        {createMetric("Provider findings", (scheme.provider_findings || []).length)}
-        {createMetric("Member findings", (scheme.member_findings || []).length)}
-      </div>
-
-      <RenderFindings title="Provider findings" findings={scheme.provider_findings || []} />
-      <RenderFindings title="Member findings" findings={scheme.member_findings || []} />
-    </section>
-  );
-}
 
 export default function AppRoot() {
   const [state, setState] = useState({ status: "loading", report: null, message: null });
@@ -117,12 +101,32 @@ export default function AppRoot() {
   useEffect(() => {
     function onHashChange() {
       const hash = window.location.hash || "";
-      if (hash.startsWith("#/scheme/")) {
-        const schemeId = decodeURIComponent(hash.replace("#/scheme/", ""));
-        setRoute({ name: "scheme", params: { schemeId } });
-      } else {
-        setRoute({ name: "overview", params: {} });
+      // /scheme/:schemeId/provider/:providerId/entity/:entityId/finding/:findingId
+      const fullFinding = hash.match(/^#\/scheme\/([^/]+)\/provider\/([^/]+)\/entity\/([^/]+)\/finding\/([^/]+)$/);
+      if (fullFinding) {
+        setRoute({ name: "finding", params: { schemeId: decodeURIComponent(fullFinding[1]), providerId: decodeURIComponent(fullFinding[2]), entityId: decodeURIComponent(fullFinding[3]), detectionId: decodeURIComponent(fullFinding[4]) } });
+        return;
       }
+
+      const entityMatch = hash.match(/^#\/scheme\/([^/]+)\/provider\/([^/]+)\/entity\/([^/]+)$/);
+      if (entityMatch) {
+        setRoute({ name: "entity", params: { schemeId: decodeURIComponent(entityMatch[1]), providerId: decodeURIComponent(entityMatch[2]), entityId: decodeURIComponent(entityMatch[3]) } });
+        return;
+      }
+
+      const providerMatch = hash.match(/^#\/scheme\/([^/]+)\/provider\/([^/]+)$/);
+      if (providerMatch) {
+        setRoute({ name: "provider", params: { schemeId: decodeURIComponent(providerMatch[1]), providerId: decodeURIComponent(providerMatch[2]) } });
+        return;
+      }
+
+      const schemeMatch = hash.match(/^#\/scheme\/([^/]+)$/);
+      if (schemeMatch) {
+        setRoute({ name: "scheme", params: { schemeId: decodeURIComponent(schemeMatch[1]) } });
+        return;
+      }
+
+      setRoute({ name: "overview", params: {} });
     }
 
     onHashChange();
@@ -239,6 +243,18 @@ export default function AppRoot() {
     window.location.hash = `#/scheme/${encodeURIComponent(schemeId)}`;
   }
 
+  function goToProvider(schemeId, providerId) {
+    window.location.hash = `#/scheme/${encodeURIComponent(schemeId)}/provider/${encodeURIComponent(providerId)}`;
+  }
+
+  function goToEntity(schemeId, providerId, entityId) {
+    window.location.hash = `#/scheme/${encodeURIComponent(schemeId)}/provider/${encodeURIComponent(providerId)}/entity/${encodeURIComponent(entityId)}`;
+  }
+
+  function goToFinding(schemeId, providerId, entityId, detectionId) {
+    window.location.hash = `#/scheme/${encodeURIComponent(schemeId)}/provider/${encodeURIComponent(providerId)}/entity/${encodeURIComponent(entityId)}/finding/${encodeURIComponent(detectionId)}`;
+  }
+
   if (route.name === "scheme") {
     const scheme = schemes.find((s) => s.scheme_id === route.params.schemeId) || null;
     return (
@@ -254,10 +270,11 @@ export default function AppRoot() {
         </section>
         <section className="grid fade-in">
           <SchemeDetail scheme={scheme} />
+          <ProviderList scheme={scheme} onSelectProvider={(providerId) => goToProvider(route.params.schemeId, providerId)} />
           <section className="panel">
             <h3>Filtered Results</h3>
             <div className="finding-list">
-              {filteredFindings.filter(f => f._scheme_id === route.params.schemeId).slice(0, 200).map((f, i) => (
+              {filteredFindings.filter((f) => f._scheme_id === route.params.schemeId).slice(0, 200).map((f, i) => (
                 <div key={i} className="finding">
                   <strong>{f.entity_id || f.provider_id || "n/a"} · score {f.score}</strong>
                   <p>{f.reasons?.join(" ") || f.description}</p>
@@ -266,6 +283,39 @@ export default function AppRoot() {
             </div>
           </section>
         </section>
+      </div>
+    );
+  }
+
+  if (route.name === "provider") {
+    const scheme = schemes.find((s) => s.scheme_id === route.params.schemeId) || null;
+    if (!scheme) return <div className="panel">Scheme not found</div>;
+    return (
+      <div>
+        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
+        <ProviderDetail scheme={scheme} providerId={route.params.providerId} onSelectEntity={(entityId) => goToEntity(route.params.schemeId, route.params.providerId, entityId)} onBack={() => goToScheme(route.params.schemeId)} />
+      </div>
+    );
+  }
+
+  if (route.name === "entity") {
+    const scheme = schemes.find((s) => s.scheme_id === route.params.schemeId) || null;
+    if (!scheme) return <div className="panel">Scheme not found</div>;
+    return (
+      <div>
+        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
+        <EntityDetail scheme={scheme} providerId={route.params.providerId} entityId={route.params.entityId} onSelectFinding={(detectionId) => goToFinding(route.params.schemeId, route.params.providerId, route.params.entityId, detectionId)} onBack={() => goToProvider(route.params.schemeId, route.params.providerId)} />
+      </div>
+    );
+  }
+
+  if (route.name === "finding") {
+    const scheme = schemes.find((s) => s.scheme_id === route.params.schemeId) || null;
+    if (!scheme) return <div className="panel">Scheme not found</div>;
+    return (
+      <div>
+        <FilterBar filters={filters} schemes={report?.schemes} onChange={setFilters} onClear={() => setFilters({ search: "", schemeId: null, risk: "all", detectionStatus: null, sortBy: "score_desc", resultCount: 0 })} />
+        <MemberDetail scheme={scheme} detectionId={route.params.detectionId} onBack={() => goToEntity(route.params.schemeId, route.params.providerId, route.params.entityId)} />
       </div>
     );
   }
