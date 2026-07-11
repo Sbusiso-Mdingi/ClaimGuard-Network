@@ -77,7 +77,7 @@ jobs:
           pnpm test
 
       - name: Upload Python coverage to Codecov
-        if: success() && env.CODECOV_TOKEN
+        if: success() && env.CODECOV_TOKEN && hashFiles('packages/data-generator/coverage.xml') != ''
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
