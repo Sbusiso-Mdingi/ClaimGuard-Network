@@ -5,16 +5,13 @@ import { fileURLToPath } from "node:url";
 import { createDatabase, createLedgerRepository } from "@claimguard/database";
 
 import { createBackendApp } from "./backend.js";
+import { createReportStorageFromEnvironment } from "./report-storage.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
 const moduleDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
-const detectionReportPath = process.env.DETECTION_REPORT_PATH
-  ? path.isAbsolute(process.env.DETECTION_REPORT_PATH)
-    ? process.env.DETECTION_REPORT_PATH
-    : path.resolve(repoRoot, process.env.DETECTION_REPORT_PATH)
-  : null;
+const detectionAnalyzeProxyUrl = process.env.DETECTION_ANALYZE_PROXY_URL || null;
 
 let ledgerRepository = null;
 let databasePool = null;
@@ -25,7 +22,13 @@ if (databaseUrl) {
   databasePool = database.pool;
 }
 
-const app = createBackendApp({ ledgerRepository, detectionReportPath });
+const reportStorage = await createReportStorageFromEnvironment({
+  reportStorageBackend: process.env.REPORT_STORAGE_BACKEND,
+  reportPath: process.env.DETECTION_REPORT_PATH,
+  repoRoot,
+});
+
+const app = createBackendApp({ ledgerRepository, reportStorage, detectionAnalyzeProxyUrl });
 
 serve({
   fetch: app.fetch,

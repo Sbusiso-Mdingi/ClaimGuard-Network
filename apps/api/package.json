@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@azure/identity": "^4.5.0",
+    "@azure/storage-blob": "^12.25.0",
     "@claimguard/shared-schema": "workspace:*",
     "@claimguard/database": "workspace:*",
     "@hono/node-server": "^1.14.0",

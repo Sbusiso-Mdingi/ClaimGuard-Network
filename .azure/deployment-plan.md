@@ -19,9 +19,10 @@
 
 ## Phase 2: Infrastructure Design
 - Host the API and web UI on Azure App Service.
-- Keep the Python detection engine local for report generation unless a later phase requires cloud execution.
+- Host a dedicated report producer runtime in Azure Container Apps Jobs for detection execution and report publishing.
 - Use Azure Key Vault as the secret boundary that will later be populated from Doppler-managed values.
 - MySQL already exists in Azure and will be wired into the API via environment configuration.
+- Store report artifacts in Azure Blob Storage and have API consume reports through storage abstractions.
 
 ## Phase 3: Artifact Generation
 - Create Azure deployment configuration.

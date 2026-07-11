@@ -1,0 +1,84 @@
+name: report-producer-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      imageTag:
+        description: Image tag for report producer
+        required: true
+        default: latest
+      trigger:
+        description: Producer trigger label
+        required: false
+        default: manual
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_CLIENT_ID: dc32e620-8239-4f20-b5ae-ca3c91cf9146
+  AZURE_TENANT_ID: 8efc1bb9-b90f-4a48-bf6c-ba0686193b80
+  AZURE_SUBSCRIPTION_ID: 896d3c72-d979-4bdc-a37f-060988d12032
+  AZURE_RESOURCE_GROUP: ClaimGuard
+  AZURE_CONTAINERAPPS_ENVIRONMENT: claimguard-env
+  AZURE_CONTAINERAPPS_JOB: claimguard-report-producer
+  AZURE_ACR_NAME: claimguardacr
+  AZURE_ACR_LOGIN_SERVER: claimguardacr.azurecr.io
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+
+      - name: Build and push producer image
+        run: |
+          IMAGE_TAG=${{ github.event.inputs.imageTag }}
+          az acr build \
+            --registry "$AZURE_ACR_NAME" \
+            --image "report-producer:${IMAGE_TAG}" \
+            --file services/report-producer/Dockerfile \
+            .
+
+      - name: Ensure container app job exists
+        run: |
+          if ! az containerapp job show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB" >/dev/null 2>&1; then
+            az containerapp job create \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINERAPPS_JOB" \
+              --environment "$AZURE_CONTAINERAPPS_ENVIRONMENT" \
+              --trigger-type Manual \
+              --replica-timeout 1800 \
+              --replica-retry-limit 3 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${{ github.event.inputs.imageTag }}" \
+              --cpu 1.0 \
+              --memory 2Gi \
+              --env-vars REPORT_STORAGE_BACKEND=azure_blob REPORT_STORAGE_LATEST_POINTER=latest.json
+          fi
+
+      - name: Update container app job image
+        run: |
+          az containerapp job update \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${{ github.event.inputs.imageTag }}"
+
+      - name: Start producer job execution
+        run: |
+          az containerapp job start \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB"

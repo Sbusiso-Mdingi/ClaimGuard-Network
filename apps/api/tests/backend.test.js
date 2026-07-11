@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 
 import { createBackendApp } from "../src/backend.js";
+
+function createLedgerRepositoryStub(entry) {
+  return {
+    async getLatestEntry() {
+      return entry;
+    },
+  };
+}
 
 test("health endpoint returns phase 3 payload", async () => {
   const app = createBackendApp();
@@ -27,43 +32,47 @@ test("trpc ping endpoint returns pong", async () => {
   assert.equal(json.result.data.message, "pong");
 });
 
-test("detection report endpoint returns a configured report", async () => {
-  const tempDir = await fsMkdirTemp();
-  const reportPath = path.join(tempDir, "report.json");
-
-  await writeFile(
-    reportPath,
-    JSON.stringify(
-      {
-        data_dir: "/tmp/data",
-        detection: {
-          risk_score: {
-            riskScore: 87,
-            severity: "High",
-            reasons: ["sample reason"],
-          },
-          graph_summary: {
-            entity_count: 12,
-            relationship_count: 18,
-          },
-          entities: [],
-          relationships: [],
+function createReportStorageStub(report) {
+  return {
+    async getLatestReport() {
+      return {
+        report,
+        metadata: {
+          source: "test",
+          version: "test-v1",
         },
-        schemes: [
-          {
-            scheme_id: "scheme_a",
-            provider_findings: [],
-            member_findings: [],
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
+      };
+    },
+  };
+}
 
-  const app = createBackendApp({ detectionReportPath: reportPath });
+test("detection report endpoint returns a configured report", async () => {
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub({
+      data_dir: "/tmp/data",
+      detection: {
+        risk_score: {
+          riskScore: 87,
+          severity: "High",
+          reasons: ["sample reason"],
+        },
+        graph_summary: {
+          entity_count: 12,
+          relationship_count: 18,
+        },
+        entities: [],
+        relationships: [],
+      },
+      schemes: [
+        {
+          scheme_id: "scheme_a",
+          provider_findings: [],
+          member_findings: [],
+        },
+      ],
+    }),
+  });
+
   const response = await app.request("http://localhost/detection/report");
   const json = await response.json();
 
@@ -73,30 +82,53 @@ test("detection report endpoint returns a configured report", async () => {
   assert.equal(json.report.detection.risk_score.riskScore, 87);
 });
 
-test("detection graph endpoint returns graph payload", async () => {
-  const tempDir = await fsMkdirTemp();
-  const reportPath = path.join(tempDir, "report.json");
-
-  await writeFile(
-    reportPath,
-    JSON.stringify(
-      {
-        detection: {
-          graph_summary: {
-            entity_count: 3,
-            relationship_count: 4,
-          },
-          entities: [{ entity_id: "claimant:M1" }],
-          relationships: [{ source_entity_id: "claimant:M1", target_entity_id: "device:D1" }],
+test("detection report endpoint includes runtime ledger reference when available", async () => {
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub({
+      detection: {
+        risk_score: {
+          riskScore: 25,
+          severity: "Low",
+          reasons: ["sample reason"],
+        },
+        ledger_reference: {
+          type: "runtime-ledger",
+          available: false,
         },
       },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
+    }),
+    ledgerRepository: createLedgerRepositoryStub({
+      sequenceNumber: 9,
+      entryType: "YELLOW_FLAG",
+      previousHash: "0".repeat(64),
+      entryHash: "b".repeat(64),
+      payload: { source: "runtime" },
+    }),
+  });
 
-  const app = createBackendApp({ detectionReportPath: reportPath });
+  const response = await app.request("http://localhost/detection/report");
+  const json = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(json.available, true);
+  assert.equal(json.report.detection.ledger_reference.available, true);
+  assert.equal(json.report.detection.ledger_reference.entry.sequenceNumber, 9);
+});
+
+test("detection graph endpoint returns graph payload", async () => {
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub({
+      detection: {
+        graph_summary: {
+          entity_count: 3,
+          relationship_count: 4,
+        },
+        entities: [{ entity_id: "claimant:M1" }],
+        relationships: [{ source_entity_id: "claimant:M1", target_entity_id: "device:D1" }],
+      },
+    }),
+  });
+
   const response = await app.request("http://localhost/detection/graph");
   const json = await response.json();
 
@@ -106,28 +138,18 @@ test("detection graph endpoint returns graph payload", async () => {
 });
 
 test("detection risk endpoint returns deterministic risk payload", async () => {
-  const tempDir = await fsMkdirTemp();
-  const reportPath = path.join(tempDir, "report.json");
-
-  await writeFile(
-    reportPath,
-    JSON.stringify(
-      {
-        detection: {
-          risk_score: {
-            riskScore: 72,
-            severity: "High",
-            reasons: ["shared devices"],
-          },
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub({
+      detection: {
+        risk_score: {
+          riskScore: 72,
+          severity: "High",
+          reasons: ["shared devices"],
         },
       },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
+    }),
+  });
 
-  const app = createBackendApp({ detectionReportPath: reportPath });
   const response = await app.request("http://localhost/detection/risk");
   const json = await response.json();
 
@@ -137,7 +159,7 @@ test("detection risk endpoint returns deterministic risk payload", async () => {
   assert.equal(json.risk.severity, "High");
 });
 
-test("detection analyze endpoint accepts claims and returns deterministic output", async () => {
+test("detection analyze endpoint is deprecated when no producer proxy is configured", async () => {
   const app = createBackendApp();
   const payload = {
     claims: [
@@ -166,14 +188,7 @@ test("detection analyze endpoint accepts claims and returns deterministic output
     ],
   };
 
-  const responseA = await app.request("http://localhost/detection/analyze", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const responseB = await app.request("http://localhost/detection/analyze", {
+  const response = await app.request("http://localhost/detection/analyze", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -181,27 +196,67 @@ test("detection analyze endpoint accepts claims and returns deterministic output
     body: JSON.stringify(payload),
   });
 
-  const jsonA = await responseA.json();
-  const jsonB = await responseB.json();
+  const json = await response.json();
 
-  assert.equal(responseA.status, 200);
-  assert.equal(responseB.status, 200);
-  assert.equal(jsonA.available, true);
-  assert.deepEqual(jsonA, jsonB);
-  assert.ok(Array.isArray(jsonA.detection.triggered_rules));
-  assert.equal(typeof jsonA.detection.risk_score.riskScore, "number");
+  assert.equal(response.status, 410);
+  assert.equal(json.available, false);
+  assert.equal(json.deprecated, true);
 });
 
-test("detection report endpoint is unavailable without a configured path", async () => {
-  const app = createBackendApp();
+test("detection analyze endpoint proxies to producer when configured", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    return new Response(
+      JSON.stringify({
+        available: true,
+        detection: {
+          risk_score: {
+            riskScore: 54,
+            severity: "Medium",
+            reasons: ["proxied"],
+          },
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    );
+  };
+
+  try {
+    const app = createBackendApp({ detectionAnalyzeProxyUrl: "http://producer.local/detection/analyze" });
+    const response = await app.request("http://localhost/detection/analyze", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ claims: [{ claim_id: "C1" }] }),
+    });
+    const json = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(json.available, true);
+    assert.equal(json.detection.risk_score.riskScore, 54);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("detection report endpoint is unavailable without configured report storage data", async () => {
+  const app = createBackendApp({
+    reportStorage: {
+      async getLatestReport() {
+        return null;
+      },
+    },
+  });
+
   const response = await app.request("http://localhost/detection/report");
   const json = await response.json();
 
   assert.equal(response.status, 503);
   assert.equal(json.available, false);
 });
-
-async function fsMkdirTemp() {
-  const tempRoot = await import("node:fs/promises").then((module) => module.mkdtemp(path.join(os.tmpdir(), "claimguard-api-")));
-  return tempRoot;
-}

@@ -24,6 +24,25 @@ uv run pytest tests --cov=src/claimguard --cov-report=xml
 
 See `docs/Phase0_Implementation_Runbook.md` for complete Phase 0 setup details, including external setup steps for GitHub, Codecov, Doppler, Sentry, and New Relic.
 
+## Production Architecture Direction
+
+ClaimGuard follows a strict producer/consumer boundary:
+
+- `services/detection-engine` performs fraud analysis only.
+- `services/report-producer` orchestrates runs and publishes report artifacts.
+- `apps/api` is a read-only report consumer.
+- `apps/web` consumes API endpoints only.
+
+### Report producer runtime
+
+```bash
+cd services/report-producer
+uv sync
+uv run claimguard-produce-report --data-dir ../../packages/data-generator/data --backend file --output-dir reports
+```
+
+For Azure mode, use backend `azure_blob` with storage configuration and managed identity.
+
 ## Phase 5 Investigator UI
 
 The web app now exposes an investigator workspace built on React Router + Tailwind/shadcn-style primitives and backed by the existing detection APIs:

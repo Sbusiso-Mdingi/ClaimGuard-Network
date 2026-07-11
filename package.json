@@ -6,7 +6,8 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "report:detection": "pnpm --dir services/detection-engine report"
+    "report:detection": "pnpm --dir services/detection-engine report",
+    "report:producer:test": "pnpm --dir services/report-producer test"
   },
   "devDependencies": {
     "turbo": "^2.0.0"

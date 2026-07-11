@@ -42,11 +42,12 @@ This specification covers an interview-ready build. It operates entirely on synt
 | **API Gateway** | tRPC, Hono | Edge-compatible routing, designed for low-latency claims switchboard traffic |
 | **Relational DB** | MySQL (via Drizzle ORM) | Fast lookups, state machine management, cryptographic ledger |
 | **Graph DB** | Azure Cosmos DB (Gremlin API) | Core fraud network and cross-scheme relationship traversals |
-| **Heavy Compute** | DigitalOcean Droplets (Python) | Cost-effective compute for GLM fitting and anomaly scoring |
+| **Producer Runtime** | Azure Container Apps Jobs (Python) | Scheduled/event-driven orchestration for detection runs |
+| **Report Storage** | Azure Blob Storage | Versioned reports, metadata, and latest pointer (`latest.json`) |
 | **Frontend UI** | React 19, TypeScript, Tailwind CSS | Rapid, type-safe investigator dashboard |
 | **Observability** | New Relic & Sentry | Distributed tracing, APM, source-mapped error tracking |
 | **CI/CD & Sec** | GitHub Actions, Codecov, AstraSecurity | Automated pipelines, coverage gating, vulnerability scanning |
-| **Secrets** | Doppler & Azure Key Vault | Environment-aware secret rotation |
+| **Secrets/Identity** | Azure Key Vault + Managed Identity | Secret boundary and least-privilege runtime access |
 
 (The "sub-50ms" latency figure from the earlier draft has been removed — it's a reasonable design target for tRPC/Hono, but not a claim to make before anything is built and measured. Worth quoting once you actually benchmark it.)
 
@@ -127,7 +128,7 @@ Where identifiers have been deliberately altered post-tokenization (evasion), th
 The engine fuses standard actuarial methodology with graph machine learning.
 
 **Statistical Anomaly Scoring (GLM):**
-Expected claims costs and frequencies are modeled via a frequency-severity GLM. Because high-iteration statistical simulations can easily tie up a local machine for hours, the modeling scripts are containerized and deployed to DigitalOcean Droplets. This completely offloads the compute burden from the core API.
+Expected claims costs and frequencies are modeled via a frequency-severity GLM. Because high-iteration statistical simulations can easily tie up a local machine for hours, the modeling scripts are containerized and executed in Azure-native producer runtimes (Azure Container Apps Jobs) so compute stays isolated from the core API.
 
 **Graph ML:**
 - **Community Detection:** Louvain modularity optimization identifies dense clusters.
@@ -156,7 +157,7 @@ To emulate a high-performing engineering team, local development and deployments
 | 1 | Data Generation: Synthetic data + seed scripts | Python, Kaggle standard datasets |
 | 2 | Client SDK: Python Edge SDK for local tokenization | Python, PyPI structuring |
 | 3 | Backend Foundation: tRPC API + Hono + Drizzle ORM + Auth + Hash-Chained Ledger | tRPC, Drizzle, MySQL |
-| 4 | Detection Engine: DigitalOcean GLM compute + Cosmos DB graph analytics | Droplets, Gremlin |
+| 4 | Detection Engine + Producer Runtime: Azure Container Apps Jobs + Blob Storage + Cosmos DB graph analytics | ACA Jobs, Blob Storage, Gremlin |
 | 5 | Investigator UI: React 19 + shadcn/ui + network graph visualization | React, Tailwind, Vite |
 | 6 | Observability & CI/CD: Sentry release tracking, AstraSecurity scanning, custom dashboards | AstraSecurity, New Relic |
 | 7 | Evaluation & Polish: Measure accuracy against seeded evasion cases, write documentation | Markdown |

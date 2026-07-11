@@ -4,6 +4,93 @@
 
 ClaimGuard is a personal Azure-hosted Node.js application composed of a production API and production web frontend running on a shared Linux App Service plan. The active production deployment targets are `claimguard-api` and `claimguard-web`. The obsolete `-ufs` App Services were removed after validation. `claimguard-kv-ufs` remains in place as the production Key Vault.
 
+The platform architecture is now centered on a strict producer/consumer boundary:
+
+- The detection engine is the only fraud-analysis component.
+- The report producer runtime orchestrates runs and publishes report artifacts.
+- The API is a read-only report consumer.
+- The investigator UI consumes only API endpoints.
+
+## Target Azure-Native Producer/Consumer Topology
+
+```mermaid
+flowchart TD
+  Ingestion[Claims Ingestion] --> Producer[Report Producer Runtime\nAzure Container Apps Job]
+  Producer --> Engine[Detection Engine\nservices/detection-engine]
+  Engine --> Publisher[Report Publisher]
+  Publisher --> Blob[(Azure Blob Storage)]
+  Blob --> API[Read-only API\napps/api]
+  API --> UI[Investigator UI\napps/web]
+
+  Producer -. managed identity .-> Blob
+  Producer -. telemetry .-> AppInsights[(Application Insights)]
+  API -. telemetry .-> AppInsights
+  AppInsights --> LogAnalytics[(Log Analytics Workspace)]
+  API -. secrets/config .-> KeyVault[(Azure Key Vault)]
+  Producer -. secrets/config .-> KeyVault
+```
+
+## Component Responsibilities
+
+### Detection Engine (`services/detection-engine`)
+
+- Ingests claims and executes fraud detection logic.
+- Produces report payloads as domain output.
+- Does not host API routes.
+
+### Report Producer (`services/report-producer`)
+
+- Handles trigger execution (manual, scheduled, and future queue-driven).
+- Invokes the detection engine.
+- Publishes versioned report artifacts, metadata, and latest pointer.
+- Implements retries and runtime telemetry hooks.
+
+### API (`apps/api`)
+
+- Reads the latest published report through `ReportStorage` abstraction.
+- Exposes read-only investigator endpoints:
+  - `GET /detection/report`
+  - `GET /detection/graph`
+  - `GET /detection/risk`
+- Keeps `POST /detection/analyze` as compatibility route only (proxy/deprecated), with no embedded detection logic.
+
+### Investigator UI (`apps/web`)
+
+- Consumes API endpoints only.
+- Contains no fraud detection logic and performs no report generation.
+
+## Execution Flow
+
+1. Producer trigger starts a report run.
+2. Producer invokes detection engine with configured input.
+3. Producer publishes report and metadata to Blob Storage.
+4. Producer updates `latest.json` pointer atomically.
+5. API reads latest pointer and report through `ReportStorage`.
+6. UI fetches read-only detection endpoints from API.
+
+## Storage Contract
+
+Blob container stores:
+
+- `latest.json` (latest pointer)
+- `reports/report-<version>.json` (immutable versioned payload)
+- `metadata/metadata-<version>.json` (run metadata)
+
+## Deployment Flow
+
+1. Deploy API and web to App Service.
+2. Deploy producer runtime to Azure Container Apps Job.
+3. Configure managed identities for API and producer.
+4. Grant Blob data-plane access via RBAC.
+5. Store non-identity configuration in Key Vault and app settings references.
+
+## Extension Points
+
+- Queue triggers: Azure Service Bus -> producer runtime.
+- Scheduling: ACA Job schedules.
+- Graph persistence: publish downstream graph/evidence artifacts after report publish.
+- Ledger persistence: API remains read-only; ledger writes handled by dedicated workflow components.
+
 The current production architecture is intentionally small:
 
 - `claimguard-api` serves the backend API.
@@ -95,7 +182,11 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 | `NEW_RELIC_APP_NAME` | `ClaimGuard` |
 | `NODE_ENV` | `production` |
 | `COSMOSDB_CONNECTION_STRING` | redacted |
-| `DETECTION_REPORT_PATH` | `/home/site/wwwroot/reports/latest-report.json` |
+| `REPORT_STORAGE_BACKEND` | `azure_blob` |
+| `REPORT_STORAGE_CONTAINER` | `claimguard-reports` |
+| `REPORT_STORAGE_ACCOUNT_URL` | `https://<storage-account>.blob.core.windows.net` |
+| `REPORT_STORAGE_LATEST_POINTER` | `latest.json` |
+| `DETECTION_ANALYZE_PROXY_URL` | optional compatibility proxy to producer runtime |
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `false` |
 | `WEBSITE_HTTPLOGGING_RETENTION_DAYS` | `3` |
 
@@ -107,6 +198,15 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 | `NODE_ENV` | `production` |
 | `CLAIMGUARD_API_BASE_URL` | `https://claimguard-api.azurewebsites.net` |
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` |
+
+### `claimguard-report-producer` (Container Apps Job)
+
+| Variable | Value |
+| --- | --- |
+| `REPORT_STORAGE_CONTAINER` | `claimguard-reports` |
+| `REPORT_STORAGE_ACCOUNT_URL` | `https://<storage-account>.blob.core.windows.net` |
+| `REPORT_STORAGE_LATEST_POINTER` | `latest.json` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | redacted |
 
 ## Production Configuration Summary
 
@@ -164,15 +264,17 @@ The following checks were completed after removing the obsolete UFS App Services
 
 1. Recreate the production App Service from the documented startup command and current configuration.
 2. Restore the MySQL backup if data loss occurred.
-3. Reapply `MYSQL_URL`, `SENTRY_DSN_API`, `NEW_RELIC_LICENSE_KEY`, `NODE_ENV`, `COSMOSDB_CONNECTION_STRING`, and `DETECTION_REPORT_PATH` to the API.
+3. Reapply `MYSQL_URL`, `SENTRY_DSN_API`, `NEW_RELIC_LICENSE_KEY`, `NODE_ENV`, `COSMOSDB_CONNECTION_STRING`, `REPORT_STORAGE_BACKEND`, `REPORT_STORAGE_CONTAINER`, `REPORT_STORAGE_ACCOUNT_URL`, and `REPORT_STORAGE_LATEST_POINTER` to the API.
 4. Reapply `SENTRY_DSN_WEB`, `NODE_ENV`, and `CLAIMGUARD_API_BASE_URL` to the web app.
-5. Verify both apps resolve on their default Azure hostnames.
-6. Confirm the API logs and deploys successfully before restoring traffic.
+5. Reapply producer runtime settings (`REPORT_STORAGE_CONTAINER`, `REPORT_STORAGE_ACCOUNT_URL`, and telemetry settings) to Azure Container Apps Job.
+6. Verify both apps resolve on their default Azure hostnames.
+7. Confirm API and producer runtime logs are healthy before restoring traffic.
 
 ## Deployment Checklist
 
 - Confirm `claimguard-api` is `Running`.
 - Confirm `claimguard-web` is `Running`.
+- Confirm producer job image revision is healthy in Azure Container Apps.
 - Confirm `CLAIMGUARD_API_BASE_URL` points to `https://claimguard-api.azurewebsites.net`.
 - Confirm the API uses `node src/backend-server.js`.
 - Confirm the web app uses `node src/server.js`.

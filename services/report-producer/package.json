@@ -1,0 +1,9 @@
+{
+  "name": "@claimguard/report-producer",
+  "private": true,
+  "scripts": {
+    "build": "uv run python -m compileall src tests",
+    "lint": "uv run python -m compileall src tests",
+    "test": "uv run python -m unittest discover -s tests -p 'test_*.py'"
+  }
+}

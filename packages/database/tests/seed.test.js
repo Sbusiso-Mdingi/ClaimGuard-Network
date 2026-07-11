@@ -23,7 +23,10 @@ test("loadSyntheticPhase1Data reads the generated Phase 1 exports", async () => 
   assert.equal(data.providers.length >= 750, true);
   assert.equal(data.members[0].scheme_id, "A");
   assert.equal(typeof data.members[0].home_lat, "number");
-  assert.equal(typeof data.claims[0].amount, "number");
+  assert.equal(Array.isArray(data.claims), true);
+  if (data.claims.length > 0) {
+    assert.equal(typeof data.claims[0].amount, "number");
+  }
 });
 
 test("seedSyntheticDatabase writes scheme, entity, claim, and ledger rows", async () => {

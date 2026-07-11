@@ -1,7 +1,8 @@
 **CI Validation Guide**
 
-- **Purpose:** Validate builds and tests for the monorepo on every push and pull request to `main`.
+- **Purpose:** Validate builds/tests for the monorepo and deploy API/web artifacts on pushes to `main`.
 - **Workflow file:** [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- **Producer deploy workflow:** [.github/workflows/producer-deploy.yml](.github/workflows/producer-deploy.yml)
 
 What the CI does:
 - Checks out the repository and installs JavaScript dependencies using `pnpm` at the workspace root.
@@ -16,6 +17,7 @@ What the CI does:
   - `pnpm --filter ./apps/api run test`
 - Uploads `apps/web/dist` as an artifact for inspection (no deploy)
 - Runs Python tests and uploads coverage to Codecov (if `CODECOV_TOKEN` present).
+- On `push` to `main`, packages deployable zip artifacts for `apps/web` and `apps/api`, then deploys both via Azure Web App ZipDeploy.
 
 Local validation (recommended before opening PR):
 
@@ -46,8 +48,10 @@ pnpm --filter ./apps/api run test
 
 Quality gates:
 - Any build, test, or lint failure will fail CI.
-- The workflow does not perform any deployments or modify Azure resources.
+- On pull requests, the workflow is validation-only (no deployment).
+- On pushes to `main`, the workflow deploys API and web resources in Azure.
 
 Notes & Troubleshooting:
 - This workflow uses `pnpm` at the workspace root to avoid duplicated installs for each package.
 - If you prefer `npm` locally, you can still run the scripts in the `apps/web` folder using `npm run build`/`npm test` — but CI uses `pnpm`.
+- Producer runtime deployment is intentionally separated into a manual workflow to avoid coupling API/web deploy cadence with batch producer releases.

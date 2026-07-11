@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createLedgerEntry, genesisPreviousHash } from "./index.js";
@@ -11,8 +11,8 @@ const syntheticSchemeNames = {
   C: "Scheme C Medical Fund",
 };
 
-const packageRoot = dirname(fileURLToPath(new URL(".", import.meta.url)));
-const defaultSourceDir = join(packageRoot, "..", "data-generator", "data");
+const moduleDir = fileURLToPath(new URL(".", import.meta.url));
+const defaultSourceDir = join(moduleDir, "..", "..", "data-generator", "data");
 
 function splitCsvLine(line) {
   const values = [];
