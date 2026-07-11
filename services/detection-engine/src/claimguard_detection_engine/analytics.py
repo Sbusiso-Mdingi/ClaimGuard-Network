@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import hashlib
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
@@ -10,6 +11,7 @@ from itertools import combinations
 from pathlib import Path
 
 from .loader import ClaimRecord, DataBundle, MemberRecord, ProviderRecord, SchemeData, load_data_bundle
+from .pipeline import run_detection_pipeline
 from .reference_data import CODE_LOOKUP, SPECIALTIES
 
 
@@ -595,6 +597,34 @@ def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
 
     evaluation = evaluate_against_ground_truth(bundle, all_provider_findings, all_member_findings, exact_links, fuzzy_links)
 
+    raw_claims: list[dict[str, object]] = []
+    for scheme in bundle.schemes.values():
+        for claim in scheme.claims:
+            member = scheme.members.get(claim.member_id)
+            provider = scheme.providers.get(claim.provider_id)
+            raw_claims.append(
+                {
+                    "claim_id": claim.claim_id,
+                    "member_id": claim.member_id,
+                    "provider_id": claim.provider_id,
+                    "phone": f"{claim.member_id}-phone",
+                    "email": f"{claim.member_id.lower()}@claimguard.synthetic",
+                    "address": member.home_region if member else "unknown-region",
+                    "bank_account": provider.synthetic_banking_detail if provider else "unknown-bank",
+                    "device_id": f"device-{claim.member_id}",
+                    "ip_address": f"10.{int(hashlib.sha256(claim.provider_id.encode('utf-8')).hexdigest()[:2], 16)}.{int(hashlib.sha256(claim.member_id.encode('utf-8')).hexdigest()[:2], 16)}.{int(hashlib.sha256(claim.claim_id.encode('utf-8')).hexdigest()[:2], 16)}",
+                }
+            )
+
+    detection = run_detection_pipeline(
+        raw_claims,
+        ledger_reference={
+            "type": "runtime-ledger",
+            "available": False,
+            "note": "Attach runtime ledger entries from the API service when database-backed ledger is enabled.",
+        },
+    )
+
     return {
         "data_dir": str(data_dir),
         "schemes": scheme_reports,
@@ -605,4 +635,5 @@ def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
             "network_nodes": network_nodes,
         },
         "evaluation": evaluation,
+        "detection": detection,
     }
