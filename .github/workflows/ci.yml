@@ -120,9 +120,11 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           rm -rf /tmp/claimguard-api-deploy
+          rm -rf /tmp/claimguard-api-deploy-flat
           pnpm --filter ./apps/api deploy /tmp/claimguard-api-deploy -P
           rm -f /tmp/claimguard-api-deploy.zip
-          cd /tmp/claimguard-api-deploy
+          rsync -aL --delete /tmp/claimguard-api-deploy/ /tmp/claimguard-api-deploy-flat/
+          cd /tmp/claimguard-api-deploy-flat
           zip -qr /tmp/claimguard-api-deploy.zip . \
             -x ".turbo/*" \
                "tests/*" \
