@@ -52,8 +52,32 @@ function RenderFindings({ title, findings }) {
   );
 }
 
+function SchemeDetail({ scheme }) {
+  if (!scheme) return <div className="panel">Scheme not found</div>;
+
+  return (
+    <section className="panel">
+      <header className="section-header">
+        <h2>{scheme.scheme_id}</h2>
+        <span className="pill">providers {scheme.provider_count} · claims {scheme.claim_count}</span>
+      </header>
+
+      <div className="metrics">
+        {createMetric("Provider score median", scheme.summary?.provider_score_median ?? 0)}
+        {createMetric("Member score median", scheme.summary?.member_score_median ?? 0)}
+        {createMetric("Provider findings", (scheme.provider_findings || []).length)}
+        {createMetric("Member findings", (scheme.member_findings || []).length)}
+      </div>
+
+      <RenderFindings title="Provider findings" findings={scheme.provider_findings || []} />
+      <RenderFindings title="Member findings" findings={scheme.member_findings || []} />
+    </section>
+  );
+}
+
 export default function AppRoot() {
   const [state, setState] = useState({ status: "loading", report: null, message: null });
+  const [route, setRoute] = useState({ name: "overview", params: {} });
 
   useEffect(() => {
     let mounted = true;
@@ -79,6 +103,22 @@ export default function AppRoot() {
 
     load();
     return () => (mounted = false);
+  }, []);
+
+  useEffect(() => {
+    function onHashChange() {
+      const hash = window.location.hash || "";
+      if (hash.startsWith("#/scheme/")) {
+        const schemeId = decodeURIComponent(hash.replace("#/scheme/", ""));
+        setRoute({ name: "scheme", params: { schemeId } });
+      } else {
+        setRoute({ name: "overview", params: {} });
+      }
+    }
+
+    onHashChange();
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
   if (state.status === "loading") {
@@ -114,6 +154,30 @@ export default function AppRoot() {
   const schemes = report?.schemes || [];
   const firstScheme = schemes[0];
 
+  // navigation helpers
+  function goToScheme(schemeId) {
+    window.location.hash = `#/scheme/${encodeURIComponent(schemeId)}`;
+  }
+
+  if (route.name === "scheme") {
+    const scheme = schemes.find((s) => s.scheme_id === route.params.schemeId) || null;
+    return (
+      <div>
+        <section className="hero fade-in">
+          <p className="eyebrow">ClaimGuard Network</p>
+          <h1>Network risk, surfaced.</h1>
+          <div className="status-row">
+            <button onClick={() => (window.location.hash = "")}>← Back</button>
+            <span className="pill">Scheme: {route.params.schemeId}</span>
+          </div>
+        </section>
+        <section className="grid fade-in">
+          <SchemeDetail scheme={scheme} />
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div>
       <section className="hero fade-in">
@@ -148,7 +212,7 @@ export default function AppRoot() {
         {schemes.map((scheme) => (
           <section className="panel scheme" key={scheme.scheme_id}>
             <header>
-              <div>{scheme.scheme_id}</div>
+              <div style={{ cursor: "pointer" }} onClick={() => goToScheme(scheme.scheme_id)}>{scheme.scheme_id}</div>
               <div className="pill">providers {scheme.provider_count} · claims {scheme.claim_count}</div>
             </header>
 
