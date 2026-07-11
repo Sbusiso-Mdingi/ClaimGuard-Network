@@ -6,6 +6,7 @@ import ProviderList from "./components/ProviderList";
 import ProviderDetail from "./components/ProviderDetail";
 import EntityDetail from "./components/EntityDetail";
 import MemberDetail from "./components/MemberDetail";
+import NetworkGraph from "./components/NetworkGraph";
 
 function createMetric(label, value) {
   return (
@@ -269,6 +270,13 @@ export default function AppRoot() {
         <section className="grid fade-in">
           <SchemeDetail scheme={scheme} />
           <ProviderList scheme={scheme} onSelectProvider={(providerId) => goToProvider(route.params.schemeId, providerId)} />
+          <NetworkGraph report={report} filteredFindings={filteredFindings.filter((f) => f._scheme_id === route.params.schemeId)} filters={filters} onNavigate={(nav) => {
+            // reuse routing helpers from AppRoot
+            if (nav.type === 'scheme') goToScheme(nav.schemeId);
+            if (nav.type === 'provider') goToProvider(nav.schemeId, nav.providerId);
+            if (nav.type === 'entity') goToEntity(nav.schemeId, nav.providerId || '', nav.entityId);
+            if (nav.type === 'finding') goToFinding(nav.schemeId, nav.providerId || '', nav.entityId || '', nav.detectionId);
+          }} />
           <section className="panel">
             <h3>Filtered Results</h3>
             <div className="finding-list">
