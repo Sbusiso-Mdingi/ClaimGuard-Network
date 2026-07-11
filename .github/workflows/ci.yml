@@ -9,6 +9,14 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  AZURE_CLIENT_ID: dc32e620-8239-4f20-b5ae-ca3c91cf9146
+  AZURE_TENANT_ID: 8efc1bb9-b90f-4a48-bf6c-ba0686193b80
+  AZURE_SUBSCRIPTION_ID: 896d3c72-d979-4bdc-a37f-060988d12032
+  AZURE_RESOURCE_GROUP: ClaimGuard
+  AZURE_WEBAPP_WEB: claimguard-web
+  AZURE_WEBAPP_API: claimguard-api
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -93,3 +101,66 @@ jobs:
           flags: python
           fail_ci_if_error: true
           verbose: true
+
+      - name: Package deployable web artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          rm -rf /tmp/claimguard-web-deploy
+          pnpm --filter ./apps/web deploy /tmp/claimguard-web-deploy -P
+          rm -f /tmp/claimguard-web-deploy.zip
+          cd /tmp/claimguard-web-deploy
+          zip -qr /tmp/claimguard-web-deploy.zip .
+
+      - name: Package deployable api artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          rm -rf /tmp/claimguard-api-deploy
+          pnpm --filter ./apps/api deploy /tmp/claimguard-api-deploy -P
+          rm -f /tmp/claimguard-api-deploy.zip
+          cd /tmp/claimguard-api-deploy
+          zip -qr /tmp/claimguard-api-deploy.zip .
+
+      - name: Upload deployable artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claimguard-deploy-packages
+          path: |
+            /tmp/claimguard-web-deploy.zip
+            /tmp/claimguard-api-deploy.zip
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Download deployable artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: claimguard-deploy-packages
+          path: /tmp/claimguard-deploy-packages
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy web app
+        run: |
+          az webapp deploy \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_WEB" \
+            --type zip \
+            --src-path /tmp/claimguard-deploy-packages/claimguard-web-deploy.zip \
+            --clean true
+
+      - name: Deploy api app
+        run: |
+          az webapp deploy \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --type zip \
+            --src-path /tmp/claimguard-deploy-packages/claimguard-api-deploy.zip \
+            --clean true
