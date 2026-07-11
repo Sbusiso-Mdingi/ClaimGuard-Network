@@ -39,6 +39,9 @@ jobs:
       - name: Install JS dependencies (root workspace)
         run: pnpm install --frozen-lockfile
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
       - name: Install Python deps for data-generator
         run: |
           cd packages/data-generator
