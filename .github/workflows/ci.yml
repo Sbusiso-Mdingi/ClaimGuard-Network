@@ -196,7 +196,7 @@ jobs:
             --type zip
             --src-path /tmp/claimguard-deploy-packages/claimguard-web-deploy.zip
             --clean false
-            --track-status false
+            --track-status true
             --timeout 1800000
 
       - name: Deploy api app with retry
@@ -212,7 +212,7 @@ jobs:
             --type zip
             --src-path /tmp/claimguard-deploy-packages/claimguard-api-deploy.zip
             --clean false
-            --track-status false
+            --track-status true
             --timeout 1800000
 
       - name: Verify deployment health endpoints
@@ -223,42 +223,32 @@ jobs:
           WEB_ROOT_URL="https://${AZURE_WEBAPP_WEB}.azurewebsites.net/"
           WEB_INDEX_URL="https://${AZURE_WEBAPP_WEB}.azurewebsites.net/index.html"
 
-          for attempt in 1 2 3 4 5; do
+          # Allow up to 5 minutes for App Service warm-up after deployment.
+          for attempt in $(seq 1 30); do
+            API_HEALTH_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$API_HEALTH_URL" || true)"
+            API_READY_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$API_READY_URL" || true)"
+            WEB_ROOT_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_ROOT_URL" || true)"
+            WEB_INDEX_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_INDEX_URL" || true)"
+
             API_OK=0
             WEB_OK=0
 
-            curl -fsS "$API_HEALTH_URL" >/dev/null && API_OK=1 || true
+            if [ "$API_HEALTH_STATUS" = "200" ] && [ "$API_READY_STATUS" = "200" ]; then
+              API_OK=1
+            fi
 
-            WEB_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_ROOT_URL" || true)"
-            if [ "$WEB_STATUS" = "200" ] || [ "$WEB_STATUS" = "301" ] || [ "$WEB_STATUS" = "302" ]; then
+            if [ "$WEB_ROOT_STATUS" = "200" ] || [ "$WEB_ROOT_STATUS" = "301" ] || [ "$WEB_ROOT_STATUS" = "302" ] || [ "$WEB_INDEX_STATUS" = "200" ]; then
               WEB_OK=1
-            else
-              INDEX_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_INDEX_URL" || true)"
-              if [ "$INDEX_STATUS" = "200" ]; then
-                WEB_OK=1
-              fi
             fi
 
             if [ "$API_OK" = "1" ] && [ "$WEB_OK" = "1" ]; then
-              break
+              echo "Deployment verification passed on attempt $attempt"
+              exit 0
             fi
 
-            echo "Deployment verification attempt $attempt failed; retrying in 10 seconds..."
+            echo "Attempt $attempt: api_health=$API_HEALTH_STATUS api_ready=$API_READY_STATUS web_root=$WEB_ROOT_STATUS web_index=$WEB_INDEX_STATUS"
             sleep 10
           done
 
-          curl -fsS "$API_HEALTH_URL" | cat
-          curl -fsS "$API_READY_URL" | cat
-
-          FINAL_WEB_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_ROOT_URL" || true)"
-          if [ "$FINAL_WEB_STATUS" = "200" ] || [ "$FINAL_WEB_STATUS" = "301" ] || [ "$FINAL_WEB_STATUS" = "302" ]; then
-            exit 0
-          fi
-
-          FINAL_INDEX_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_INDEX_URL" || true)"
-          if [ "$FINAL_INDEX_STATUS" = "200" ]; then
-            exit 0
-          fi
-
-          echo "Web deployment verification failed: root status=$FINAL_WEB_STATUS index status=$FINAL_INDEX_STATUS"
+          echo "Deployment verification failed after retries."
           exit 1
