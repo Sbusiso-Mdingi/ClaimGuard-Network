@@ -168,18 +168,18 @@ test("keeps shell and navigation available when backend APIs are unavailable", a
   expect(screen.getByText(String(demoInvestigatorArtifacts.claims.length))).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Claims Explorer/i }));
-  expect(await screen.findByText(/Claims Explorer/i)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Claims Explorer/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: demoInvestigatorArtifacts.claims[0].claimId })).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Network Graph/i }));
-  expect(await screen.findByText(/Network Graph/i)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Network Graph/i })).toBeInTheDocument();
   expect(screen.getByText(/Select a node to inspect connected entities/i)).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Risk Panel/i }));
-  expect(await screen.findByText(/Risk Panel/i)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Risk Panel/i })).toBeInTheDocument();
   expect(screen.getByText(/Shared bank account links the highest-risk provider nodes across schemes/i)).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Detection History/i }));
-  expect(await screen.findByText(/Detection History/i)).toBeInTheDocument();
-  expect(screen.getByText(/2026/)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Detection History/i })).toBeInTheDocument();
+  expect(screen.getAllByText(/2026/).length).toBeGreaterThan(0);
 });
