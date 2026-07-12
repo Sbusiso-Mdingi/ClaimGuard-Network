@@ -12,6 +12,9 @@ const root = process.env.NODE_ENV === "production" ? distRoot : srcRoot;
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".json": "application/json",
 };
 
 async function proxyApiRequest(req, res) {
