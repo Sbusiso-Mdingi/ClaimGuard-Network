@@ -7,8 +7,8 @@ export function PageFrame({ eyebrow, title, description, actions, children }) {
     <div className="space-y-5">
       <header className="flex flex-col gap-4 border-b border-border/70 pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          {eyebrow ? <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">{eyebrow}</p> : null}
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground lg:text-[1.75rem]">{title}</h1>
+          {eyebrow ? <p className="font-data text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">{eyebrow}</p> : null}
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground lg:text-[1.75rem]">{title}</h1>
           {description ? <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
         </div>
         {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
@@ -24,7 +24,7 @@ export function SectionCard({ title, description, actions, children, className =
       <CardHeader className="space-y-2 pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
-            <CardTitle className="text-base font-semibold tracking-tight">{title}</CardTitle>
+            <CardTitle className="font-display text-base font-semibold tracking-tight">{title}</CardTitle>
             {description ? <CardDescription className="max-w-3xl text-sm leading-6">{description}</CardDescription> : null}
           </div>
           {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
@@ -52,7 +52,7 @@ export function StatCard({ title, value, description, icon: Icon, tone = "defaul
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{title}</p>
           {Icon ? <Icon className="h-4 w-4 text-muted-foreground" /> : null}
         </div>
-        <CardTitle className="text-3xl leading-none tracking-tight">{value}</CardTitle>
+        <CardTitle className="font-data text-3xl font-semibold leading-none tracking-tight">{value}</CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
         <p className="text-sm leading-6 text-muted-foreground">{description}</p>
@@ -74,11 +74,52 @@ export function MetricPill({ label, value, tone = "default" }) {
   return (
     <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${toneClasses}`}>
       <span className="uppercase tracking-[0.18em] text-[10px] opacity-70">{label}</span>
-      <span>{value}</span>
+      <span className="font-data">{value}</span>
     </div>
   );
 }
 
 export function StatusBadge({ children, variant = "outline" }) {
   return <Badge variant={variant} className="rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide">{children}</Badge>;
+}
+
+const STAMP_TONE_VAR = {
+  danger: "--stamp-danger",
+  warning: "--stamp-warning",
+  success: "--stamp-success",
+  info: "--stamp-info",
+};
+
+/**
+ * CaseStamp — the signature element of the Case File theme. Renders a
+ * claim/severity status as an ink-stamped tag rather than a soft pill,
+ * used anywhere a claim's disposition is the primary thing being read
+ * (tables, claim headers, dashboard rows).
+ */
+export function CaseStamp({ children, tone = "info" }) {
+  const cssVar = STAMP_TONE_VAR[tone] || STAMP_TONE_VAR.info;
+  return (
+    <span
+      className="case-stamp"
+      style={{
+        borderColor: `hsl(var(${cssVar}))`,
+        color: `hsl(var(${cssVar}))`,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function severityStampTone(severity) {
+  if (severity === "High") return "danger";
+  if (severity === "Medium") return "warning";
+  return "success";
+}
+
+export function statusStampTone(status) {
+  if (status === "CONFIRMED_FRAUD") return "danger";
+  if (status === "UNDER_INVESTIGATION") return "warning";
+  if (status === "DISMISSED") return "success";
+  return "info";
 }
