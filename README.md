@@ -26,6 +26,11 @@ See `docs/Phase0_Implementation_Runbook.md` for complete Phase 0 setup details, 
 
 For production operations and incident checks, see `docs/operations-runbook.md`.
 
+Observability deliverables for Phase 6:
+
+- `docs/observability-dashboards.md`
+- `docs/alert-definitions.md`
+
 ## Production Architecture Direction
 
 ClaimGuard follows a strict producer/consumer boundary:

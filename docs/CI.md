@@ -22,7 +22,8 @@ What the CI does:
 - Verifies post-deploy runtime health with endpoint probes:
   - API `GET /health`
   - API `GET /ready`
-  - web root `GET /`
+  - web root `GET /` (accepts 200/301/302)
+  - web index fallback `GET /index.html` (expects 200 if root is non-200)
 
 Local validation (recommended before opening PR):
 

@@ -60,6 +60,51 @@ Deployment is marked failed if probes do not recover within retries.
 4. Inspect producer runtime logs for failed attempts and durations.
 5. If report read fails, verify report storage pointer (`latest.json`) and blob accessibility.
 
+## Investigation Playbooks
+
+### Failed Ingestion
+
+1. Filter API logs for `event=claims_ingestion_failed`.
+2. Group by `message` and `requestId` to isolate the dominant failure mode.
+3. Confirm corresponding HTTP records from `event=http_request` and `path=/claims/ingest`.
+4. Verify database connectivity via `GET /ready` checks (`databaseReachable`).
+5. If ingestion succeeded but no downstream report was produced, continue with failed producer run playbook.
+
+### Failed Producer Run
+
+1. Filter producer logs for `event=producer_attempt_failed` and `event=producer_run_failed`.
+2. Correlate with the latest `event=producer_attempt_started` and trigger value.
+3. Check `run_duration_ms` and `attempt_duration_ms` to identify timeout vs immediate failure.
+4. Validate report storage configuration (`REPORT_STORAGE_*` values) and blob access.
+5. Confirm whether a later retry succeeded (`event=producer_attempt_succeeded`).
+
+### Missing Report
+
+1. Check API request logs for `path=/detection/report` and high `status=503` rates.
+2. Confirm latest producer completion (`event=producer_run_completed`).
+3. Verify report publication event fields (`version`, `latest_pointer_path`).
+4. Validate `latest.json` pointer and target report blob accessibility.
+5. Re-run producer deployment trigger if no successful completion exists in expected interval.
+
+### Failed Deployment
+
+1. Review `.github/workflows/ci.yml` run summary for failed deploy steps.
+2. Inspect deploy verification probe output (`/health`, `/ready`, `/`).
+3. If API probe fails, inspect startup logs for `event=api_server_started`, `unhandled_rejection`, or `uncaught_exception`.
+4. Validate artifact integrity and deploy packaging output from CI artifacts.
+5. Roll back to last successful artifact/deployment run according to `docs/azure-production-architecture.md`.
+
+### API Outage
+
+1. Check API liveness and readiness:
+	- `GET /health`
+	- `GET /live`
+	- `GET /ready`
+2. Inspect API logs for spike in `status>=500` from `event=http_request`.
+3. Correlate failed requests by `requestId` to recent ingestion or confirmation operations.
+4. Check dependency state from readiness checks (`reportStorageReachable`, `databaseReachable`).
+5. Recover service or perform rollback using the deployment runbook.
+
 ## Current Known Limits (Out of Scope)
 
 - Alert rules are not codified in this repository.

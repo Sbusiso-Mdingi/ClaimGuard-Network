@@ -221,15 +221,44 @@ jobs:
           API_HEALTH_URL="https://${AZURE_WEBAPP_API}.azurewebsites.net/health"
           API_READY_URL="https://${AZURE_WEBAPP_API}.azurewebsites.net/ready"
           WEB_ROOT_URL="https://${AZURE_WEBAPP_WEB}.azurewebsites.net/"
+          WEB_INDEX_URL="https://${AZURE_WEBAPP_WEB}.azurewebsites.net/index.html"
 
           for attempt in 1 2 3 4 5; do
-            if curl -fsS "$API_HEALTH_URL" >/dev/null && curl -fsS "$WEB_ROOT_URL" >/dev/null; then
+            API_OK=0
+            WEB_OK=0
+
+            curl -fsS "$API_HEALTH_URL" >/dev/null && API_OK=1 || true
+
+            WEB_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_ROOT_URL" || true)"
+            if [ "$WEB_STATUS" = "200" ] || [ "$WEB_STATUS" = "301" ] || [ "$WEB_STATUS" = "302" ]; then
+              WEB_OK=1
+            else
+              INDEX_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_INDEX_URL" || true)"
+              if [ "$INDEX_STATUS" = "200" ]; then
+                WEB_OK=1
+              fi
+            fi
+
+            if [ "$API_OK" = "1" ] && [ "$WEB_OK" = "1" ]; then
               break
             fi
+
             echo "Deployment verification attempt $attempt failed; retrying in 10 seconds..."
             sleep 10
           done
 
           curl -fsS "$API_HEALTH_URL" | cat
           curl -fsS "$API_READY_URL" | cat
-          curl -fsS "$WEB_ROOT_URL" >/dev/null
+
+          FINAL_WEB_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_ROOT_URL" || true)"
+          if [ "$FINAL_WEB_STATUS" = "200" ] || [ "$FINAL_WEB_STATUS" = "301" ] || [ "$FINAL_WEB_STATUS" = "302" ]; then
+            exit 0
+          fi
+
+          FINAL_INDEX_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_INDEX_URL" || true)"
+          if [ "$FINAL_INDEX_STATUS" = "200" ]; then
+            exit 0
+          fi
+
+          echo "Web deployment verification failed: root status=$FINAL_WEB_STATUS index status=$FINAL_INDEX_STATUS"
+          exit 1
