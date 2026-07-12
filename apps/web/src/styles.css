@@ -53,13 +53,76 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    background:
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.12), transparent 22%),
+      radial-gradient(circle at top right, hsl(var(--accent) / 0.1), transparent 18%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
+  }
+}
+
+@layer components {
+  .investigator-surface {
+    @apply rounded-2xl border border-border/70 bg-card/95 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur;
+  }
+
+  .investigator-section {
+    @apply investigator-surface overflow-hidden;
+  }
+
+  .investigator-table {
+    @apply min-w-full text-left text-sm;
+  }
+
+  .investigator-table thead {
+    @apply bg-muted/60 text-xs uppercase tracking-[0.14em] text-muted-foreground;
+  }
+
+  .investigator-table th {
+    @apply whitespace-nowrap border-b border-border/70 px-4 py-3 font-medium;
+  }
+
+  .investigator-table td {
+    @apply border-b border-border/50 px-4 py-3 align-top;
+  }
+
+  .investigator-table tbody tr {
+    @apply transition-colors hover:bg-secondary/40;
+  }
+
+  .investigator-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .investigator-scrollbar::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+
+  .investigator-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
   }
 }
 
 .react-flow__node {
-  @apply rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
+  @apply rounded-xl border border-border bg-card px-3 py-2 text-xs text-foreground shadow-sm;
 }
 
 .react-flow__controls button {
-  @apply border-border bg-card text-foreground;
+  @apply border-border bg-card text-foreground shadow-sm;
+}
+
+.react-flow__panel {
+  @apply rounded-lg bg-card/95 backdrop-blur;
+}
+
+.react-flow__minimap {
+  @apply rounded-lg border border-border shadow-sm;
+}
+
+.react-flow__attribution {
+  @apply hidden;
+}
+
+.react-flow__edge-path {
+  stroke-linecap: round;
 }
