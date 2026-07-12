@@ -1,48 +1,54 @@
 import React, { useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
+import { Progress } from "../../components/ui/progress";
+import { PageFrame, SectionCard, MetricPill, StatusBadge } from "./InvestigatorUI";
 
 function RiskPanel({ claim, risk, ledgerReference }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Risk Panel</CardTitle>
-        <CardDescription>Explainability and contributing detection evidence.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <div className="flex items-center justify-between">
-          <span>Risk score</span>
-          <span className="font-semibold">{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</span>
+    <SectionCard title="Risk summary" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
+      <div className="space-y-5 text-sm">
+        <div className="rounded-2xl border border-border/70 bg-secondary/30 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Risk score</p>
+              <p className="mt-1 text-4xl font-semibold tracking-tight">{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</p>
+            </div>
+            <Badge variant={claim.severity === "High" ? "destructive" : claim.severity === "Medium" ? "warning" : "secondary"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold">
+              {claim.severity}
+            </Badge>
+          </div>
+          <Progress value={Number.isFinite(claim.riskScore) ? claim.riskScore : 0} className="mt-4 h-2" />
         </div>
-        <div className="flex items-center justify-between">
-          <span>Severity</span>
-          <Badge variant={claim.severity === "High" ? "destructive" : claim.severity === "Medium" ? "warning" : "secondary"}>{claim.severity}</Badge>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <div className="rounded-xl border border-border/70 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Triggered rules</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(claim.triggeredRules || []).map((rule) => <StatusBadge key={rule} variant="outline">{rule}</StatusBadge>)}
+            </div>
+          </div>
+          <div className="rounded-xl border border-border/70 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Ledger reference</p>
+            <p className="mt-2 text-sm text-muted-foreground">{ledgerReference?.available ? `Connected (${ledgerReference.entry?.entryType || "entry"})` : "Unavailable"}</p>
+          </div>
         </div>
-        <div>
-          <p className="mb-1 text-xs uppercase text-muted-foreground">Triggered rules</p>
-          <ul className="list-disc space-y-1 pl-5">
-            {(claim.triggeredRules || []).map((rule) => <li key={rule}>{rule}</li>)}
+
+        <div className="rounded-xl border border-border/70 px-4 py-3">
+          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Evidence</p>
+          <ul className="mt-2 space-y-2 text-sm leading-6 text-foreground">
+            {(claim.evidence || []).slice(0, 6).map((item) => <li key={item} className="rounded-lg bg-secondary/30 px-3 py-2">{item}</li>)}
           </ul>
         </div>
-        <div>
-          <p className="mb-1 text-xs uppercase text-muted-foreground">Evidence</p>
-          <ul className="list-disc space-y-1 pl-5">
-            {(claim.evidence || []).slice(0, 6).map((item) => <li key={item}>{item}</li>)}
+
+        <div className="rounded-xl border border-border/70 px-4 py-3">
+          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Global risk explanation</p>
+          <ul className="mt-2 space-y-2 text-sm leading-6 text-foreground">
+            {(risk?.reasons || []).slice(0, 4).map((item) => <li key={item} className="rounded-lg bg-secondary/30 px-3 py-2">{item}</li>)}
           </ul>
         </div>
-        <div>
-          <p className="mb-1 text-xs uppercase text-muted-foreground">Global risk explanation</p>
-          <ul className="list-disc space-y-1 pl-5">
-            {(risk?.reasons || []).slice(0, 4).map((item) => <li key={item}>{item}</li>)}
-          </ul>
-        </div>
-        <div>
-          <p className="mb-1 text-xs uppercase text-muted-foreground">Ledger reference</p>
-          <p className="text-xs text-muted-foreground">{ledgerReference?.available ? `Connected (${ledgerReference.entry?.entryType || "entry"})` : "Unavailable"}</p>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </SectionCard>
   );
 }
 
@@ -71,67 +77,79 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
 
   if (!claim) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Claim not found</CardTitle>
-          <CardDescription>The selected claim is not available in the current snapshot.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Link to="/claims" className="text-sm text-primary underline-offset-4 hover:underline">Return to Claims Explorer</Link>
-        </CardContent>
-      </Card>
+      <SectionCard title="Claim not found" description="The selected claim is not available in the current snapshot.">
+        <Link to="/claims" className="text-sm text-primary underline-offset-4 hover:underline">Return to Claims Explorer</Link>
+      </SectionCard>
     );
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle>Claim Details · {claim.claimId}</CardTitle>
-          <CardDescription>Policy holder {claim.policyHolder} · {new Date(claim.detectionDate).toLocaleString()}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          <div className="grid gap-2 md:grid-cols-2">
-            <div><span className="text-muted-foreground">Status:</span> {claim.status}</div>
-            <div><span className="text-muted-foreground">Risk score:</span> {claim.riskScore}</div>
-            <div><span className="text-muted-foreground">Severity:</span> {claim.severity}</div>
-            <div><span className="text-muted-foreground">Rules:</span> {(claim.triggeredRules || []).length}</div>
+    <PageFrame
+      eyebrow="Claim Details"
+      title={claim.claimId}
+      description={`Policy holder ${claim.policyHolder} · ${new Date(claim.detectionDate).toLocaleString()}`}
+      actions={[
+        <MetricPill key="status" label="Status" value={claim.status} tone={claim.status === "CONFIRMED_FRAUD" ? "danger" : claim.status === "UNDER_INVESTIGATION" ? "warning" : "default"} />,
+        <MetricPill key="rules" label="Rules" value={`${(claim.triggeredRules || []).length}`} />,
+      ]}
+    >
+      <div className="grid gap-4 xl:grid-cols-[1.6fr_0.95fr]">
+        <SectionCard title="Claim information" description="A compact summary of the selected claim, claimant, and current review state.">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-xl border border-border/70 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Claim ID</p>
+              <p className="mt-1 text-sm font-semibold">{claim.claimId}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Policy holder</p>
+              <p className="mt-1 text-sm font-semibold">{claim.policyHolder}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Risk score</p>
+              <p className="mt-1 text-sm font-semibold">{claim.riskScore}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Severity</p>
+              <p className="mt-1 text-sm font-semibold">{claim.severity}</p>
+            </div>
           </div>
 
-          <div>
-            <h3 className="mb-2 font-semibold">Entities</h3>
-            {related.entities.length === 0 ? (
-              <p className="text-muted-foreground">No entities found for this claim.</p>
-            ) : (
-              <div className="space-y-2">
-                {related.entities.map((entity) => (
-                  <div key={entity.entity_id} className="rounded-md border border-border p-2">
-                    <p className="font-medium">{entity.entity_id}</p>
-                    <p className="text-xs text-muted-foreground">{entity.entity_type} · {entity.value || "n/a"}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-xl border border-border/70 p-4">
+              <h3 className="text-sm font-semibold">Entities</h3>
+              {related.entities.length === 0 ? (
+                <p className="mt-2 text-sm text-muted-foreground">No entities found for this claim.</p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {related.entities.map((entity) => (
+                    <div key={entity.entity_id} className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-3">
+                      <p className="text-sm font-medium">{entity.entity_id}</p>
+                      <p className="text-xs text-muted-foreground">{entity.entity_type} · {entity.value || "n/a"}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
-          <div>
-            <h3 className="mb-2 font-semibold">Relationships</h3>
-            {related.claimRelationships.length === 0 ? (
-              <p className="text-muted-foreground">No relationships found for this claim.</p>
-            ) : (
-              <div className="space-y-2">
-                {related.claimRelationships.map((rel, idx) => (
-                  <div key={`${rel.source_entity_id}-${rel.target_entity_id}-${idx}`} className="rounded-md border border-border p-2 text-xs">
-                    {rel.source_entity_id} → {rel.target_entity_id} ({rel.relationship_type})
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="rounded-xl border border-border/70 p-4">
+              <h3 className="text-sm font-semibold">Relationships</h3>
+              {related.claimRelationships.length === 0 ? (
+                <p className="mt-2 text-sm text-muted-foreground">No relationships found for this claim.</p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {related.claimRelationships.map((rel, idx) => (
+                    <div key={`${rel.source_entity_id}-${rel.target_entity_id}-${idx}`} className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-3 text-xs leading-5">
+                      {rel.source_entity_id} → {rel.target_entity_id} ({rel.relationship_type})
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        </SectionCard>
 
-      <RiskPanel claim={claim} risk={risk} ledgerReference={report?.detection?.ledger_reference} />
-    </div>
+        <RiskPanel claim={claim} risk={risk} ledgerReference={report?.detection?.ledger_reference} />
+      </div>
+    </PageFrame>
   );
 }
