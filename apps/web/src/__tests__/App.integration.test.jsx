@@ -82,6 +82,21 @@ function mockFetch() {
   });
 }
 
+function mockFetchFailure() {
+  global.fetch = vi.fn((url) => {
+    if (String(url).includes("/api/detection/report")) {
+      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Report unavailable (503)" }) });
+    }
+    if (String(url).includes("/api/detection/graph")) {
+      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Graph unavailable (503)" }) });
+    }
+    if (String(url).includes("/api/detection/risk")) {
+      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Risk unavailable (503)" }) });
+    }
+    return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
+  });
+}
+
 beforeEach(() => {
   window.history.pushState({}, "", "/");
   vi.useRealTimers();
@@ -138,3 +153,27 @@ test("static snapshot mode stops polling while live mode continues", async () =>
   });
   expect(global.fetch).toHaveBeenCalledTimes(6);
 }, 10000);
+
+test("keeps shell and navigation available when backend APIs are unavailable", async () => {
+  const user = userEvent.setup();
+  mockFetchFailure();
+
+  render(<AppRoot />);
+
+  expect(await screen.findByText(/Fraud Investigator Workspace/i)).toBeInTheDocument();
+  expect(screen.getByText(/ClaimGuard Investigator/i)).toBeInTheDocument();
+
+  expect(await screen.findByText(/Dashboard Unavailable/i)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("link", { name: /Claims Explorer/i }));
+  expect(await screen.findByText(/Claims Explorer Unavailable/i)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("link", { name: /Network Graph/i }));
+  expect(await screen.findByText(/Network Graph Unavailable/i)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("link", { name: /Risk Panel/i }));
+  expect(await screen.findByText(/Risk Panel Unavailable/i)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("link", { name: /Detection History/i }));
+  expect(await screen.findByText(/Detection History Unavailable/i)).toBeInTheDocument();
+});

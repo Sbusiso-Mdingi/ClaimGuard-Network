@@ -33,19 +33,28 @@ function StatusScreen({ title, description, actionLabel, onAction }) {
 function InvestigatorRoutes() {
   const data = useInvestigatorData();
 
-  if (data.status === "loading") {
-    return <StatusScreen title="Loading Investigator Workspace" description="Fetching detection report, graph, and risk APIs..." />;
-  }
+  function renderPageContent(readyElement, options = {}) {
+    if (data.status === "loading") {
+      return (
+        <StatusScreen
+          title={options.loadingTitle || "Loading Investigator Workspace"}
+          description={options.loadingDescription || "Fetching detection report, graph, and risk APIs..."}
+        />
+      );
+    }
 
-  if (data.status === "error") {
-    return (
-      <StatusScreen
-        title="Unable to Load Investigator Data"
-        description={data.error || "The API responses were unavailable."}
-        actionLabel="Retry"
-        onAction={data.refreshNow}
-      />
-    );
+    if (data.status === "error") {
+      return (
+        <StatusScreen
+          title={options.errorTitle || "Unable to Load Investigator Data"}
+          description={data.error || options.errorDescription || "The API responses were unavailable."}
+          actionLabel="Retry"
+          onAction={data.refreshNow}
+        />
+      );
+    }
+
+    return readyElement;
   }
 
   return (
@@ -62,12 +71,51 @@ function InvestigatorRoutes() {
           />
         }
       >
-        <Route index element={<DashboardPage metrics={data.metrics} status={data.status} lastRefresh={data.lastRefresh} />} />
-        <Route path="claims" element={<ClaimsExplorerPage claims={data.claims} />} />
-        <Route path="claims/:claimId" element={<ClaimDetailsPage claims={data.claims} report={data.report} graph={data.graph} risk={data.risk} />} />
-        <Route path="network" element={<NetworkPage graph={data.graph} />} />
-        <Route path="risk" element={<RiskPage risk={data.risk} report={data.report} />} />
-        <Route path="history" element={<HistoryPage snapshots={data.snapshots} />} />
+        <Route
+          index
+          element={renderPageContent(
+            <DashboardPage metrics={data.metrics} status={data.status} lastRefresh={data.lastRefresh} />,
+            {
+              loadingTitle: "Loading Dashboard",
+              errorTitle: "Dashboard Unavailable",
+            },
+          )}
+        />
+        <Route
+          path="claims"
+          element={renderPageContent(<ClaimsExplorerPage claims={data.claims} />, {
+            loadingTitle: "Loading Claims Explorer",
+            errorTitle: "Claims Explorer Unavailable",
+          })}
+        />
+        <Route
+          path="claims/:claimId"
+          element={renderPageContent(<ClaimDetailsPage claims={data.claims} report={data.report} graph={data.graph} risk={data.risk} />, {
+            loadingTitle: "Loading Claim Details",
+            errorTitle: "Claim Details Unavailable",
+          })}
+        />
+        <Route
+          path="network"
+          element={renderPageContent(<NetworkPage graph={data.graph} />, {
+            loadingTitle: "Loading Network Graph",
+            errorTitle: "Network Graph Unavailable",
+          })}
+        />
+        <Route
+          path="risk"
+          element={renderPageContent(<RiskPage risk={data.risk} report={data.report} />, {
+            loadingTitle: "Loading Risk Panel",
+            errorTitle: "Risk Panel Unavailable",
+          })}
+        />
+        <Route
+          path="history"
+          element={renderPageContent(<HistoryPage snapshots={data.snapshots} />, {
+            loadingTitle: "Loading Detection History",
+            errorTitle: "Detection History Unavailable",
+          })}
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
