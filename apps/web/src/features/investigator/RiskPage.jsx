@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge } from "../../components/ui/badge";
 import { Progress } from "../../components/ui/progress";
-import { PageFrame, SectionCard, StatusBadge } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatusBadge, CaseStamp, severityStampTone } from "./InvestigatorUI";
 
 export function RiskPage({ risk, report }) {
   const reasons = risk?.reasons || [];
@@ -14,7 +14,7 @@ export function RiskPage({ risk, report }) {
       title="Explainability summary"
       description="Risk score, severity, triggered rules, and evidence are surfaced in a compact review-friendly format."
       actions={[
-        <StatusBadge key="severity" variant={risk?.severity === "High" ? "destructive" : risk?.severity === "Medium" ? "secondary" : "outline"}>{risk?.severity || "Low"}</StatusBadge>,
+        <CaseStamp key="severity" tone={severityStampTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</CaseStamp>,
       ]}
     >
       <SectionCard title="Risk score" description="The score and severity indicate how aggressively this claim should be reviewed.">
@@ -22,11 +22,9 @@ export function RiskPage({ risk, report }) {
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Current score</p>
-              <p className="mt-1 text-5xl font-semibold tracking-tight">{risk?.riskScore ?? 0}</p>
+              <p className="font-data mt-1 text-5xl font-semibold tracking-tight">{risk?.riskScore ?? 0}</p>
             </div>
-            <Badge variant={risk?.severity === "High" ? "destructive" : risk?.severity === "Medium" ? "warning" : "secondary"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold">
-              {risk?.severity || "Low"}
-            </Badge>
+            <CaseStamp tone={severityStampTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</CaseStamp>
           </div>
           <Progress value={risk?.riskScore ?? 0} className="mt-4 h-2" />
         </div>
