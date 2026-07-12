@@ -18,6 +18,11 @@ What the CI does:
 - Uploads `apps/web/dist` as an artifact for inspection (no deploy)
 - Runs Python tests and uploads coverage to Codecov (if `CODECOV_TOKEN` present).
 - On `push` to `main`, packages deployable zip artifacts for `apps/web` and `apps/api`, then deploys both via Azure Web App ZipDeploy.
+- Retains CI artifacts (`web-dist`, deploy zips) for 14 days to support incident forensics and fast rollback packaging.
+- Verifies post-deploy runtime health with endpoint probes:
+  - API `GET /health`
+  - API `GET /ready`
+  - web root `GET /`
 
 Local validation (recommended before opening PR):
 
@@ -50,6 +55,7 @@ Quality gates:
 - Any build, test, or lint failure will fail CI.
 - On pull requests, the workflow is validation-only (no deployment).
 - On pushes to `main`, the workflow deploys API and web resources in Azure.
+- The deploy job fails if health verification probes fail after retries.
 
 Notes & Troubleshooting:
 - This workflow uses `pnpm` at the workspace root to avoid duplicated installs for each package.

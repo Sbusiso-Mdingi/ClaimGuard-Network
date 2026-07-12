@@ -24,6 +24,8 @@ uv run pytest tests --cov=src/claimguard --cov-report=xml
 
 See `docs/Phase0_Implementation_Runbook.md` for complete Phase 0 setup details, including external setup steps for GitHub, Codecov, Doppler, Sentry, and New Relic.
 
+For production operations and incident checks, see `docs/operations-runbook.md`.
+
 ## Production Architecture Direction
 
 ClaimGuard follows a strict producer/consumer boundary:

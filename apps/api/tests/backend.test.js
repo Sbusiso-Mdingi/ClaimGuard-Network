@@ -22,6 +22,75 @@ test("health endpoint returns phase 3 payload", async () => {
   assert.equal(json.phase, "3");
 });
 
+test("live endpoint returns liveness payload", async () => {
+  const app = createBackendApp();
+  const response = await app.request("http://localhost/live");
+  const json = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(json.status, "ok");
+  assert.equal(json.live, true);
+  assert.equal(json.service, "api");
+});
+
+test("ready endpoint returns readiness details when dependencies are healthy", async () => {
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub({
+      detection: {
+        risk_score: {
+          riskScore: 44,
+          severity: "Medium",
+          reasons: ["test"],
+        },
+      },
+    }),
+    ledgerRepository: {
+      async getLatestEntry() {
+        return null;
+      },
+      async getLatestConfirmedFraudEntry() {
+        return null;
+      },
+    },
+  });
+
+  const response = await app.request("http://localhost/ready");
+  const json = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(json.ready, true);
+  assert.equal(json.status, "ok");
+  assert.equal(json.checks.reportStorageReachable, true);
+  assert.equal(json.checks.databaseReachable, true);
+});
+
+test("ready endpoint returns 503 when report storage is unreachable", async () => {
+  const app = createBackendApp({
+    reportStorage: {
+      async getLatestReport() {
+        throw new Error("unreachable");
+      },
+    },
+  });
+
+  const response = await app.request("http://localhost/ready");
+  const json = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(json.ready, false);
+  assert.equal(json.status, "degraded");
+  assert.equal(json.checks.reportStorageReachable, false);
+});
+
+test("api sets x-request-id response header", async () => {
+  const app = createBackendApp();
+  const response = await app.request("http://localhost/health");
+  const requestId = response.headers.get("x-request-id");
+
+  assert.ok(requestId);
+  assert.ok(requestId.length > 0);
+});
+
 test("trpc ping endpoint returns pong", async () => {
   const app = createBackendApp();
   const response = await app.request("http://localhost/trpc/ping");
@@ -372,4 +441,131 @@ test("investigation confirm-fraud endpoint writes confirmed ledger entry", async
   assert.equal(json.available, true);
   assert.equal(json.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
   assert.equal(json.entry.payload.claimId, "C-300");
+});
+
+test("claims ingestion triggers producer wiring and detection report reads the newly published payload", async () => {
+  const state = {
+    ingestedClaims: [],
+    report: null,
+    version: null,
+    triggerCount: 0,
+  };
+
+  const claimIngestionService = {
+    async ingestClaims({ claims, source }) {
+      state.ingestedClaims = claims.map((claim) => ({
+        ...claim,
+        billing_code: claim.billing_code || "UNKNOWN",
+      }));
+
+      return {
+        received: claims.length,
+        inserted: claims.length,
+        updated: 0,
+        source,
+      };
+    },
+  };
+
+  const producerRuntimeTrigger = {
+    async triggerAfterIngestion() {
+      state.triggerCount += 1;
+      const first = state.ingestedClaims[0];
+      state.version = "ingestion-v1";
+      state.report = {
+        data_dir: "ingested-claims",
+        schemes: [],
+        network: {
+          exact_banking_links: [],
+          behavioral_provider_links: [],
+          resolved_entities: [],
+          network_nodes: [],
+        },
+        evaluation: {
+          available: false,
+          single_scheme: { detected: 0, total: 0, recall: 0 },
+          cross_scheme: { detected: 0, total: 0, recall: 0 },
+        },
+        detection: {
+          entities: [
+            { entity_id: `claimant:${first.member_id}`, entity_type: "claimant", value: first.member_id },
+          ],
+          relationships: [
+            {
+              relationship_type: "observed_with",
+              source_entity_id: `claimant:${first.member_id}`,
+              target_entity_id: `provider:${first.provider_id}`,
+              claim_id: first.claim_id,
+            },
+          ],
+          triggered_rules: [],
+          risk_score: {
+            riskScore: 0,
+            severity: "Low",
+            reasons: ["No detection rules were triggered"],
+          },
+          evidence: [],
+          graph_summary: {
+            entity_count: 1,
+            relationship_count: 1,
+            max_degree: 1,
+            claimant_count: 1,
+          },
+        },
+      };
+    },
+  };
+
+  const reportStorage = {
+    async getLatestReport() {
+      if (!state.report) {
+        return null;
+      }
+
+      return {
+        report: state.report,
+        metadata: {
+          source: "test",
+          version: state.version,
+        },
+      };
+    },
+  };
+
+  const app = createBackendApp({
+    claimIngestionService,
+    producerRuntimeTrigger,
+    reportStorage,
+  });
+
+  const ingestResponse = await app.request("http://localhost/claims/ingest", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      source: "api-runtime-flow",
+      claims: [
+        {
+          claim_id: "C-500",
+          scheme_id: "scheme_a",
+          member_id: "M-500",
+          provider_id: "P-500",
+          service_date: "2026-01-15",
+          billing_code: "CONSULT",
+          amount: 321.11,
+        },
+      ],
+    }),
+  });
+
+  const ingestJson = await ingestResponse.json();
+  assert.equal(ingestResponse.status, 202);
+  assert.equal(ingestJson.available, true);
+  assert.equal(state.triggerCount, 1);
+
+  const reportResponse = await app.request("http://localhost/detection/report");
+  const reportJson = await reportResponse.json();
+  assert.equal(reportResponse.status, 200);
+  assert.equal(reportJson.available, true);
+  assert.equal(reportJson.report.data_dir, "ingested-claims");
+  assert.equal(reportJson.report.detection.relationships[0].claim_id, "C-500");
 });

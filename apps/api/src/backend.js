@@ -9,6 +9,23 @@ import { backendRouter, backendRouterPath } from "./trpc.js";
 
 const genesisPreviousHash = "0".repeat(64);
 
+function logEvent(level, event, details = {}) {
+  const payload = {
+    timestamp: new Date().toISOString(),
+    level,
+    service: "api",
+    event,
+    ...details,
+  };
+
+  const rendered = JSON.stringify(payload);
+  if (level === "error") {
+    console.error(rendered);
+  } else {
+    console.log(rendered);
+  }
+}
+
 function createLedgerEntry({ sequenceNumber, previousHash = genesisPreviousHash, entryType, payload }) {
   const digest = crypto.createHash("sha256");
   digest.update(previousHash);
@@ -55,6 +72,45 @@ async function loadReportOrFail(reportStorage) {
       },
     };
   }
+}
+
+async function checkApiReadiness({ ledgerRepository, reportStorage, producerRuntimeTrigger }) {
+  const checks = {
+    reportStorageConfigured: Boolean(reportStorage),
+    reportStorageReachable: false,
+    reportAvailable: false,
+    databaseConfigured: Boolean(ledgerRepository),
+    databaseReachable: null,
+    producerTriggerConfigured: Boolean(producerRuntimeTrigger),
+  };
+
+  try {
+    const loaded = await reportStorage.getLatestReport();
+    checks.reportStorageReachable = true;
+    checks.reportAvailable = Boolean(loaded?.report);
+  } catch {
+    checks.reportStorageReachable = false;
+  }
+
+  if (ledgerRepository) {
+    try {
+      await ledgerRepository.getLatestEntry();
+      checks.databaseReachable = true;
+    } catch {
+      checks.databaseReachable = false;
+    }
+  }
+
+  const blockingFailures = [
+    checks.reportStorageReachable === false,
+    checks.databaseConfigured && checks.databaseReachable === false,
+  ];
+
+  const ready = !blockingFailures.some(Boolean);
+  return {
+    ready,
+    checks,
+  };
 }
 
 async function proxyDetectionAnalyze(detectionAnalyzeProxyUrl, payload) {
@@ -107,6 +163,7 @@ async function buildRuntimeLedgerReference(ledgerRepository) {
 export function createBackendApp({
   ledgerRepository = null,
   claimIngestionService = null,
+  producerRuntimeTrigger = null,
   reportStorage = null,
   detectionAnalyzeProxyUrl = null,
   detectionReportPath = null,
@@ -118,6 +175,54 @@ export function createBackendApp({
     });
 
   const app = new Hono();
+
+  app.use("*", async (c, next) => {
+    const requestStart = Date.now();
+    const requestId = c.req.header("x-request-id") || crypto.randomUUID();
+    c.set("requestId", requestId);
+    c.header("x-request-id", requestId);
+
+    try {
+      await next();
+    } finally {
+      logEvent("info", "http_request", {
+        requestId,
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        durationMs: Date.now() - requestStart,
+      });
+    }
+  });
+
+  app.get("/live", (c) => {
+    return c.json({
+      status: "ok",
+      service: "api",
+      live: true,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.get("/ready", async (c) => {
+    const readiness = await checkApiReadiness({
+      ledgerRepository,
+      reportStorage: resolvedReportStorage,
+      producerRuntimeTrigger,
+    });
+
+    const statusCode = readiness.ready ? 200 : 503;
+    return c.json(
+      {
+        status: readiness.ready ? "ok" : "degraded",
+        service: "api",
+        ready: readiness.ready,
+        checks: readiness.checks,
+        timestamp: new Date().toISOString(),
+      },
+      statusCode,
+    );
+  });
 
   app.get("/health", (c) => {
     return c.json(createBackendHealth());
@@ -290,13 +395,41 @@ export function createBackendApp({
     }
 
     try {
+      const requestId = c.get("requestId") || null;
       const summary = await claimIngestionService.ingestClaims({
         claims,
         source: payload?.source || "api",
       });
 
+      logEvent("info", "claims_ingested", {
+        requestId,
+        source: payload?.source || "api",
+        received: summary.received,
+        inserted: summary.inserted,
+        updated: summary.updated,
+      });
+
+      if (producerRuntimeTrigger && typeof producerRuntimeTrigger.triggerAfterIngestion === "function") {
+        const triggerStart = Date.now();
+        await producerRuntimeTrigger.triggerAfterIngestion({
+          claims,
+          source: payload?.source || "api",
+          ingestion: summary,
+        });
+        logEvent("info", "producer_trigger_completed", {
+          requestId,
+          source: payload?.source || "api",
+          durationMs: Date.now() - triggerStart,
+          claimCount: claims.length,
+        });
+      }
+
       return c.json({ available: true, ingestion: summary }, 202);
     } catch (error) {
+      logEvent("error", "claims_ingestion_failed", {
+        requestId: c.get("requestId") || null,
+        message: error?.message || "Claim ingestion failed.",
+      });
       return c.json(
         {
           available: false,
@@ -334,6 +467,7 @@ export function createBackendApp({
     }
 
     try {
+      const requestId = c.get("requestId") || null;
       const entry = await ledgerRepository.createConfirmedFraudEntry({
         claimId,
         investigatorId,
@@ -343,8 +477,21 @@ export function createBackendApp({
         notes: payload?.notes || null,
       });
 
+      logEvent("info", "fraud_confirmed", {
+        requestId,
+        claimId,
+        investigatorId,
+        schemeId: payload?.schemeId || null,
+        reportVersion: payload?.reportVersion || null,
+        ledgerSequenceNumber: entry.sequenceNumber,
+      });
+
       return c.json({ available: true, entry }, 201);
     } catch (error) {
+      logEvent("error", "fraud_confirmation_failed", {
+        requestId: c.get("requestId") || null,
+        message: error?.message || "Failed to persist confirmed fraud decision.",
+      });
       return c.json(
         {
           available: false,

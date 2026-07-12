@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createClaimIngestionRepository, createDatabase, createLedgerRepository } from "@claimguard/database";
 
 import { createBackendApp } from "./backend.js";
+import { createProducerRuntimeTriggerFromEnvironment } from "./producer-runtime-trigger.js";
 import { createReportStorageFromEnvironment } from "./report-storage.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
@@ -15,12 +16,14 @@ const detectionAnalyzeProxyUrl = process.env.DETECTION_ANALYZE_PROXY_URL || null
 
 let ledgerRepository = null;
 let claimIngestionService = null;
+let producerRuntimeTrigger = null;
 let databasePool = null;
 
 if (databaseUrl) {
   const database = createDatabase(databaseUrl);
   ledgerRepository = createLedgerRepository(database.db);
   claimIngestionService = createClaimIngestionRepository(database.pool);
+  producerRuntimeTrigger = createProducerRuntimeTriggerFromEnvironment({ repoRoot });
   databasePool = database.pool;
 }
 
@@ -30,14 +33,55 @@ const reportStorage = await createReportStorageFromEnvironment({
   repoRoot,
 });
 
-const app = createBackendApp({ ledgerRepository, claimIngestionService, reportStorage, detectionAnalyzeProxyUrl });
+const app = createBackendApp({
+  ledgerRepository,
+  claimIngestionService,
+  producerRuntimeTrigger,
+  reportStorage,
+  detectionAnalyzeProxyUrl,
+});
 
 serve({
   fetch: app.fetch,
   port,
 });
 
-console.log(`ClaimGuard API backend listening on :${port}`);
+console.log(
+  JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "info",
+    service: "api",
+    event: "api_server_started",
+    port,
+    hasDatabase: Boolean(databasePool),
+    hasProducerTrigger: Boolean(producerRuntimeTrigger),
+    reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),
+  }),
+);
+
+process.on("unhandledRejection", (error) => {
+  console.error(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "error",
+      service: "api",
+      event: "unhandled_rejection",
+      message: error?.message || String(error),
+    }),
+  );
+});
+
+process.on("uncaughtException", (error) => {
+  console.error(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "error",
+      service: "api",
+      event: "uncaught_exception",
+      message: error?.message || String(error),
+    }),
+  );
+});
 
 if (databasePool) {
   process.on("SIGINT", async () => {

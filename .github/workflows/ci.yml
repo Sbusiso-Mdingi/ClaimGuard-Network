@@ -86,6 +86,7 @@ jobs:
         with:
           name: web-dist
           path: apps/web/dist
+          retention-days: 14
 
       - name: Run Python tests with coverage (data-generator)
         run: |
@@ -147,6 +148,7 @@ jobs:
           path: |
             /tmp/claimguard-web-deploy.zip
             /tmp/claimguard-api-deploy.zip
+          retention-days: 14
 
   deploy:
     runs-on: ubuntu-latest
@@ -212,3 +214,22 @@ jobs:
             --clean false
             --track-status false
             --timeout 1800000
+
+      - name: Verify deployment health endpoints
+        run: |
+          set -euo pipefail
+          API_HEALTH_URL="https://${AZURE_WEBAPP_API}.azurewebsites.net/health"
+          API_READY_URL="https://${AZURE_WEBAPP_API}.azurewebsites.net/ready"
+          WEB_ROOT_URL="https://${AZURE_WEBAPP_WEB}.azurewebsites.net/"
+
+          for attempt in 1 2 3 4 5; do
+            if curl -fsS "$API_HEALTH_URL" >/dev/null && curl -fsS "$WEB_ROOT_URL" >/dev/null; then
+              break
+            fi
+            echo "Deployment verification attempt $attempt failed; retrying in 10 seconds..."
+            sleep 10
+          done
+
+          curl -fsS "$API_HEALTH_URL" | cat
+          curl -fsS "$API_READY_URL" | cat
+          curl -fsS "$WEB_ROOT_URL" >/dev/null

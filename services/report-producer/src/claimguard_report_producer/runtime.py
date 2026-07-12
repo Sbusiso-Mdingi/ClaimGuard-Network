@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,27 +45,87 @@ class DetectionReportProducer:
     def run(self, *, trigger: str = "manual") -> ProducerRunResult:
         attempt = 0
         last_error: Exception | None = None
+        run_started_at = time.perf_counter()
 
         while attempt <= self.max_retries:
             attempt += 1
+            attempt_started_at = time.perf_counter()
             try:
-                self._log("info", f"Starting detection report production (attempt={attempt}, trigger={trigger}).")
+                self._log(
+                    "info",
+                    "producer_attempt_started",
+                    {
+                        "attempt": attempt,
+                        "trigger": trigger,
+                        "max_retries": self.max_retries,
+                        "top_n": self.top_n,
+                    },
+                )
                 report = self.detector(self.data_dir, self.top_n)
                 published = self.publisher.publish(report, run_id=f"{trigger}-{attempt}")
-                self._log("info", f"Published detection report version={published.version}.")
+                self._log(
+                    "info",
+                    "producer_attempt_succeeded",
+                    {
+                        "attempt": attempt,
+                        "trigger": trigger,
+                        "version": published.version,
+                        "report_path": published.report_path,
+                        "latest_pointer_path": published.latest_pointer_path,
+                        "attempt_duration_ms": round((time.perf_counter() - attempt_started_at) * 1000, 3),
+                    },
+                )
+                self._log(
+                    "info",
+                    "producer_run_completed",
+                    {
+                        "trigger": trigger,
+                        "attempt_count": attempt,
+                        "run_duration_ms": round((time.perf_counter() - run_started_at) * 1000, 3),
+                    },
+                )
                 return ProducerRunResult(published=published, attempt_count=attempt, trigger=trigger)
             except Exception as error:  # noqa: BLE001
                 last_error = error
-                self._log("error", f"Detection report production failed (attempt={attempt}): {error}")
+                self._log(
+                    "error",
+                    "producer_attempt_failed",
+                    {
+                        "attempt": attempt,
+                        "trigger": trigger,
+                        "message": str(error),
+                        "attempt_duration_ms": round((time.perf_counter() - attempt_started_at) * 1000, 3),
+                    },
+                )
                 if attempt > self.max_retries:
                     break
                 time.sleep(self.retry_delay_seconds)
 
+        self._log(
+            "error",
+            "producer_run_failed",
+            {
+                "trigger": trigger,
+                "attempt_count": attempt,
+                "run_duration_ms": round((time.perf_counter() - run_started_at) * 1000, 3),
+            },
+        )
         raise RuntimeError("Detection report production failed after retries") from last_error
 
-    def _log(self, level: str, message: str) -> None:
+    def _log(self, level: str, event: str, details: dict[str, object]) -> None:
+        payload = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": level,
+            "service": "report-producer",
+            "event": event,
+            **details,
+        }
+
         if not self.logger:
+            rendered = json.dumps(payload)
+            print(rendered)
             return
+
         method = getattr(self.logger, level, None)
         if callable(method):
-            method(message)
+            method(json.dumps(payload))
