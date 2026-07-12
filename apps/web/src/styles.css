@@ -146,7 +146,7 @@
 }
 
 .react-flow__panel {
-  @apply rounded-lg bg-card/95 backdrop-blur;
+  @apply rounded-lg bg-card;
 }
 
 .react-flow__minimap {

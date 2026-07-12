@@ -18,7 +18,7 @@ export function HistoryPage({ snapshots }) {
         ) : (
           <div className="space-y-3">
             {snapshots.map((snapshot) => (
-              <div key={snapshot.id} className="relative rounded-2xl border border-border/70 bg-background/70 px-4 py-4 pl-12 text-sm shadow-sm">
+              <div key={snapshot.id} className="relative rounded-2xl border border-border/70 bg-background/70 px-4 py-4 pl-12 text-sm">
                 <span className="absolute left-4 top-4 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary">
                   <Clock3 className="h-4 w-4" />
                 </span>

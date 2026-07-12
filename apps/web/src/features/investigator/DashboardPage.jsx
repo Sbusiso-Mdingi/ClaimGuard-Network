@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertTriangle, Building2, Clock3, Database, FileText, Gauge, Radar, ShieldAlert, ShieldCheck, TrendingUp, Users } from "lucide-react";
+import { AlertTriangle, Building2, FileText, Gauge, Radar, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Skeleton } from "../../components/ui/skeleton";
 import { PageFrame, SectionCard, StatCard, MetricPill, CaseStamp, severityStampTone } from "./InvestigatorUI";
 

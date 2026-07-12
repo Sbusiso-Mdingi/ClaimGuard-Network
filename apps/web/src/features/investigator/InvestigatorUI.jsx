@@ -20,7 +20,7 @@ export function PageFrame({ eyebrow, title, description, actions, children }) {
 
 export function SectionCard({ title, description, actions, children, className = "" }) {
   return (
-    <Card className={className}>
+    <Card className={`rounded-xl border border-border/70 bg-card shadow-none ${className}`}>
       <CardHeader className="space-y-2 pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
@@ -38,15 +38,15 @@ export function SectionCard({ title, description, actions, children, className =
 export function StatCard({ title, value, description, icon: Icon, tone = "default" }) {
   const toneClasses =
     tone === "success"
-      ? "border-emerald-500/25 bg-emerald-500/5"
+      ? "border-emerald-500/40 bg-card"
       : tone === "warning"
-        ? "border-amber-500/25 bg-amber-500/5"
+        ? "border-amber-500/40 bg-card"
         : tone === "danger"
-          ? "border-rose-500/25 bg-rose-500/5"
+          ? "border-rose-500/40 bg-card"
           : "border-border/80 bg-card";
 
   return (
-    <Card className={`overflow-hidden shadow-[0_10px_30px_rgba(15,23,42,0.08)] ${toneClasses}`}>
+    <Card className={`overflow-hidden rounded-xl shadow-none ${toneClasses}`}>
       <CardHeader className="space-y-3 pb-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{title}</p>

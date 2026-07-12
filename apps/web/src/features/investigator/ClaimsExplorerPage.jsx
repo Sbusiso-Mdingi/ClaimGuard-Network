@@ -77,7 +77,7 @@ export function ClaimsExplorerPage({ claims }) {
               aria-label="Filter by severity"
               value={severityFilter}
               onChange={(event) => setSeverityFilter(event.target.value)}
-              className="h-11 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="h-11 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
             >
               <option value="all">All severities</option>
               <option value="high">High</option>

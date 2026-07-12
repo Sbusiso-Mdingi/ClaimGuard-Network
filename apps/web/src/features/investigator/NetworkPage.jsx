@@ -91,7 +91,7 @@ export function NetworkPage({ graph }) {
             <p className="rounded-2xl border border-dashed border-border p-8 text-sm text-muted-foreground">No graph entities found in current snapshot.</p>
           ) : (
             <div className="relative h-[620px] overflow-hidden rounded-2xl border border-border/70 bg-background/70" data-testid="network-graph">
-              <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card/90 px-3 py-2 shadow-sm backdrop-blur">
+              <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2">
                 <Badge variant="outline" className="rounded-full px-2.5 py-1 text-[11px] font-semibold">Claims</Badge>
                 <Badge variant="outline" className="rounded-full px-2.5 py-1 text-[11px] font-semibold">Providers</Badge>
                 <Badge variant="outline" className="rounded-full px-2.5 py-1 text-[11px] font-semibold">Bank links</Badge>

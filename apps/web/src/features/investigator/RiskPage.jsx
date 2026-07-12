@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge } from "../../components/ui/badge";
 import { Progress } from "../../components/ui/progress";
-import { PageFrame, SectionCard, StatusBadge, CaseStamp, severityStampTone } from "./InvestigatorUI";
+import { PageFrame, SectionCard, CaseStamp, severityStampTone } from "./InvestigatorUI";
 
 export function RiskPage({ risk, report }) {
   const reasons = risk?.reasons || [];
