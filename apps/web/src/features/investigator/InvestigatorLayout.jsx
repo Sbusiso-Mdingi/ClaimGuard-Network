@@ -32,7 +32,8 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
                 <Activity className="h-5 w-5" />
               </span>
               <div>
-                <p className="text-sm font-semibold tracking-tight">ClaimGuard Investigator</p>
+                <p className="font-display text-sm font-semibold tracking-tight">ClaimGuard</p>
+                <p className="font-data text-xs uppercase tracking-[0.2em] text-muted-foreground">Investigator console</p>
               </div>
             </Link>
             <Button
@@ -61,13 +62,13 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
                 <ShieldCheck className="h-4 w-4 text-primary" />
                 <span className="font-medium">Last refresh</span>
               </div>
-              <p>{lastRefresh ? new Date(lastRefresh).toLocaleString() : "waiting for first sync"}</p>
+              <p className="font-data">{lastRefresh ? new Date(lastRefresh).toLocaleString() : "waiting for first sync"}</p>
             </div>
           </div>
 
           <nav className="space-y-1.5">
-            <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Investigation views</p>
-            {navItems.map((item) => {
+            <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Case file sections</p>
+            {navItems.map((item, index) => {
               const Icon = item.icon;
               return (
                 <NavLink
@@ -76,17 +77,18 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
                   end={item.to === "/"}
                   className={({ isActive }) =>
                     [
-                      "group flex items-center gap-3 rounded-xl border px-3 py-3 text-sm font-medium transition-all",
+                      "group flex items-center gap-3 rounded-lg border-l-2 px-3 py-3 text-sm font-medium transition-all",
                       isActive
-                        ? "border-primary/20 bg-primary/10 text-foreground shadow-sm"
-                        : "border-transparent text-muted-foreground hover:border-border hover:bg-secondary/60 hover:text-foreground",
+                        ? "border-primary bg-secondary/60 text-foreground"
+                        : "border-transparent text-muted-foreground hover:border-border hover:bg-secondary/30 hover:text-foreground",
                     ].join(" ")
                   }
                 >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background/70 text-muted-foreground group-[.active]:text-primary">
-                    <Icon className="h-4 w-4" />
+                  <span className="font-data flex h-9 w-9 items-center justify-center rounded-lg bg-background/70 text-[11px] text-muted-foreground group-[.active]:border-primary/40 group-[.active]:text-primary">
+                    {String(index + 1).padStart(2, "0")}
                   </span>
                   <span className="flex-1">{item.label}</span>
+                  <Icon className="h-4 w-4 text-muted-foreground group-[.active]:text-primary" />
                 </NavLink>
               );
             })}
@@ -106,7 +108,7 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
         <main className="min-w-0 p-4 md:p-6 xl:p-8">
           <header className="mb-6 flex flex-col gap-4 rounded-2xl border border-border/70 bg-card/90 px-5 py-4 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Fraud Investigator Workspace</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Fraud investigation workspace</p>
               <h1 className="text-xl font-semibold tracking-tight">Operational review console</h1>
               <p className="max-w-3xl text-sm leading-6 text-muted-foreground">Monitor detections, inspect claims, and trace relationship networks across the current investigator snapshot.</p>
             </div>
