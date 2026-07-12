@@ -112,11 +112,11 @@ test("renders dashboard and routes to claim details", async () => {
   const user = userEvent.setup();
   render(<AppRoot />);
 
-  expect(await screen.findByText(/Fraud Investigator Workspace/i)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
   expect(screen.getByText(/Total claims/i)).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Claims Explorer/i }));
-  expect(await screen.findByText(/Search, sort, and filter claims/i)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
 
   expect(screen.getAllByText("82").length).toBeGreaterThan(0);
 
@@ -124,8 +124,8 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.getByRole("link", { name: "C-1" })).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: "C-1" }));
-  expect(await screen.findByText(/Claim Details/i)).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: /Risk Panel/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /C-1/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Explainability summary/i })).toBeInTheDocument();
 });
 
 test("static snapshot mode stops polling while live mode continues", async () => {
@@ -137,7 +137,7 @@ test("static snapshot mode stops polling while live mode continues", async () =>
     await Promise.resolve();
   });
 
-  expect(screen.getByText(/Fraud Investigator Workspace/i)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
   expect(global.fetch).toHaveBeenCalledTimes(3);
 
   await act(async () => {
@@ -161,8 +161,8 @@ test("keeps shell and navigation available when backend APIs are unavailable", a
 
   render(<AppRoot />);
 
-  expect(await screen.findByText(/Fraud Investigator Workspace/i)).toBeInTheDocument();
-  expect(screen.getByText(/ClaimGuard Investigator/i)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
+  expect(screen.getByText(/ClaimGuard/i)).toBeInTheDocument();
 
   expect(await screen.findByText(/Total claims/i)).toBeInTheDocument();
   expect(screen.getAllByText(String(demoInvestigatorArtifacts.claims.length)).length).toBeGreaterThan(0);
