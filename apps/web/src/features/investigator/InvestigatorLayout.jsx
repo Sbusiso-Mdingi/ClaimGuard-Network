@@ -32,8 +32,7 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
                 <Activity className="h-5 w-5" />
               </span>
               <div>
-                <p className="text-sm font-semibold tracking-tight">ClaimGuard</p>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Investigator Console</p>
+                <p className="text-sm font-semibold tracking-tight">ClaimGuard Investigator</p>
               </div>
             </Link>
             <Button
@@ -107,7 +106,7 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
         <main className="min-w-0 p-4 md:p-6 xl:p-8">
           <header className="mb-6 flex flex-col gap-4 rounded-2xl border border-border/70 bg-card/90 px-5 py-4 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Fraud investigation workspace</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Fraud Investigator Workspace</p>
               <h1 className="text-xl font-semibold tracking-tight">Operational review console</h1>
               <p className="max-w-3xl text-sm leading-6 text-muted-foreground">Monitor detections, inspect claims, and trace relationship networks across the current investigator snapshot.</p>
             </div>

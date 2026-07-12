@@ -6,7 +6,7 @@ import { PageFrame, SectionCard, MetricPill, StatusBadge } from "./InvestigatorU
 
 function RiskPanel({ claim, risk, ledgerReference }) {
   return (
-    <SectionCard title="Risk summary" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
+    <SectionCard title="Risk Panel" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
       <div className="space-y-5 text-sm">
         <div className="rounded-2xl border border-border/70 bg-secondary/30 p-4">
           <div className="flex items-center justify-between gap-3">
