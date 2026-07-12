@@ -64,7 +64,7 @@ test("ready endpoint returns readiness details when dependencies are healthy", a
   assert.equal(json.checks.databaseReachable, true);
 });
 
-test("ready endpoint returns 503 when report storage is unreachable", async () => {
+test("ready endpoint returns 200 degraded when report storage is unreachable", async () => {
   const app = createBackendApp({
     reportStorage: {
       async getLatestReport() {
@@ -76,8 +76,8 @@ test("ready endpoint returns 503 when report storage is unreachable", async () =
   const response = await app.request("http://localhost/ready");
   const json = await response.json();
 
-  assert.equal(response.status, 503);
-  assert.equal(json.ready, false);
+  assert.equal(response.status, 200);
+  assert.equal(json.ready, true);
   assert.equal(json.status, "degraded");
   assert.equal(json.checks.reportStorageReachable, false);
 });

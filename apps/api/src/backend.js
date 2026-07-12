@@ -101,14 +101,20 @@ async function checkApiReadiness({ ledgerRepository, reportStorage, producerRunt
     }
   }
 
-  const blockingFailures = [
-    checks.reportStorageReachable === false,
-    checks.databaseConfigured && checks.databaseReachable === false,
-  ];
+  const degradedChecks = {
+    reportStorageReachable: checks.reportStorageReachable === false,
+  };
 
-  const ready = !blockingFailures.some(Boolean);
+  const blockingFailures = {
+    databaseReachable: checks.databaseConfigured && checks.databaseReachable === false,
+  };
+
+  const ready = !Object.values(blockingFailures).some(Boolean);
+  const degraded = Object.values(degradedChecks).some(Boolean);
+
   return {
     ready,
+    degraded,
     checks,
   };
 }
@@ -212,9 +218,10 @@ export function createBackendApp({
     });
 
     const statusCode = readiness.ready ? 200 : 503;
+    const status = readiness.ready ? (readiness.degraded ? "degraded" : "ok") : "degraded";
     return c.json(
       {
-        status: readiness.ready ? "ok" : "degraded",
+        status,
         service: "api",
         ready: readiness.ready,
         checks: readiness.checks,
