@@ -32,6 +32,7 @@ from .fraud.cross_scheme_evasion import apply_cross_scheme_evasion, evasion_case
 from .fraud.ghost_claiming import apply_ghost_claiming
 from .fraud.membership_substitution import apply_membership_substitution
 from .fraud.up_coding import apply_up_coding
+from .investigations import build_investigation_reports, write_investigation_markdown, write_investigation_reports
 from .claims import generate_normal_claims
 from .ground_truth import build_ground_truth, write_ground_truth
 from .identifiers import SequentialId
@@ -152,6 +153,15 @@ def run_pipeline(config: Config, verbose: bool = True) -> dict:
     all_collusion = [r for st in states.values() for r in st.collusion_ring_records]
     ground_truth = build_ground_truth(all_single_scheme, all_collusion, cross_scheme_evasion_records)
     write_ground_truth(ground_truth, data_dir / "ground_truth" / "planted_fraud.json")
+
+    scheme_names = {scheme.id: scheme.name for scheme in config.schemes}
+    investigation_reports = build_investigation_reports(
+        states=states,
+        ground_truth=ground_truth,
+        scheme_names=scheme_names,
+    )
+    write_investigation_reports(data_dir / "ground_truth" / "investigation_reports.json", investigation_reports)
+    write_investigation_markdown(data_dir / "docs" / "investigation_scenarios.md", investigation_reports)
 
     write_data_dictionary(data_dir / "docs" / "data_dictionary.md")
 

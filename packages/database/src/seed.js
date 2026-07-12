@@ -6,9 +6,9 @@ import { createLedgerEntry, genesisPreviousHash } from "./index.js";
 import { applyMigrations } from "./migrate.js";
 
 const syntheticSchemeNames = {
-  A: "Scheme A Medical Fund",
-  B: "Scheme B Medical Fund",
-  C: "Scheme C Medical Fund",
+  A: "Nedbank Health",
+  B: "MedSecure",
+  C: "HealthFirst",
 };
 
 const moduleDir = fileURLToPath(new URL(".", import.meta.url));
@@ -56,6 +56,11 @@ async function readCsvRecords(filePath) {
     const values = splitCsvLine(line);
     return Object.fromEntries(headers.map((header, index) => [header, values[index]]));
   });
+}
+
+async function readJsonFile(filePath) {
+  const content = await readFile(filePath, "utf8");
+  return JSON.parse(content);
 }
 
 function toNumber(value) {
@@ -201,7 +206,9 @@ export async function seedSyntheticDatabase(pool, options = {}) {
     "amount",
   ]);
 
-  const ledgerEntry = createLedgerEntry({
+  const ledgerEntries = [];
+
+  const seedEntry = createLedgerEntry({
     sequenceNumber: 1,
     previousHash: genesisPreviousHash,
     entryType: "DATA_SEEDED",
@@ -211,13 +218,45 @@ export async function seedSyntheticDatabase(pool, options = {}) {
     },
   });
 
-  await insertRows(pool, "ledger_entries", [{
-    sequence_number: ledgerEntry.sequenceNumber,
-    entry_type: ledgerEntry.entryType,
-    previous_hash: ledgerEntry.previousHash,
-    entry_hash: ledgerEntry.entryHash,
-    payload: ledgerEntry.payload,
-  }], [
+  ledgerEntries.push(seedEntry);
+
+  try {
+    const investigationPayload = await readJsonFile(join(sourceDir, "ground_truth", "investigation_reports.json"));
+    const confirmedReports = (investigationPayload?.reports || [])
+      .filter((report) => report.investigation_status === "CONFIRMED_FRAUD" && report.final_decision === "Fraud confirmed")
+      .sort((left, right) => String(left.investigation_id).localeCompare(String(right.investigation_id)));
+
+    let previousEntry = seedEntry;
+    for (const report of confirmedReports) {
+      const entry = createLedgerEntry({
+        sequenceNumber: previousEntry.sequenceNumber + 1,
+        previousHash: previousEntry.entryHash,
+        entryType: "INVESTIGATOR_CONFIRMED_FRAUD",
+        payload: {
+          claimId: report.claim_id,
+          investigatorId: report.investigator,
+          schemeId: report.scheme_id,
+          reportVersion: "synthetic-demo-v1",
+          reason: report.evidence_summary,
+          notes: `Synthetic case ${report.investigation_id}: ${report.scenario_type}`,
+          decisionTimestamp: report.decision_date,
+        },
+      });
+
+      ledgerEntries.push(entry);
+      previousEntry = entry;
+    }
+  } catch {
+    // Investigation artifacts are optional for backwards-compatible seed runs.
+  }
+
+  await insertRows(pool, "ledger_entries", ledgerEntries.map((entry) => ({
+    sequence_number: entry.sequenceNumber,
+    entry_type: entry.entryType,
+    previous_hash: entry.previousHash,
+    entry_hash: entry.entryHash,
+    payload: entry.payload,
+  })), [
     "sequence_number",
     "entry_type",
     "previous_hash",

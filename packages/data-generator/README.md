@@ -6,6 +6,12 @@ planted deliberately inside them, plus a ground-truth answer key so Phase 2+
 (hashing, entity resolution, graph analytics) can be scored against known
 truth instead of a vibes-based "does this look plausible."
 
+The default fictional schemes used for demo runs are:
+
+- Nedbank Health (`A`)
+- MedSecure (`B`)
+- HealthFirst (`C`)
+
 Phase 1 produces **data only** — no hashing, matching, graphs, or UI. See
 §2 of the spec for the full out-of-scope list.
 
@@ -58,7 +64,9 @@ data/
   scheme_b/{members,providers,claims}.csv
   scheme_c/{members,providers,claims}.csv
   ground_truth/planted_fraud.json     # spec §9 structure
+  ground_truth/investigation_reports.json  # synthetic demo investigation outcomes
   docs/data_dictionary.md
+  docs/investigation_scenarios.md
   generation_config.yaml              # snapshot of the config that produced this run
 ```
 

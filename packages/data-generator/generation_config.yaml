@@ -16,11 +16,11 @@ currency_symbol: "R"
 
 schemes:
   - id: "A"
-    name: "Scheme A Medical Fund"
+    name: "Nedbank Health"
   - id: "B"
-    name: "Scheme B Medical Fund"
+    name: "MedSecure"
   - id: "C"
-    name: "Scheme C Medical Fund"
+    name: "HealthFirst"
 
 volumes:
   members_per_scheme: 3000
