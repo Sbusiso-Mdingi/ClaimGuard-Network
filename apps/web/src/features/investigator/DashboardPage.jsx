@@ -1,8 +1,7 @@
 import React from "react";
 import { AlertTriangle, Building2, Clock3, Database, FileText, Gauge, Radar, ShieldAlert, ShieldCheck, TrendingUp, Users } from "lucide-react";
-import { Badge } from "../../components/ui/badge";
 import { Skeleton } from "../../components/ui/skeleton";
-import { PageFrame, SectionCard, StatCard, MetricPill } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatCard, MetricPill, CaseStamp, severityStampTone } from "./InvestigatorUI";
 
 function metricTone(value) {
   if (typeof value !== "number") return "default";
@@ -75,16 +74,14 @@ export function DashboardPage({ metrics, status, lastRefresh }) {
                 <div key={item.claimId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/70 px-4 py-4 transition-colors hover:bg-secondary/40">
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold tracking-tight">{item.claimId}</p>
-                      <Badge variant={item.severity === "High" ? "destructive" : item.severity === "Medium" ? "warning" : "secondary"} className="rounded-full px-2.5 py-1 text-[11px] font-semibold">
-                        {item.severity}
-                      </Badge>
+                      <p className="font-data text-sm font-semibold tracking-tight">{item.claimId}</p>
+                      <CaseStamp tone={severityStampTone(item.severity)}>{item.severity}</CaseStamp>
                     </div>
                     <p className="text-sm text-muted-foreground">Policy holder: {item.policyHolder}</p>
                     <p className="text-xs text-muted-foreground">Triggered rules: {(item.triggeredRules || []).slice(0, 2).join(" · ") || "No rules"}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-semibold tracking-tight">{item.riskScore}</p>
+                    <p className="font-data text-2xl font-semibold tracking-tight">{item.riskScore}</p>
                     <p className="text-xs text-muted-foreground">Risk score</p>
                   </div>
                 </div>
