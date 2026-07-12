@@ -3,8 +3,7 @@ import { Link } from "react-router-dom";
 import { Filter, Search, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
-import { PageFrame, SectionCard, StatusBadge } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatusBadge, CaseStamp, statusStampTone } from "./InvestigatorUI";
 
 const SORT_FIELDS = {
   claimId: (a, b) => a.claimId.localeCompare(b.claimId),
@@ -132,9 +131,7 @@ export function ClaimsExplorerPage({ claims }) {
                     </td>
                     <td>{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</td>
                     <td>
-                      <Badge variant={claim.severity === "High" ? "destructive" : claim.severity === "Medium" ? "warning" : "secondary"} className="rounded-full px-2.5 py-1 text-[11px] font-semibold">
-                        {claim.status}
-                      </Badge>
+                      <CaseStamp tone={statusStampTone(claim.status)}>{claim.status.replace(/_/g, " ")}</CaseStamp>
                     </td>
                     <td>{claim.policyHolder}</td>
                     <td>{new Date(claim.detectionDate).toLocaleString()}</td>
