@@ -1,22 +1,19 @@
 import React, { useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Badge } from "../../components/ui/badge";
 import { Progress } from "../../components/ui/progress";
-import { PageFrame, SectionCard, MetricPill, StatusBadge } from "./InvestigatorUI";
+import { PageFrame, SectionCard, MetricPill, StatusBadge, CaseStamp, severityStampTone } from "./InvestigatorUI";
 
 function RiskPanel({ claim, risk, ledgerReference }) {
   return (
-    <SectionCard title="Risk Panel" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
+    <SectionCard title="Risk summary" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
       <div className="space-y-5 text-sm">
         <div className="rounded-2xl border border-border/70 bg-secondary/30 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Risk score</p>
-              <p className="mt-1 text-4xl font-semibold tracking-tight">{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</p>
+              <p className="font-data mt-1 text-4xl font-semibold tracking-tight">{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</p>
             </div>
-            <Badge variant={claim.severity === "High" ? "destructive" : claim.severity === "Medium" ? "warning" : "secondary"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold">
-              {claim.severity}
-            </Badge>
+            <CaseStamp tone={severityStampTone(claim.severity)}>{claim.severity}</CaseStamp>
           </div>
           <Progress value={Number.isFinite(claim.riskScore) ? claim.riskScore : 0} className="mt-4 h-2" />
         </div>
@@ -98,7 +95,7 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-border/70 px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Claim ID</p>
-              <p className="mt-1 text-sm font-semibold">{claim.claimId}</p>
+              <p className="font-data mt-1 text-sm font-semibold">{claim.claimId}</p>
             </div>
             <div className="rounded-xl border border-border/70 px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Policy holder</p>
