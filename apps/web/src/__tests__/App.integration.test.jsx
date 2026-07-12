@@ -2,6 +2,7 @@ import React from "react";
 import { act, render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
+import { demoInvestigatorArtifacts } from "../features/investigator/demoInvestigatorData";
 
 const reportPayload = {
   available: true,
@@ -163,17 +164,22 @@ test("keeps shell and navigation available when backend APIs are unavailable", a
   expect(await screen.findByText(/Fraud Investigator Workspace/i)).toBeInTheDocument();
   expect(screen.getByText(/ClaimGuard Investigator/i)).toBeInTheDocument();
 
-  expect(await screen.findByText(/Dashboard Unavailable/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Total claims/i)).toBeInTheDocument();
+  expect(screen.getByText(String(demoInvestigatorArtifacts.claims.length))).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Claims Explorer/i }));
-  expect(await screen.findByText(/Claims Explorer Unavailable/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Claims Explorer/i)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: demoInvestigatorArtifacts.claims[0].claimId })).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Network Graph/i }));
-  expect(await screen.findByText(/Network Graph Unavailable/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Network Graph/i)).toBeInTheDocument();
+  expect(screen.getByText(/Select a node to inspect connected entities/i)).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Risk Panel/i }));
-  expect(await screen.findByText(/Risk Panel Unavailable/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Risk Panel/i)).toBeInTheDocument();
+  expect(screen.getByText(/Shared bank account links the highest-risk provider nodes across schemes/i)).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: /Detection History/i }));
-  expect(await screen.findByText(/Detection History Unavailable/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Detection History/i)).toBeInTheDocument();
+  expect(screen.getByText(/2026/)).toBeInTheDocument();
 });

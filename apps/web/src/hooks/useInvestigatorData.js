@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { demoInvestigatorArtifacts } from "../features/investigator/demoInvestigatorData";
 
 const POLL_INTERVAL_MS = 15000;
 
@@ -64,6 +65,22 @@ function createSnapshot(report, graph, risk, fetchedAt, claims) {
   };
 }
 
+function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = []) {
+  const claims = extractClaimRows(report, risk, fetchedAt);
+  const snapshot = createSnapshot(report, graph, risk, fetchedAt, claims);
+
+  return {
+    status: "ready",
+    report,
+    graph,
+    risk,
+    claims,
+    snapshots: [snapshot, ...(previousSnapshots || [])].slice(0, 25),
+    lastRefresh: fetchedAt,
+    error: null,
+  };
+}
+
 export function useInvestigatorData() {
   const [mode, setMode] = useState("live");
   const [state, setState] = useState({
@@ -78,6 +95,8 @@ export function useInvestigatorData() {
   });
 
   const load = useCallback(async () => {
+    const fetchedAt = new Date().toISOString();
+
     try {
       const [reportRes, graphRes, riskRes] = await Promise.all([
         fetch("/api/detection/report", { cache: "no-store" }),
@@ -101,26 +120,20 @@ export function useInvestigatorData() {
         throw new Error(riskPayload.message || `Risk unavailable (${riskRes.status})`);
       }
 
-      const fetchedAt = new Date().toISOString();
-      const claims = extractClaimRows(reportPayload.report, riskPayload.risk, fetchedAt);
-      const snapshot = createSnapshot(reportPayload.report, graphPayload.graph, riskPayload.risk, fetchedAt, claims);
-
-      setState((prev) => ({
-        status: "ready",
-        report: reportPayload.report,
-        graph: graphPayload.graph,
-        risk: riskPayload.risk,
-        claims,
-        snapshots: [snapshot, ...(prev.snapshots || [])].slice(0, 25),
-        lastRefresh: fetchedAt,
-        error: null,
-      }));
+      setState((prev) => buildReadyState(reportPayload.report, graphPayload.graph, riskPayload.risk, fetchedAt, prev.snapshots));
     } catch (error) {
-      setState((prev) => ({
-        ...prev,
-        status: prev.report ? "ready" : "error",
+      const fallbackState = buildReadyState(
+        demoInvestigatorArtifacts.report,
+        demoInvestigatorArtifacts.graph,
+        demoInvestigatorArtifacts.risk,
+        fetchedAt,
+        demoInvestigatorArtifacts.snapshots,
+      );
+
+      setState({
+        ...fallbackState,
         error: error instanceof Error ? error.message : "Failed to load investigator data.",
-      }));
+      });
     }
   }, []);
 
@@ -137,8 +150,7 @@ export function useInvestigatorData() {
   }, [mode, load]);
 
   const metrics = useMemo(() => {
-    const report = state.report;
-    const claims = state.claims;
+    const { report, claims } = state;
     const highRisk = Number.isFinite(state.risk?.highRiskClaims)
       ? state.risk.highRiskClaims
       : Number.isFinite(report?.detection?.risk_score?.highRiskClaims)
