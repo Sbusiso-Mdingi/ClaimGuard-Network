@@ -125,7 +125,7 @@ test("renders dashboard and routes to claim details", async () => {
 
   await user.click(screen.getByRole("link", { name: "C-1" }));
   expect(await screen.findByRole("heading", { name: /C-1/i })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: /Explainability summary/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
 });
 
 test("static snapshot mode stops polling while live mode continues", async () => {
