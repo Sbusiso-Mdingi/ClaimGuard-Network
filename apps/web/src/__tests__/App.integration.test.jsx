@@ -162,7 +162,7 @@ test("keeps shell and navigation available when backend APIs are unavailable", a
   render(<AppRoot />);
 
   expect(await screen.findByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
-  expect(screen.getByText(/ClaimGuard/i)).toBeInTheDocument();
+  expect(screen.getByText("ClaimGuard")).toBeInTheDocument();
 
   expect(await screen.findByText(/Total claims/i)).toBeInTheDocument();
   expect(screen.getAllByText(String(demoInvestigatorArtifacts.claims.length)).length).toBeGreaterThan(0);
