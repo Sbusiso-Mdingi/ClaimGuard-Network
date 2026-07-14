@@ -3,16 +3,15 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 import { Activity, Moon, ShieldCheck, Sparkles, Sun } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
-
-const navItems = [
-  { to: "/", label: "Dashboard" },
-  { to: "/claims", label: "Claims Explorer" },
-  { to: "/network", label: "Network Graph" },
-  { to: "/risk", label: "Risk Panel" },
-  { to: "/history", label: "Detection History" },
-];
+import { useRole } from "../../context/RoleContext";
+import { NAV_ITEMS } from "../../lib/roleNav";
+import { RoleSwitcher } from "./RoleSwitcher";
 
 export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, ledgerStatus }) {
+  // 1. Added role context and filtered navigation items here
+  const { identity } = useRole();
+  const visibleNavItems = NAV_ITEMS.filter((item) => item.roles.includes(identity.role));
+
   const [theme, setTheme] = useState(() => window.localStorage.getItem("claimguard-theme") || "dark");
 
   useEffect(() => {
@@ -68,7 +67,8 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
 
           <nav className="space-y-1.5">
             <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Case file sections</p>
-            {navItems.map((item, index) => {
+            {/* 2. Changed source array from 'navItems' to 'visibleNavItems' */}
+            {visibleNavItems.map((item, index) => {
               return (
                 <NavLink
                   key={item.to}
@@ -92,14 +92,9 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
             })}
           </nav>
 
+          {/* 3. Replaced the old "Demo mode" sidebar card with the RoleSwitcher component */}
           <div className="mt-auto pt-4">
-            <div className="rounded-xl border border-border/70 bg-card p-4">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                <Sparkles className="h-4 w-4 text-primary" />
-                Demo mode
-              </div>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">Use Live Replay for streaming refreshes or Static Snapshot for a fixed case review.</p>
-            </div>
+            <RoleSwitcher />
           </div>
         </aside>
 

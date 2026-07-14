@@ -12,6 +12,15 @@ import { NetworkPage } from "./features/investigator/NetworkPage";
 import { RiskPage } from "./features/investigator/RiskPage";
 import { HistoryPage } from "./features/investigator/HistoryPage";
 
+// 1. Added top-level context and page imports
+import { RoleProvider } from "./context/RoleContext";
+import { InvestigationsPage } from "./features/investigator/InvestigationsPage";
+import { InvestigationWorkspacePage } from "./features/investigator/InvestigationWorkspacePage";
+import { CommitteeRegistryPage } from "./features/investigator/CommitteeRegistryPage";
+import { SchemeAdminPage } from "./features/investigator/SchemeAdminPage";
+import { PlatformAdminPage } from "./features/investigator/PlatformAdminPage";
+import { RequireRoleAccess } from "./features/investigator/RequireRoleAccess";
+
 function StatusScreen({ title, description, actionLabel, onAction }) {
   return (
     <div className="mx-auto mt-10 max-w-xl p-4">
@@ -116,6 +125,14 @@ function InvestigatorRoutes() {
             errorTitle: "Detection History Unavailable",
           })}
         />
+
+        {/* 2. Added new role-protected workflow and administration routing paths here */}
+        <Route path="investigations" element={<RequireRoleAccess navKey="investigations"><InvestigationsPage /></RequireRoleAccess>} />
+        <Route path="investigations/:investigationId" element={<RequireRoleAccess navKey="investigations"><InvestigationWorkspacePage /></RequireRoleAccess>} />
+        <Route path="committee" element={<RequireRoleAccess navKey="committee"><CommitteeRegistryPage /></RequireRoleAccess>} />
+        <Route path="admin/scheme" element={<RequireRoleAccess navKey="scheme-admin"><SchemeAdminPage /></RequireRoleAccess>} />
+        <Route path="admin/platform" element={<RequireRoleAccess navKey="platform-admin"><PlatformAdminPage /></RequireRoleAccess>} />
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -125,9 +142,12 @@ function InvestigatorRoutes() {
 export default function AppRoot() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
-        <InvestigatorRoutes />
-      </BrowserRouter>
+      {/* 3. Wrapped the router with the RoleProvider state element wrapper */}
+      <RoleProvider>
+        <BrowserRouter>
+          <InvestigatorRoutes />
+        </BrowserRouter>
+      </RoleProvider>
     </ErrorBoundary>
   );
 }

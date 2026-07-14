@@ -1,7 +1,13 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Progress } from "../../components/ui/progress";
+import { Button } from "../../components/ui/button";
 import { PageFrame, SectionCard, MetricPill, StatusBadge, CaseStamp, severityStampTone } from "./InvestigatorUI";
+
+// 1. Added top-level imports from role, claim guard roles, and tracking contexts
+import { useRole } from "../../context/RoleContext";
+import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
+import { addTrackedInvestigation } from "../../lib/trackedInvestigations";
 
 function RiskPanel({ claim, risk, ledgerReference }) {
   return (
@@ -53,6 +59,11 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
   const params = useParams();
   const claimId = decodeURIComponent(params.claimId || "");
 
+  // 2. Extracted role hooks, notification state, and permission guards before the 'if' checks
+  const { authHeaders, identity } = useRole();
+  const [escalateMessage, setEscalateMessage] = useState(null);
+  const canEscalate = [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR].includes(identity.role);
+
   const claim = claims.find((row) => row.claimId === claimId);
 
   const related = useMemo(() => {
@@ -72,6 +83,27 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
     };
   }, [claimId, graph, report]);
 
+  // 3. Escalation handler function
+  async function handleEscalate() {
+    setEscalateMessage(null);
+    try {
+      const response = await fetch("/api/investigations", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders },
+        body: JSON.stringify({ claimId: claim?.claimId }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.available) {
+        setEscalateMessage({ tone: "error", text: json.message || "Escalation failed." });
+        return;
+      }
+      addTrackedInvestigation(json.investigation.investigationId);
+      setEscalateMessage({ tone: "success", text: `Escalated as ${json.investigation.investigationId}.` });
+    } catch (error) {
+      setEscalateMessage({ tone: "error", text: error.message || "Request failed." });
+    }
+  }
+
   if (!claim) {
     return (
       <SectionCard title="Claim not found" description="The selected claim is not available in the current snapshot.">
@@ -85,11 +117,30 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
       eyebrow="Claim Details"
       title={claim.claimId}
       description={`Policy holder ${claim.policyHolder} · ${new Date(claim.detectionDate).toLocaleString()}`}
+      /* 4. Appended the conditional conditional escalate action button inside actions */
       actions={[
         <MetricPill key="status" label="Status" value={claim.status} tone={claim.status === "CONFIRMED_FRAUD" ? "danger" : claim.status === "UNDER_INVESTIGATION" ? "warning" : "default"} />,
         <MetricPill key="rules" label="Rules" value={`${(claim.triggeredRules || []).length}`} />,
-      ]}
+        canEscalate && (
+          <Button key="escalate" size="sm" onClick={handleEscalate} className="rounded-full">
+            Escalate to investigation
+          </Button>
+        )
+      ].filter(Boolean)}
     >
+      {/* 5. Added system notification alert message container directly below the header element */}
+      {escalateMessage && (
+        <div
+          className={`mb-5 rounded-xl border p-4 text-sm ${
+            escalateMessage.tone === "success"
+              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+              : "border-destructive/20 bg-destructive/10 text-destructive"
+          }`}
+        >
+          {escalateMessage.text}
+        </div>
+      )}
+
       <div className="grid gap-4 xl:grid-cols-[1.6fr_0.95fr]">
         <SectionCard title="Claim information" description="A compact summary of the selected claim, claimant, and current review state.">
           <div className="grid gap-3 md:grid-cols-2">
