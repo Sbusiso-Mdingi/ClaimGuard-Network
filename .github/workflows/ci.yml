@@ -169,6 +169,16 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
           audience: api://AzureADTokenExchange
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run database migrations
+        env:
+          MYSQL_URL: ${{ secrets.MYSQL_URL }}
+        run: |
+          npm install mysql2 drizzle-orm
+          node packages/database/src/migrate.js
+
       - name: Enable run-from-package for web
         run: |
           az webapp config appsettings set \
