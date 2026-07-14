@@ -50,14 +50,23 @@ const server = http.createServer(async (req, res) => {
   try {
     let content = await readFile(filePath, "utf8");
 
-    if (extname(filePath) === ".html") {
+    const isHtml = extname(filePath) === ".html";
+    if (isHtml) {
       content = content
         .replaceAll("__SENTRY_DSN_WEB__", process.env.SENTRY_DSN_WEB || "")
         .replaceAll("__NODE_ENV__", process.env.NODE_ENV || "development")
         .replaceAll("__CLAIMGUARD_API_BASE_URL__", apiBaseUrl);
     }
 
-    res.writeHead(200, { "content-type": mimeTypes[extname(filePath)] || "application/octet-stream" });
+    const contentType = mimeTypes[extname(filePath)] || "application/octet-stream";
+    const cacheControl = isHtml 
+      ? "no-cache, no-store, must-revalidate" 
+      : "public, max-age=31536000, immutable";
+
+    res.writeHead(200, { 
+      "content-type": contentType,
+      "cache-control": cacheControl
+    });
     res.end(content);
   } catch {
     // If the file isn't found, assume this is a client-side route and
@@ -65,7 +74,10 @@ const server = http.createServer(async (req, res) => {
     try {
       const indexPath = join(root, "index.html");
       const indexContent = await readFile(indexPath, "utf8");
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.writeHead(200, { 
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-cache, no-store, must-revalidate"
+      });
       res.end(indexContent);
     } catch {
       res.writeHead(404, { "content-type": "application/json" });
