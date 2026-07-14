@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { buildConnectionOptions } from "./client.js";
+import { buildConnectionOptions, createMysqlConnection } from "./client.js";
 
 export const defaultMigrationPath = fileURLToPath(new URL("../migrations/0001_initial.sql", import.meta.url));
 export const defaultMigrationPaths = Object.freeze([
@@ -55,34 +55,38 @@ async function ensureDatabaseExists(databaseUrl) {
 const isDirectExecution = process.argv[1] === fileURLToPath(import.meta.url);
 
 if (isDirectExecution) {
-  const databaseUrl = process.env.MYSQL_URL;
-  if (!databaseUrl) {
-    throw new Error("MYSQL_URL must be set to run migrations");
-  }
+  (async () => {
+    const databaseUrl = process.env.MYSQL_URL;
+    if (!databaseUrl) {
+      throw new Error("MYSQL_URL must be set to run migrations");
+    }
 
-  const { createMysqlConnection } = await import("./client.js");
-  let pool;
+    let pool;
 
-  try {
-    pool = createMysqlConnection(databaseUrl);
-    const result = await applyMigrations(pool);
-    console.log(`Applied ${result.appliedStatements} migration statements from ${result.migrationPath}`);
-  } catch (error) {
-    if (error && error.code === "ER_BAD_DB_ERROR") {
-      await ensureDatabaseExists(databaseUrl);
-      if (pool) {
-        await pool.end();
-      }
-
+    try {
       pool = createMysqlConnection(databaseUrl);
       const result = await applyMigrations(pool);
       console.log(`Applied ${result.appliedStatements} migration statements from ${result.migrationPath}`);
-    } else {
-      throw error;
+    } catch (error) {
+      if (error && error.code === "ER_BAD_DB_ERROR") {
+        await ensureDatabaseExists(databaseUrl);
+        if (pool) {
+          await pool.end();
+        }
+
+        pool = createMysqlConnection(databaseUrl);
+        const result = await applyMigrations(pool);
+        console.log(`Applied ${result.appliedStatements} migration statements from ${result.migrationPath}`);
+      } else {
+        throw error;
+      }
+    } finally {
+      if (pool) {
+        await pool.end();
+      }
     }
-  } finally {
-    if (pool) {
-      await pool.end();
-    }
-  }
+  })().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
 }
