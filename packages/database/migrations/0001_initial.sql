@@ -86,19 +86,19 @@ CREATE TABLE IF NOT EXISTS medical_schemes (
 );
 
 ALTER TABLE schemes
-  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+  ADD COLUMN tenant_id VARCHAR(64) NULL;
 
 ALTER TABLE members
-  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+  ADD COLUMN tenant_id VARCHAR(64) NULL;
 
 ALTER TABLE providers
-  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+  ADD COLUMN tenant_id VARCHAR(64) NULL;
 
 ALTER TABLE claims
-  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+  ADD COLUMN tenant_id VARCHAR(64) NULL;
 
 ALTER TABLE ledger_entries
-  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+  ADD COLUMN tenant_id VARCHAR(64) NULL;
 
 ALTER TABLE schemes
   ADD INDEX idx_schemes_tenant_id (tenant_id),

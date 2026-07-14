@@ -26,7 +26,20 @@ export async function applyMigrations(pool, migrationPath = defaultMigrationPath
     const statements = splitSqlStatements(sql);
 
     for (const statement of statements) {
-      await pool.query(statement);
+      try {
+        await pool.query(statement);
+      } catch (error) {
+        if (
+          error.code === "ER_DUP_FIELDNAME" ||
+          error.code === "ER_DUP_KEY" ||
+          error.code === "ER_DUP_KEYNAME" ||
+          error.code === "ER_TABLE_EXISTS_ERROR"
+        ) {
+          // Ignore idempotency errors for raw SQL migrations
+          continue;
+        }
+        throw error;
+      }
     }
 
     appliedStatements += statements.length;
