@@ -1,0 +1,41 @@
+{"timestamp":"2026-07-14T08:13:57.493Z","level":"info","service":"api","event":"fraud_registry_published","requestId":"824d1ae3-6c6b-4481-9097-14574ca5815e","registryEntryId":"reg-1","investigationId":"inv-reg-1","subjectToken":"prov-123"}
+{"timestamp":"2026-07-14T08:13:57.494Z","level":"info","service":"api","event":"fraud_confirmed","requestId":"824d1ae3-6c6b-4481-9097-14574ca5815e","claimId":"claim-alpha","investigatorId":"investigator-alpha","schemeId":null,"reportVersion":null,"ledgerSequenceNumber":1}
+{"timestamp":"2026-07-14T08:13:57.496Z","level":"info","service":"api","event":"http_request","requestId":"824d1ae3-6c6b-4481-9097-14574ca5815e","method":"POST","path":"/investigations/confirm-fraud","status":201,"durationMs":10}
+{"timestamp":"2026-07-14T08:13:57.502Z","level":"info","service":"api","event":"fraud_reversed","requestId":"a9a01898-c914-40e5-9b41-30ef0178d68d","claimId":"claim-alpha","investigatorId":"investigator-alpha","investigationId":"inv-reg-2","originalRegistryEntryId":"reg-active","reversalRegistryEntryId":"reg-2","ledgerSequenceNumber":1}
+{"timestamp":"2026-07-14T08:13:57.503Z","level":"info","service":"api","event":"http_request","requestId":"a9a01898-c914-40e5-9b41-30ef0178d68d","method":"POST","path":"/investigations/reverse-fraud","status":201,"durationMs":2}
+{"timestamp":"2026-07-14T08:13:57.509Z","level":"info","service":"api","event":"http_request","requestId":"caa8fd15-122e-48ad-a93d-2fa98eaed91e","method":"GET","path":"/registry/search","status":200,"durationMs":2}
+{"timestamp":"2026-07-14T08:13:57.511Z","level":"info","service":"api","event":"http_request","requestId":"62fb1842-8275-4911-a1ba-4142d17a17d7","method":"GET","path":"/registry/reg-alpha","status":200,"durationMs":1}
+{"timestamp":"2026-07-14T08:13:57.513Z","level":"info","service":"api","event":"http_request","requestId":"f4b9dc72-e875-4730-a066-d9a073a37d47","method":"GET","path":"/registry/history/prov-shared","status":200,"durationMs":1}
+{"timestamp":"2026-07-14T08:13:57.517Z","level":"info","service":"api","event":"http_request","requestId":"68b48eed-2611-446c-ba33-a84cbcc4b7f3","method":"GET","path":"/registry/search","status":403,"durationMs":1}
+{"timestamp":"2026-07-14T08:13:57.518Z","level":"info","service":"api","event":"http_request","requestId":"6c01d780-d7a4-48c0-bf9a-458812f9f8be","method":"GET","path":"/registry/reg-1","status":403,"durationMs":1}
+{"timestamp":"2026-07-14T08:13:57.518Z","level":"info","service":"api","event":"http_request","requestId":"12d629e6-f8ab-4f48-a417-5576bb5c4802","method":"GET","path":"/registry/history/tok","status":403,"durationMs":0}
+TAP version 13
+# Subtest: confirm-fraud successfully publishes to the shared fraud registry
+ok 1 - confirm-fraud successfully publishes to the shared fraud registry
+  ---
+  duration_ms: 67.68
+  ...
+# Subtest: reverse-fraud creates ledger event and REVERSED registry entry
+ok 2 - reverse-fraud creates ledger event and REVERSED registry entry
+  ---
+  duration_ms: 5.259667
+  ...
+# Subtest: registry endpoints allow global read access across tenants
+ok 3 - registry endpoints allow global read access across tenants
+  ---
+  duration_ms: 10.185083
+  ...
+# Subtest: registry read endpoints are protected by authorization roles
+ok 4 - registry read endpoints are protected by authorization roles
+  ---
+  duration_ms: 5.050292
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 121.480417

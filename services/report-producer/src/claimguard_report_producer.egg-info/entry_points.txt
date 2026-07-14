@@ -1,0 +1,2 @@
+[console_scripts]
+claimguard-produce-report = claimguard_report_producer.cli:main

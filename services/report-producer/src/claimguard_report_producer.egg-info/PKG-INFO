@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: claimguard-report-producer
+Version: 0.1.0
+Summary: ClaimGuard report producer runtime and publishers
+Requires-Python: >=3.11

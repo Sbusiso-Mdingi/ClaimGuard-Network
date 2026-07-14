@@ -2,7 +2,14 @@ import { serve } from "@hono/node-server";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createClaimIngestionRepository, createDatabase, createLedgerRepository } from "@claimguard/database";
+import {
+  createClaimIngestionRepository,
+  createDatabase,
+  createInvestigationRepository,
+  createLedgerRepository,
+  createSharedFraudRegistryRepository,
+  createTenantRepository,
+} from "@claimguard/database";
 
 import { createBackendApp } from "./backend.js";
 import { createProducerRuntimeTriggerFromEnvironment } from "./producer-runtime-trigger.js";
@@ -15,14 +22,20 @@ const repoRoot = path.resolve(moduleDir, "../../..");
 const detectionAnalyzeProxyUrl = process.env.DETECTION_ANALYZE_PROXY_URL || null;
 
 let ledgerRepository = null;
+let investigationRepository = null;
+let sharedFraudRegistryRepository = null;
 let claimIngestionService = null;
 let producerRuntimeTrigger = null;
+let tenantRepository = null;
 let databasePool = null;
 
 if (databaseUrl) {
   const database = createDatabase(databaseUrl);
   ledgerRepository = createLedgerRepository(database.db);
+  investigationRepository = createInvestigationRepository(database.pool);
+  sharedFraudRegistryRepository = createSharedFraudRegistryRepository(database.pool);
   claimIngestionService = createClaimIngestionRepository(database.pool);
+  tenantRepository = createTenantRepository(database.pool);
   producerRuntimeTrigger = createProducerRuntimeTriggerFromEnvironment({ repoRoot });
   databasePool = database.pool;
 }
@@ -35,8 +48,11 @@ const reportStorage = await createReportStorageFromEnvironment({
 
 const app = createBackendApp({
   ledgerRepository,
+  investigationRepository,
+  sharedFraudRegistryRepository,
   claimIngestionService,
   producerRuntimeTrigger,
+  tenantRepository,
   reportStorage,
   detectionAnalyzeProxyUrl,
 });
@@ -54,6 +70,7 @@ console.log(
     event: "api_server_started",
     port,
     hasDatabase: Boolean(databasePool),
+    hasTenantRepository: Boolean(tenantRepository),
     hasProducerTrigger: Boolean(producerRuntimeTrigger),
     reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),
   }),

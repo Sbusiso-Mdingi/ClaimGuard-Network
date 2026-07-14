@@ -3,6 +3,18 @@ import test from "node:test";
 
 import { createBackendApp } from "../src/backend.js";
 
+function developmentAuthHeaders({
+  user = "scheme-user",
+  role = "scheme_user",
+  tenantId = "tenant_default",
+} = {}) {
+  return {
+    "x-claimguard-user": user,
+    "x-claimguard-role": role,
+    "x-claimguard-user-tenant": tenantId,
+  };
+}
+
 function createLedgerRepositoryStub(entry) {
   return {
     async getLatestEntry() {
@@ -360,7 +372,10 @@ test("claims ingestion endpoint requires configured ingestion service", async ()
   const app = createBackendApp();
   const response = await app.request("http://localhost/claims/ingest", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...developmentAuthHeaders(),
+    },
     body: JSON.stringify({ claims: [{ claim_id: "C1" }] }),
   });
 
@@ -385,7 +400,10 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
 
   const response = await app.request("http://localhost/claims/ingest", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...developmentAuthHeaders(),
+    },
     body: JSON.stringify({
       source: "synthetic-loader",
       claims: [
@@ -422,12 +440,38 @@ test("investigation confirm-fraud endpoint writes confirmed ledger entry", async
         };
       },
     },
+    investigationRepository: {
+      async getInvestigationById(investigationId) {
+        if (investigationId !== "investigation-300") {
+          return null;
+        }
+
+        return {
+          investigationId,
+          tenantId: "tenant_default",
+          claimId: "C-300",
+          status: "CONFIRMED_FRAUD",
+          fraudConfirmedAt: null,
+        };
+      },
+      async markFraudPublished(investigationId) {
+        assert.equal(investigationId, "investigation-300");
+        return true;
+      },
+    },
   });
 
   const response = await app.request("http://localhost/investigations/confirm-fraud", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...developmentAuthHeaders({
+        user: "INV-1",
+        role: "investigator",
+      }),
+    },
     body: JSON.stringify({
+      investigationId: "investigation-300",
       claimId: "C-300",
       investigatorId: "INV-1",
       reason: "Patient denied receiving treatment",
@@ -540,7 +584,10 @@ test("claims ingestion triggers producer wiring and detection report reads the n
 
   const ingestResponse = await app.request("http://localhost/claims/ingest", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...developmentAuthHeaders(),
+    },
     body: JSON.stringify({
       source: "api-runtime-flow",
       claims: [

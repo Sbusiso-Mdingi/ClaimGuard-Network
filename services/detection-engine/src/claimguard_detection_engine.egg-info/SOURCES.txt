@@ -5,11 +5,15 @@ src/claimguard_detection_engine/__main__.py
 src/claimguard_detection_engine/analytics.py
 src/claimguard_detection_engine/cli.py
 src/claimguard_detection_engine/detector.py
+src/claimguard_detection_engine/graph_store.py
 src/claimguard_detection_engine/loader.py
+src/claimguard_detection_engine/pipeline.py
 src/claimguard_detection_engine/reference_data.py
+src/claimguard_detection_engine/rule_engine.py
 src/claimguard_detection_engine.egg-info/PKG-INFO
 src/claimguard_detection_engine.egg-info/SOURCES.txt
 src/claimguard_detection_engine.egg-info/dependency_links.txt
 src/claimguard_detection_engine.egg-info/entry_points.txt
 src/claimguard_detection_engine.egg-info/top_level.txt
 tests/test_detector.py
+tests/test_pipeline.py

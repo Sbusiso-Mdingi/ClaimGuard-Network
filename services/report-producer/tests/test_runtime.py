@@ -10,8 +10,8 @@ class FakePublisher:
     def __init__(self) -> None:
         self.published = []
 
-    def publish(self, report, *, run_id=None):
-        self.published.append((report, run_id))
+    def publish(self, report, *, run_id=None, tenant_id=None):
+        self.published.append((report, run_id, tenant_id))
 
         class _Result:
             version = "v-test"
@@ -41,7 +41,9 @@ class RuntimeTests(TestCase):
         result = runtime.run(trigger="manual")
         self.assertEqual(result.attempt_count, 1)
         self.assertEqual(result.published.version, "v-test")
+        self.assertEqual(result.tenant_id, "tenant_default")
         self.assertEqual(len(publisher.published), 1)
+        self.assertEqual(publisher.published[0][2], "tenant_default")
 
     def test_runtime_retries_and_succeeds(self) -> None:
         publisher = FakePublisher()
@@ -64,6 +66,21 @@ class RuntimeTests(TestCase):
         result = runtime.run(trigger="scheduled")
         self.assertEqual(result.attempt_count, 2)
         self.assertEqual(len(publisher.published), 1)
+
+    def test_runtime_passes_explicit_tenant_context_to_publisher(self) -> None:
+        publisher = FakePublisher()
+
+        runtime = DetectionReportProducer(
+            data_dir=Path("/tmp/data"),
+            publisher=publisher,
+            tenant_id="tenant_alpha",
+            max_retries=0,
+            detector=lambda _data_dir, _top_n: {"schemes": []},
+        )
+
+        result = runtime.run(trigger="manual")
+        self.assertEqual(result.tenant_id, "tenant_alpha")
+        self.assertEqual(publisher.published[0][2], "tenant_alpha")
 
     def test_runtime_raises_after_retries(self) -> None:
         publisher = FakePublisher()

@@ -60,3 +60,99 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_ledger_entries_sequence_number (sequence_number)
 );
+
+CREATE TABLE IF NOT EXISTS tenants (
+  tenant_id VARCHAR(64) PRIMARY KEY,
+  tenant_slug VARCHAR(128) NOT NULL UNIQUE,
+  tenant_name VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS medical_schemes (
+  medical_scheme_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id VARCHAR(64) NOT NULL,
+  scheme_id VARCHAR(8) NOT NULL,
+  scheme_name VARCHAR(255) NOT NULL,
+  is_primary TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_medical_schemes_tenant_scheme (tenant_id, scheme_id),
+  UNIQUE KEY uq_medical_schemes_scheme_id (scheme_id),
+  INDEX idx_medical_schemes_tenant_id (tenant_id),
+  CONSTRAINT fk_medical_schemes_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_medical_schemes_scheme_id FOREIGN KEY (scheme_id) REFERENCES schemes (scheme_id) ON DELETE CASCADE
+);
+
+ALTER TABLE schemes
+  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+
+ALTER TABLE members
+  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+
+ALTER TABLE providers
+  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+
+ALTER TABLE claims
+  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+
+ALTER TABLE ledger_entries
+  ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NULL;
+
+ALTER TABLE schemes
+  ADD INDEX idx_schemes_tenant_id (tenant_id),
+  ADD CONSTRAINT fk_schemes_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE RESTRICT;
+
+ALTER TABLE members
+  ADD INDEX idx_members_tenant_id (tenant_id),
+  ADD CONSTRAINT fk_members_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE RESTRICT;
+
+ALTER TABLE providers
+  ADD INDEX idx_providers_tenant_id (tenant_id),
+  ADD CONSTRAINT fk_providers_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE RESTRICT;
+
+ALTER TABLE claims
+  ADD INDEX idx_claims_tenant_id (tenant_id),
+  ADD CONSTRAINT fk_claims_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE RESTRICT;
+
+ALTER TABLE ledger_entries
+  ADD INDEX idx_ledger_entries_tenant_id (tenant_id),
+  ADD CONSTRAINT fk_ledger_entries_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE RESTRICT;
+
+INSERT INTO tenants (tenant_id, tenant_slug, tenant_name, status)
+VALUES ('tenant_default', 'default', 'Default Medical Scheme Tenant', 'active')
+ON DUPLICATE KEY UPDATE
+  tenant_slug = VALUES(tenant_slug),
+  tenant_name = VALUES(tenant_name),
+  status = VALUES(status);
+
+UPDATE schemes
+SET tenant_id = 'tenant_default'
+WHERE tenant_id IS NULL;
+
+UPDATE members m
+JOIN schemes s ON s.scheme_id = m.scheme_id
+SET m.tenant_id = s.tenant_id
+WHERE m.tenant_id IS NULL;
+
+UPDATE providers p
+JOIN schemes s ON s.scheme_id = p.scheme_id
+SET p.tenant_id = s.tenant_id
+WHERE p.tenant_id IS NULL;
+
+UPDATE claims c
+JOIN schemes s ON s.scheme_id = c.scheme_id
+SET c.tenant_id = s.tenant_id
+WHERE c.tenant_id IS NULL;
+
+UPDATE ledger_entries
+SET tenant_id = 'tenant_default'
+WHERE tenant_id IS NULL;
+
+INSERT INTO medical_schemes (tenant_id, scheme_id, scheme_name, is_primary)
+SELECT s.tenant_id, s.scheme_id, s.scheme_name, 1
+FROM schemes s
+ON DUPLICATE KEY UPDATE
+  tenant_id = VALUES(tenant_id),
+  scheme_name = VALUES(scheme_name);

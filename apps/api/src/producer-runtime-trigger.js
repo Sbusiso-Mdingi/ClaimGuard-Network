@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
+import { LEGACY_DEFAULT_TENANT_ID } from "@claimguard/database";
+
 function runCommand({ command, args, cwd, env }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -41,6 +43,47 @@ function runCommand({ command, args, cwd, env }) {
   });
 }
 
+export function scopeClaimsForTenant(claims, tenantId) {
+  if (!Array.isArray(claims)) {
+    return [];
+  }
+
+  return claims.map((claim) => ({
+    ...claim,
+    tenant_id: claim?.tenant_id || tenantId,
+  }));
+}
+
+export function buildProducerTriggerArgs({
+  baseArgs,
+  claimsPath,
+  tenantId,
+  backend,
+  topN,
+  source,
+  outputDir,
+}) {
+  const args = [
+    ...baseArgs,
+    "--claims-json",
+    claimsPath,
+    "--tenant-id",
+    tenantId,
+    "--backend",
+    backend,
+    "--top-n",
+    topN,
+    "--trigger",
+    source || "ingest",
+  ];
+
+  if (backend === "file") {
+    args.push("--output-dir", outputDir);
+  }
+
+  return args;
+}
+
 export function createProducerRuntimeTriggerFromEnvironment({ repoRoot }) {
   const command = process.env.REPORT_PRODUCER_TRIGGER_COMMAND || "uv";
   const baseArgs = (process.env.REPORT_PRODUCER_TRIGGER_ARGS || "run claimguard-produce-report")
@@ -54,28 +97,25 @@ export function createProducerRuntimeTriggerFromEnvironment({ repoRoot }) {
   const topN = process.env.REPORT_PRODUCER_TOP_N || "10";
 
   return {
-    async triggerAfterIngestion({ claims, source = "api" }) {
+    async triggerAfterIngestion({ claims, source = "api", tenantContext = null }) {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "claimguard-ingest-"));
       const claimsPath = path.join(tempDir, "claims.json");
+      const tenantId = tenantContext?.tenant_id || process.env.DEFAULT_TENANT_ID || LEGACY_DEFAULT_TENANT_ID;
 
       try {
-        await writeFile(claimsPath, `${JSON.stringify({ claims })}\n`, "utf-8");
+        const scopedClaims = scopeClaimsForTenant(claims, tenantId);
 
-        const args = [
-          ...baseArgs,
-          "--claims-json",
+        await writeFile(claimsPath, `${JSON.stringify({ tenant_id: tenantId, claims: scopedClaims })}\n`, "utf-8");
+
+        const args = buildProducerTriggerArgs({
+          baseArgs,
           claimsPath,
-          "--backend",
+          tenantId,
           backend,
-          "--top-n",
           topN,
-          "--trigger",
-          source || "ingest",
-        ];
-
-        if (backend === "file") {
-          args.push("--output-dir", outputDir);
-        }
+          source,
+          outputDir,
+        });
 
         await runCommand({
           command,

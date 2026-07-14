@@ -57,3 +57,29 @@ def build_report_from_ingested_claims(claims: list[dict[str, object]]) -> dict[s
         },
         "detection": detection,
     }
+
+
+def filter_claims_for_tenant(
+    claims: list[dict[str, object]],
+    *,
+    tenant_id: str,
+) -> list[dict[str, object]]:
+    if not tenant_id:
+        raise ValueError("tenant_id is required to filter claims.")
+
+    has_explicit_tenant = any(claim.get("tenant_id") for claim in claims)
+
+    if not has_explicit_tenant:
+        return [
+            {
+                **claim,
+                "tenant_id": tenant_id,
+            }
+            for claim in claims
+        ]
+
+    return [
+        claim
+        for claim in claims
+        if str(claim.get("tenant_id") or "") == tenant_id
+    ]

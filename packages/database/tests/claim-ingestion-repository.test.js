@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createClaimIngestionRepository } from "../src/index.js";
+import { createClaimIngestionRepository, runWithTenantContext } from "../src/index.js";
 
 function createFakePool() {
   const executions = [];
@@ -48,6 +48,7 @@ test("claim ingestion repository inserts claims through transaction", async () =
   assert.equal(result.source, "synthetic-run");
   assert.equal(pool.executions.length, 1);
   assert.match(pool.executions[0].sql, /INSERT INTO claims/i);
+  assert.equal(pool.executions[0].params[7], "tenant_default");
 });
 
 test("claim ingestion repository validates required fields", async () => {
@@ -66,4 +67,38 @@ test("claim ingestion repository validates required fields", async () => {
       }),
     /missing required fields/i,
   );
+});
+
+test("claim ingestion repository persists tenant_id from active tenant context", async () => {
+  const pool = createFakePool();
+  const repository = createClaimIngestionRepository(pool);
+
+  await runWithTenantContext(
+    {
+      tenant_id: "tenant_alpha",
+      tenant_slug: "alpha",
+      scheme_id: null,
+      source: "header",
+    },
+    async () => {
+      await repository.ingestClaims({
+        source: "api",
+        claims: [
+          {
+            claim_id: "C-102",
+            scheme_id: "scheme_a",
+            member_id: "M-2",
+            provider_id: "P-2",
+            service_date: "2025-01-16",
+            billing_code: "XRAY",
+            amount: 100.0,
+          },
+        ],
+      });
+    },
+  );
+
+  assert.equal(pool.executions.length, 1);
+  assert.equal(pool.executions[0].params[7], "tenant_alpha");
+  assert.match(pool.executions[0].sql, /tenant_id/i);
 });

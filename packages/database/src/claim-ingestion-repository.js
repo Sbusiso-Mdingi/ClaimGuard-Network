@@ -1,3 +1,5 @@
+import { getActiveTenantId } from "./tenant-context-store.js";
+
 function normalizeClaim(claim) {
   return {
     claim_id: claim.claim_id,
@@ -41,6 +43,7 @@ export function createClaimIngestionRepository(pool) {
       const connection = await pool.getConnection();
       let inserted = 0;
       let updated = 0;
+      const tenantId = getActiveTenantId();
 
       try {
         await connection.beginTransaction();
@@ -50,15 +53,16 @@ export function createClaimIngestionRepository(pool) {
           const [result] = await connection.execute(
             `
               INSERT INTO claims (
-                claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount
-              ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
               ON DUPLICATE KEY UPDATE
                 scheme_id = VALUES(scheme_id),
                 member_id = VALUES(member_id),
                 provider_id = VALUES(provider_id),
                 service_date = VALUES(service_date),
                 billing_code = VALUES(billing_code),
-                amount = VALUES(amount)
+                amount = VALUES(amount),
+                tenant_id = VALUES(tenant_id)
             `,
             [
               claim.claim_id,
@@ -68,6 +72,7 @@ export function createClaimIngestionRepository(pool) {
               claim.service_date,
               claim.billing_code,
               claim.amount,
+              tenantId,
             ],
           );
 

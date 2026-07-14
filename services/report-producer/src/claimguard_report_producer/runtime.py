@@ -20,6 +20,7 @@ class ProducerRunResult:
     published: PublishedReport
     attempt_count: int
     trigger: str
+    tenant_id: str
 
 
 class DetectionReportProducer:
@@ -32,6 +33,7 @@ class DetectionReportProducer:
         max_retries: int = 2,
         retry_delay_seconds: float = 1.0,
         detector: Callable[[Path, int], dict[str, object]] | None = None,
+        tenant_id: str = "tenant_default",
         logger=None,
     ) -> None:
         self.data_dir = data_dir
@@ -40,6 +42,7 @@ class DetectionReportProducer:
         self.max_retries = max_retries
         self.retry_delay_seconds = retry_delay_seconds
         self.detector = detector or _default_detector
+        self.tenant_id = tenant_id
         self.logger = logger
 
     def run(self, *, trigger: str = "manual") -> ProducerRunResult:
@@ -59,10 +62,15 @@ class DetectionReportProducer:
                         "trigger": trigger,
                         "max_retries": self.max_retries,
                         "top_n": self.top_n,
+                        "tenant_id": self.tenant_id,
                     },
                 )
                 report = self.detector(self.data_dir, self.top_n)
-                published = self.publisher.publish(report, run_id=f"{trigger}-{attempt}")
+                published = self.publisher.publish(
+                    report,
+                    run_id=f"{trigger}-{self.tenant_id}-{attempt}",
+                    tenant_id=self.tenant_id,
+                )
                 self._log(
                     "info",
                     "producer_attempt_succeeded",
@@ -72,6 +80,7 @@ class DetectionReportProducer:
                         "version": published.version,
                         "report_path": published.report_path,
                         "latest_pointer_path": published.latest_pointer_path,
+                        "tenant_id": self.tenant_id,
                         "attempt_duration_ms": round((time.perf_counter() - attempt_started_at) * 1000, 3),
                     },
                 )
@@ -81,10 +90,16 @@ class DetectionReportProducer:
                     {
                         "trigger": trigger,
                         "attempt_count": attempt,
+                        "tenant_id": self.tenant_id,
                         "run_duration_ms": round((time.perf_counter() - run_started_at) * 1000, 3),
                     },
                 )
-                return ProducerRunResult(published=published, attempt_count=attempt, trigger=trigger)
+                return ProducerRunResult(
+                    published=published,
+                    attempt_count=attempt,
+                    trigger=trigger,
+                    tenant_id=self.tenant_id,
+                )
             except Exception as error:  # noqa: BLE001
                 last_error = error
                 self._log(
@@ -93,6 +108,7 @@ class DetectionReportProducer:
                     {
                         "attempt": attempt,
                         "trigger": trigger,
+                        "tenant_id": self.tenant_id,
                         "message": str(error),
                         "attempt_duration_ms": round((time.perf_counter() - attempt_started_at) * 1000, 3),
                     },
@@ -107,6 +123,7 @@ class DetectionReportProducer:
             {
                 "trigger": trigger,
                 "attempt_count": attempt,
+                "tenant_id": self.tenant_id,
                 "run_duration_ms": round((time.perf_counter() - run_started_at) * 1000, 3),
             },
         )

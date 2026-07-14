@@ -17,7 +17,13 @@ class PublishedReport:
 
 
 class ReportPublisher(Protocol):
-    def publish(self, report: dict[str, object], *, run_id: str | None = None) -> PublishedReport:
+    def publish(
+        self,
+        report: dict[str, object],
+        *,
+        run_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> PublishedReport:
         ...
 
 
@@ -30,27 +36,37 @@ class FileReportPublisher:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
 
-    def publish(self, report: dict[str, object], *, run_id: str | None = None) -> PublishedReport:
+    def publish(
+        self,
+        report: dict[str, object],
+        *,
+        run_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> PublishedReport:
         version = generate_version()
-        report_dir = self.base_dir / "reports"
-        metadata_dir = self.base_dir / "metadata"
-        latest_path = self.base_dir / "latest.json"
+        tenant_partition = (tenant_id or "tenant_default").strip() or "tenant_default"
+        tenant_root = self.base_dir / tenant_partition
+        versions_dir = tenant_root / "versions"
+        latest_path = tenant_root / "latest.json"
+        metadata_path = tenant_root / "metadata.json"
 
-        report_dir.mkdir(parents=True, exist_ok=True)
-        metadata_dir.mkdir(parents=True, exist_ok=True)
+        versions_dir.mkdir(parents=True, exist_ok=True)
 
-        report_path = report_dir / f"report-{version}.json"
-        metadata_path = metadata_dir / f"metadata-{version}.json"
+        report_path = versions_dir / f"report-{version}.json"
+        version_metadata_path = versions_dir / f"metadata-{version}.json"
 
         payload = {
             "version": version,
             "runId": run_id,
+            "tenantId": tenant_partition,
             "generatedAt": datetime.now(UTC).isoformat(),
             "reportBlobName": str(report_path.relative_to(self.base_dir)).replace("\\", "/"),
             "metadataBlobName": str(metadata_path.relative_to(self.base_dir)).replace("\\", "/"),
+            "versionMetadataBlobName": str(version_metadata_path.relative_to(self.base_dir)).replace("\\", "/"),
         }
 
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        version_metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         latest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -110,17 +126,28 @@ class AzureBlobReportPublisher:
         container_client = blob_service_client.get_container_client(container_name)
         return cls(container_client=container_client)
 
-    def publish(self, report: dict[str, object], *, run_id: str | None = None) -> PublishedReport:
+    def publish(
+        self,
+        report: dict[str, object],
+        *,
+        run_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> PublishedReport:
         version = generate_version()
-        report_blob_name = f"{self.reports_prefix}/report-{version}.json"
-        metadata_blob_name = f"{self.metadata_prefix}/metadata-{version}.json"
+        tenant_partition = (tenant_id or "tenant_default").strip() or "tenant_default"
+        report_blob_name = f"{tenant_partition}/versions/report-{version}.json"
+        version_metadata_blob_name = f"{tenant_partition}/versions/metadata-{version}.json"
+        metadata_blob_name = f"{tenant_partition}/metadata.json"
+        latest_blob_name = f"{tenant_partition}/latest.json"
 
         pointer = {
             "version": version,
             "runId": run_id,
+            "tenantId": tenant_partition,
             "generatedAt": datetime.now(UTC).isoformat(),
             "reportBlobName": report_blob_name,
             "metadataBlobName": metadata_blob_name,
+            "versionMetadataBlobName": version_metadata_blob_name,
         }
 
         self.container_client.upload_blob(
@@ -129,12 +156,17 @@ class AzureBlobReportPublisher:
             overwrite=True,
         )
         self.container_client.upload_blob(
+            name=version_metadata_blob_name,
+            data=json.dumps(pointer, sort_keys=True),
+            overwrite=True,
+        )
+        self.container_client.upload_blob(
             name=metadata_blob_name,
             data=json.dumps(pointer, sort_keys=True),
             overwrite=True,
         )
         self.container_client.upload_blob(
-            name=self.latest_blob_name,
+            name=latest_blob_name,
             data=json.dumps(pointer, sort_keys=True),
             overwrite=True,
         )
@@ -143,5 +175,5 @@ class AzureBlobReportPublisher:
             version=version,
             report_path=report_blob_name,
             metadata_path=metadata_blob_name,
-            latest_pointer_path=self.latest_blob_name,
+            latest_pointer_path=latest_blob_name,
         )

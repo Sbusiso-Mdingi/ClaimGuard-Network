@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 import { buildConnectionOptions } from "./client.js";
 
 export const defaultMigrationPath = fileURLToPath(new URL("../migrations/0001_initial.sql", import.meta.url));
+export const defaultMigrationPaths = Object.freeze([
+  defaultMigrationPath,
+  fileURLToPath(new URL("../migrations/0002_investigations.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0003_shared_fraud_registry.sql", import.meta.url)),
+]);
 
 function splitSqlStatements(sql) {
   return sql
@@ -12,15 +17,26 @@ function splitSqlStatements(sql) {
     .filter(Boolean);
 }
 
-export async function applyMigrations(pool, migrationPath = defaultMigrationPath) {
-  const sql = await readFile(migrationPath, "utf8");
-  const statements = splitSqlStatements(sql);
+export async function applyMigrations(pool, migrationPath = defaultMigrationPaths) {
+  const migrationPaths = Array.isArray(migrationPath) ? migrationPath : [migrationPath];
+  let appliedStatements = 0;
 
-  for (const statement of statements) {
-    await pool.query(statement);
+  for (const currentMigrationPath of migrationPaths) {
+    const sql = await readFile(currentMigrationPath, "utf8");
+    const statements = splitSqlStatements(sql);
+
+    for (const statement of statements) {
+      await pool.query(statement);
+    }
+
+    appliedStatements += statements.length;
   }
 
-  return { appliedStatements: statements.length, migrationPath };
+  return {
+    appliedStatements,
+    migrationPath: migrationPaths.length === 1 ? migrationPaths[0] : null,
+    migrationPaths,
+  };
 }
 
 async function ensureDatabaseExists(databaseUrl) {

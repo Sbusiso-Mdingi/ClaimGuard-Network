@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
 from .runtime import DetectionReportProducer
-from .sources import build_report_from_ingested_claims, load_claims_from_json
+from .sources import build_report_from_ingested_claims, filter_claims_for_tenant, load_claims_from_json
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,6 +17,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backend", choices=["file", "azure_blob"], default="file", help="Report storage backend")
     parser.add_argument("--output-dir", type=Path, default=Path("reports"), help="Output base directory for file backend")
     parser.add_argument("--trigger", default="manual", help="Trigger label for telemetry and metadata")
+    parser.add_argument(
+        "--tenant-id",
+        default=os.environ.get("DEFAULT_TENANT_ID", "tenant_default"),
+        help="Tenant identifier to scope report generation and publishing",
+    )
     return parser
 
 
@@ -38,15 +44,17 @@ def main(argv: list[str] | None = None) -> int:
     runtime_data_dir = args.data_dir or Path(".")
     if args.claims_json:
         claims = load_claims_from_json(args.claims_json)
+        tenant_claims = filter_claims_for_tenant(claims, tenant_id=args.tenant_id)
 
         def detector(_data_dir: Path, _top_n: int) -> dict[str, object]:
-            return build_report_from_ingested_claims(claims)
+            return build_report_from_ingested_claims(tenant_claims)
 
     producer = DetectionReportProducer(
         data_dir=runtime_data_dir,
         publisher=publisher,
         top_n=args.top_n,
         detector=detector,
+        tenant_id=args.tenant_id,
     )
     result = producer.run(trigger=args.trigger)
 
