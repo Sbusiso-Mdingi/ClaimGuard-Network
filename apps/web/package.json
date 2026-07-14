@@ -2,6 +2,10 @@
   "name": "@claimguard/web",
   "private": true,
   "type": "module",
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
     "@radix-ui/react-slot": "^1.3.0",
     "@sentry/react": "^10.65.0",
