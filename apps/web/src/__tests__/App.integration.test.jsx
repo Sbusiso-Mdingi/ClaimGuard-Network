@@ -171,15 +171,15 @@ test("keeps shell and navigation available when backend APIs are unavailable", a
   expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: demoInvestigatorArtifacts.claims[0].claimId })).toBeInTheDocument();
 
-  await user.click(screen.getByRole("link", { name: /Network Graph/i }));
+  await user.click(screen.getByRole("link", { name: /Network(?: Graph)?/i }));
   expect(await screen.findByRole("heading", { name: /Relationship intelligence/i })).toBeInTheDocument();
   expect(screen.getByText(/Select a node to inspect connected entities/i)).toBeInTheDocument();
 
-  await user.click(screen.getByRole("link", { name: /Risk Panel/i }));
+  await user.click(screen.getByRole("link", { name: /Risk(?: Panel)?/i }));
   expect(await screen.findByRole("heading", { name: /Explainability summary/i })).toBeInTheDocument();
   expect(screen.getByText(/Shared bank account links the highest-risk provider nodes across schemes/i)).toBeInTheDocument();
 
-  await user.click(screen.getByRole("link", { name: /Detection History/i }));
+  await user.click(screen.getByRole("link", { name: /(?:Detection )?History/i }));
   expect(await screen.findByRole("heading", { name: /Snapshot timeline/i })).toBeInTheDocument();
   expect(screen.getAllByText(/2026/).length).toBeGreaterThan(0);
 });
