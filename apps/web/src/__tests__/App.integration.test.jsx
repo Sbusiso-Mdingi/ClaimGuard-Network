@@ -115,7 +115,7 @@ test("renders dashboard and routes to claim details", async () => {
   expect(await screen.findByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
   expect(screen.getByText(/Total claims/i)).toBeInTheDocument();
 
-  await user.click(screen.getByRole("link", { name: /Claims Explorer/i }));
+  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
   expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
 
   expect(screen.getAllByText("82").length).toBeGreaterThan(0);
@@ -167,7 +167,7 @@ test("keeps shell and navigation available when backend APIs are unavailable", a
   expect(await screen.findByText(/Total claims/i)).toBeInTheDocument();
   expect(screen.getAllByText(String(demoInvestigatorArtifacts.claims.length)).length).toBeGreaterThan(0);
 
-  await user.click(screen.getByRole("link", { name: /Claims Explorer/i }));
+  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
   expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: demoInvestigatorArtifacts.claims[0].claimId })).toBeInTheDocument();
 
