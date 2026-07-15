@@ -14,6 +14,11 @@ import {
 import { createBackendApp } from "./backend.js";
 import { createProducerRuntimeTriggerFromEnvironment } from "./producer-runtime-trigger.js";
 import { createReportStorageFromEnvironment } from "./report-storage.js";
+import {
+  createLiveDemoBootstrapFromDatabase,
+  createLiveDemoSimulator,
+  parseLiveDemoConfigFromEnvironment,
+} from "./simulation/live-demo-simulator.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
@@ -28,6 +33,7 @@ let claimIngestionService = null;
 let producerRuntimeTrigger = null;
 let tenantRepository = null;
 let databasePool = null;
+let liveDemoSimulator = null;
 
 if (databaseUrl) {
   const database = createDatabase(databaseUrl);
@@ -57,6 +63,80 @@ const app = createBackendApp({
   detectionAnalyzeProxyUrl,
 });
 
+const liveDemoConfig = parseLiveDemoConfigFromEnvironment(process.env);
+
+if (databasePool && liveDemoConfig.enabled) {
+  const bootstrap = createLiveDemoBootstrapFromDatabase({
+    pool: databasePool,
+    configuredTenantIds: liveDemoConfig.configuredTenantIds,
+    seed: liveDemoConfig.seed,
+    logger(level, event, details = {}) {
+      const payload = {
+        timestamp: new Date().toISOString(),
+        level,
+        service: "api",
+        event,
+        ...details,
+      };
+
+      const rendered = JSON.stringify(payload);
+      if (level === "error") {
+        console.error(rendered);
+      } else {
+        console.log(rendered);
+      }
+    },
+  });
+
+  liveDemoSimulator = createLiveDemoSimulator({
+    enabled: true,
+    seed: liveDemoConfig.seed,
+    tickIntervalMs: liveDemoConfig.tickIntervalMs,
+    maxRecentClaims: liveDemoConfig.maxRecentClaims,
+    fraudRate: liveDemoConfig.fraudRate,
+    bootstrap,
+    apiClient: {
+      async request({ path, method = "GET", headers = {}, body = null }) {
+        const response = await app.request(`http://localhost${path}`, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+
+        let json = null;
+        try {
+          json = await response.json();
+        } catch {
+          json = null;
+        }
+
+        return {
+          status: response.status,
+          json,
+        };
+      },
+    },
+    logger(level, event, details = {}) {
+      const payload = {
+        timestamp: new Date().toISOString(),
+        level,
+        service: "api",
+        event,
+        ...details,
+      };
+
+      const rendered = JSON.stringify(payload);
+      if (level === "error") {
+        console.error(rendered);
+      } else {
+        console.log(rendered);
+      }
+    },
+  });
+
+  await liveDemoSimulator.start();
+}
+
 serve({
   fetch: app.fetch,
   port,
@@ -72,6 +152,8 @@ console.log(
     hasDatabase: Boolean(databasePool),
     hasTenantRepository: Boolean(tenantRepository),
     hasProducerTrigger: Boolean(producerRuntimeTrigger),
+    liveDemoMode: liveDemoConfig.mode,
+    liveDemoEnabled: Boolean(liveDemoSimulator),
     reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),
   }),
 );
@@ -102,6 +184,7 @@ process.on("uncaughtException", (error) => {
 
 if (databasePool) {
   process.on("SIGINT", async () => {
+    liveDemoSimulator?.stop();
     await databasePool.end();
     process.exit(0);
   });
