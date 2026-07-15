@@ -36,6 +36,94 @@ function createCatalog() {
   ];
 }
 
+function createPersonaCatalog() {
+  return [
+    {
+      tenant_id: "tenant_discovery",
+      tenant_name: "Discovery Health",
+      schemes: ["scheme_discovery"],
+      members: Array.from({ length: 18 }).map((_, index) => ({
+        member_id: `M-D-${String(index + 1).padStart(3, "0")}`,
+        scheme_id: "scheme_discovery",
+        home_region: index % 2 === 0 ? "Gauteng" : "Western Cape",
+      })),
+      providers: [
+        { provider_id: "P-D-GP-01", scheme_id: "scheme_discovery", specialty: "GENERAL_PRACTITIONER", synthetic_banking_detail: "BANK-D-1" },
+        { provider_id: "P-D-HOSP-01", scheme_id: "scheme_discovery", specialty: "HOSPITAL", synthetic_banking_detail: "BANK-D-2" },
+        { provider_id: "P-D-RAD-01", scheme_id: "scheme_discovery", specialty: "RADIOLOGIST", synthetic_banking_detail: "BANK-D-3" },
+        { provider_id: "P-D-PATH-01", scheme_id: "scheme_discovery", specialty: "PATHOLOGIST", synthetic_banking_detail: "BANK-D-4" },
+        { provider_id: "P-D-SPEC-01", scheme_id: "scheme_discovery", specialty: "SPECIALIST", synthetic_banking_detail: "BANK-D-5" },
+        { provider_id: "P-D-PHARM-01", scheme_id: "scheme_discovery", specialty: "PHARMACY", synthetic_banking_detail: "BANK-D-6" },
+      ],
+    },
+    {
+      tenant_id: "tenant_momentum",
+      tenant_name: "Momentum Health",
+      schemes: ["scheme_momentum"],
+      members: Array.from({ length: 14 }).map((_, index) => ({
+        member_id: `M-M-${String(index + 1).padStart(3, "0")}`,
+        scheme_id: "scheme_momentum",
+        home_region: index % 3 === 0 ? "KwaZulu-Natal" : "Gauteng",
+      })),
+      providers: [
+        { provider_id: "P-M-GP-01", scheme_id: "scheme_momentum", specialty: "GENERAL_PRACTITIONER", synthetic_banking_detail: "BANK-M-1" },
+        { provider_id: "P-M-DEN-01", scheme_id: "scheme_momentum", specialty: "DENTIST", synthetic_banking_detail: "BANK-M-2" },
+        { provider_id: "P-M-PHYSIO-01", scheme_id: "scheme_momentum", specialty: "PHYSIOTHERAPIST", synthetic_banking_detail: "BANK-M-3" },
+        { provider_id: "P-M-PHARM-01", scheme_id: "scheme_momentum", specialty: "PHARMACY", synthetic_banking_detail: "BANK-M-4" },
+        { provider_id: "P-M-SPEC-01", scheme_id: "scheme_momentum", specialty: "SPECIALIST", synthetic_banking_detail: "BANK-M-5" },
+      ],
+    },
+    {
+      tenant_id: "tenant_bonitas",
+      tenant_name: "Bonitas",
+      schemes: ["scheme_bonitas"],
+      members: Array.from({ length: 16 }).map((_, index) => ({
+        member_id: `M-BN-${String(index + 1).padStart(3, "0")}`,
+        scheme_id: "scheme_bonitas",
+        home_region: index % 2 === 0 ? "Free State" : "Gauteng",
+      })),
+      providers: [
+        { provider_id: "P-BN-GP-01", scheme_id: "scheme_bonitas", specialty: "GENERAL_PRACTITIONER", synthetic_banking_detail: "BANK-BN-1" },
+        { provider_id: "P-BN-SPEC-01", scheme_id: "scheme_bonitas", specialty: "SPECIALIST", synthetic_banking_detail: "BANK-BN-2" },
+        { provider_id: "P-BN-PATH-01", scheme_id: "scheme_bonitas", specialty: "PATHOLOGIST", synthetic_banking_detail: "BANK-BN-3" },
+        { provider_id: "P-BN-HOSP-01", scheme_id: "scheme_bonitas", specialty: "HOSPITAL", synthetic_banking_detail: "BANK-BN-4" },
+        { provider_id: "P-BN-PHARM-01", scheme_id: "scheme_bonitas", specialty: "PHARMACY", synthetic_banking_detail: "BANK-BN-5" },
+      ],
+    },
+    {
+      tenant_id: "tenant_medihelp",
+      tenant_name: "Medihelp",
+      schemes: ["scheme_medihelp"],
+      members: Array.from({ length: 12 }).map((_, index) => ({
+        member_id: `M-MH-${String(index + 1).padStart(3, "0")}`,
+        scheme_id: "scheme_medihelp",
+        home_region: index % 2 === 0 ? "Mpumalanga" : "Gauteng",
+      })),
+      providers: [
+        { provider_id: "P-MH-GP-01", scheme_id: "scheme_medihelp", specialty: "GENERAL_PRACTITIONER", synthetic_banking_detail: "BANK-MH-1" },
+        { provider_id: "P-MH-SPEC-01", scheme_id: "scheme_medihelp", specialty: "SPECIALIST", synthetic_banking_detail: "BANK-MH-2" },
+        { provider_id: "P-MH-HOSP-01", scheme_id: "scheme_medihelp", specialty: "HOSPITAL", synthetic_banking_detail: "BANK-MH-3" },
+        { provider_id: "P-MH-PHARM-01", scheme_id: "scheme_medihelp", specialty: "PHARMACY", synthetic_banking_detail: "BANK-MH-4" },
+      ],
+    },
+    {
+      tenant_id: "tenant_fedhealth",
+      tenant_name: "Fedhealth",
+      schemes: ["scheme_fedhealth"],
+      members: Array.from({ length: 10 }).map((_, index) => ({
+        member_id: `M-F-${String(index + 1).padStart(3, "0")}`,
+        scheme_id: "scheme_fedhealth",
+        home_region: index % 2 === 0 ? "North West" : "Gauteng",
+      })),
+      providers: [
+        { provider_id: "P-F-GP-01", scheme_id: "scheme_fedhealth", specialty: "GENERAL_PRACTITIONER", synthetic_banking_detail: "BANK-F-1" },
+        { provider_id: "P-F-PHARM-01", scheme_id: "scheme_fedhealth", specialty: "PHARMACY", synthetic_banking_detail: "BANK-F-2" },
+        { provider_id: "P-F-DEN-01", scheme_id: "scheme_fedhealth", specialty: "DENTIST", synthetic_banking_detail: "BANK-F-3" },
+      ],
+    },
+  ];
+}
+
 function createMockApiClient(catalog) {
   const tenantToSchemes = new Map(catalog.map((tenant) => [tenant.tenant_id, new Set(tenant.schemes)]));
 
@@ -330,9 +418,9 @@ function createMockApiClient(catalog) {
   };
 }
 
-async function createSimulatorHarness({ enabled, seed = 42, mode = null, staticMode = false, storyMode = "" }) {
-  const catalog = createCatalog();
-  const apiClient = createMockApiClient(catalog);
+async function createSimulatorHarness({ enabled, seed = 42, mode = null, staticMode = false, storyMode = "", catalog = null }) {
+  const effectiveCatalog = catalog || createCatalog();
+  const apiClient = createMockApiClient(effectiveCatalog);
   const resolvedMode = mode || (enabled ? "on" : "off");
 
   const simulator = createLiveDemoSimulator({
@@ -345,7 +433,7 @@ async function createSimulatorHarness({ enabled, seed = 42, mode = null, staticM
     maxActiveInvestigations: 200,
     bootstrap: {
       async loadCatalog() {
-        return catalog;
+        return effectiveCatalog;
       },
     },
     apiClient,
@@ -466,6 +554,94 @@ test("simulation is deterministic with fixed seed", async () => {
 
   assert.deepEqual(firstSnapshot.stats, secondSnapshot.stats);
   assert.deepEqual(firstSnapshot.activityTail, secondSnapshot.activityTail);
+});
+
+test("tenant personas produce visibly different behavior patterns", async () => {
+  const { simulator, apiClient } = await createSimulatorHarness({
+    enabled: true,
+    seed: 512,
+    catalog: createPersonaCatalog(),
+  });
+
+  for (let index = 0; index < 220; index += 1) {
+    await simulator.runTick();
+  }
+
+  const claimsByTenant = new Map();
+  for (const claim of apiClient.state.claims) {
+    if (!claimsByTenant.has(claim.tenantId)) {
+      claimsByTenant.set(claim.tenantId, []);
+    }
+    claimsByTenant.get(claim.tenantId).push(claim);
+  }
+
+  const discoveryCount = (claimsByTenant.get("tenant_discovery") || []).length;
+  const fedhealthCount = (claimsByTenant.get("tenant_fedhealth") || []).length;
+  assert.equal(discoveryCount > fedhealthCount, true);
+
+  const bonitasClaims = claimsByTenant.get("tenant_bonitas") || [];
+  const momentumClaims = claimsByTenant.get("tenant_momentum") || [];
+  const bonitasChronic = bonitasClaims.filter((claim) =>
+    ["chronic_diabetic", "hypertensive_retiree"].includes(claim._sim?.member?.profile?.archetype),
+  ).length;
+  const momentumChronic = momentumClaims.filter((claim) =>
+    ["chronic_diabetic", "hypertensive_retiree"].includes(claim._sim?.member?.profile?.archetype),
+  ).length;
+  assert.equal(bonitasChronic >= momentumChronic, true);
+});
+
+test("healthcare journeys generate expected claim pathway chains", async () => {
+  const { simulator, apiClient } = await createSimulatorHarness({ enabled: true, seed: 901, catalog: createPersonaCatalog() });
+
+  for (let index = 0; index < 180; index += 1) {
+    await simulator.runTick();
+  }
+
+  const pathways = new Set(apiClient.state.claims.map((claim) => claim._sim?.carePathway).filter(Boolean));
+  assert.equal(pathways.has("chronic_diabetic"), true);
+  assert.equal(pathways.has("pregnant_member"), true);
+  assert.equal(pathways.has("high_utilisation_member"), true);
+
+  const hasPregnancyHospitalStep = apiClient.state.claims.some(
+    (claim) => claim._sim?.carePathway === "pregnant_member" && claim._sim?.memberIntent?.claimFamilyHint === "hospital",
+  );
+  const hasChronicPharmacyStep = apiClient.state.claims.some(
+    (claim) => claim._sim?.carePathway === "chronic_diabetic" && claim._sim?.memberIntent?.claimFamilyHint === "pharmacy",
+  );
+  assert.equal(hasPregnancyHospitalStep, true);
+  assert.equal(hasChronicPharmacyStep, true);
+});
+
+test("fraud scenarios create observable evidence traces", async () => {
+  const { simulator, apiClient } = await createSimulatorHarness({ enabled: true, seed: 1337, catalog: createPersonaCatalog() });
+
+  for (let index = 0; index < 180; index += 1) {
+    await simulator.runTick();
+  }
+
+  const scenarioClaims = apiClient.state.claims.filter((claim) => Boolean(claim._sim?.scenario?.key));
+  assert.equal(scenarioClaims.length > 0, true);
+  assert.equal(
+    scenarioClaims.every((claim) => Array.isArray(claim._sim?.evidenceSignals) && claim._sim.evidenceSignals.length > 0),
+    true,
+  );
+});
+
+test("investigations progress with delays, evidence, and unresolved cases", async () => {
+  const { simulator, apiClient } = await createSimulatorHarness({ enabled: true, seed: 2718, catalog: createPersonaCatalog() });
+
+  for (let index = 0; index < 260; index += 1) {
+    await simulator.runTick();
+  }
+
+  assert.equal(apiClient.state.notes.length > 0, true);
+  assert.equal(apiClient.state.evidence.length > 0, true);
+
+  const statuses = [...apiClient.state.investigations.values()].map((investigation) => investigation.status);
+  const hasUnresolved = statuses.some((status) => ["OPEN", "UNDER_REVIEW", "AWAITING_EVIDENCE"].includes(status));
+  const hasConcluded = statuses.some((status) => ["CLOSED", "NO_FRAUD_FOUND", "CONFIRMED_FRAUD"].includes(status));
+  assert.equal(hasUnresolved, true);
+  assert.equal(hasConcluded, true);
 });
 
 test("story mode produces reproducible named scenarios", async () => {

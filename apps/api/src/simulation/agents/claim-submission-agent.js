@@ -8,15 +8,40 @@ function chooseFraudScenario({ random, fraudRate, scenarios, storyPick, memberIn
   }
 
   let adjustedFraudRate = fraudRate;
+  const candidateKeys = new Set();
+
+  candidateKeys.add("duplicate_billing");
+  candidateKeys.add("procedure_inflation");
 
   if (memberIntent?.behavior === "identity_misuse" || memberIntent?.behavior === "doctor_shopper") {
     adjustedFraudRate += 0.02;
+    candidateKeys.add("identity_reuse");
+    candidateKeys.add("doctor_shopping");
+    if (memberIntent?.behavior === "identity_misuse") {
+      candidateKeys.add("ghost_patient");
+    }
+  }
+
+  if (memberIntent?.claimFamilyHint === "pathology" || memberIntent?.claimFamilyHint === "radiology") {
+    candidateKeys.add("excessive_pathology");
   }
 
   if (providerIntent?.riskProfile === "fraudulent") {
     adjustedFraudRate += 0.03;
+    candidateKeys.add("provider_collusion");
+    candidateKeys.add("network_collusion");
+    candidateKeys.add("repeat_offender");
+    candidateKeys.add("recovered_provider");
   } else if (providerIntent?.riskProfile === "suspicious") {
     adjustedFraudRate += 0.015;
+    candidateKeys.add("impossible_travel");
+    candidateKeys.add("duplicate_billing");
+  }
+
+  if (providerIntent?.networkRelationships === "ring_member" || providerIntent?.networkRelationships === "referral_cartel") {
+    adjustedFraudRate += 0.01;
+    candidateKeys.add("network_collusion");
+    candidateKeys.add("cross_scheme_fraud");
   }
 
   adjustedFraudRate = Math.max(0.02, Math.min(0.05, adjustedFraudRate));
@@ -25,7 +50,9 @@ function chooseFraudScenario({ random, fraudRate, scenarios, storyPick, memberIn
     return null;
   }
 
-  return scenarios[random.int(0, scenarios.length - 1)] || null;
+  const candidates = scenarios.filter((entry) => candidateKeys.has(entry.key));
+  const pool = candidates.length > 0 ? candidates : scenarios;
+  return pool[random.int(0, pool.length - 1)] || null;
 }
 
 export function createClaimSubmissionAgent({

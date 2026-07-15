@@ -1,24 +1,68 @@
-const JOURNEY_TEMPLATES = {
-  acute: ["consultation", "pharmacy", "consultation"],
-  chronic: ["consultation", "pharmacy", "pharmacy", "consultation", "referral"],
-  hospital: ["consultation", "hospital", "pathology", "referral", "consultation"],
-  maternity: ["consultation", "referral", "hospital", "consultation", "pharmacy"],
+const CARE_PATHWAYS = {
+  healthy_young_adult: [
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER"] },
+    { claimFamily: "pharmacy", specialties: ["PHARMACY"] },
+  ],
+  family_with_dependants: [
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER"] },
+    { claimFamily: "referral", specialties: ["SPECIALIST"] },
+    { claimFamily: "pharmacy", specialties: ["PHARMACY"] },
+  ],
+  chronic_diabetic: [
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER"] },
+    { claimFamily: "pharmacy", specialties: ["PHARMACY"] },
+    { claimFamily: "pharmacy", specialties: ["PHARMACY"] },
+    { claimFamily: "referral", specialties: ["SPECIALIST"] },
+  ],
+  hypertensive_retiree: [
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER"] },
+    { claimFamily: "pathology", specialties: ["PATHOLOGIST"] },
+    { claimFamily: "pharmacy", specialties: ["PHARMACY"] },
+    { claimFamily: "referral", specialties: ["SPECIALIST"] },
+  ],
+  pregnant_member: [
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER"] },
+    { claimFamily: "obstetric", specialties: ["OBSTETRICIAN"] },
+    { claimFamily: "hospital", specialties: ["HOSPITAL"] },
+    { claimFamily: "paediatric", specialties: ["PAEDIATRICIAN"] },
+  ],
+  high_utilisation_member: [
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER"] },
+    { claimFamily: "hospital", specialties: ["HOSPITAL"] },
+    { claimFamily: "radiology", specialties: ["RADIOLOGIST"] },
+    { claimFamily: "pathology", specialties: ["PATHOLOGIST"] },
+    { claimFamily: "referral", specialties: ["SPECIALIST"] },
+  ],
+  doctor_shopping_member: [
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER", "SPECIALIST"] },
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER", "SPECIALIST"] },
+    { claimFamily: "pharmacy", specialties: ["PHARMACY"] },
+    { claimFamily: "consultation", specialties: ["GENERAL_PRACTITIONER", "SPECIALIST"] },
+  ],
 };
 
 function pickJourneyTemplate(memberProfile, random) {
+  if (memberProfile?.archetype && CARE_PATHWAYS[memberProfile.archetype]) {
+    return memberProfile.archetype;
+  }
+
   if (memberProfile?.chronic) {
-    return "chronic";
+    return "chronic_diabetic";
   }
+
   if (memberProfile?.utilization === "high_utilization") {
-    return "hospital";
+    return "high_utilisation_member";
   }
-  if (memberProfile?.behavior === "identity_misuse") {
-    return random.chance(0.6) ? "hospital" : "acute";
+
+  if (memberProfile?.behavior === "doctor_shopper") {
+    return "doctor_shopping_member";
   }
-  if (memberProfile?.dependants >= 2 && random.chance(0.25)) {
-    return "maternity";
+
+  if (memberProfile?.dependants >= 2 && random.chance(0.35)) {
+    return "family_with_dependants";
   }
-  return "acute";
+
+  return "healthy_young_adult";
 }
 
 function weightedMemberPick(members, random) {
@@ -77,7 +121,7 @@ export function createMemberBehaviourAgent({ random } = {}) {
       return created;
     }
 
-    existing.stepIndex = (existing.stepIndex + 1) % JOURNEY_TEMPLATES[existing.templateKey].length;
+    existing.stepIndex = (existing.stepIndex + 1) % CARE_PATHWAYS[existing.templateKey].length;
     return existing;
   }
 
@@ -92,17 +136,20 @@ export function createMemberBehaviourAgent({ random } = {}) {
     }
 
     const journey = nextJourneyStep(member);
-    const claimFamilyHint = JOURNEY_TEMPLATES[journey.templateKey][journey.stepIndex] || "consultation";
+    const currentStep = CARE_PATHWAYS[journey.templateKey][journey.stepIndex] || CARE_PATHWAYS.healthy_young_adult[0];
 
     return {
       member,
-      claimFamilyHint,
+      claimFamilyHint: currentStep.claimFamily,
+      preferredSpecialties: currentStep.specialties,
+      carePathway: journey.templateKey,
       journeyKey: journey.templateKey,
       journeyStep: journey.stepIndex,
       behavior: member.profile?.behavior || "normal",
       utilization: member.profile?.utilization || "normal",
       chronic: Boolean(member.profile?.chronic),
       dependants: Number(member.profile?.dependants || 0),
+      archetype: member.profile?.archetype || journey.templateKey,
     };
   }
 

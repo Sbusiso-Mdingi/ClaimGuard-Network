@@ -20,14 +20,19 @@ const PROVIDER_SPECIALTIES = [
   "PATHOLOGIST",
   "RADIOLOGIST",
   "PHARMACY",
+  "OBSTETRICIAN",
+  "PAEDIATRICIAN",
   "SPECIALIST",
 ];
 
 const BILLING_CODES = {
   consultation: ["CONSULT_GP", "CONSULT_SPECIALIST", "CHECKUP", "VACCINATION"],
   pathology: ["PATH_LIPID", "PATH_HBA1C", "PATH_CBC", "PATH_THYROID"],
+  radiology: ["RAD_XRAY", "RAD_CT", "RAD_MRI", "RAD_ULTRASOUND"],
   pharmacy: ["RX_CHRONIC", "RX_ACUTE", "RX_ANTIBIOTIC", "RX_CONTROLLED"],
   hospital: ["HOSP_ADMISSION", "ER_VISIT", "WARD_DAY", "SURGERY_MINOR"],
+  obstetric: ["OBS_ANTENATAL", "OBS_DELIVERY", "OBS_FOLLOWUP"],
+  paediatric: ["PAED_NEWBORN", "PAED_CONSULT", "PAED_IMMUNISATION"],
   referral: ["REF_SPECIALIST", "REF_PHYSIO", "REF_RAD"],
 };
 
@@ -42,6 +47,7 @@ const FRAUD_SCENARIOS = [
   { key: "doctor_shopping", offenceCategory: "Doctor Shopping", reason: "Doctor shopping pattern detected across providers." },
   { key: "impossible_travel", offenceCategory: "Impossible Travel", reason: "Impossible travel pattern detected for claim timeline." },
   { key: "network_collusion", offenceCategory: "Network Collusion", reason: "Network collusion pattern detected between claimant and provider cluster." },
+  { key: "cross_scheme_fraud", offenceCategory: "Cross-Scheme Fraud", reason: "Cross-scheme subject correlation pattern detected from registry intelligence feed." },
   { key: "recovered_provider", offenceCategory: "Recovered Fraud Provider", reason: "Recovered fraudulent provider resumed suspicious billing patterns." },
   { key: "repeat_offender", offenceCategory: "Repeat Offender", reason: "Repeat offender behavior observed across prior case history." },
 ];
@@ -49,6 +55,32 @@ const FRAUD_SCENARIOS = [
 const MEMBER_UTILIZATION_PROFILES = ["normal", "frequent_claimant", "chronic", "doctor_shopper", "high_utilization"];
 const MEMBER_BEHAVIORS = ["normal", "frequent_claimant", "doctor_shopper", "identity_misuse", "collusive"];
 const PROVIDER_RISK_PROFILES = ["honest", "aggressive", "suspicious", "fraudulent"];
+const MEMBER_ARCHETYPES = [
+  "healthy_young_adult",
+  "family_with_dependants",
+  "chronic_diabetic",
+  "hypertensive_retiree",
+  "pregnant_member",
+  "high_utilisation_member",
+  "doctor_shopping_member",
+];
+
+function chooseWeighted(choices, randomValue) {
+  const total = choices.reduce((sum, entry) => sum + Number(entry.weight || 0), 0);
+  if (total <= 0) {
+    return choices[0]?.value || null;
+  }
+
+  let threshold = randomValue * total;
+  for (const entry of choices) {
+    threshold -= Number(entry.weight || 0);
+    if (threshold <= 0) {
+      return entry.value;
+    }
+  }
+
+  return choices[choices.length - 1]?.value || null;
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -120,36 +152,72 @@ function deriveTenantPersona(tenantName, random) {
 
   if (normalized.includes("discovery")) {
     return {
+      segment: "discovery",
       demographics: "large_population",
       chronicBurden: "medium",
       claimVolumeWeight: 1.4,
       specialistDensity: 1.3,
+      memberTarget: 240,
+      providerTarget: 75,
     };
   }
 
   if (normalized.includes("bonitas")) {
     return {
+      segment: "bonitas",
       demographics: "older_population",
       chronicBurden: "high",
       claimVolumeWeight: 1.2,
       specialistDensity: 1.1,
+      memberTarget: 180,
+      providerTarget: 55,
     };
   }
 
   if (normalized.includes("momentum")) {
     return {
+      segment: "momentum",
       demographics: "younger_population",
       chronicBurden: "low",
       claimVolumeWeight: 0.9,
       specialistDensity: 1.0,
+      memberTarget: 140,
+      providerTarget: 40,
+    };
+  }
+
+  if (normalized.includes("medihelp")) {
+    return {
+      segment: "medihelp",
+      demographics: "mixed_population",
+      chronicBurden: "medium",
+      claimVolumeWeight: 1.0,
+      specialistDensity: 1.05,
+      memberTarget: 155,
+      providerTarget: 45,
+    };
+  }
+
+  if (normalized.includes("fedhealth")) {
+    return {
+      segment: "fedhealth",
+      demographics: "younger_population",
+      chronicBurden: "low",
+      claimVolumeWeight: 0.78,
+      specialistDensity: 0.9,
+      memberTarget: 120,
+      providerTarget: 34,
     };
   }
 
   return {
+    segment: "default",
     demographics: "mixed_population",
     chronicBurden: random.pick(["low", "medium", "high"]),
     claimVolumeWeight: Number((0.9 + random.next() * 0.5).toFixed(2)),
     specialistDensity: Number((0.9 + random.next() * 0.5).toFixed(2)),
+    memberTarget: 120,
+    providerTarget: 30,
   };
 }
 
@@ -196,7 +264,13 @@ function specialtyToClaimFamily(specialty) {
     return "pathology";
   }
   if (normalized.includes("RADIO")) {
-    return "pathology";
+    return "radiology";
+  }
+  if (normalized.includes("OBSTETRIC")) {
+    return "obstetric";
+  }
+  if (normalized.includes("PAEDIATRIC")) {
+    return "paediatric";
   }
   if (normalized.includes("HOSP")) {
     return "hospital";
@@ -251,20 +325,142 @@ function hashToNumber(input) {
   return Number.parseInt(digest.slice(0, 8), 16);
 }
 
-function buildMemberProfile(memberId) {
+function buildMemberProfile(memberId, tenantPersona = null) {
   const hashed = hashToNumber(memberId);
+  const age = 18 + (hashed % 67);
+  const ageBand = age < 30 ? "young_adult" : age < 45 ? "adult" : age < 60 ? "midlife" : "retiree";
+  const personaSegment = tenantPersona?.segment || "default";
+  const roll = (hashed % 10_000) / 10_000;
+
+  const archetypeWeights =
+    personaSegment === "discovery"
+      ? [
+          { value: "healthy_young_adult", weight: 18 },
+          { value: "family_with_dependants", weight: 24 },
+          { value: "chronic_diabetic", weight: 13 },
+          { value: "hypertensive_retiree", weight: 11 },
+          { value: "pregnant_member", weight: 9 },
+          { value: "high_utilisation_member", weight: 17 },
+          { value: "doctor_shopping_member", weight: 8 },
+        ]
+      : personaSegment === "bonitas"
+        ? [
+            { value: "healthy_young_adult", weight: 8 },
+            { value: "family_with_dependants", weight: 14 },
+            { value: "chronic_diabetic", weight: 24 },
+            { value: "hypertensive_retiree", weight: 26 },
+            { value: "pregnant_member", weight: 5 },
+            { value: "high_utilisation_member", weight: 16 },
+            { value: "doctor_shopping_member", weight: 7 },
+          ]
+        : personaSegment === "momentum"
+          ? [
+              { value: "healthy_young_adult", weight: 33 },
+              { value: "family_with_dependants", weight: 28 },
+              { value: "chronic_diabetic", weight: 7 },
+              { value: "hypertensive_retiree", weight: 5 },
+              { value: "pregnant_member", weight: 13 },
+              { value: "high_utilisation_member", weight: 8 },
+              { value: "doctor_shopping_member", weight: 6 },
+            ]
+          : personaSegment === "fedhealth"
+            ? [
+                { value: "healthy_young_adult", weight: 32 },
+                { value: "family_with_dependants", weight: 29 },
+                { value: "chronic_diabetic", weight: 8 },
+                { value: "hypertensive_retiree", weight: 7 },
+                { value: "pregnant_member", weight: 11 },
+                { value: "high_utilisation_member", weight: 7 },
+                { value: "doctor_shopping_member", weight: 6 },
+              ]
+            : personaSegment === "medihelp"
+              ? [
+                  { value: "healthy_young_adult", weight: 17 },
+                  { value: "family_with_dependants", weight: 25 },
+                  { value: "chronic_diabetic", weight: 15 },
+                  { value: "hypertensive_retiree", weight: 15 },
+                  { value: "pregnant_member", weight: 8 },
+                  { value: "high_utilisation_member", weight: 13 },
+                  { value: "doctor_shopping_member", weight: 7 },
+                ]
+              : MEMBER_ARCHETYPES.map((value) => ({ value, weight: 1 }));
+
+  const archetype = chooseWeighted(archetypeWeights, roll) || MEMBER_ARCHETYPES[hashed % MEMBER_ARCHETYPES.length];
+  const chronic = archetype === "chronic_diabetic" || archetype === "hypertensive_retiree" || Boolean((hashed >> 6) % 2);
+  const utilization =
+    archetype === "high_utilisation_member"
+      ? "high_utilization"
+      : archetype === "chronic_diabetic" || archetype === "hypertensive_retiree"
+        ? "chronic"
+        : archetype === "doctor_shopping_member"
+          ? "doctor_shopper"
+          : MEMBER_UTILIZATION_PROFILES[hashed % MEMBER_UTILIZATION_PROFILES.length];
+  const behavior =
+    archetype === "doctor_shopping_member"
+      ? "doctor_shopper"
+      : archetype === "high_utilisation_member"
+        ? "frequent_claimant"
+        : archetype === "pregnant_member"
+          ? "normal"
+          : MEMBER_BEHAVIORS[(hashed >> 3) % MEMBER_BEHAVIORS.length];
+
   return {
-    utilization: MEMBER_UTILIZATION_PROFILES[hashed % MEMBER_UTILIZATION_PROFILES.length],
-    behavior: MEMBER_BEHAVIORS[(hashed >> 3) % MEMBER_BEHAVIORS.length],
-    chronic: Boolean((hashed >> 6) % 2),
+    archetype,
+    ageBand,
+    age,
+    utilization,
+    behavior,
+    chronic,
     dependants: (hashed >> 7) % 4,
+    chronicConditions:
+      archetype === "chronic_diabetic"
+        ? ["diabetes"]
+        : archetype === "hypertensive_retiree"
+          ? ["hypertension"]
+          : chronic
+            ? ["chronic_condition"]
+            : [],
+    pregnancyEligible: archetype === "pregnant_member",
   };
 }
 
-function buildProviderProfile(providerId) {
+function buildProviderProfile(providerId, specialty = "") {
   const hashed = hashToNumber(providerId);
+  const normalizedSpecialty = String(specialty || "").toUpperCase();
+  const utilizationProfile =
+    normalizedSpecialty.includes("HOSP")
+      ? "high_throughput"
+      : normalizedSpecialty.includes("PHARM")
+        ? "repeat_dispensing"
+        : normalizedSpecialty.includes("RADIO") || normalizedSpecialty.includes("PATH")
+          ? "diagnostic_batch"
+          : normalizedSpecialty.includes("SPECIAL") || normalizedSpecialty.includes("OBSTETRIC") || normalizedSpecialty.includes("PAEDIATRIC")
+            ? "specialist_referral"
+            : "balanced";
+
+  const referralBehavior =
+    normalizedSpecialty.includes("GENERAL_PRACTITIONER")
+      ? "gatekeeper"
+      : normalizedSpecialty.includes("SPECIAL") || normalizedSpecialty.includes("OBSTETRIC") || normalizedSpecialty.includes("PAEDIATRIC")
+        ? "referral_hub"
+        : normalizedSpecialty.includes("PATH") || normalizedSpecialty.includes("RADIO")
+          ? "diagnostic_support"
+          : normalizedSpecialty.includes("PHARM")
+            ? "dispensing"
+            : "facility";
+
+  const networkRelationships =
+    (hashed >> 9) % 20 === 0
+      ? "ring_member"
+      : (hashed >> 10) % 15 === 0
+        ? "referral_cartel"
+        : "neutral";
+
   return {
     riskProfile: PROVIDER_RISK_PROFILES[hashed % PROVIDER_RISK_PROFILES.length],
+    utilizationProfile,
+    referralBehavior,
+    networkRelationships,
     networkAffinity: (hashed % 100) / 100,
     normalWorkload: 20 + ((hashed >> 5) % 80),
   };
@@ -284,20 +480,21 @@ function allowedTransition(from, to) {
 }
 
 function createTenantState(tenant, random) {
+  const persona = deriveTenantPersona(tenant.tenant_name, random);
   const members = tenant.members.map((member) => ({
     ...member,
-    profile: buildMemberProfile(member.member_id),
+    profile: buildMemberProfile(member.member_id, persona),
   }));
 
   const providers = tenant.providers.map((provider) => ({
     ...provider,
-    profile: buildProviderProfile(provider.provider_id),
+    profile: buildProviderProfile(provider.provider_id, provider.specialty),
   }));
 
   return {
     tenantId: tenant.tenant_id,
     tenantName: tenant.tenant_name,
-    persona: deriveTenantPersona(tenant.tenant_name, random),
+    persona,
     schemes: [...tenant.schemes],
     members,
     providers,
@@ -307,6 +504,10 @@ function createTenantState(tenant, random) {
     relationshipUpdates: 0,
     lastSeenMemberIds: new Set(),
     lastSeenProviderIds: new Set(),
+    memberClaimHistory: new Map(),
+    providerClaimHistory: new Map(),
+    sharedIdentityTokens: new Map(),
+    sharedProviderRingToken: `ring:${tenant.tenant_id}`,
     randomWeight: random.int(1, 100),
     agents: {
       member: null,
@@ -432,6 +633,107 @@ export function createLiveDemoSimulator({
     return specialtyToClaimFamily(provider.specialty);
   }
 
+  function registerClaimHistory(tenantState, claim) {
+    const memberHistory = tenantState.memberClaimHistory.get(claim.member_id) || [];
+    memberHistory.push({
+      claimId: claim.claim_id,
+      serviceDate: claim.service_date,
+      providerId: claim.provider_id,
+      billingCode: claim.billing_code,
+      amount: claim.amount,
+      scenarioKey: claim._sim?.scenario?.key || null,
+    });
+    while (memberHistory.length > 24) {
+      memberHistory.shift();
+    }
+    tenantState.memberClaimHistory.set(claim.member_id, memberHistory);
+
+    const providerHistory = tenantState.providerClaimHistory.get(claim.provider_id) || [];
+    providerHistory.push({
+      claimId: claim.claim_id,
+      serviceDate: claim.service_date,
+      memberId: claim.member_id,
+      billingCode: claim.billing_code,
+      amount: claim.amount,
+      scenarioKey: claim._sim?.scenario?.key || null,
+    });
+    while (providerHistory.length > 32) {
+      providerHistory.shift();
+    }
+    tenantState.providerClaimHistory.set(claim.provider_id, providerHistory);
+  }
+
+  function applyFraudScenarioArtifacts({ tenantState, claim, scenario, member, provider }) {
+    const evidenceSignals = [];
+
+    if (!scenario) {
+      return evidenceSignals;
+    }
+
+    const memberHistory = tenantState.memberClaimHistory.get(member.member_id) || [];
+    const providerHistory = tenantState.providerClaimHistory.get(provider.provider_id) || [];
+
+    if (scenario.key === "duplicate_billing" && memberHistory.length > 0) {
+      const last = memberHistory[memberHistory.length - 1];
+      claim.service_date = last.serviceDate;
+      claim.billing_code = last.billingCode;
+      claim.amount = last.amount;
+      evidenceSignals.push("same_day_duplicate_claim_signature");
+    }
+
+    if (scenario.key === "ghost_patient") {
+      claim.device_id = `shared-device-${member.scheme_id}`;
+      claim.phone = `+272100000${String(hashToNumber(member.scheme_id) % 10)}`;
+      evidenceSignals.push("reused_device_and_contact_pattern");
+    }
+
+    if (scenario.key === "identity_reuse") {
+      const token = tenantState.sharedIdentityTokens.get(member.scheme_id) || `identity-token-${member.scheme_id}`;
+      tenantState.sharedIdentityTokens.set(member.scheme_id, token);
+      claim.email = `${token}@demo.claimguard.local`;
+      claim.phone = `+2782000${String(hashToNumber(token) % 10000).padStart(4, "0")}`;
+      evidenceSignals.push("shared_identity_artifact");
+    }
+
+    if (scenario.key === "procedure_inflation") {
+      claim.amount = Number((claim.amount * random.int(2, 4)).toFixed(2));
+      evidenceSignals.push("procedure_cost_outlier");
+    }
+
+    if (scenario.key === "excessive_pathology") {
+      claim.billing_code = random.pick(BILLING_CODES.pathology);
+      evidenceSignals.push("pathology_frequency_spike");
+    }
+
+    if (scenario.key === "doctor_shopping") {
+      evidenceSignals.push("multi_provider_consultation_cluster");
+    }
+
+    if (scenario.key === "provider_collusion" || scenario.key === "network_collusion") {
+      claim.bank_account = `COLLUSION-${tenantState.sharedProviderRingToken}`;
+      evidenceSignals.push("shared_provider_banking_pattern");
+    }
+
+    if (scenario.key === "impossible_travel") {
+      claim.ip_address = `196.${random.int(1, 250)}.${random.int(1, 250)}.${random.int(1, 250)}`;
+      evidenceSignals.push("geo_temporal_inconsistency");
+    }
+
+    if (scenario.key === "cross_scheme_fraud") {
+      evidenceSignals.push("cross_scheme_subject_recurrence");
+    }
+
+    if (scenario.key === "repeat_offender") {
+      evidenceSignals.push("historical_offender_link");
+    }
+
+    if (scenario.key === "recovered_provider") {
+      evidenceSignals.push("provider_recidivism_signal");
+    }
+
+    return evidenceSignals;
+  }
+
   function buildClaimForTenant(tenantState, timelineNow, options = {}) {
     const member = options.member || random.pick(tenantState.members);
     if (!member) {
@@ -458,7 +760,7 @@ export function createLiveDemoSimulator({
             : random.int(250, 4200);
 
     const scenario = options.scenario || (random.chance(fraudRate) ? random.pick(FRAUD_SCENARIOS) : null);
-    const amount = scenario && scenario.key === "procedure_inflation" ? amountBase * random.int(2, 4) : amountBase;
+    const amount = amountBase;
 
     const claim = {
       claim_id: nextClaimId({ tenantId: tenantState.tenantId, tickNumber, sequence: claimSequence }),
@@ -480,10 +782,23 @@ export function createLiveDemoSimulator({
         story: options.story || null,
         memberIntent: options.memberIntent || null,
         providerIntent: options.providerIntent || null,
+        carePathway: options.memberIntent?.carePathway || null,
         member,
         provider,
       },
     };
+
+    const evidenceSignals = applyFraudScenarioArtifacts({
+      tenantState,
+      claim,
+      scenario,
+      member,
+      provider,
+    });
+
+    if (scenario) {
+      claim._sim.evidenceSignals = evidenceSignals.length > 0 ? evidenceSignals : [`scenario_evidence:${scenario.key}`];
+    }
 
     tenantState.lastSeenMemberIds.add(member.member_id);
     tenantState.lastSeenProviderIds.add(provider.provider_id);
@@ -527,10 +842,13 @@ export function createLiveDemoSimulator({
         tenantState.recentFraudCandidates.push({
           claim,
           scenario: claim._sim.scenario,
+          evidenceSignals: claim._sim.evidenceSignals || [],
           createdAtTick: tickNumber,
           escalated: false,
         });
       }
+
+      registerClaimHistory(tenantState, claim);
 
       return true;
     }
@@ -574,9 +892,14 @@ export function createLiveDemoSimulator({
         providerId: selected.claim.provider_id,
         status: "OPEN",
         scenario: selected.scenario,
+        evidenceSignals: selected.evidenceSignals || [],
         notes: 0,
         evidence: 0,
         published: false,
+        createdAtTick: tickNumber,
+        nextReviewTick: tickNumber + random.int(1, 3),
+        reviewCycles: 0,
+        targetEvidenceCount: random.int(1, 4),
       });
 
       stats.investigationsCreated += 1;
@@ -776,38 +1099,49 @@ export function createLiveDemoSimulator({
       return false;
     }
 
+    if (tickNumber < (investigation.nextReviewTick || 0)) {
+      return false;
+    }
+
+    investigation.reviewCycles = Number(investigation.reviewCycles || 0) + 1;
+    investigation.nextReviewTick = tickNumber + random.int(1, 3);
+
     if (investigation.status === "OPEN") {
-      await patchInvestigationStatus(tenantState, investigation, "UNDER_REVIEW");
+      if (random.chance(0.65)) {
+        await patchInvestigationStatus(tenantState, investigation, "UNDER_REVIEW");
+      }
       return true;
     }
 
     if (investigation.status === "UNDER_REVIEW") {
+      const evidenceHeadline = investigation.evidenceSignals?.[investigation.notes % Math.max(1, investigation.evidenceSignals.length)] || investigation.scenario.reason;
       await addInvestigationNote(
         tenantState,
         investigation,
-        `${investigation.scenario.reason} Evidence chain review in progress.`,
+        `${evidenceHeadline} Evidence chain review in progress. Cycle ${investigation.reviewCycles}.`,
       );
 
-      if (random.chance(0.6)) {
+      if (investigation.evidence < investigation.targetEvidenceCount && random.chance(0.7)) {
         await addInvestigationEvidence(tenantState, investigation);
       }
 
-      if (random.chance(0.35)) {
+      if (investigation.evidence < investigation.targetEvidenceCount && random.chance(0.4)) {
         await patchInvestigationStatus(tenantState, investigation, "AWAITING_EVIDENCE");
         return true;
       }
 
-      if (random.chance(0.4)) {
+      if (investigation.evidence >= investigation.targetEvidenceCount && random.chance(0.35)) {
         await patchInvestigationStatus(tenantState, investigation, "CONFIRMED_FRAUD");
-      } else if (random.chance(0.35)) {
+      } else if (investigation.reviewCycles >= 2 && random.chance(0.25)) {
         await patchInvestigationStatus(tenantState, investigation, "NO_FRAUD_FOUND");
       }
+
       return true;
     }
 
     if (investigation.status === "AWAITING_EVIDENCE") {
       await addInvestigationEvidence(tenantState, investigation);
-      if (random.chance(0.7)) {
+      if (random.chance(0.55)) {
         await patchInvestigationStatus(tenantState, investigation, "UNDER_REVIEW");
       }
       return true;
@@ -822,7 +1156,7 @@ export function createLiveDemoSimulator({
     }
 
     if (investigation.status === "NO_FRAUD_FOUND") {
-      if (random.chance(0.6)) {
+      if (random.chance(0.25)) {
         const closed = await patchInvestigationStatus(tenantState, investigation, "CLOSED");
         if (closed) {
           stats.investigationsClosed += 1;
@@ -853,7 +1187,7 @@ export function createLiveDemoSimulator({
       await maybeReverseFraud(tenantState, selected);
     }
 
-    if (random.chance(0.45)) {
+    if (random.chance(0.3)) {
       const closed = await patchInvestigationStatus(tenantState, selected, "CLOSED");
       if (closed) {
         stats.investigationsClosed += 1;
@@ -921,7 +1255,7 @@ export function createLiveDemoSimulator({
 
     const tenantForRelationshipUpdate = pickTenantState();
     if (tenantForRelationshipUpdate) {
-      const planned = tenantForRelationshipUpdate.agents.provider.planRelationshipUpdates();
+      const planned = tenantForRelationshipUpdate.agents.provider.planRelationshipUpdates(tenantForRelationshipUpdate);
       updateProviderRelationships(tenantForRelationshipUpdate, planned);
     }
 
@@ -1165,11 +1499,17 @@ export function createLiveDemoBootstrapFromDatabase({
     return legacySchemeRows.map((row) => row.scheme_id);
   }
 
-  async function maybeInsertBootstrapMembers({ tenantId, schemeId, targetCount }) {
+  async function maybeInsertBootstrapMembers({ tenantId, tenantName, schemeId, targetCount }) {
+    const persona = deriveTenantPersona(tenantName, random);
     const rows = [];
     for (let index = 0; index < targetCount; index += 1) {
       const gender = random.chance(0.5) ? "M" : "F";
-      const birthYear = random.int(1945, 2019);
+      const birthYear =
+        persona.segment === "bonitas"
+          ? random.int(1942, 1985)
+          : persona.segment === "momentum" || persona.segment === "fedhealth"
+            ? random.int(1975, 2010)
+            : random.int(1952, 2008);
       const birthMonth = String(random.int(1, 12)).padStart(2, "0");
       const birthDay = String(random.int(1, 28)).padStart(2, "0");
       const region = pickProvince(random);
@@ -1220,11 +1560,54 @@ export function createLiveDemoBootstrapFromDatabase({
     );
   }
 
-  async function maybeInsertBootstrapProviders({ tenantId, schemeId, targetCount }) {
+  async function maybeInsertBootstrapProviders({ tenantId, tenantName, schemeId, targetCount }) {
+    const persona = deriveTenantPersona(tenantName, random);
+    const specialtyWeights =
+      persona.segment === "discovery"
+        ? [
+            { value: "GENERAL_PRACTITIONER", weight: 20 },
+            { value: "SPECIALIST", weight: 18 },
+            { value: "HOSPITAL", weight: 12 },
+            { value: "RADIOLOGIST", weight: 10 },
+            { value: "PATHOLOGIST", weight: 10 },
+            { value: "PHARMACY", weight: 12 },
+            { value: "PHYSIOTHERAPIST", weight: 8 },
+            { value: "DENTIST", weight: 6 },
+            { value: "OBSTETRICIAN", weight: 2 },
+            { value: "PAEDIATRICIAN", weight: 2 },
+          ]
+        : persona.segment === "bonitas"
+          ? [
+              { value: "GENERAL_PRACTITIONER", weight: 22 },
+              { value: "SPECIALIST", weight: 16 },
+              { value: "HOSPITAL", weight: 12 },
+              { value: "RADIOLOGIST", weight: 8 },
+              { value: "PATHOLOGIST", weight: 12 },
+              { value: "PHARMACY", weight: 14 },
+              { value: "PHYSIOTHERAPIST", weight: 5 },
+              { value: "DENTIST", weight: 5 },
+              { value: "OBSTETRICIAN", weight: 3 },
+              { value: "PAEDIATRICIAN", weight: 3 },
+            ]
+          : persona.segment === "momentum"
+            ? [
+                { value: "GENERAL_PRACTITIONER", weight: 24 },
+                { value: "SPECIALIST", weight: 11 },
+                { value: "HOSPITAL", weight: 9 },
+                { value: "RADIOLOGIST", weight: 7 },
+                { value: "PATHOLOGIST", weight: 7 },
+                { value: "PHARMACY", weight: 18 },
+                { value: "PHYSIOTHERAPIST", weight: 10 },
+                { value: "DENTIST", weight: 10 },
+                { value: "OBSTETRICIAN", weight: 2 },
+                { value: "PAEDIATRICIAN", weight: 2 },
+              ]
+            : PROVIDER_SPECIALTIES.map((value) => ({ value, weight: 1 }));
+
     const rows = [];
     for (let index = 0; index < targetCount; index += 1) {
       const providerId = `SIMP-${tenantId.replace(/[^A-Za-z0-9]/g, "").slice(-6).toUpperCase()}-${schemeId}-${String(index + 1).padStart(4, "0")}`;
-      const specialty = random.pick(PROVIDER_SPECIALTIES);
+      const specialty = chooseWeighted(specialtyWeights, random.next()) || random.pick(PROVIDER_SPECIALTIES);
       const region = pickProvince(random);
       rows.push([
         providerId,
@@ -1265,7 +1648,11 @@ export function createLiveDemoBootstrapFromDatabase({
     );
   }
 
-  async function ensureBootstrapCapacity({ tenantId, schemeIds }) {
+  async function ensureBootstrapCapacity({ tenantId, tenantName, schemeIds }) {
+    const persona = deriveTenantPersona(tenantName, random);
+    const targetMembers = Number(persona.memberTarget || 120);
+    const targetProviders = Number(persona.providerTarget || 30);
+
     for (const schemeId of schemeIds) {
       const [memberCountRow] = await queryRows(
         "SELECT COUNT(*) AS total FROM members WHERE tenant_id = ? AND scheme_id = ?",
@@ -1279,19 +1666,21 @@ export function createLiveDemoBootstrapFromDatabase({
       const memberCount = Number(memberCountRow?.total || 0);
       const providerCount = Number(providerCountRow?.total || 0);
 
-      if (memberCount < 120) {
+      if (memberCount < targetMembers) {
         await maybeInsertBootstrapMembers({
           tenantId,
+          tenantName,
           schemeId,
-          targetCount: 120 - memberCount,
+          targetCount: targetMembers - memberCount,
         });
       }
 
-      if (providerCount < 30) {
+      if (providerCount < targetProviders) {
         await maybeInsertBootstrapProviders({
           tenantId,
           schemeId,
-          targetCount: 30 - providerCount,
+          tenantName,
+          targetCount: targetProviders - providerCount,
         });
       }
     }
@@ -1309,6 +1698,7 @@ export function createLiveDemoBootstrapFromDatabase({
 
       await ensureBootstrapCapacity({
         tenantId: tenant.tenant_id,
+        tenantName: tenant.tenant_name,
         schemeIds,
       });
 
