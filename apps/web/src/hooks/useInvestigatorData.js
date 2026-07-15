@@ -3,6 +3,26 @@ import { demoInvestigatorArtifacts } from "../features/investigator/demoInvestig
 
 const POLL_INTERVAL_MS = 15000;
 
+function isLedgerLinked(ledgerReference) {
+  if (!ledgerReference || typeof ledgerReference !== "object") {
+    return false;
+  }
+
+  if (ledgerReference.available === true || ledgerReference.linked === true || ledgerReference.configured === true) {
+    return true;
+  }
+
+  if (
+    ledgerReference.type === "runtime-ledger" &&
+    typeof ledgerReference.message === "string" &&
+    /no\s+.*entries\s+exist\s+yet/i.test(ledgerReference.message)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function selectClaimantForClaim(relationships, claimId) {
   const row = relationships.find((rel) => rel.claim_id === claimId && String(rel.source_entity_id).startsWith("claimant:"));
   return row?.source_entity_id?.replace("claimant:", "") || "Unknown";
@@ -181,7 +201,7 @@ export function useInvestigatorData() {
       averageRiskScore: avgRisk,
       activeFraudSchemes,
       recentDetections,
-      ledgerStatus: report?.detection?.ledger_reference?.available ? "Connected" : "Not linked",
+      ledgerStatus: isLedgerLinked(report?.detection?.ledger_reference) ? "Connected" : "Not linked",
     };
   }, [state.report, state.claims, state.risk]);
 

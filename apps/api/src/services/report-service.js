@@ -98,9 +98,15 @@ export function createReportService({
       };
 
       try {
-        const loaded = await reportStorage.getLatestReport();
-        checks.reportStorageReachable = true;
-        checks.reportAvailable = Boolean(loaded?.report);
+        if (typeof reportStorage?.checkReadiness === "function") {
+          const readiness = await reportStorage.checkReadiness();
+          checks.reportStorageReachable = readiness?.reachable !== false;
+          checks.reportAvailable = Boolean(readiness?.available);
+        } else {
+          const loaded = await reportStorage.getLatestReport();
+          checks.reportStorageReachable = true;
+          checks.reportAvailable = Boolean(loaded?.report);
+        }
       } catch {
         checks.reportStorageReachable = false;
       }

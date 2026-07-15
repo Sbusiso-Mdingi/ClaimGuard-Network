@@ -1,6 +1,42 @@
 import React, { useEffect, useState } from "react";
 import { PageFrame, SectionCard, StatusIndicator } from "./InvestigatorUI";
 
+const HEALTH_REQUEST_TIMEOUT_MS = 15000;
+
+async function fetchJsonWithTimeout(url, timeoutMs = HEALTH_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    if (!response.ok) {
+      return {
+        status: "error",
+        ready: false,
+        message: `Request failed (${response.status})`,
+      };
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      return {
+        status: "timeout",
+        ready: false,
+        message: "Request timed out.",
+      };
+    }
+
+    return {
+      status: "unreachable",
+      ready: false,
+      message: "Request failed.",
+    };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 function PlannedCapability({ title }) {
   return (
     <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
@@ -16,11 +52,19 @@ export function PlatformAdminPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [healthRes, readyRes] = await Promise.all([
-        fetch("/api/health").then((r) => r.json()).catch(() => null),
-        fetch("/api/ready").then((r) => r.json()).catch(() => null),
+      const [healthRes, readyRes] = await Promise.allSettled([
+        fetchJsonWithTimeout("/api/health"),
+        fetchJsonWithTimeout("/api/ready"),
       ]);
-      if (!cancelled) setHealth({ health: healthRes, ready: readyRes });
+
+      if (cancelled) {
+        return;
+      }
+
+      setHealth({
+        health: healthRes.status === "fulfilled" ? healthRes.value : { status: "unreachable" },
+        ready: readyRes.status === "fulfilled" ? readyRes.value : { status: "unreachable", ready: false },
+      });
     })();
     return () => {
       cancelled = true;

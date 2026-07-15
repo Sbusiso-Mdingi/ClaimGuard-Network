@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 
 import {
   LEGACY_DEFAULT_TENANT_ID,
@@ -73,6 +73,62 @@ export class FileReportStorage {
     };
   }
 
+  async checkReadiness() {
+    const reportsRoot = this.#getResolvedReportsRoot();
+    const tenantCandidates = buildTenantCandidates();
+
+    for (const tenantCandidate of tenantCandidates) {
+      const reportPathCandidate = await this.#resolveTenantScopedReportPath({
+        reportsRoot,
+        tenantSegment: tenantCandidate,
+      });
+
+      if (reportPathCandidate) {
+        return {
+          reachable: true,
+          available: await this.#fileExists(reportPathCandidate),
+        };
+      }
+    }
+
+    if (!this.reportPath) {
+      return {
+        reachable: true,
+        available: false,
+      };
+    }
+
+    return {
+      reachable: true,
+      available: await this.#fileExists(this.reportPath),
+    };
+  }
+
+  async #resolveTenantScopedReportPath({ reportsRoot, tenantSegment }) {
+    if (!reportsRoot || !tenantSegment) {
+      return null;
+    }
+
+    const tenantRoot = path.join(reportsRoot, tenantSegment);
+    const pointerPath = path.join(tenantRoot, this.latestPointerFileName);
+    const pointerContent = await this.#readFileIfExists(pointerPath);
+    if (!pointerContent) {
+      return null;
+    }
+
+    const pointer = parseJson(pointerContent, pointerPath);
+    return resolveReportReference({
+      reference:
+        pointer?.reportBlobName ||
+        pointer?.report_blob_name ||
+        pointer?.reportPath ||
+        pointer?.report_path ||
+        null,
+      rootPath: reportsRoot,
+      tenantRootPath: tenantRoot,
+    });
+  }
+
   async #loadTenantScopedReport({ reportsRoot, tenantSegment }) {
     if (!reportsRoot || !tenantSegment) {
       return null;
@@ -125,6 +181,18 @@ export class FileReportStorage {
     } catch (error) {
       if (error?.code === "ENOENT") {
         return null;
+      }
+      throw error;
+    }
+  }
+
+  async #fileExists(filePath) {
+    try {
+      await access(filePath);
+      return true;
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return false;
       }
       throw error;
     }
@@ -221,6 +289,65 @@ export class AzureBlobReportStorage {
     };
   }
 
+  async checkReadiness() {
+    const tenantCandidates = buildTenantCandidates();
+
+    for (const tenantCandidate of tenantCandidates) {
+      const reportBlobName = await this.#resolveTenantScopedReportBlob(tenantCandidate);
+      if (!reportBlobName) {
+        continue;
+      }
+
+      return {
+        reachable: true,
+        available: await this.#blobExists(reportBlobName),
+      };
+    }
+
+    const pointer = await this.#readPointer(this.latestPointerBlobName);
+    const reportBlobName =
+      pointer?.reportBlobName ||
+      pointer?.report_blob_name ||
+      pointer?.reportPath ||
+      pointer?.report_path ||
+      this.fallbackReportBlobName;
+
+    if (!reportBlobName) {
+      return {
+        reachable: true,
+        available: false,
+      };
+    }
+
+    return {
+      reachable: true,
+      available: await this.#blobExists(reportBlobName),
+    };
+  }
+
+  async #resolveTenantScopedReportBlob(tenantSegment) {
+    if (!tenantSegment) {
+      return null;
+    }
+
+    const tenantPrefix = `${tenantSegment}/`;
+    const pointerBlobName = `${tenantPrefix}${this.latestPointerBlobName}`;
+    const pointer = await this.#readPointer(pointerBlobName);
+    if (!pointer) {
+      return null;
+    }
+
+    return resolveBlobReference({
+      reference:
+        pointer?.reportBlobName ||
+        pointer?.report_blob_name ||
+        pointer?.reportPath ||
+        pointer?.report_path ||
+        null,
+      tenantPrefix,
+    });
+  }
+
   async #readPointer(pointerBlobName) {
     const content = await this.#readBlobAsString(pointerBlobName);
     if (!content) {
@@ -288,6 +415,11 @@ export class AzureBlobReportStorage {
     }
 
     return streamToString(stream);
+  }
+
+  async #blobExists(blobName) {
+    const blobClient = this.containerClient.getBlobClient(blobName);
+    return blobClient.exists();
   }
 }
 
