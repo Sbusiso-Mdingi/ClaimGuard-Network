@@ -17,13 +17,49 @@ const mimeTypes = {
   ".json": "application/json",
 };
 
+const hopByHopHeaders = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+  "content-length",
+]);
+
+function buildUpstreamHeaders(req) {
+  const headers = new Headers();
+
+  for (const [name, value] of Object.entries(req.headers)) {
+    const lowerName = name.toLowerCase();
+    if (hopByHopHeaders.has(lowerName) || value == null) {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        headers.append(name, entry);
+      }
+    } else {
+      headers.set(name, value);
+    }
+  }
+
+  return headers;
+}
+
 async function proxyApiRequest(req, res) {
   const upstreamUrl = new URL(req.url.replace(/^\/api/, ""), apiBaseUrl);
+  const method = (req.method || "GET").toUpperCase();
+  const hasBody = method !== "GET" && method !== "HEAD";
   const upstreamResponse = await fetch(upstreamUrl, {
-    method: req.method,
-    headers: {
-      accept: req.headers.accept || "application/json",
-    },
+    method,
+    headers: buildUpstreamHeaders(req),
+    body: hasBody ? req : undefined,
+    duplex: hasBody ? "half" : undefined,
   });
 
   const body = await upstreamResponse.arrayBuffer();
