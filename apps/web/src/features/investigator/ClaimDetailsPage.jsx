@@ -9,6 +9,18 @@ import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
 import { addTrackedInvestigation } from "../../lib/trackedInvestigations";
 
 function RiskPanel({ claim, risk, ledgerReference }) {
+  const ledgerLinked =
+    ledgerReference?.available === true ||
+    ledgerReference?.linked === true ||
+    ledgerReference?.configured === true ||
+    (ledgerReference?.type === "runtime-ledger" &&
+      typeof ledgerReference?.message === "string" &&
+      /no\s+.*entries\s+exist\s+yet/i.test(ledgerReference.message));
+
+  const ledgerLabel = ledgerLinked
+    ? `Connected (${ledgerReference?.entry?.entryType || "no entries yet"})`
+    : "Unavailable";
+
   return (
     <SectionCard title="Risk summary" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
       <div className="space-y-5 text-sm">
@@ -32,7 +44,7 @@ function RiskPanel({ claim, risk, ledgerReference }) {
           </div>
           <div className="rounded-xl border border-border/70 px-4 py-3">
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Ledger reference</p>
-            <p className="mt-2 text-sm text-muted-foreground">{ledgerReference?.available ? `Connected (${ledgerReference.entry?.entryType || "entry"})` : "Unavailable"}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{ledgerLabel}</p>
           </div>
         </div>
 
