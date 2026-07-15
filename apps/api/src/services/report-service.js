@@ -62,29 +62,61 @@ export function createReportService({
   producerRuntimeTrigger = null,
   detectionAnalyzeProxyUrl = null,
 } = {}) {
+  const reportCacheTtlMsRaw = Number.parseInt(process.env.REPORT_CACHE_TTL_MS || "15000", 10);
+  const reportCacheTtlMs = Number.isFinite(reportCacheTtlMsRaw) && reportCacheTtlMsRaw >= 0 ? reportCacheTtlMsRaw : 15000;
+
+  let cachedReport = null;
+  let cachedReportAt = 0;
+  let inflightLoadPromise = null;
+
+  const readFromStorage = async () => {
+    try {
+      const loaded = await reportStorage.getLatestReport();
+      if (!loaded || !loaded.report) {
+        return {
+          ok: false,
+          status: 503,
+          body: {
+            available: false,
+            message: "No detection report is available from the configured report storage.",
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        report: loaded.report,
+        metadata: loaded.metadata || null,
+      };
+    } catch (error) {
+      return reportStorageFailure(error);
+    }
+  };
+
   return {
     async loadReportOrFail() {
-      try {
-        const loaded = await reportStorage.getLatestReport();
-        if (!loaded || !loaded.report) {
-          return {
-            ok: false,
-            status: 503,
-            body: {
-              available: false,
-              message: "No detection report is available from the configured report storage.",
-            },
-          };
-        }
+      const now = Date.now();
+      const cacheIsFresh =
+        cachedReport && reportCacheTtlMs > 0 && now - cachedReportAt <= reportCacheTtlMs;
 
-        return {
-          ok: true,
-          report: loaded.report,
-          metadata: loaded.metadata || null,
-        };
-      } catch (error) {
-        return reportStorageFailure(error);
+      if (cacheIsFresh) {
+        return cachedReport;
       }
+
+      if (!inflightLoadPromise) {
+        inflightLoadPromise = readFromStorage().finally(() => {
+          inflightLoadPromise = null;
+        });
+      }
+
+      const result = await inflightLoadPromise;
+
+      if (result?.ok) {
+        cachedReport = result;
+        cachedReportAt = Date.now();
+      }
+
+      return result;
     },
 
     async checkReadiness() {

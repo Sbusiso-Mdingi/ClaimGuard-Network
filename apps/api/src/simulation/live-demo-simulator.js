@@ -1,8 +1,16 @@
 import crypto from "node:crypto";
+import { createStoryEngine } from "./story-mode.js";
+import { createTimelineScheduler } from "./agents/timeline-scheduler.js";
+import { createMemberBehaviourAgent } from "./agents/member-behaviour-agent.js";
+import { createProviderBehaviourAgent } from "./agents/provider-behaviour-agent.js";
+import { createClaimSubmissionAgent } from "./agents/claim-submission-agent.js";
+import { createFraudAnalystAgent } from "./agents/fraud-analyst-agent.js";
+import { createInvestigatorAgent } from "./agents/investigator-agent.js";
+import { createApplicationsCommitteeAgent } from "./agents/applications-committee-agent.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 8_000;
 const DEFAULT_MAX_RECENT_CLAIMS = 500;
-const DEFAULT_FRAUD_RATE = 0.08;
+const DEFAULT_FRAUD_RATE = 0.04;
 
 const PROVIDER_SPECIALTIES = [
   "GENERAL_PRACTITIONER",
@@ -87,19 +95,61 @@ function normalizeSimulationMode(value) {
 }
 
 export function parseLiveDemoConfigFromEnvironment(env = process.env) {
+  const mode = normalizeSimulationMode(env.LIVE_DEMO_MODE);
   const configuredTenants = String(env.LIVE_DEMO_TENANTS || "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
 
   return {
-    mode: normalizeSimulationMode(env.LIVE_DEMO_MODE),
-    enabled: normalizeSimulationMode(env.LIVE_DEMO_MODE) === "on",
+    mode,
+    enabled: mode === "on" || mode === "static",
+    staticMode: mode === "static",
     tickIntervalMs: clamp(Number(env.LIVE_DEMO_TICK_MS || DEFAULT_TICK_INTERVAL_MS), 1000, 300000),
     seed: Number(env.LIVE_DEMO_SEED || 42),
     configuredTenantIds: configuredTenants,
     maxRecentClaims: clamp(Number(env.LIVE_DEMO_MAX_RECENT_CLAIMS || DEFAULT_MAX_RECENT_CLAIMS), 100, 5000),
-    fraudRate: clamp(Number(env.LIVE_DEMO_FRAUD_RATE || DEFAULT_FRAUD_RATE), 0.01, 0.5),
+    maxActiveInvestigations: clamp(Number(env.LIVE_DEMO_MAX_ACTIVE_INVESTIGATIONS || 800), 50, 8000),
+    storyMode: String(env.LIVE_DEMO_STORY_MODE || ""),
+    fraudRate: clamp(Number(env.LIVE_DEMO_FRAUD_RATE || DEFAULT_FRAUD_RATE), 0.02, 0.05),
+  };
+}
+
+function deriveTenantPersona(tenantName, random) {
+  const normalized = String(tenantName || "").toLowerCase();
+
+  if (normalized.includes("discovery")) {
+    return {
+      demographics: "large_population",
+      chronicBurden: "medium",
+      claimVolumeWeight: 1.4,
+      specialistDensity: 1.3,
+    };
+  }
+
+  if (normalized.includes("bonitas")) {
+    return {
+      demographics: "older_population",
+      chronicBurden: "high",
+      claimVolumeWeight: 1.2,
+      specialistDensity: 1.1,
+    };
+  }
+
+  if (normalized.includes("momentum")) {
+    return {
+      demographics: "younger_population",
+      chronicBurden: "low",
+      claimVolumeWeight: 0.9,
+      specialistDensity: 1.0,
+    };
+  }
+
+  return {
+    demographics: "mixed_population",
+    chronicBurden: random.pick(["low", "medium", "high"]),
+    claimVolumeWeight: Number((0.9 + random.next() * 0.5).toFixed(2)),
+    specialistDensity: Number((0.9 + random.next() * 0.5).toFixed(2)),
   };
 }
 
@@ -247,6 +297,7 @@ function createTenantState(tenant, random) {
   return {
     tenantId: tenant.tenant_id,
     tenantName: tenant.tenant_name,
+    persona: deriveTenantPersona(tenant.tenant_name, random),
     schemes: [...tenant.schemes],
     members,
     providers,
@@ -257,14 +308,22 @@ function createTenantState(tenant, random) {
     lastSeenMemberIds: new Set(),
     lastSeenProviderIds: new Set(),
     randomWeight: random.int(1, 100),
+    agents: {
+      member: null,
+      provider: null,
+    },
   };
 }
 
 export function createLiveDemoSimulator({
   enabled = false,
+  mode = "off",
+  staticMode = false,
   seed = 42,
   tickIntervalMs = DEFAULT_TICK_INTERVAL_MS,
   maxRecentClaims = DEFAULT_MAX_RECENT_CLAIMS,
+  maxActiveInvestigations = 800,
+  storyMode = "",
   fraudRate = DEFAULT_FRAUD_RATE,
   apiClient,
   bootstrap,
@@ -273,12 +332,20 @@ export function createLiveDemoSimulator({
 } = {}) {
   const random = new SeededRandom(seed);
   const timeline = defaultTimeline(timelineConfig);
+  const storyEngine = createStoryEngine({ storyMode });
+  const scheduler = createTimelineScheduler({ random, staticMode });
 
   let timer = null;
   let running = false;
   let tickNumber = 0;
   let claimSequence = 0;
   let tenantStates = new Map();
+  const agentRuntime = {
+    claimSubmission: null,
+    fraudAnalyst: null,
+    investigator: null,
+    committee: null,
+  };
 
   const stats = {
     ticks: 0,
@@ -328,11 +395,28 @@ export function createLiveDemoSimulator({
       return null;
     }
 
-    values.sort((left, right) => left.randomWeight - right.randomWeight);
-    return values[random.int(0, values.length - 1)];
+    const weighted = values.map((value) => ({
+      value,
+      weight: Math.max(1, Math.floor((value.persona?.claimVolumeWeight || 1) * 100)) + value.randomWeight,
+    }));
+
+    const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+    let threshold = random.next() * total;
+    for (const entry of weighted) {
+      threshold -= entry.weight;
+      if (threshold <= 0) {
+        return entry.value;
+      }
+    }
+
+    return weighted[weighted.length - 1]?.value || null;
   }
 
-  function selectClaimFamily(member, provider) {
+  function selectClaimFamily(member, provider, claimFamilyHint = null) {
+    if (claimFamilyHint) {
+      return claimFamilyHint;
+    }
+
     if (member.profile.chronic && random.chance(0.35)) {
       return "pharmacy";
     }
@@ -348,16 +432,21 @@ export function createLiveDemoSimulator({
     return specialtyToClaimFamily(provider.specialty);
   }
 
-  function buildClaimForTenant(tenantState, timelineNow) {
-    const member = random.pick(tenantState.members);
-    const provider = random.pick(tenantState.providers.filter((entry) => entry.scheme_id === member.scheme_id));
+  function buildClaimForTenant(tenantState, timelineNow, options = {}) {
+    const member = options.member || random.pick(tenantState.members);
+    if (!member) {
+      return null;
+    }
+
+    const providerPool = tenantState.providers.filter((entry) => entry.scheme_id === member.scheme_id);
+    const provider = options.provider || random.pick(providerPool);
 
     if (!member || !provider) {
       return null;
     }
 
     claimSequence += 1;
-    const claimFamily = selectClaimFamily(member, provider);
+    const claimFamily = selectClaimFamily(member, provider, options.claimFamilyHint || null);
     const billingCode = random.pick(BILLING_CODES[claimFamily] || BILLING_CODES.consultation);
     const amountBase =
       claimFamily === "hospital"
@@ -368,7 +457,7 @@ export function createLiveDemoSimulator({
             ? random.int(180, 1600)
             : random.int(250, 4200);
 
-    const scenario = random.chance(fraudRate) ? random.pick(FRAUD_SCENARIOS) : null;
+    const scenario = options.scenario || (random.chance(fraudRate) ? random.pick(FRAUD_SCENARIOS) : null);
     const amount = scenario && scenario.key === "procedure_inflation" ? amountBase * random.int(2, 4) : amountBase;
 
     const claim = {
@@ -388,6 +477,9 @@ export function createLiveDemoSimulator({
       tenant_id: tenantState.tenantId,
       _sim: {
         scenario,
+        story: options.story || null,
+        memberIntent: options.memberIntent || null,
+        providerIntent: options.providerIntent || null,
         member,
         provider,
       },
@@ -419,9 +511,16 @@ export function createLiveDemoSimulator({
       pushActivity({
         tick: tickNumber,
         type: "claim_ingested",
+        agent: "claim_submission_agent",
         tenantId: tenantState.tenantId,
+        schemeId: claim.scheme_id,
+        memberId: claim.member_id,
+        providerId: claim.provider_id,
         claimId: claim.claim_id,
         scenario: claim._sim?.scenario?.key || null,
+        story: claim._sim?.story?.key || null,
+        decision: claim._sim?.scenario ? "fraud_pattern_injected" : "normal_healthcare_claim",
+        correlationId: `${tenantState.tenantId}:${tickNumber}:${claim.claim_id}`,
       });
 
       if (claim._sim?.scenario) {
@@ -432,13 +531,22 @@ export function createLiveDemoSimulator({
           escalated: false,
         });
       }
+
+      return true;
     }
+
+    return false;
   }
 
   async function maybeCreateInvestigation(tenantState) {
+    const activeCount = [...tenantState.activeInvestigations.values()].filter((entry) => entry.status !== "CLOSED").length;
+    if (activeCount >= maxActiveInvestigations) {
+      return false;
+    }
+
     const candidates = tenantState.recentFraudCandidates.filter((candidate) => !candidate.escalated);
     if (candidates.length === 0 || !random.chance(0.45)) {
-      return;
+      return false;
     }
 
     const selected = random.pick(candidates);
@@ -458,7 +566,7 @@ export function createLiveDemoSimulator({
     });
 
     if (response.status === 201 && response.json?.available && response.json.investigation?.investigationId) {
-      const investigation = response.json.investigation;
+      const { investigation } = response.json;
       tenantState.activeInvestigations.set(investigation.investigationId, {
         investigationId: investigation.investigationId,
         claimId: selected.claim.claim_id,
@@ -475,18 +583,29 @@ export function createLiveDemoSimulator({
       pushActivity({
         tick: tickNumber,
         type: "investigation_created",
+        agent: "fraud_analyst_agent",
         tenantId: tenantState.tenantId,
+        memberId: selected.claim.member_id,
+        providerId: selected.claim.provider_id,
         investigationId: investigation.investigationId,
         claimId: selected.claim.claim_id,
         scenario: selected.scenario.key,
+        decision: "escalate",
+        correlationId: `${tenantState.tenantId}:${tickNumber}:${investigation.investigationId}`,
       });
+
+      return true;
     }
+
+    return false;
   }
 
   async function patchInvestigationStatus(tenantState, investigation, nextStatus) {
     if (!allowedTransition(investigation.status, nextStatus)) {
       return false;
     }
+
+    const previousStatus = investigation.status;
 
     const response = await apiRequest({
       path: `/investigations/${encodeURIComponent(investigation.investigationId)}`,
@@ -504,9 +623,12 @@ export function createLiveDemoSimulator({
       pushActivity({
         tick: tickNumber,
         type: "investigation_status",
+        agent: "investigator_agent",
         tenantId: tenantState.tenantId,
         investigationId: investigation.investigationId,
         status: nextStatus,
+        decision: `transition:${previousStatus}->${nextStatus}`,
+        correlationId: `${tenantState.tenantId}:${tickNumber}:${investigation.investigationId}`,
       });
       return true;
     }
@@ -594,8 +716,11 @@ export function createLiveDemoSimulator({
       pushActivity({
         tick: tickNumber,
         type: "fraud_confirmed",
+        agent: "investigator_agent",
         tenantId: tenantState.tenantId,
         investigationId: investigation.investigationId,
+        decision: "confirm_fraud",
+        correlationId: `${tenantState.tenantId}:${tickNumber}:${investigation.investigationId}`,
       });
       return true;
     }
@@ -628,8 +753,11 @@ export function createLiveDemoSimulator({
       pushActivity({
         tick: tickNumber,
         type: "fraud_reversed",
+        agent: "applications_committee_agent",
         tenantId: tenantState.tenantId,
         investigationId: investigation.investigationId,
+        decision: "reverse_fraud",
+        correlationId: `${tenantState.tenantId}:${tickNumber}:${investigation.investigationId}`,
       });
       return true;
     }
@@ -640,17 +768,17 @@ export function createLiveDemoSimulator({
   async function progressInvestigationForTenant(tenantState, timelineNow) {
     const active = [...tenantState.activeInvestigations.values()].filter((entry) => entry.status !== "CLOSED");
     if (active.length === 0) {
-      return;
+      return false;
     }
 
     const investigation = random.pick(active);
     if (!investigation) {
-      return;
+      return false;
     }
 
     if (investigation.status === "OPEN") {
       await patchInvestigationStatus(tenantState, investigation, "UNDER_REVIEW");
-      return;
+      return true;
     }
 
     if (investigation.status === "UNDER_REVIEW") {
@@ -666,7 +794,7 @@ export function createLiveDemoSimulator({
 
       if (random.chance(0.35)) {
         await patchInvestigationStatus(tenantState, investigation, "AWAITING_EVIDENCE");
-        return;
+        return true;
       }
 
       if (random.chance(0.4)) {
@@ -674,7 +802,7 @@ export function createLiveDemoSimulator({
       } else if (random.chance(0.35)) {
         await patchInvestigationStatus(tenantState, investigation, "NO_FRAUD_FOUND");
       }
-      return;
+      return true;
     }
 
     if (investigation.status === "AWAITING_EVIDENCE") {
@@ -682,23 +810,15 @@ export function createLiveDemoSimulator({
       if (random.chance(0.7)) {
         await patchInvestigationStatus(tenantState, investigation, "UNDER_REVIEW");
       }
-      return;
+      return true;
     }
 
     if (investigation.status === "CONFIRMED_FRAUD") {
       if (!investigation.published) {
         await maybeConfirmFraud(tenantState, investigation, timelineNow);
-      } else {
-        await maybeReverseFraud(tenantState, investigation);
       }
 
-      if (random.chance(0.45)) {
-        const closed = await patchInvestigationStatus(tenantState, investigation, "CLOSED");
-        if (closed) {
-          stats.investigationsClosed += 1;
-        }
-      }
-      return;
+      return true;
     }
 
     if (investigation.status === "NO_FRAUD_FOUND") {
@@ -708,21 +828,57 @@ export function createLiveDemoSimulator({
           stats.investigationsClosed += 1;
         }
       }
+
+      return true;
     }
+
+    return false;
   }
 
-  function updateProviderRelationships(tenantState) {
-    const updates = random.int(0, 2);
-    tenantState.providerRelationshipVersion += updates;
-    tenantState.relationshipUpdates += updates;
-    stats.relationshipUpdates += updates;
+  async function maybeReviewClosedOutcomes(tenantState) {
+    const closedEligible = [...tenantState.activeInvestigations.values()].filter(
+      (entry) => entry.status === "CONFIRMED_FRAUD" || entry.status === "NO_FRAUD_FOUND",
+    );
 
-    if (updates > 0) {
+    if (closedEligible.length === 0) {
+      return null;
+    }
+
+    const selected = random.pick(closedEligible);
+    if (!selected) {
+      return null;
+    }
+
+    if (selected.status === "CONFIRMED_FRAUD" && selected.published && random.chance(0.08)) {
+      await maybeReverseFraud(tenantState, selected);
+    }
+
+    if (random.chance(0.45)) {
+      const closed = await patchInvestigationStatus(tenantState, selected, "CLOSED");
+      if (closed) {
+        stats.investigationsClosed += 1;
+        return "committee_closed_case";
+      }
+    }
+
+    return "committee_reviewed_case";
+  }
+
+  function updateProviderRelationships(tenantState, updates = null) {
+    const updateCount = Number.isFinite(updates) ? updates : random.int(0, 2);
+    tenantState.providerRelationshipVersion += updateCount;
+    tenantState.relationshipUpdates += updateCount;
+    stats.relationshipUpdates += updateCount;
+
+    if (updateCount > 0) {
       pushActivity({
         tick: tickNumber,
         type: "provider_relationship_update",
+        agent: "provider_behaviour_agent",
         tenantId: tenantState.tenantId,
-        count: updates,
+        count: updateCount,
+        decision: "network_update",
+        correlationId: `${tenantState.tenantId}:${tickNumber}:provider-network`,
       });
     }
   }
@@ -742,27 +898,31 @@ export function createLiveDemoSimulator({
     stats.ticks += 1;
 
     const now = timeline.advance(random);
-    const claimsToCreate = random.int(0, 3);
+    const tickPlan = {
+      ...scheduler.nextTickPlan({ tickNumber }),
+      tickNumber,
+    };
 
-    for (let index = 0; index < claimsToCreate; index += 1) {
-      const tenantState = pickTenantState();
-      if (!tenantState) {
-        break;
-      }
-
-      const claim = buildClaimForTenant(tenantState, now);
-      if (!claim) {
-        continue;
-      }
-
-      await ingestClaim({ tenantState, claim });
+    if (agentRuntime.claimSubmission) {
+      await agentRuntime.claimSubmission.runTick({ tickPlan, timelineNow: now });
     }
 
-    const tenantForInvestigation = pickTenantState();
-    if (tenantForInvestigation) {
-      await maybeCreateInvestigation(tenantForInvestigation);
-      await progressInvestigationForTenant(tenantForInvestigation, now);
-      updateProviderRelationships(tenantForInvestigation);
+    if (agentRuntime.fraudAnalyst) {
+      await agentRuntime.fraudAnalyst.runTick({ tickPlan, timelineNow: now });
+    }
+
+    if (agentRuntime.investigator) {
+      await agentRuntime.investigator.runTick({ tickPlan, timelineNow: now });
+    }
+
+    if (agentRuntime.committee) {
+      await agentRuntime.committee.runTick({ tickPlan, timelineNow: now });
+    }
+
+    const tenantForRelationshipUpdate = pickTenantState();
+    if (tenantForRelationshipUpdate) {
+      const planned = tenantForRelationshipUpdate.agents.provider.planRelationshipUpdates();
+      updateProviderRelationships(tenantForRelationshipUpdate, planned);
     }
 
     for (const tenantState of tenantStates.values()) {
@@ -790,12 +950,21 @@ export function createLiveDemoSimulator({
     }
 
     const catalog = await bootstrap.loadCatalog();
-    tenantStates = new Map(
-      (catalog || [])
-        .filter((tenant) => tenant?.tenant_id && Array.isArray(tenant.members) && Array.isArray(tenant.providers))
-        .filter((tenant) => tenant.members.length > 0 && tenant.providers.length > 0)
-        .map((tenant) => [tenant.tenant_id, createTenantState(tenant, random)]),
-    );
+    tenantStates = new Map();
+    for (const tenant of catalog || []) {
+      if (!tenant?.tenant_id || !Array.isArray(tenant.members) || !Array.isArray(tenant.providers)) {
+        continue;
+      }
+
+      if (tenant.members.length === 0 || tenant.providers.length === 0) {
+        continue;
+      }
+
+      const tenantState = createTenantState(tenant, random);
+      tenantState.agents.member = createMemberBehaviourAgent({ random });
+      tenantState.agents.provider = createProviderBehaviourAgent({ random });
+      tenantStates.set(tenant.tenant_id, tenantState);
+    }
 
     log("info", "live_demo_catalog_loaded", {
       tenants: tenantStates.size,
@@ -803,6 +972,40 @@ export function createLiveDemoSimulator({
       providers: [...tenantStates.values()].reduce((sum, tenant) => sum + tenant.providers.length, 0),
       tickIntervalMs,
       seed,
+      mode,
+      staticMode,
+      stories: storyEngine.activeStories,
+    });
+
+    agentRuntime.claimSubmission = createClaimSubmissionAgent({
+      random,
+      storyEngine,
+      fraudRate,
+      scenarios: FRAUD_SCENARIOS,
+      pickTenantState,
+      buildClaimForTenant,
+      ingestClaim,
+      pushActivity,
+    });
+
+    agentRuntime.fraudAnalyst = createFraudAnalystAgent({
+      random,
+      pickTenantState,
+      maybeCreateInvestigation,
+      pushActivity,
+    });
+
+    agentRuntime.investigator = createInvestigatorAgent({
+      pickTenantState,
+      progressInvestigationForTenant,
+      pushActivity,
+    });
+
+    agentRuntime.committee = createApplicationsCommitteeAgent({
+      random,
+      pickTenantState,
+      maybeReviewClosedOutcomes,
+      pushActivity,
     });
   }
 
@@ -829,6 +1032,9 @@ export function createLiveDemoSimulator({
       tickIntervalMs,
       seed,
       enabled,
+      mode,
+      staticMode,
+      stories: storyEngine.activeStories,
     });
   }
 
@@ -856,6 +1062,8 @@ export function createLiveDemoSimulator({
   function getSnapshot() {
     return {
       enabled,
+      mode,
+      staticMode,
       running,
       tickNumber,
       now: timeline.current().toISOString(),
@@ -872,6 +1080,7 @@ export function createLiveDemoSimulator({
         relationshipUpdates: tenant.relationshipUpdates,
       })),
       activityTail: activityLog.slice(-100),
+      stories: storyEngine.activeStories,
     };
   }
 

@@ -90,9 +90,13 @@ if (databasePool && liveDemoConfig.enabled) {
 
   liveDemoSimulator = createLiveDemoSimulator({
     enabled: true,
+    mode: liveDemoConfig.mode,
+    staticMode: liveDemoConfig.staticMode,
     seed: liveDemoConfig.seed,
     tickIntervalMs: liveDemoConfig.tickIntervalMs,
     maxRecentClaims: liveDemoConfig.maxRecentClaims,
+    maxActiveInvestigations: liveDemoConfig.maxActiveInvestigations,
+    storyMode: liveDemoConfig.storyMode,
     fraudRate: liveDemoConfig.fraudRate,
     bootstrap,
     apiClient: {

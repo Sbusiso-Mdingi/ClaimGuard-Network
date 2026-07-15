@@ -330,14 +330,19 @@ function createMockApiClient(catalog) {
   };
 }
 
-async function createSimulatorHarness({ enabled, seed = 42 }) {
+async function createSimulatorHarness({ enabled, seed = 42, mode = null, staticMode = false, storyMode = "" }) {
   const catalog = createCatalog();
   const apiClient = createMockApiClient(catalog);
+  const resolvedMode = mode || (enabled ? "on" : "off");
 
   const simulator = createLiveDemoSimulator({
     enabled,
+    mode: resolvedMode,
+    staticMode,
+    storyMode,
     seed,
     tickIntervalMs: 60_000,
+    maxActiveInvestigations: 200,
     bootstrap: {
       async loadCatalog() {
         return catalog;
@@ -461,4 +466,49 @@ test("simulation is deterministic with fixed seed", async () => {
 
   assert.deepEqual(firstSnapshot.stats, secondSnapshot.stats);
   assert.deepEqual(firstSnapshot.activityTail, secondSnapshot.activityTail);
+});
+
+test("story mode produces reproducible named scenarios", async () => {
+  const first = await createSimulatorHarness({
+    enabled: true,
+    seed: 314,
+    storyMode: "provider_collusion,identity_theft",
+  });
+  const second = await createSimulatorHarness({
+    enabled: true,
+    seed: 314,
+    storyMode: "provider_collusion,identity_theft",
+  });
+
+  for (let index = 0; index < 75; index += 1) {
+    await first.simulator.runTick();
+    await second.simulator.runTick();
+  }
+
+  const firstSnapshot = first.simulator.getSnapshot();
+  const secondSnapshot = second.simulator.getSnapshot();
+
+  assert.equal(firstSnapshot.stories.length > 0, true);
+  assert.deepEqual(firstSnapshot.stories, secondSnapshot.stories);
+  assert.deepEqual(firstSnapshot.activityTail, secondSnapshot.activityTail);
+});
+
+test("static mode remains deterministic while API checks continue", async () => {
+  const { simulator, apiClient } = await createSimulatorHarness({
+    enabled: true,
+    mode: "static",
+    staticMode: true,
+    seed: 808,
+    storyMode: "duplicate_mri_billing",
+  });
+
+  for (let index = 0; index < 60; index += 1) {
+    await simulator.runTick();
+  }
+
+  const snapshot = simulator.getSnapshot();
+  assert.equal(snapshot.mode, "static");
+  assert.equal(snapshot.staticMode, true);
+  assert.equal(snapshot.stats.apiCalls > 0, true);
+  assert.equal(apiClient.state.calls.length > 0, true);
 });
