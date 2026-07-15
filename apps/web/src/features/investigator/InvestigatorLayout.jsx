@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { Activity, Moon, Sparkles, Sun } from "lucide-react";
+import { Activity, Menu, Moon, Sparkles, Sun, X } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { useRole } from "../../context/RoleContext";
@@ -42,6 +42,7 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
   const usingDemoDataset = dataSource === "demo";
 
   const [theme, setTheme] = useState(() => window.localStorage.getItem("claimguard-theme") || "dark");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -50,10 +51,55 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
     window.localStorage.setItem("claimguard-theme", theme);
   }, [theme]);
 
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3 lg:hidden">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-10 w-10 rounded-lg"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open navigation"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Activity className="h-4 w-4" />
+          </span>
+          <p className="font-data text-xs uppercase tracking-[0.2em] text-muted-foreground">Investigator console</p>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-10 w-10 rounded-full"
+          onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+          aria-label="Toggle theme on mobile"
+        >
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
+      </div>
+
+      {sidebarOpen ? (
+        <div
+          className="fixed inset-0 z-30 bg-background/70 backdrop-blur-sm lg:hidden"
+          aria-hidden="true"
+          onClick={() => setSidebarOpen(false)}
+        />
+      ) : null}
+
       <div className="mx-auto grid min-h-screen w-full max-w-[1680px] grid-cols-1 lg:grid-cols-[300px_1fr]">
-        <aside className="sticky top-0 flex h-screen flex-col border-b border-border bg-card px-4 py-4 lg:border-b-0 lg:border-r">
+        <aside
+          className={[
+            "fixed inset-y-0 left-0 z-40 flex h-screen w-[300px] flex-col overflow-y-auto border-r border-border bg-card px-4 py-4 transition-transform duration-200 investigator-scrollbar",
+            sidebarOpen ? "translate-x-0" : "-translate-x-full",
+            "lg:sticky lg:top-0 lg:z-auto lg:w-auto lg:translate-x-0",
+          ].join(" ")}
+        >
           <div className="mb-5 flex items-center justify-between gap-3 border-b border-border/70 pb-4">
             <Link to="/" className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -64,15 +110,26 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
                 <p className="font-data text-xs uppercase tracking-[0.2em] text-muted-foreground">Investigator console</p>
               </div>
             </Link>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-10 w-10 rounded-full"
-              onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-              aria-label="Toggle theme"
-            >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-10 w-10 rounded-full"
+                onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-10 w-10 rounded-full lg:hidden"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close navigation"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           <nav className="space-y-5">

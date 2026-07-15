@@ -36,21 +36,41 @@ export function SectionCard({ title, description, actions, children, className =
 }
 
 export function StatCard({ title, value, description, icon: Icon, tone = "default" }) {
-  const toneClasses =
-    tone === "success"
-      ? "border-emerald-500/40 bg-card"
-      : tone === "warning"
-        ? "border-amber-500/40 bg-card"
-        : tone === "danger"
-          ? "border-rose-500/40 bg-card"
-          : "border-border/80 bg-card";
+  const toneStyles = {
+    success: {
+      border: "border-emerald-500/40",
+      accent: "bg-emerald-500/70",
+      chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+    },
+    warning: {
+      border: "border-amber-500/40",
+      accent: "bg-amber-500/70",
+      chip: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+    },
+    danger: {
+      border: "border-rose-500/40",
+      accent: "bg-rose-500/70",
+      chip: "bg-rose-500/10 text-rose-600 dark:text-rose-300",
+    },
+    default: {
+      border: "border-border/80",
+      accent: "bg-primary/50",
+      chip: "bg-primary/10 text-primary",
+    },
+  };
+  const styles = toneStyles[tone] || toneStyles.default;
 
   return (
-    <Card className={`overflow-hidden rounded-xl shadow-none ${toneClasses}`}>
+    <Card className={`relative overflow-hidden rounded-xl bg-card shadow-none ${styles.border}`}>
+      <span className={`absolute inset-x-0 top-0 h-0.5 ${styles.accent}`} aria-hidden="true" />
       <CardHeader className="space-y-3 pb-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{title}</p>
-          {Icon ? <Icon className="h-4 w-4 text-muted-foreground" /> : null}
+          {Icon ? (
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${styles.chip}`}>
+              <Icon className="h-4 w-4" />
+            </span>
+          ) : null}
         </div>
         <CardTitle className="font-data text-3xl font-semibold leading-none tracking-tight">{value}</CardTitle>
       </CardHeader>
@@ -115,6 +135,38 @@ export function severityStatusTone(severity) {
   if (severity === "High") return "danger";
   if (severity === "Medium") return "warning";
   return "success";
+}
+
+export function riskScoreTone(score) {
+  if (!Number.isFinite(score)) return "default";
+  if (score >= 75) return "danger";
+  if (score >= 50) return "warning";
+  return "success";
+}
+
+const RISK_BAR_TONE = {
+  danger: "bg-rose-500/80",
+  warning: "bg-amber-500/80",
+  success: "bg-emerald-500/80",
+  default: "bg-primary/70",
+};
+
+export function RiskScoreBar({ score, className = "" }) {
+  const clamped = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
+  const tone = riskScoreTone(score);
+
+  return (
+    <div
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={clamped}
+      aria-label="Risk score"
+      className={`h-1.5 w-full overflow-hidden rounded-full bg-secondary ${className}`}
+    >
+      <div className={`h-full rounded-full transition-all ${RISK_BAR_TONE[tone]}`} style={{ width: `${clamped}%` }} />
+    </div>
+  );
 }
 
 export function claimStatusTone(status) {

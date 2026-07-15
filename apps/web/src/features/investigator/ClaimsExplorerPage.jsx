@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Filter, Search, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { Filter, Search, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
-import { PageFrame, SectionCard, StatusIndicator, claimStatusTone } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatusIndicator, RiskScoreBar, claimStatusTone } from "./InvestigatorUI";
+
+const PAGE_SIZE = 10;
 
 const SORT_FIELDS = {
   claimId: (a, b) => a.claimId.localeCompare(b.claimId),
@@ -20,6 +22,7 @@ export function ClaimsExplorerPage({ claims }) {
   const [severityFilter, setSeverityFilter] = useState("all");
   const [sortField, setSortField] = useState("riskScore");
   const [sortDirection, setSortDirection] = useState("desc");
+  const [page, setPage] = useState(0);
 
   const rows = useMemo(() => {
     const filtered = claims.filter((claim) => {
@@ -40,6 +43,17 @@ export function ClaimsExplorerPage({ claims }) {
     return filtered;
   }, [claims, query, severityFilter, sortField, sortDirection]);
 
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pagedRows = useMemo(
+    () => rows.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE),
+    [rows, currentPage],
+  );
+
+  useEffect(() => {
+    setPage(0);
+  }, [query, severityFilter]);
+
   function toggleSort(field) {
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -47,6 +61,11 @@ export function ClaimsExplorerPage({ claims }) {
     }
     setSortField(field);
     setSortDirection("desc");
+  }
+
+  function SortIcon({ field }) {
+    if (sortField !== field) return <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />;
+    return sortDirection === "asc" ? <ArrowUp className="h-3.5 w-3.5 text-primary" /> : <ArrowDown className="h-3.5 w-3.5 text-primary" />;
   }
 
   return (
@@ -97,20 +116,20 @@ export function ClaimsExplorerPage({ claims }) {
             <thead className="sticky top-0 z-10">
               <tr>
                 <th>
-                  <button className="inline-flex items-center gap-2 font-medium text-foreground transition hover:text-primary" onClick={() => toggleSort("claimId")}>
-                    Claim ID <ArrowUpDown className="h-3.5 w-3.5" />
+                  <button className="inline-flex items-center gap-2 font-medium text-foreground transition hover:text-primary" onClick={() => toggleSort("claimId")} aria-label="Sort by claim id">
+                    Claim ID <SortIcon field="claimId" />
                   </button>
                 </th>
                 <th>
-                  <button className="inline-flex items-center gap-2 font-medium text-foreground transition hover:text-primary" onClick={() => toggleSort("riskScore")}>
-                    Risk score <ArrowUpDown className="h-3.5 w-3.5" />
+                  <button className="inline-flex items-center gap-2 font-medium text-foreground transition hover:text-primary" onClick={() => toggleSort("riskScore")} aria-label="Sort by risk score">
+                    Risk score <SortIcon field="riskScore" />
                   </button>
                 </th>
                 <th>Status</th>
                 <th>Policy holder</th>
                 <th>
-                  <button className="inline-flex items-center gap-2 font-medium text-foreground transition hover:text-primary" onClick={() => toggleSort("detectionDate")}>
-                    Detection date <ArrowUpDown className="h-3.5 w-3.5" />
+                  <button className="inline-flex items-center gap-2 font-medium text-foreground transition hover:text-primary" onClick={() => toggleSort("detectionDate")} aria-label="Sort by detection date">
+                    Detection date <SortIcon field="detectionDate" />
                   </button>
                 </th>
                 <th>Triggered rules</th>
@@ -122,14 +141,23 @@ export function ClaimsExplorerPage({ claims }) {
                   <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No claims match your filters.</td>
                 </tr>
               ) : (
-                rows.map((claim) => (
+                pagedRows.map((claim) => (
                   <tr key={claim.claimId}>
                     <td className="font-medium text-foreground">
                       <Link to={`/claims/${encodeURIComponent(claim.claimId)}`} className="text-primary underline-offset-4 hover:underline focus-visible:underline">
                         {claim.claimId}
                       </Link>
                     </td>
-                    <td>{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</td>
+                    <td>
+                      {Number.isFinite(claim.riskScore) ? (
+                        <div className="min-w-[110px] space-y-1.5">
+                          <span className="font-semibold">{claim.riskScore}</span>
+                          <RiskScoreBar score={claim.riskScore} />
+                        </div>
+                      ) : (
+                        "Unavailable"
+                      )}
+                    </td>
                     <td>
                       <StatusIndicator tone={claimStatusTone(claim.status)}>{claim.status.replace(/_/g, " ")}</StatusIndicator>
                     </td>
@@ -142,13 +170,30 @@ export function ClaimsExplorerPage({ claims }) {
             </tbody>
           </table>
         </div>
-        <div className="mt-4 flex items-center justify-between gap-3 text-sm text-muted-foreground">
-          <p>Showing {rows.length} matching claims from the current snapshot.</p>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+          <p>
+            Showing {rows.length === 0 ? 0 : currentPage * PAGE_SIZE + 1}–{Math.min(rows.length, (currentPage + 1) * PAGE_SIZE)} of {rows.length} matching claims.
+          </p>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-9 rounded-full px-3" disabled>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-full px-3"
+              disabled={currentPage === 0}
+              onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+            >
               <ChevronLeft className="mr-1 h-4 w-4" /> Prev
             </Button>
-            <Button variant="outline" size="sm" className="h-9 rounded-full px-3" disabled>
+            <span className="font-data text-xs uppercase tracking-[0.14em]">
+              Page {currentPage + 1} / {pageCount}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-full px-3"
+              disabled={currentPage >= pageCount - 1}
+              onClick={() => setPage((prev) => Math.min(pageCount - 1, prev + 1))}
+            >
               Next <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           </div>
