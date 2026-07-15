@@ -92,6 +92,7 @@ export function useInvestigatorData() {
     snapshots: [],
     lastRefresh: null,
     error: null,
+    dataSource: "live",
   });
 
   const load = useCallback(async () => {
@@ -120,7 +121,10 @@ export function useInvestigatorData() {
         throw new Error(riskPayload.message || `Risk unavailable (${riskRes.status})`);
       }
 
-      setState((prev) => buildReadyState(reportPayload.report, graphPayload.graph, riskPayload.risk, fetchedAt, prev.snapshots));
+      setState((prev) => ({
+        ...buildReadyState(reportPayload.report, graphPayload.graph, riskPayload.risk, fetchedAt, prev.snapshots),
+        dataSource: "live",
+      }));
     } catch (error) {
       const fallbackState = buildReadyState(
         demoInvestigatorArtifacts.report,
@@ -133,6 +137,7 @@ export function useInvestigatorData() {
       setState({
         ...fallbackState,
         error: error instanceof Error ? error.message : "Failed to load investigator data.",
+        dataSource: "demo",
       });
     }
   }, []);

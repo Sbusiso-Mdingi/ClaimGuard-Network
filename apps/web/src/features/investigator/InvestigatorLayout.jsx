@@ -1,16 +1,45 @@
-import React, { useEffect, useState } from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
-import { Activity, Moon, ShieldCheck, Sparkles, Sun } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Activity, Moon, Sparkles, Sun } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { useRole } from "../../context/RoleContext";
-import { NAV_ITEMS } from "../../lib/roleNav";
+import { NAV_GROUPS } from "../../lib/roleNav";
 import { RoleSwitcher } from "./RoleSwitcher";
 
-export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, ledgerStatus }) {
-  // 1. Added role context and filtered navigation items here
+function formatRole(role) {
+  if (!role) return "Unknown";
+  return role
+    .split("_")
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function isLiveDetectionRoute(pathname) {
+  return (
+    pathname === "/" ||
+    pathname.startsWith("/claims") ||
+    pathname === "/network" ||
+    pathname === "/risk" ||
+    pathname === "/history"
+  );
+}
+
+export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, ledgerStatus, dataSource }) {
   const { identity } = useRole();
-  const visibleNavItems = NAV_ITEMS.filter((item) => item.roles.includes(identity.role));
+  const location = useLocation();
+  const visibleNavGroups = useMemo(
+    () =>
+      NAV_GROUPS
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((item) => item.roles.includes(identity.role)),
+        }))
+        .filter((group) => group.items.length > 0),
+    [identity.role],
+  );
+  const showLiveControls = isLiveDetectionRoute(location.pathname);
+  const usingDemoDataset = dataSource === "demo";
 
   const [theme, setTheme] = useState(() => window.localStorage.getItem("claimguard-theme") || "dark");
 
@@ -46,53 +75,43 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
             </Button>
           </div>
 
-          <div className="mb-5 space-y-3 rounded-2xl border border-border/70 bg-background/80 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Connection</p>
-                <p className="mt-1 text-sm font-medium text-foreground">{ledgerStatus === "Connected" ? "Ledger linked" : "Ledger unavailable"}</p>
-              </div>
-              <Badge variant={ledgerStatus === "Connected" ? "success" : "warning"} className="rounded-full px-2.5 py-1 text-[11px]">
-                {ledgerStatus}
-              </Badge>
-            </div>
-            <div className="rounded-xl border border-border/70 bg-card p-3 text-xs text-muted-foreground">
-              <div className="mb-1 flex items-center gap-2 text-foreground">
-                <ShieldCheck className="h-4 w-4 text-primary" />
-                <span className="font-medium">Last refresh</span>
-              </div>
-              <p className="font-data">{lastRefresh ? new Date(lastRefresh).toLocaleString() : "waiting for first sync"}</p>
-            </div>
-          </div>
-
-          <nav className="space-y-1.5">
-            <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Case file sections</p>
-            {/* 2. Changed source array from 'navItems' to 'visibleNavItems' */}
-            {visibleNavItems.map((item, index) => {
-              return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.to === "/"}
-                  className={({ isActive }) =>
-                    [
-                      "group flex items-center gap-3 rounded-lg border-l-2 px-3 py-3 text-sm font-medium transition-all",
-                      isActive
-                        ? "border-primary bg-secondary/60 text-foreground"
-                        : "border-transparent text-muted-foreground hover:border-border hover:bg-secondary/30 hover:text-foreground",
-                    ].join(" ")
-                  }
-                >
-                  <span className="font-data flex h-9 w-9 items-center justify-center rounded-lg bg-background/70 text-[11px] text-muted-foreground group-[.active]:border-primary/40 group-[.active]:text-primary">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <span className="flex-1">{item.label}</span>
-                </NavLink>
-              );
-            })}
+          <nav className="space-y-5">
+            {visibleNavGroups.map((group, groupIndex) => (
+              <section
+                key={group.key}
+                className={groupIndex > 0 ? "border-t border-border/70 pt-5" : ""}
+                aria-label={group.title}
+              >
+                <div className="px-3 pb-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">{group.title}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{group.subtitle}</p>
+                </div>
+                <div className="space-y-1.5">
+                  {group.items.map((item, itemIndex) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === "/"}
+                      className={({ isActive }) =>
+                        [
+                          "group flex items-center gap-3 rounded-lg border-l-2 px-3 py-3 text-sm font-medium transition-all",
+                          isActive
+                            ? "border-primary bg-secondary/60 text-foreground"
+                            : "border-transparent text-muted-foreground hover:border-border hover:bg-secondary/30 hover:text-foreground",
+                        ].join(" ")
+                      }
+                    >
+                      <span className="font-data flex h-9 w-9 items-center justify-center rounded-lg bg-background/70 text-[11px] text-muted-foreground group-[.active]:border-primary/40 group-[.active]:text-primary">
+                        {String(itemIndex + 1).padStart(2, "0")}
+                      </span>
+                      <span className="flex-1">{item.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </section>
+            ))}
           </nav>
 
-          {/* 3. Replaced the old "Demo mode" sidebar card with the RoleSwitcher component */}
           <div className="mt-auto pt-4">
             <RoleSwitcher />
           </div>
@@ -100,40 +119,57 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
 
         <main className="min-w-0 p-4 md:p-6 xl:p-8">
           <header className="mb-6 flex flex-col gap-4 rounded-xl border border-border/70 bg-card px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Fraud investigation workspace</p>
-              <h1 className="text-xl font-semibold tracking-tight">Operational review console</h1>
-              <p className="max-w-3xl text-sm leading-6 text-muted-foreground">Monitor detections, inspect claims, and trace relationship networks across the current investigator snapshot.</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-              <Badge variant="outline" className="gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em]">
-                <Activity className="h-3.5 w-3.5" />
-                Demo mode
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
+                Tenant: {identity.tenantLabel || identity.tenantId}
               </Badge>
-              <div className="inline-flex rounded-full border border-border bg-background p-1">
-                <Button
-                  size="sm"
-                  variant={mode === "live" ? "default" : "ghost"}
-                  onClick={() => setMode("live")}
-                  aria-label="Enable live replay"
-                  className="rounded-full px-4"
-                >
-                  Live Replay
-                </Button>
-                <Button
-                  size="sm"
-                  variant={mode === "static" ? "default" : "ghost"}
-                  onClick={() => setMode("static")}
-                  aria-label="Enable static snapshot"
-                  className="rounded-full px-4"
-                >
-                  Static Snapshot
-                </Button>
-              </div>
-              <Button size="sm" variant="outline" onClick={refreshNow} className="rounded-full px-4">
-                Refresh now
-              </Button>
+              <Badge variant="outline" className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
+                Role: {formatRole(identity.role)}
+              </Badge>
+              <Badge variant="outline" className="gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
+                <Activity className="h-3.5 w-3.5" />
+                Demo Mode
+              </Badge>
+              {usingDemoDataset ? (
+                <Badge variant="warning" className="gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Demo Dataset
+                </Badge>
+              ) : null}
             </div>
+            {showLiveControls ? (
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                <Badge variant={ledgerStatus === "Connected" ? "success" : "warning"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
+                  Ledger: {ledgerStatus}
+                </Badge>
+                <div className="inline-flex rounded-full border border-border bg-background p-1">
+                  <Button
+                    size="sm"
+                    variant={mode === "live" ? "default" : "ghost"}
+                    onClick={() => setMode("live")}
+                    aria-label="Enable live replay"
+                    className="rounded-full px-4"
+                  >
+                    Live Replay
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={mode === "static" ? "default" : "ghost"}
+                    onClick={() => setMode("static")}
+                    aria-label="Enable static snapshot"
+                    className="rounded-full px-4"
+                  >
+                    Static Snapshot
+                  </Button>
+                </div>
+                <Button size="sm" variant="outline" onClick={refreshNow} className="rounded-full px-4">
+                  Refresh
+                </Button>
+                <Badge variant="outline" className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
+                  Last: {lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "Waiting"}
+                </Badge>
+              </div>
+            ) : null}
           </header>
 
           <Outlet />

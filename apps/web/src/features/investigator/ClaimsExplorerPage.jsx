@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Filter, Search, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
-import { PageFrame, SectionCard, StatusBadge, CaseStamp, statusStampTone } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatusIndicator, claimStatusTone } from "./InvestigatorUI";
 
 const SORT_FIELDS = {
   claimId: (a, b) => a.claimId.localeCompare(b.claimId),
@@ -55,8 +55,8 @@ export function ClaimsExplorerPage({ claims }) {
       title="Claims review table"
       description="Search, sort, and filter claims surfaced by the detection APIs in a high-density investigation view."
       actions={[
-        <StatusBadge key="count" variant="outline">{rows.length} records</StatusBadge>,
-        <StatusBadge key="severity" variant="outline">{severityFilter === "all" ? "All severities" : severityFilter}</StatusBadge>,
+        <StatusIndicator key="count" variant="badge">{rows.length} records</StatusIndicator>,
+        <StatusIndicator key="severity" variant="badge">{severityFilter === "all" ? "All severities" : severityFilter}</StatusIndicator>,
       ]}
     >
       <SectionCard title="Filters" description="Use search and severity controls to narrow the investigation queue.">
@@ -131,7 +131,7 @@ export function ClaimsExplorerPage({ claims }) {
                     </td>
                     <td>{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</td>
                     <td>
-                      <CaseStamp tone={statusStampTone(claim.status)}>{claim.status.replace(/_/g, " ")}</CaseStamp>
+                      <StatusIndicator tone={claimStatusTone(claim.status)}>{claim.status.replace(/_/g, " ")}</StatusIndicator>
                     </td>
                     <td>{claim.policyHolder}</td>
                     <td>{new Date(claim.detectionDate).toLocaleString()}</td>

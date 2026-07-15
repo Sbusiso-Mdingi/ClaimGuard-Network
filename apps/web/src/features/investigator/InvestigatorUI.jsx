@@ -79,25 +79,25 @@ export function MetricPill({ label, value, tone = "default" }) {
   );
 }
 
-export function StatusBadge({ children, variant = "outline" }) {
-  return <Badge variant={variant} className="rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide">{children}</Badge>;
-}
-
-const STAMP_TONE_VAR = {
+const STATUS_TONE_VAR = {
   danger: "--stamp-danger",
   warning: "--stamp-warning",
   success: "--stamp-success",
   info: "--stamp-info",
 };
 
-/**
- * CaseStamp — the signature element of the Case File theme. Renders a
- * claim/severity status as an ink-stamped tag rather than a soft pill,
- * used anywhere a claim's disposition is the primary thing being read
- * (tables, claim headers, dashboard rows).
- */
-export function CaseStamp({ children, tone = "info" }) {
-  const cssVar = STAMP_TONE_VAR[tone] || STAMP_TONE_VAR.info;
+export function StatusIndicator({ children, tone = "info", variant = "stamp" }) {
+  if (variant === "badge") {
+    const badgeVariant =
+      tone === "danger" ? "destructive" : tone === "warning" ? "warning" : tone === "success" ? "success" : "outline";
+    return (
+      <Badge variant={badgeVariant} className="rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide">
+        {children}
+      </Badge>
+    );
+  }
+
+  const cssVar = STATUS_TONE_VAR[tone] || STATUS_TONE_VAR.info;
   return (
     <span
       className="case-stamp"
@@ -111,13 +111,13 @@ export function CaseStamp({ children, tone = "info" }) {
   );
 }
 
-export function severityStampTone(severity) {
+export function severityStatusTone(severity) {
   if (severity === "High") return "danger";
   if (severity === "Medium") return "warning";
   return "success";
 }
 
-export function statusStampTone(status) {
+export function claimStatusTone(status) {
   if (status === "CONFIRMED_FRAUD") return "danger";
   if (status === "UNDER_INVESTIGATION") return "warning";
   if (status === "DISMISSED") return "success";

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useRole } from "../../context/RoleContext";
 import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
-import { PageFrame, SectionCard, MetricPill, StatusBadge } from "./InvestigatorUI";
+import { PageFrame, SectionCard, MetricPill, StatusIndicator } from "./InvestigatorUI";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 
@@ -189,7 +189,7 @@ export function InvestigationWorkspacePage() {
                       <span>{new Date(note.timestamp).toLocaleString()}</span>
                     </div>
                     <p className="mt-1">{note.text}</p>
-                    <StatusBadge variant="outline">{note.noteType}</StatusBadge>
+                    <StatusIndicator variant="badge">{note.noteType}</StatusIndicator>
                   </div>
                 ))}
                 {(investigation.evidence || []).map((item) => (
@@ -200,7 +200,7 @@ export function InvestigationWorkspacePage() {
                     </div>
                     <p className="mt-1 font-medium">{item.filename}</p>
                     {item.description && <p className="text-muted-foreground">{item.description}</p>}
-                    <StatusBadge variant="outline">{item.evidenceType}</StatusBadge>
+                    <StatusIndicator variant="badge">{item.evidenceType}</StatusIndicator>
                   </div>
                 ))}
               </>

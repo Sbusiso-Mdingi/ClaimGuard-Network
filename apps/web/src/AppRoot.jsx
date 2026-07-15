@@ -77,53 +77,78 @@ function InvestigatorRoutes() {
             refreshNow={data.refreshNow}
             lastRefresh={data.lastRefresh}
             ledgerStatus={data.metrics.ledgerStatus}
+            dataSource={data.dataSource}
           />
         }
       >
         <Route
           index
-          element={renderPageContent(
-            <DashboardPage metrics={data.metrics} status={data.status} lastRefresh={data.lastRefresh} />,
-            {
-              loadingTitle: "Loading Dashboard",
-              errorTitle: "Dashboard Unavailable",
-            },
-          )}
+          element={
+            <RequireRoleAccess navKey="dashboard">
+              {renderPageContent(
+                <DashboardPage metrics={data.metrics} status={data.status} lastRefresh={data.lastRefresh} />,
+                {
+                  loadingTitle: "Loading Dashboard",
+                  errorTitle: "Dashboard Unavailable",
+                },
+              )}
+            </RequireRoleAccess>
+          }
         />
         <Route
           path="claims"
-          element={renderPageContent(<ClaimsExplorerPage claims={data.claims} />, {
-            loadingTitle: "Loading Claims Explorer",
-            errorTitle: "Claims Explorer Unavailable",
-          })}
+          element={
+            <RequireRoleAccess navKey="claims">
+              {renderPageContent(<ClaimsExplorerPage claims={data.claims} />, {
+                loadingTitle: "Loading Claims Explorer",
+                errorTitle: "Claims Explorer Unavailable",
+              })}
+            </RequireRoleAccess>
+          }
         />
         <Route
           path="claims/:claimId"
-          element={renderPageContent(<ClaimDetailsPage claims={data.claims} report={data.report} graph={data.graph} risk={data.risk} />, {
-            loadingTitle: "Loading Claim Details",
-            errorTitle: "Claim Details Unavailable",
-          })}
+          element={
+            <RequireRoleAccess navKey="claims">
+              {renderPageContent(<ClaimDetailsPage claims={data.claims} report={data.report} graph={data.graph} risk={data.risk} />, {
+                loadingTitle: "Loading Claim Details",
+                errorTitle: "Claim Details Unavailable",
+              })}
+            </RequireRoleAccess>
+          }
         />
         <Route
           path="network"
-          element={renderPageContent(<NetworkPage graph={data.graph} />, {
-            loadingTitle: "Loading Network Graph",
-            errorTitle: "Network Graph Unavailable",
-          })}
+          element={
+            <RequireRoleAccess navKey="network">
+              {renderPageContent(<NetworkPage graph={data.graph} />, {
+                loadingTitle: "Loading Network Graph",
+                errorTitle: "Network Graph Unavailable",
+              })}
+            </RequireRoleAccess>
+          }
         />
         <Route
           path="risk"
-          element={renderPageContent(<RiskPage risk={data.risk} report={data.report} />, {
-            loadingTitle: "Loading Risk Panel",
-            errorTitle: "Risk Panel Unavailable",
-          })}
+          element={
+            <RequireRoleAccess navKey="risk">
+              {renderPageContent(<RiskPage risk={data.risk} report={data.report} />, {
+                loadingTitle: "Loading Risk Panel",
+                errorTitle: "Risk Panel Unavailable",
+              })}
+            </RequireRoleAccess>
+          }
         />
         <Route
           path="history"
-          element={renderPageContent(<HistoryPage snapshots={data.snapshots} />, {
-            loadingTitle: "Loading Detection History",
-            errorTitle: "Detection History Unavailable",
-          })}
+          element={
+            <RequireRoleAccess navKey="history">
+              {renderPageContent(<HistoryPage snapshots={data.snapshots} />, {
+                loadingTitle: "Loading Detection History",
+                errorTitle: "Detection History Unavailable",
+              })}
+            </RequireRoleAccess>
+          }
         />
 
         {/* 2. Added new role-protected workflow and administration routing paths here */}

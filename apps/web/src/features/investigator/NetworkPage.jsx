@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
 import "reactflow/dist/style.css";
 import { Badge } from "../../components/ui/badge";
-import { PageFrame, SectionCard, MetricPill, StatusBadge } from "./InvestigatorUI";
+import { PageFrame, SectionCard, MetricPill, StatusIndicator } from "./InvestigatorUI";
 
 function edgeId(rel, index) {
   return `${rel.source_entity_id}-${rel.target_entity_id}-${rel.claim_id || index}`;
@@ -84,7 +84,7 @@ export function NetworkPage({ graph }) {
           title="Network graph"
           description="Zoom, pan, and select nodes. High-risk relationships are emphasized when a node is selected."
           actions={[
-            <StatusBadge key="selected" variant="outline">{selectedNodeId ? "Node selected" : "No node selected"}</StatusBadge>,
+            <StatusIndicator key="selected" variant="badge">{selectedNodeId ? "Node selected" : "No node selected"}</StatusIndicator>,
           ]}
         >
           {(graph?.entities || []).length === 0 ? (

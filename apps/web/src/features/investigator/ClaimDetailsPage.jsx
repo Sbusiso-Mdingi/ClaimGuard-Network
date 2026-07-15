@@ -2,9 +2,8 @@ import React, { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Progress } from "../../components/ui/progress";
 import { Button } from "../../components/ui/button";
-import { PageFrame, SectionCard, MetricPill, StatusBadge, CaseStamp, severityStampTone } from "./InvestigatorUI";
+import { PageFrame, SectionCard, MetricPill, StatusIndicator, severityStatusTone } from "./InvestigatorUI";
 
-// 1. Added top-level imports from role, claim guard roles, and tracking contexts
 import { useRole } from "../../context/RoleContext";
 import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
 import { addTrackedInvestigation } from "../../lib/trackedInvestigations";
@@ -19,7 +18,7 @@ function RiskPanel({ claim, risk, ledgerReference }) {
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Risk score</p>
               <p className="font-data mt-1 text-4xl font-semibold tracking-tight">{Number.isFinite(claim.riskScore) ? claim.riskScore : "Unavailable"}</p>
             </div>
-            <CaseStamp tone={severityStampTone(claim.severity)}>{claim.severity}</CaseStamp>
+            <StatusIndicator tone={severityStatusTone(claim.severity)}>{claim.severity}</StatusIndicator>
           </div>
           <Progress value={Number.isFinite(claim.riskScore) ? claim.riskScore : 0} className="mt-4 h-2" />
         </div>
@@ -28,7 +27,7 @@ function RiskPanel({ claim, risk, ledgerReference }) {
           <div className="rounded-xl border border-border/70 px-4 py-3">
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Triggered rules</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              {(claim.triggeredRules || []).map((rule) => <StatusBadge key={rule} variant="outline">{rule}</StatusBadge>)}
+              {(claim.triggeredRules || []).map((rule) => <StatusIndicator key={rule} variant="badge">{rule}</StatusIndicator>)}
             </div>
           </div>
           <div className="rounded-xl border border-border/70 px-4 py-3">
@@ -59,7 +58,6 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
   const params = useParams();
   const claimId = decodeURIComponent(params.claimId || "");
 
-  // 2. Extracted role hooks, notification state, and permission guards before the 'if' checks
   const { authHeaders, identity } = useRole();
   const [escalateMessage, setEscalateMessage] = useState(null);
   const canEscalate = [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR].includes(identity.role);
@@ -83,7 +81,6 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
     };
   }, [claimId, graph, report]);
 
-  // 3. Escalation handler function
   async function handleEscalate() {
     setEscalateMessage(null);
     try {
@@ -117,7 +114,6 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
       eyebrow="Claim Details"
       title={claim.claimId}
       description={`Policy holder ${claim.policyHolder} · ${new Date(claim.detectionDate).toLocaleString()}`}
-      /* 4. Appended the conditional conditional escalate action button inside actions */
       actions={[
         <MetricPill key="status" label="Status" value={claim.status} tone={claim.status === "CONFIRMED_FRAUD" ? "danger" : claim.status === "UNDER_INVESTIGATION" ? "warning" : "default"} />,
         <MetricPill key="rules" label="Rules" value={`${(claim.triggeredRules || []).length}`} />,
@@ -128,7 +124,6 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
         )
       ].filter(Boolean)}
     >
-      {/* 5. Added system notification alert message container directly below the header element */}
       {escalateMessage && (
         <div
           className={`mb-5 rounded-xl border p-4 text-sm ${

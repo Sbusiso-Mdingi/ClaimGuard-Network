@@ -1,7 +1,7 @@
 import React from "react";
 import { AlertTriangle, Building2, FileText, Gauge, Radar, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Skeleton } from "../../components/ui/skeleton";
-import { PageFrame, SectionCard, StatCard, MetricPill, CaseStamp, severityStampTone } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatCard, MetricPill, StatusIndicator, severityStatusTone } from "./InvestigatorUI";
 
 function metricTone(value) {
   if (typeof value !== "number") return "default";
@@ -75,7 +75,7 @@ export function DashboardPage({ metrics, status, lastRefresh }) {
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-data text-sm font-semibold tracking-tight">{item.claimId}</p>
-                      <CaseStamp tone={severityStampTone(item.severity)}>{item.severity}</CaseStamp>
+                      <StatusIndicator tone={severityStatusTone(item.severity)}>{item.severity}</StatusIndicator>
                     </div>
                     <p className="text-sm text-muted-foreground">Policy holder: {item.policyHolder}</p>
                     <p className="text-xs text-muted-foreground">Triggered rules: {(item.triggeredRules || []).slice(0, 2).join(" · ") || "No rules"}</p>

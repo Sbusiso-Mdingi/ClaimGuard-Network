@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge } from "../../components/ui/badge";
 import { Progress } from "../../components/ui/progress";
-import { PageFrame, SectionCard, CaseStamp, severityStampTone } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatusIndicator, severityStatusTone } from "./InvestigatorUI";
 
 export function RiskPage({ risk, report }) {
   const reasons = risk?.reasons || [];
@@ -14,7 +14,7 @@ export function RiskPage({ risk, report }) {
       title="Explainability summary"
       description="Risk score, severity, triggered rules, and evidence are surfaced in a compact review-friendly format."
       actions={[
-        <CaseStamp key="severity" tone={severityStampTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</CaseStamp>,
+        <StatusIndicator key="severity" tone={severityStatusTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</StatusIndicator>,
       ]}
     >
       <SectionCard title="Risk score" description="The score and severity indicate how aggressively this claim should be reviewed.">
@@ -24,7 +24,7 @@ export function RiskPage({ risk, report }) {
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Current score</p>
               <p className="font-data mt-1 text-5xl font-semibold tracking-tight">{risk?.riskScore ?? 0}</p>
             </div>
-            <CaseStamp tone={severityStampTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</CaseStamp>
+            <StatusIndicator tone={severityStatusTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</StatusIndicator>
           </div>
           <Progress value={risk?.riskScore ?? 0} className="mt-4 h-2" />
         </div>

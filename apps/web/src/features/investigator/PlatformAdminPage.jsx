@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { PageFrame, SectionCard, StatusBadge } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatusIndicator } from "./InvestigatorUI";
 
 function PlannedCapability({ title }) {
   return (
@@ -35,12 +35,12 @@ export function PlatformAdminPage() {
     >
       <SectionCard title="API health" description="Live read from the API's existing /health and /ready endpoints.">
         <div className="flex flex-wrap gap-3">
-          <StatusBadge variant={health?.health?.status === "ok" ? "success" : "outline"}>
+          <StatusIndicator variant="badge" tone={health?.health?.status === "ok" ? "success" : "info"}>
             /health: {health?.health?.status || "checking..."}
-          </StatusBadge>
-          <StatusBadge variant={health?.ready?.ready ? "success" : "outline"}>
+          </StatusIndicator>
+          <StatusIndicator variant="badge" tone={health?.ready?.ready ? "success" : "info"}>
             /ready: {health?.ready?.status || "checking..."}
-          </StatusBadge>
+          </StatusIndicator>
         </div>
       </SectionCard>
 

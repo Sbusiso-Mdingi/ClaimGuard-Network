@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useRole } from "../../context/RoleContext";
-import { PageFrame, SectionCard, StatusBadge } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatusIndicator } from "./InvestigatorUI";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
 
@@ -69,7 +69,7 @@ export function CommitteeRegistryPage() {
               <div key={entry.registryEntryId} className="rounded-xl border border-border/70 bg-background/70 px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold">{entry.medicalScheme}</p>
-                  <StatusBadge variant={entry.status === "ACTIVE" ? "destructive" : "outline"}>{entry.status}</StatusBadge>
+                  <StatusIndicator tone={entry.status === "ACTIVE" ? "danger" : "info"} variant="badge">{entry.status}</StatusIndicator>
                 </div>
                 <p className="text-xs text-muted-foreground">{entry.fraudSubjectType} · {entry.offenceCategory} · finding date {entry.findingDate}</p>
                 <p className="mt-1 font-data text-xs">{entry.registryEntryId}</p>
