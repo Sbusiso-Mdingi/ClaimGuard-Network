@@ -16,7 +16,7 @@
     "zod": "^3.24.0"
   },
   "scripts": {
-    "build": "mkdir -p dist && cp src/*.js src/*.cjs dist/",
+    "build": "rm -rf dist && mkdir -p dist && cp -R src/* dist/",
     "lint": "node -e \"import('./src/backend.js')\"",
     "test": "node --test tests/*.test.js",
     "test:backend": "node --test tests/*.test.js",
