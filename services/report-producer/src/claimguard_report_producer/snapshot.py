@@ -35,13 +35,16 @@ class TenantSnapshot:
 class PyMySqlTenantSnapshotRepository:
     """Exports one tenant corpus from a short repeatable-read transaction."""
 
-    def __init__(self, connection_factory: Callable[[], object]) -> None:
+    def __init__(self, connection_factory: Callable[[], object], allowed_tenant_ids: frozenset[str] | None = None) -> None:
         self.connection_factory = connection_factory
+        self.allowed_tenant_ids = allowed_tenant_ids
 
     def load_tenant_snapshot(self, *, tenant_id: str) -> TenantSnapshot:
         canonical_tenant_id = str(tenant_id or "").strip()
         if not canonical_tenant_id:
             raise ValueError("tenant_id is required for a tenant snapshot.")
+        if self.allowed_tenant_ids is not None and canonical_tenant_id not in self.allowed_tenant_ids:
+            raise ValueError("Snapshot tenant is outside the verified worker data-plane scope.")
 
         connection = self.connection_factory()
         try:

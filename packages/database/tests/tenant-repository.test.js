@@ -33,7 +33,7 @@ test("tenant repository looks up tenant by tenant_id", async () => {
     return [[]];
   });
 
-  const repository = createTenantRepository(pool);
+  const repository = createTenantRepository(pool, { allowLegacyDefault: true });
   const tenant = await repository.lookupTenantById("tenant_alpha");
 
   assert.equal(tenant.tenant_id, "tenant_alpha");
@@ -108,7 +108,7 @@ test("tenant repository falls back to schemes lookup when medical_schemes has no
   assert.equal(tenant.scheme_id, "S2");
 });
 
-test("tenant repository returns configured default tenant and validates existence", async () => {
+test("tenant repository returns configured default tenant only with explicit legacy opt-in and validates existence", async () => {
   const pool = createFakePool((sql, params) => {
     if (sql.includes("FROM tenants") && sql.includes("tenant_id = ?") && params[0] === "tenant_cfg") {
       return [[{ tenant_id: "tenant_cfg", tenant_slug: "cfg", tenant_name: "Configured", status: "active" }]];
@@ -125,7 +125,7 @@ test("tenant repository returns configured default tenant and validates existenc
     return [[]];
   });
 
-  const repository = createTenantRepository(pool);
+  const repository = createTenantRepository(pool, { allowLegacyDefault: true });
   const defaultTenant = await repository.getDefaultTenant({ defaultTenantId: "tenant_cfg" });
 
   assert.equal(defaultTenant.tenant_id, "tenant_cfg");

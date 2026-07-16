@@ -158,7 +158,7 @@ test("investigation repository creates an OPEN investigation for an active-tenan
   const pool = createFakePool({
     claims: [{ claim_id: "claim-alpha-1", tenant_id: "tenant_alpha" }],
   });
-  const repository = createInvestigationRepository(pool);
+  const repository = createInvestigationRepository(pool, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(tenantContext("tenant_alpha"), async () => {
     const investigation = await createTestInvestigation(repository);
@@ -178,7 +178,7 @@ test("investigation repository permits the defined investigation workflow transi
   const pool = createFakePool({
     claims: [{ claim_id: "claim-alpha-1", tenant_id: "tenant_alpha" }],
   });
-  const repository = createInvestigationRepository(pool);
+  const repository = createInvestigationRepository(pool, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(tenantContext("tenant_alpha"), async () => {
     const created = await createTestInvestigation(repository);
@@ -210,7 +210,7 @@ test("investigation repository rejects invalid status transitions", async () => 
   const pool = createFakePool({
     claims: [{ claim_id: "claim-alpha-1", tenant_id: "tenant_alpha" }],
   });
-  const repository = createInvestigationRepository(pool);
+  const repository = createInvestigationRepository(pool, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(tenantContext("tenant_alpha"), async () => {
     const created = await createTestInvestigation(repository);
@@ -230,7 +230,7 @@ test("investigation repository stores note and evidence metadata with the invest
   const pool = createFakePool({
     claims: [{ claim_id: "claim-alpha-1", tenant_id: "tenant_alpha" }],
   });
-  const repository = createInvestigationRepository(pool);
+  const repository = createInvestigationRepository(pool, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(tenantContext("tenant_alpha"), async () => {
     const created = await createTestInvestigation(repository);
@@ -263,7 +263,7 @@ test("investigation repository prevents another tenant from reading or attaching
   const pool = createFakePool({
     claims: [{ claim_id: "claim-alpha-1", tenant_id: "tenant_alpha" }],
   });
-  const repository = createInvestigationRepository(pool);
+  const repository = createInvestigationRepository(pool, { allowLegacyTenantContext: true });
   let investigationId;
 
   await runWithTenantContext(tenantContext("tenant_alpha"), async () => {

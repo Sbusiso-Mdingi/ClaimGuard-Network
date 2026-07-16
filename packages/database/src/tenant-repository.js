@@ -15,9 +15,15 @@ function normalizeTenantRow(row, schemeId = null) {
   };
 }
 
-export function createTenantRepository(pool) {
+export function createTenantRepository(pool, { dataPlaneContext = null, allowLegacyDefault = false } = {}) {
   if (!pool || typeof pool.query !== "function") {
     throw new Error("A mysql2 pool with query support is required for tenant repository.");
+  }
+  const canonicalTenantId = dataPlaneContext?.operationalTenantId || null;
+
+  function scoped(row) {
+    const tenant = normalizeTenantRow(row);
+    return canonicalTenantId && tenant?.tenant_id !== canonicalTenantId ? null : tenant;
   }
 
   return {
@@ -36,7 +42,7 @@ export function createTenantRepository(pool) {
         [tenantId],
       );
 
-      return normalizeTenantRow(rows?.[0] ?? null);
+      return scoped(rows?.[0] ?? null);
     },
 
     async lookupTenantBySlug(tenantSlug) {
@@ -54,7 +60,7 @@ export function createTenantRepository(pool) {
         [tenantSlug],
       );
 
-      return normalizeTenantRow(rows?.[0] ?? null);
+      return scoped(rows?.[0] ?? null);
     },
 
     async lookupTenantBySchemeId(schemeId) {
@@ -74,7 +80,8 @@ export function createTenantRepository(pool) {
       );
 
       if (medicalSchemeRows?.[0]) {
-        return normalizeTenantRow(medicalSchemeRows[0], schemeId);
+        const tenant = scoped(medicalSchemeRows[0]);
+        return tenant ? { ...tenant, scheme_id: schemeId } : null;
       }
 
       const [legacySchemeRows] = await pool.query(
@@ -88,10 +95,16 @@ export function createTenantRepository(pool) {
         [schemeId],
       );
 
-      return normalizeTenantRow(legacySchemeRows?.[0] ?? null, schemeId);
+      const tenant = scoped(legacySchemeRows?.[0] ?? null);
+      return tenant ? { ...tenant, scheme_id: schemeId } : null;
     },
 
     async getDefaultTenant({ defaultTenantId = null } = {}) {
+      if (!allowLegacyDefault) {
+        const error = new Error("Implicit default tenant selection is disabled for routed operational access.");
+        error.code = "IMPLICIT_TENANT_FALLBACK_DISABLED";
+        throw error;
+      }
       if (defaultTenantId) {
         const configuredTenant = await this.lookupTenantById(defaultTenantId);
         if (configuredTenant) {

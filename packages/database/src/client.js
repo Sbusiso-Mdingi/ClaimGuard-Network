@@ -47,11 +47,11 @@ export function createDatabase(databaseUrl, options = {}) {
 
   return {
     pool,
-    db: drizzle(pool, {
-      mode,
-      schema: {
-        ledgerEntriesTable,
-      },
-    }),
+    db: createDatabaseFromPool(pool, { mode }),
   };
+}
+
+export function createDatabaseFromPool(pool, { mode = "default" } = {}) {
+  if (!pool) throw new TypeError("A verified operational pool is required.");
+  return drizzle(pool, { mode, schema: { ledgerEntriesTable } });
 }

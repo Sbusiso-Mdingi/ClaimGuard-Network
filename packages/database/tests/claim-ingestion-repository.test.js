@@ -53,7 +53,7 @@ function createFakePool() {
 
 test("claim ingestion repository inserts claims through transaction", async () => {
   const pool = createFakePool();
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   const result = await repository.ingestClaims({
     source: "synthetic-run",
@@ -85,7 +85,7 @@ test("claim ingestion repository inserts claims through transaction", async () =
 
 test("claim ingestion repository validates required fields", async () => {
   const pool = createFakePool();
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   await assert.rejects(
     () =>
@@ -103,7 +103,7 @@ test("claim ingestion repository validates required fields", async () => {
 
 test("claim ingestion repository persists tenant_id from active tenant context", async () => {
   const pool = createFakePool();
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(
     {
@@ -241,7 +241,7 @@ function claimInput(amount) {
 
 test("claim ownership is immutable while same-tenant updates remain idempotent", async () => {
   const pool = createStatefulClaimPool();
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
     repository.ingestClaims({ claims: [claimInput(100)] }),
@@ -267,7 +267,7 @@ test("claim ownership is immutable while same-tenant updates remain idempotent",
 
 test("claim and outbox creation commit together and identical retries reuse one job", async () => {
   const pool = createStatefulClaimPool();
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   const first = await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
     repository.ingestClaims({ claims: [claimInput(100)], correlationId: "request-1" }),
@@ -286,7 +286,7 @@ test("claim and outbox creation commit together and identical retries reuse one 
 
 test("outbox enqueue failure rolls back the claim write", async () => {
   const pool = createStatefulClaimPool({ failOutboxInsert: true });
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   await assert.rejects(
     () => runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
@@ -302,7 +302,7 @@ test("outbox enqueue failure rolls back the claim write", async () => {
 
 test("claim failure creates no outbox job", async () => {
   const pool = createStatefulClaimPool({ failClaimInsert: true });
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   await assert.rejects(
     () => runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
@@ -317,7 +317,7 @@ test("claim failure creates no outbox job", async () => {
 
 test("ownership conflict rolls back without creating an outbox job", async () => {
   const pool = createStatefulClaimPool();
-  const repository = createClaimIngestionRepository(pool);
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
   await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
     repository.ingestClaims({ claims: [claimInput(100)] }),
   );

@@ -8,7 +8,16 @@ export {
 } from "./ledger-entry.js";
 export { appendLedgerEntry, LedgerConcurrencyConflictError } from "./ledger-chain.js";
 
-export { createDatabase, createMysqlConnection } from "./client.js";
+export { createDatabase, createDatabaseFromPool, createMysqlConnection } from "./client.js";
+export {
+  createDataPlaneContext,
+  dataPlanePoolKey,
+  DataPlaneContextValidationError,
+  requireOperationalDataPlaneContext,
+} from "./data-plane-context.js";
+export { createLegacySharedAdapter, DataPlaneMetadataMismatchError } from "./legacy-shared-adapter.js";
+export { createTenantConnectionManager, TenantPoolLimitError, TenantPoolTimeoutError } from "./tenant-connection-manager.js";
+export { createOperationalRepositories } from "./operational-repositories.js";
 export {
   ClaimOwnershipConflictError,
   createClaimIngestionRepository,

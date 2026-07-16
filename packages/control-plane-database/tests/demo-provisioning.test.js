@@ -9,6 +9,7 @@ test("demo provisioning represents every current scheme plus a platform administ
   const assignments = [];
   const mappings = [];
   const catalogue = [];
+  const routes = new Map();
   let sequence = 0;
   const repositories = {
     organisations: { async getBySlug(slug) { return organisations.get(slug) || null; } },
@@ -22,6 +23,7 @@ test("demo provisioning represents every current scheme plus a platform administ
       async createMembership(input) { const item = { ...input, membershipId: `membership-${sequence}` }; memberships.set(item.membershipId, item); return item; },
       async createCredential(input) { return { ...input, credentialId: `credential-${sequence}` }; },
     },
+    routes: { async getSafeActiveForOrganisation(organisationId) { return routes.get(organisationId) || null; } },
   };
   const service = {
     async createDraftOrganisation(input) {
@@ -36,6 +38,11 @@ test("demo provisioning represents every current scheme plus a platform administ
       return item;
     },
     async assignMembershipRole(input) { assignments.push(input); return input; },
+    async registerRoute(input) {
+      const route = { ...input, routeId: `route-${input.organisationId}`, routeGeneration: 1 };
+      routes.set(input.organisationId, route);
+      return route;
+    },
   };
   const executor = {
     async execute(sql, params = []) {
@@ -56,6 +63,9 @@ test("demo provisioning represents every current scheme plus a platform administ
   assert.deepEqual([...new Set(result.oneTimeCredentials.map((entry) => entry.organisation))].sort(), ["alpha", "beta", "claimguard"]);
   assert.equal(result.oneTimeCredentials.filter((entry) => entry.role === "platform_administrator").length, 1);
   assert.equal(mappings.length, 2);
+  assert.equal(routes.size, 3);
+  assert.equal([...routes.values()].filter((route) => route.routeType === "legacy_shared").length, 2);
+  assert.equal([...routes.values()].find((route) => route.routeType === "platform_none").databaseName, null);
   assert.equal(assignments.length, 11);
   assert.equal(catalogue.length, 11);
   assert.equal(result.oneTimeCredentials.every((entry) => entry.password.length >= 32), true);

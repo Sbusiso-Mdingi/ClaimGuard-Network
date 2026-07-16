@@ -24,8 +24,8 @@ test("control-plane schema contains required foundations and excludes operationa
   assert.doesNotMatch(sql, /connection_string\s/);
 });
 
-test("operational migrations 0001-0007 do not contain control-plane tables", async () => {
-  for (let number = 1; number <= 7; number += 1) {
+test("operational migrations 0001-0008 do not contain control-plane identity tables", async () => {
+  for (let number = 1; number <= 8; number += 1) {
     const padded = String(number).padStart(4, "0");
     const migration = (await import("node:fs/promises")).readdir;
     const files = await migration(new URL("../../database/migrations/", import.meta.url));
@@ -45,11 +45,12 @@ test("canonical authorization seed is insert-only and grants platform admin no p
   assert.doesNotMatch(sql, /DELETE\s+FROM|UPDATE\s+role_permissions/i);
 });
 
-test("Phase 11C activates only identity/session control-plane dependencies and no data-plane routing", async () => {
+test("Phase 11D activates explicit data-plane routing without private database selection", async () => {
   const backend = await readFile(new URL("../../../apps/api/src/backend.js", import.meta.url), "utf8");
   const server = await readFile(new URL("../../../apps/api/src/backend-server.js", import.meta.url), "utf8");
   assert.match(`${backend}\n${server}`, /control-plane-database|CONTROL_PLANE_MYSQL_URL|registerAuthRoutes/);
-  assert.doesNotMatch(`${backend}\n${server}`, /getSafeActiveForOrganisation|data_plane_routes|secret_reference/);
+  assert.match(`${backend}\n${server}`, /dataPlaneRuntime|TenantConnectionManager|createTenantConnectionManager/);
+  assert.doesNotMatch(`${backend}\n${server}`, /private_database.*createPool|USE\s+database/i);
 });
 
 test("schema constraints encode immutable IDs, scoped identities, aliases, and one active route", async () => {

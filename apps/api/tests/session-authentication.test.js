@@ -179,19 +179,29 @@ test("demo account endpoint is fail-closed and returns only safe catalogue entri
 
 test("internal service authentication uses its dedicated bearer mechanism and rejects browser authority headers", async () => {
   const token = "i".repeat(32);
-  const { app } = sessionApp({ configuration: { internalServiceToken: token } });
+  const { app } = sessionApp({ configuration: { internalServiceToken: token, internalServiceOrganisationIds: ["org-1"] } });
   const accepted = await app.request("http://localhost/health", { headers: {
     authorization: `Bearer ${token}`,
     "x-cg-service-actor": "simulator-worker",
     "x-cg-service-role": "platform_administrator",
     "x-cg-service-tenant": "tenant-alpha",
+    "x-cg-service-organisation": "org-1",
   } });
   assert.equal(accepted.status, 200);
+  const outsideScope = await app.request("http://localhost/health", { headers: {
+    authorization: `Bearer ${token}`,
+    "x-cg-service-actor": "simulator-worker",
+    "x-cg-service-role": "platform_administrator",
+    "x-cg-service-tenant": "tenant-beta",
+    "x-cg-service-organisation": "org-beta",
+  } });
+  assert.equal(outsideScope.status, 403);
   const rejected = await app.request("http://localhost/health", { headers: {
     authorization: `Bearer ${token}`,
     "x-cg-service-actor": "simulator-worker",
     "x-cg-service-role": "platform_administrator",
     "x-cg-service-tenant": "tenant-alpha",
+    "x-cg-service-organisation": "org-1",
     "x-claimguard-role": "investigator",
   } });
   assert.equal(rejected.status, 403);

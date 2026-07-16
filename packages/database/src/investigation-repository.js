@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { getActiveTenantId } from "./tenant-context-store.js";
+import { repositoryTenantId } from "./repository-context.js";
 
 export const INVESTIGATION_STATUS = Object.freeze({
   OPEN: "OPEN",
@@ -198,12 +198,14 @@ export function isFraudConfirmationPermitted(investigation) {
   );
 }
 
-export function createInvestigationRepository(pool) {
+export function createInvestigationRepository(pool, { dataPlaneContext = null, allowLegacyTenantContext = false } = {}) {
   requirePool(pool);
+  if (!dataPlaneContext && !allowLegacyTenantContext) repositoryTenantId(null);
+  const canonicalTenantId = () => repositoryTenantId(dataPlaneContext, { allowLegacyTenantContext });
 
   return {
     async createInvestigation({ claimId, assignedInvestigator = null, assignedBy, priority = INVESTIGATION_PRIORITY.NORMAL }) {
-      const tenantId = getActiveTenantId();
+      const tenantId = canonicalTenantId();
       const normalizedClaimId = normalizeRequiredString(claimId, "claimId", 32);
       const normalizedAssignedBy = normalizeRequiredString(assignedBy, "assignedBy", 255);
       const normalizedAssignedInvestigator = normalizeOptionalString(
@@ -257,7 +259,7 @@ export function createInvestigationRepository(pool) {
     },
 
     async getInvestigationById(investigationId) {
-      const tenantId = getActiveTenantId();
+      const tenantId = canonicalTenantId();
       const normalizedInvestigationId = normalizeRequiredString(investigationId, "investigationId", 64);
       const [rows] = await pool.execute(
         `

@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createSimulatorWorker } from "../src/worker.js";
+
+test("simulator CLI resolves a verified organisation route and never opens an implicit global database", async () => {
+  const source = await readFile(new URL("../src/cli.js", import.meta.url), "utf8");
+  assert.match(source, /SIMULATOR_STATE_ORGANISATION_ID/);
+  assert.match(source, /createTenantConnectionManager/);
+  assert.match(source, /createOperationalRepositories/);
+  assert.doesNotMatch(source, /createDatabase\(/);
+  assert.match(source, /requestedTenantIds\[0\] !== dataPlaneContext\.operationalTenantId/);
+});
 
 class MemoryRepository {
   constructor({ mode = "live", status = "running", checkpoint = null, pressure = {} } = {}) {

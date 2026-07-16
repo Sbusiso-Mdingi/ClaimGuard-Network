@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .contract import ReportContractError
+from .data_plane import resolve_worker_data_plane_scope
 from .outbox import OutboxJob, PyMySqlOutboxRepository
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
 from .runtime import DetectionReportProducer
@@ -246,8 +247,25 @@ class ReportProducerWorker:
 
 def create_worker_from_environment(*, backend: str | None = None, output_dir: Path | None = None) -> ReportProducerWorker:
     database_url = os.environ.get("MYSQL_URL", "")
-    repository = PyMySqlOutboxRepository.from_url(database_url)
-    snapshot_repository = PyMySqlTenantSnapshotRepository(repository.connection_factory)
+    organisation_ids = [os.environ.get("REPORT_WORKER_ORGANISATION_ID", "").strip()]
+    organisation_ids = [value for value in organisation_ids if value]
+    scope = resolve_worker_data_plane_scope(
+        control_plane_url=os.environ.get("CONTROL_PLANE_MYSQL_URL", ""),
+        operational_url=database_url,
+        organisation_ids=organisation_ids,
+        environment_key=os.environ.get("DATA_PLANE_ENVIRONMENT", "legacy"),
+    )
+    print(json.dumps({
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "level": "info",
+        "service": "report-producer-worker",
+        "event": "data_plane_scope_verified",
+        "organisation_id": scope.organisation_ids[0],
+        "route_key": scope.route_keys[0],
+        "schema_version": scope.schema_version,
+    }, sort_keys=True))
+    repository = PyMySqlOutboxRepository.from_url(database_url, allowed_tenant_ids=scope.tenant_ids)
+    snapshot_repository = PyMySqlTenantSnapshotRepository(repository.connection_factory, scope.tenant_ids)
     resolved_backend = (backend or os.environ.get("REPORT_STORAGE_BACKEND", "file")).lower()
     if resolved_backend == "azure_blob":
         publisher = AzureBlobReportPublisher.from_environment()

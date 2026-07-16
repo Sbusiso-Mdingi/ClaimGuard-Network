@@ -1,7 +1,7 @@
 const identityAuthorityHeaders = new Set([
   "x-claimguard-user", "x-claimguard-role", "x-claimguard-user-tenant", "x-claimguard-tenant",
 ]);
-const internalServiceHeaders = new Set(["x-cg-service-actor", "x-cg-service-role", "x-cg-service-tenant"]);
+const internalServiceHeaders = new Set(["x-cg-service-actor", "x-cg-service-role", "x-cg-service-tenant", "x-cg-service-organisation"]);
 const forwardingHeaders = new Set(["forwarded", "x-forwarded-for", "x-real-ip"]);
 
 const hopByHopHeaders = new Set([

@@ -1,5 +1,5 @@
-import { getActiveTenantId } from "./tenant-context-store.js";
 import { enqueueClaimProcessingJob } from "./claim-processing-outbox-repository.js";
+import { repositoryTenantId } from "./repository-context.js";
 
 export class ClaimOwnershipConflictError extends Error {
   constructor(message = "Claim identifier is already owned by another tenant.") {
@@ -51,7 +51,11 @@ function configuredMaxAttempts(value) {
 
 export function createClaimIngestionRepository(pool, {
   maxOutboxAttempts = process.env.REPORT_WORKER_MAX_ATTEMPTS || process.env.CLAIM_OUTBOX_MAX_ATTEMPTS,
+  dataPlaneContext = null,
+  allowLegacyTenantContext = false,
 } = {}) {
+  if (!dataPlaneContext && !allowLegacyTenantContext) repositoryTenantId(null);
+  const canonicalTenantId = () => repositoryTenantId(dataPlaneContext, { allowLegacyTenantContext });
   return {
     async ingestClaims({ claims, source = "api", correlationId = null }) {
       if (!Array.isArray(claims) || claims.length === 0) {
@@ -66,7 +70,7 @@ export function createClaimIngestionRepository(pool, {
       let inserted = 0;
       let updated = 0;
       let outboxJob = null;
-      const tenantId = getActiveTenantId();
+      const tenantId = canonicalTenantId();
 
       try {
         await connection.beginTransaction();

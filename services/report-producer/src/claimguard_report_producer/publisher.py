@@ -100,7 +100,9 @@ class FileReportPublisher:
         report_tenant = metadata.get("tenant", {}).get("tenantId") if isinstance(metadata, dict) else None
         if len(version) != 64 or not watermark or any(character not in "0123456789abcdef" for character in version):
             raise ValueError("A canonical hexadecimal reportId and source watermark are required for publication.")
-        tenant_partition = (tenant_id or "tenant_default").strip() or "tenant_default"
+        tenant_partition = str(tenant_id or "").strip()
+        if not tenant_partition:
+            raise ValueError("An explicit canonical tenant partition is required.")
         if report_tenant != tenant_partition:
             raise ValueError("The report tenant does not match the storage partition.")
         tenant_root = self.base_dir / tenant_partition
@@ -208,7 +210,9 @@ class AzureBlobReportPublisher:
         report_tenant = metadata.get("tenant", {}).get("tenantId") if isinstance(metadata, dict) else None
         if len(version) != 64 or not watermark or any(character not in "0123456789abcdef" for character in version):
             raise ValueError("A canonical hexadecimal reportId and source watermark are required for publication.")
-        tenant_partition = (tenant_id or "tenant_default").strip() or "tenant_default"
+        tenant_partition = str(tenant_id or "").strip()
+        if not tenant_partition:
+            raise ValueError("An explicit canonical tenant partition is required.")
         if report_tenant != tenant_partition:
             raise ValueError("The report tenant does not match the storage partition.")
         report_blob_name = f"{tenant_partition}/versions/report-{version}.json"

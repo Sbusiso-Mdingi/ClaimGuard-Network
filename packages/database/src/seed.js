@@ -268,6 +268,9 @@ export async function seedSyntheticDatabase(pool, options = {}) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  if (process.env.OPERATIONAL_ADMIN_MODE !== "legacy_shared") {
+    throw new Error("Operational seeding requires OPERATIONAL_ADMIN_MODE=legacy_shared.");
+  }
   const databaseUrl = process.env.MYSQL_URL;
   if (!databaseUrl) {
     throw new Error("MYSQL_URL must be set to seed synthetic data");

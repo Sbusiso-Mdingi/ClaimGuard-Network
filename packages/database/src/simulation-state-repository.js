@@ -163,10 +163,11 @@ function assertCheckpoint(checkpoint, expectedTick) {
   }
 }
 
-export function createSimulationStateRepository(pool) {
+export function createSimulationStateRepository(pool, { dataPlaneContext = null } = {}) {
   if (!pool || typeof pool.execute !== "function" || typeof pool.getConnection !== "function") {
     throw new TypeError("A MySQL pool with execute and getConnection is required.");
   }
+  if (dataPlaneContext && dataPlaneContext.routeType !== "legacy_shared") throw new TypeError("Simulator state requires an operational DataPlaneContext.");
 
   return {
     async ensureDefaultInstance({ createdBy = "system", mode = "off", seed = 42, tickIntervalMs = 8000, storyKey = null, config = {} } = {}) {

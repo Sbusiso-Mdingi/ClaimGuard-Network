@@ -177,7 +177,7 @@ export async function enqueueClaimProcessingJob(executor, {
   };
 }
 
-async function recoverExpiredLeasesWithExecutor(executor) {
+async function recoverExpiredLeasesWithExecutor(executor, tenantId = null) {
   const [result] = await executor.execute(
     `
       UPDATE claim_processing_outbox
@@ -196,14 +196,17 @@ async function recoverExpiredLeasesWithExecutor(executor) {
           ELSE NULL
         END
       WHERE status = 'processing'
+        ${tenantId ? "AND tenant_id = ?" : ""}
         AND lease_expires_at IS NOT NULL
         AND lease_expires_at <= UTC_TIMESTAMP(3)
     `,
+    tenantId ? [tenantId] : [],
   );
   return Number(result?.affectedRows || 0);
 }
 
-export function createClaimProcessingOutboxRepository(pool) {
+export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext = null } = {}) {
+  const canonicalTenantId = dataPlaneContext?.operationalTenantId || null;
   return {
     async enqueue(job) {
       const connection = await pool.getConnection();
@@ -223,7 +226,7 @@ export function createClaimProcessingOutboxRepository(pool) {
     async recoverExpiredLeases() {
       const connection = await pool.getConnection();
       try {
-        return await recoverExpiredLeasesWithExecutor(connection);
+        return await recoverExpiredLeasesWithExecutor(connection, canonicalTenantId);
       } finally {
         connection.release();
       }
@@ -237,17 +240,19 @@ export function createClaimProcessingOutboxRepository(pool) {
 
       try {
         await connection.beginTransaction();
-        await recoverExpiredLeasesWithExecutor(connection);
+        await recoverExpiredLeasesWithExecutor(connection, canonicalTenantId);
         const [candidateRows] = await connection.execute(
           `
             SELECT id
             FROM claim_processing_outbox
             WHERE status IN ('pending', 'retry')
+              ${canonicalTenantId ? "AND tenant_id = ?" : ""}
               AND available_at <= UTC_TIMESTAMP(3)
             ORDER BY available_at ASC, created_at ASC
             LIMIT ${leaseLimit}
             FOR UPDATE SKIP LOCKED
           `,
+          canonicalTenantId ? [canonicalTenantId] : [],
         );
         const ids = (candidateRows || []).map((row) => row.id);
 
@@ -291,6 +296,7 @@ export function createClaimProcessingOutboxRepository(pool) {
     },
 
     async markCompleted({ id, tenantId, workerId }) {
+      if (canonicalTenantId && tenantId !== canonicalTenantId) throw new Error("Outbox tenant does not match the verified data-plane context.");
       const [result] = await pool.execute(
         `
           UPDATE claim_processing_outbox
@@ -309,6 +315,7 @@ export function createClaimProcessingOutboxRepository(pool) {
     },
 
     async markRetry({ id, tenantId, workerId, delaySeconds, lastError }) {
+      if (canonicalTenantId && tenantId !== canonicalTenantId) throw new Error("Outbox tenant does not match the verified data-plane context.");
       const [result] = await pool.execute(
         `
           UPDATE claim_processing_outbox
@@ -333,6 +340,7 @@ export function createClaimProcessingOutboxRepository(pool) {
     },
 
     async markDeadLetter({ id, tenantId, workerId, lastError }) {
+      if (canonicalTenantId && tenantId !== canonicalTenantId) throw new Error("Outbox tenant does not match the verified data-plane context.");
       const [result] = await pool.execute(
         `
           UPDATE claim_processing_outbox
@@ -356,6 +364,7 @@ export function createClaimProcessingOutboxRepository(pool) {
     },
 
     async getJobStatus({ id, tenantId }) {
+      if (canonicalTenantId && tenantId !== canonicalTenantId) throw new Error("Outbox tenant does not match the verified data-plane context.");
       const [rows] = await pool.execute(
         `
           SELECT *

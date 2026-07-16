@@ -45,11 +45,12 @@ def _map_job(row: dict[str, object]) -> OutboxJob:
 
 
 class PyMySqlOutboxRepository:
-    def __init__(self, connection_factory: Callable[[], object]) -> None:
+    def __init__(self, connection_factory: Callable[[], object], allowed_tenant_ids: frozenset[str] | None = None) -> None:
         self.connection_factory = connection_factory
+        self.allowed_tenant_ids = allowed_tenant_ids
 
     @classmethod
-    def from_url(cls, database_url: str) -> "PyMySqlOutboxRepository":
+    def from_url(cls, database_url: str, *, allowed_tenant_ids: frozenset[str] | None = None) -> "PyMySqlOutboxRepository":
         if not database_url:
             raise ValueError("MYSQL_URL is required for report worker mode.")
 
@@ -81,11 +82,15 @@ class PyMySqlOutboxRepository:
                 **connect_options,
             )
 
-        return cls(connection_factory)
+        return cls(connection_factory, allowed_tenant_ids)
+
+    def _require_allowed_tenant(self, tenant_id: str) -> None:
+        if self.allowed_tenant_ids is not None and tenant_id not in self.allowed_tenant_ids:
+            raise ValueError("Outbox tenant is outside the verified worker data-plane scope.")
 
     def recover_expired_leases(self, cursor) -> int:
         return cursor.execute(
-            """
+            f"""
             UPDATE claim_processing_outbox
             SET
               status = CASE
@@ -102,9 +107,11 @@ class PyMySqlOutboxRepository:
                 ELSE NULL
               END
             WHERE status = 'processing'
+              {"AND tenant_id IN (" + ", ".join(["%s"] * len(self.allowed_tenant_ids)) + ")" if self.allowed_tenant_ids else ""}
               AND lease_expires_at IS NOT NULL
               AND lease_expires_at <= UTC_TIMESTAMP(3)
-            """
+            """,
+            list(self.allowed_tenant_ids or []),
         )
 
     def lease_next_available_jobs(
@@ -127,11 +134,13 @@ class PyMySqlOutboxRepository:
                     SELECT id
                     FROM claim_processing_outbox
                     WHERE status IN ('pending', 'retry')
+                      {"AND tenant_id IN (" + ", ".join(["%s"] * len(self.allowed_tenant_ids)) + ")" if self.allowed_tenant_ids else ""}
                       AND available_at <= UTC_TIMESTAMP(3)
                     ORDER BY available_at ASC, created_at ASC
                     LIMIT {safe_limit}
                     FOR UPDATE SKIP LOCKED
-                    """
+                    """,
+                    list(self.allowed_tenant_ids or []),
                 )
                 ids = [str(row["id"]) for row in cursor.fetchall()]
                 if not ids:
@@ -165,6 +174,8 @@ class PyMySqlOutboxRepository:
                     [*ids, worker_id],
                 )
                 jobs = [_map_job(row) for row in cursor.fetchall()]
+                for job in jobs:
+                    self._require_allowed_tenant(job.tenant_id)
             connection.commit()
             return jobs
         except Exception:
@@ -192,6 +203,7 @@ class PyMySqlOutboxRepository:
             connection.close()
 
     def mark_completed(self, *, job: OutboxJob, worker_id: str) -> bool:
+        self._require_allowed_tenant(job.tenant_id)
         return self._transition(
             sql="""
                 UPDATE claim_processing_outbox
@@ -221,6 +233,7 @@ class PyMySqlOutboxRepository:
         tenant_ids = {job.tenant_id for job in jobs}
         if len(tenant_ids) != 1:
             raise ValueError("Coalesced outbox completion cannot cross tenant boundaries.")
+        self._require_allowed_tenant(next(iter(tenant_ids)))
         connection = self.connection_factory()
         try:
             connection.begin()
@@ -264,6 +277,7 @@ class PyMySqlOutboxRepository:
         delay_seconds: int,
         last_error: str,
     ) -> bool:
+        self._require_allowed_tenant(job.tenant_id)
         return self._transition(
             sql="""
                 UPDATE claim_processing_outbox
@@ -287,6 +301,7 @@ class PyMySqlOutboxRepository:
         worker_id: str,
         last_error: str,
     ) -> bool:
+        self._require_allowed_tenant(job.tenant_id)
         return self._transition(
             sql="""
                 UPDATE claim_processing_outbox

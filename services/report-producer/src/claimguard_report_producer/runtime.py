@@ -34,7 +34,7 @@ class DetectionReportProducer:
         max_retries: int = 2,
         retry_delay_seconds: float = 1.0,
         detector: Callable[..., dict[str, object]] | None = None,
-        tenant_id: str = "tenant_default",
+        tenant_id: str | None = None,
         logger=None,
     ) -> None:
         self.data_dir = data_dir
@@ -43,7 +43,9 @@ class DetectionReportProducer:
         self.max_retries = max_retries
         self.retry_delay_seconds = retry_delay_seconds
         self.detector = detector or _default_detector
-        self.tenant_id = tenant_id
+        self.tenant_id = str(tenant_id or "").strip()
+        if not self.tenant_id:
+            raise ValueError("An explicit canonical tenant_id is required.")
         self.logger = logger
 
     def run(self, *, trigger: str = "manual") -> ProducerRunResult:

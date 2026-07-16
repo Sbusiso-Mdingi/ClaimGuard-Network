@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@claimguard/control-plane-database": "workspace:*",
     "@claimguard/database": "workspace:*"
   },
   "scripts": {

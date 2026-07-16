@@ -274,13 +274,17 @@ function normalizeWorkflowInput(input, operationType) {
   };
 }
 
-export function createFraudWorkflowRepository(pool) {
+export function createFraudWorkflowRepository(pool, { dataPlaneContext = null } = {}) {
   requirePool(pool);
+  const canonicalTenantId = dataPlaneContext?.operationalTenantId || null;
 
   return {
     async confirmFraud(input) {
       const operationType = FRAUD_WORKFLOW_OPERATION.CONFIRMATION;
       const normalized = normalizeWorkflowInput(input, operationType);
+      if (canonicalTenantId && normalized.tenantId !== canonicalTenantId) {
+        throw new FraudWorkflowValidationError("Tenant does not match the verified data-plane context.", "data_plane_tenant_mismatch");
+      }
 
       return inTransaction(pool, async (connection) => {
         const investigation = await loadLockedInvestigation(
@@ -470,6 +474,9 @@ export function createFraudWorkflowRepository(pool) {
     async reverseFraud(input) {
       const operationType = FRAUD_WORKFLOW_OPERATION.REVERSAL;
       const normalized = normalizeWorkflowInput(input, operationType);
+      if (canonicalTenantId && normalized.tenantId !== canonicalTenantId) {
+        throw new FraudWorkflowValidationError("Tenant does not match the verified data-plane context.", "data_plane_tenant_mismatch");
+      }
 
       return inTransaction(pool, async (connection) => {
         const investigation = await loadLockedInvestigation(

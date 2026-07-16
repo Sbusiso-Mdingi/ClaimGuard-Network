@@ -79,7 +79,7 @@ function createFakeDb() {
 
 test("ledger repository creates chained entries with tenant_id", async () => {
   const db = createFakeDb();
-  const repository = createLedgerRepository(db);
+  const repository = createLedgerRepository(db, null, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(
     {
@@ -113,7 +113,7 @@ test("ledger repository creates chained entries with tenant_id", async () => {
 
 test("ledger repository records and returns latest confirmed fraud entry for active tenant only", async () => {
   const db = createFakeDb();
-  const repository = createLedgerRepository(db);
+  const repository = createLedgerRepository(db, null, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(
     {
@@ -162,7 +162,7 @@ test("ledger repository records and returns latest confirmed fraud entry for act
 
 test("ledger repository applies default tenant fallback when no tenant context exists", async () => {
   const db = createFakeDb();
-  const repository = createLedgerRepository(db);
+  const repository = createLedgerRepository(db, null, { allowLegacyTenantContext: true });
 
   const entry = await repository.createEntry({
     entryType: "API_BOOT",
@@ -177,7 +177,7 @@ test("ledger repository applies default tenant fallback when no tenant context e
 
 test("ledger repository enforces cross-tenant isolation for hash lookups", async () => {
   const db = createFakeDb();
-  const repository = createLedgerRepository(db);
+  const repository = createLedgerRepository(db, null, { allowLegacyTenantContext: true });
 
   let alphaHash = null;
 

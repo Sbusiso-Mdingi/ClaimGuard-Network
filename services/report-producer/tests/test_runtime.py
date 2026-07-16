@@ -52,6 +52,7 @@ class RuntimeTests(TestCase):
             publisher=publisher,
             top_n=7,
             max_retries=0,
+            tenant_id="tenant_default",
             detector=lambda _path, top_n: canonical_report() if top_n == 7 else {},
         )
         result = runtime.run(trigger="manual")
@@ -70,14 +71,16 @@ class RuntimeTests(TestCase):
             return canonical_report()
 
         runtime = DetectionReportProducer(
-            data_dir=Path("."), publisher=publisher, detector=detector, max_retries=1, retry_delay_seconds=0
+            data_dir=Path("."), publisher=publisher, detector=detector, max_retries=1, retry_delay_seconds=0,
+            tenant_id="tenant_default",
         )
         self.assertEqual(runtime.run(trigger="scheduled").attempt_count, 2)
 
     def test_invalid_report_never_reaches_publisher(self) -> None:
         publisher = FakePublisher()
         runtime = DetectionReportProducer(
-            data_dir=Path("."), publisher=publisher, detector=lambda _path, _top_n: {"schemes": []}, max_retries=0
+            data_dir=Path("."), publisher=publisher, detector=lambda _path, _top_n: {"schemes": []}, max_retries=0,
+            tenant_id="tenant_default",
         )
         with self.assertRaises(ReportContractError):
             runtime.run(trigger="manual")

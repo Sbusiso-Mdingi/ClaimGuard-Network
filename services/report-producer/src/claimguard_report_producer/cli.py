@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trigger", default="manual", help="Trigger label for telemetry and metadata")
     parser.add_argument(
         "--tenant-id",
-        default=os.environ.get("DEFAULT_TENANT_ID", "tenant_default"),
+        required=True,
         help="Tenant identifier to scope report generation and publishing",
     )
     return parser

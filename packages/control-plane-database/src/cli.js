@@ -91,7 +91,10 @@ async function runDemoProvisioning({ values }) {
     const repositories = createControlPlaneRepositories(controlPool);
     const service = createControlPlaneService({ pool: controlPool, repositories });
     const tenants = await readLegacyTenantInventory(operationalPool);
-    const result = await provisionDemoAccounts({ tenants, repositories, service, executor: controlPool });
+    const result = await provisionDemoAccounts({
+      tenants, repositories, service, executor: controlPool,
+      operationalDatabaseName: new URL(operationalUrl).pathname.replace(/^\//, ""),
+    });
     json({
       warning: "These generated demo passwords are shown once. Store them only in the approved deployment secret mechanism.",
       ...result,

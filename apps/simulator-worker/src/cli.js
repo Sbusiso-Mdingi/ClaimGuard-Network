@@ -1,8 +1,14 @@
-import { createDatabase, createSimulationStateRepository } from "@claimguard/database";
+import {
+  createLegacySharedAdapter,
+  createOperationalRepositories,
+  createTenantConnectionManager,
+} from "@claimguard/database";
+import { createControlPlanePool, createControlPlaneRepositories } from "@claimguard/control-plane-database";
 import {
   createLiveDemoBootstrapFromDatabase,
   createLiveDemoSimulator,
 } from "../../api/src/simulation/live-demo-simulator.js";
+import { createControlPlaneDataPlaneRouteResolver } from "../../api/src/data-plane-route-resolver.js";
 import { createSimulatorWorker, simulatorWorkerConfigFromEnvironment } from "./worker.js";
 
 function requireEnvironment(name) {
@@ -13,10 +19,32 @@ function requireEnvironment(name) {
 
 async function main() {
   const command = process.argv[2] || "tick";
-  const database = createDatabase(requireEnvironment("MYSQL_URL"));
-  const repository = createSimulationStateRepository(database.pool);
+  const controlPool = createControlPlanePool(requireEnvironment("CONTROL_PLANE_MYSQL_URL"));
+  const controlRepositories = createControlPlaneRepositories(controlPool);
+  const routeResolver = createControlPlaneDataPlaneRouteResolver({ repositories: controlRepositories });
+  const stateOrganisationId = requireEnvironment("SIMULATOR_STATE_ORGANISATION_ID");
+  const dataPlaneContext = await routeResolver.resolve({
+    organisationId: stateOrganisationId,
+    serviceIdentityId: "simulator-worker",
+    correlationId: `${command}:${Date.now()}`,
+  });
+  const connectionManager = createTenantConnectionManager({
+    adapters: { legacy_shared: createLegacySharedAdapter({
+      databaseUrl: requireEnvironment("MYSQL_URL"),
+      expectedEnvironment: process.env.DATA_PLANE_ENVIRONMENT || "legacy",
+      connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
+    }) },
+    maxPools: Number(process.env.DATA_PLANE_MAX_POOLS || 8),
+    logger(level, event, details) {
+      console.log(JSON.stringify({ timestamp: new Date().toISOString(), level, service: "simulator-worker", event, ...details }));
+    },
+  });
+  const dataPlaneLease = await connectionManager.acquire(dataPlaneContext);
+  const repository = createOperationalRepositories(dataPlaneContext, dataPlaneLease.pool).simulatorState;
   const config = simulatorWorkerConfigFromEnvironment(process.env);
   const apiBaseUrl = requireEnvironment("SIMULATOR_API_BASE_URL").replace(/\/$/, "");
+  const authorityMode = String(process.env.AUTHENTICATION_MODE || "session").toLowerCase();
+  const organisationScope = { [dataPlaneContext.operationalTenantId]: stateOrganisationId };
 
   try {
     if (command === "status") {
@@ -32,10 +60,13 @@ async function main() {
         return response.ok;
       },
       simulatorFactory: async ({ instance, assertMutationAllowed, deadline, maxClaimsPerTick }) => {
-        const configuredTenantIds = String(process.env.SIMULATOR_TENANTS || "").split(",").map((value) => value.trim()).filter(Boolean);
+        const requestedTenantIds = String(process.env.SIMULATOR_TENANTS || dataPlaneContext.operationalTenantId).split(",").map((value) => value.trim()).filter(Boolean);
+        if (requestedTenantIds.length !== 1 || requestedTenantIds[0] !== dataPlaneContext.operationalTenantId) {
+          throw new Error("Simulator tenant scope must equal the verified state organisation tenant.");
+        }
         const bootstrap = createLiveDemoBootstrapFromDatabase({
-          pool: database.pool,
-          configuredTenantIds,
+          pool: dataPlaneLease.pool,
+          configuredTenantIds: requestedTenantIds,
           seed: instance.seed,
         });
         return createLiveDemoSimulator({
@@ -51,7 +82,7 @@ async function main() {
           initialCheckpoint: instance.checkpoint,
           maxClaimsPerTick,
           bootstrap,
-          authorityMode: String(process.env.AUTHENTICATION_MODE || "session").toLowerCase(),
+          authorityMode,
           apiClient: {
             async request({ path, method = "GET", headers = {}, body = null }) {
               await assertMutationAllowed();
@@ -60,8 +91,11 @@ async function main() {
                 method,
                 headers: {
                   ...headers,
-                  ...(String(process.env.AUTHENTICATION_MODE || "session").toLowerCase() === "session" && process.env.INTERNAL_SERVICE_TOKEN
-                    ? { authorization: `Bearer ${process.env.INTERNAL_SERVICE_TOKEN}` }
+                  ...(authorityMode === "session" && process.env.INTERNAL_SERVICE_TOKEN
+                    ? {
+                        authorization: `Bearer ${process.env.INTERNAL_SERVICE_TOKEN}`,
+                        "x-cg-service-organisation": organisationScope[headers["x-cg-service-tenant"]] || "",
+                      }
                     : {}),
                   "content-type": "application/json",
                   "x-request-id": `${instance.id}:tick:${instance.tickNumber + 1}`,
@@ -82,7 +116,9 @@ async function main() {
     else if (command === "continuous") await worker.runContinuous();
     else throw new Error("Command must be one of: tick, drain, continuous, status.");
   } finally {
-    await database.pool.end();
+    await dataPlaneLease.release();
+    await connectionManager.invalidateOrganisation(stateOrganisationId, "worker_shutdown");
+    await controlPool.end();
   }
 }
 

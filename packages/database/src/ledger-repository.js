@@ -3,12 +3,14 @@ import { and, desc, eq } from "drizzle-orm";
 import { createLedgerEntry, genesisPreviousHash } from "./ledger-entry.js";
 import { appendLedgerEntry } from "./ledger-chain.js";
 import { ledgerEntriesTable } from "./index.js";
-import { getActiveTenantId } from "./tenant-context-store.js";
+import { repositoryTenantId } from "./repository-context.js";
 
 const CONFIRMED_FRAUD_ENTRY_TYPE = "INVESTIGATOR_CONFIRMED_FRAUD";
 const REVERSED_FRAUD_ENTRY_TYPE = "INVESTIGATOR_REVERSED_FRAUD";
 
-export function createLedgerRepository(db, pool = null) {
+export function createLedgerRepository(db, pool = null, { dataPlaneContext = null, allowLegacyTenantContext = false } = {}) {
+  if (!dataPlaneContext && !allowLegacyTenantContext) repositoryTenantId(null);
+  const canonicalTenantId = () => repositoryTenantId(dataPlaneContext, { allowLegacyTenantContext });
   async function getLatestGlobalEntry() {
     const [latestEntry] = await db
       .select()
@@ -21,7 +23,7 @@ export function createLedgerRepository(db, pool = null) {
 
   return {
     async getLatestEntry() {
-      const tenantId = getActiveTenantId();
+      const tenantId = canonicalTenantId();
       const [latestEntry] = await db
         .select()
         .from(ledgerEntriesTable)
@@ -33,7 +35,7 @@ export function createLedgerRepository(db, pool = null) {
     },
 
     async createEntry({ entryType, payload }) {
-      const tenantId = getActiveTenantId();
+      const tenantId = canonicalTenantId();
       if (pool && typeof pool.getConnection === "function") {
         const connection = await pool.getConnection();
         try {
@@ -68,7 +70,7 @@ export function createLedgerRepository(db, pool = null) {
     },
 
     async getLatestConfirmedFraudEntry() {
-      const tenantId = getActiveTenantId();
+      const tenantId = canonicalTenantId();
       const [latestEntry] = await db
         .select()
         .from(ledgerEntriesTable)
@@ -139,7 +141,7 @@ export function createLedgerRepository(db, pool = null) {
     },
 
     async findEntryByHash(entryHash) {
-      const tenantId = getActiveTenantId();
+      const tenantId = canonicalTenantId();
       const [entry] = await db
         .select()
         .from(ledgerEntriesTable)

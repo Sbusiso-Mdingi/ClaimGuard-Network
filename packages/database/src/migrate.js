@@ -12,6 +12,7 @@ export const defaultMigrationPaths = Object.freeze([
   fileURLToPath(new URL("../migrations/0005_atomic_fraud_workflows.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0006_tenant_snapshot_reports.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0007_simulation_runtime.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0008_data_plane_metadata.sql", import.meta.url)),
 ]);
 
 function splitSqlStatements(sql) {
@@ -74,6 +75,9 @@ const isDirectExecution = process.argv[1] === fileURLToPath(import.meta.url);
 
 if (isDirectExecution) {
   (async () => {
+    if (process.env.OPERATIONAL_ADMIN_MODE !== "legacy_shared") {
+      throw new Error("Operational migrations require OPERATIONAL_ADMIN_MODE=legacy_shared.");
+    }
     const databaseUrl = process.env.MYSQL_URL;
     if (!databaseUrl) {
       throw new Error("MYSQL_URL must be set to run migrations");

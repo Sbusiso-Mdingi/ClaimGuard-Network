@@ -137,8 +137,9 @@ export function normalizeRegistryPublicationMetadata(metadata, options = {}) {
   };
 }
 
-export function createSharedFraudRegistryRepository(pool) {
+export function createSharedFraudRegistryRepository(pool, { dataPlaneContext = null } = {}) {
   requirePool(pool);
+  const canonicalTenantId = dataPlaneContext?.operationalTenantId || null;
 
   async function getRegistryRecordById(registryEntryId) {
     const normalizedRegistryEntryId = normalizeRequiredString(registryEntryId, "registryEntryId", 64);
@@ -167,6 +168,7 @@ export function createSharedFraudRegistryRepository(pool) {
       const ledgerHash = normalizeRequiredString(ledgerEntry.entryHash, "ledgerHash", 64);
       const investigationId = normalizeRequiredString(investigation?.investigationId, "investigationId", 64);
       const tenantId = normalizeRequiredString(investigation?.tenantId, "tenantId", 64);
+      if (canonicalTenantId && tenantId !== canonicalTenantId) throw new FraudRegistryValidationError("Tenant does not match the verified data-plane context.", "data_plane_tenant_mismatch");
       const normalizedMetadata = normalizeRegistryPublicationMetadata(metadata);
       const registryEntryId = crypto.randomUUID();
       const publicationTimestamp = new Date().toISOString();
@@ -228,6 +230,7 @@ export function createSharedFraudRegistryRepository(pool) {
       const ledgerHash = normalizeRequiredString(ledgerEntry.entryHash, "ledgerHash", 64);
       const investigationId = normalizeRequiredString(investigation?.investigationId, "investigationId", 64);
       const tenantId = normalizeRequiredString(investigation?.tenantId, "tenantId", 64);
+      if (canonicalTenantId && tenantId !== canonicalTenantId) throw new FraudRegistryValidationError("Tenant does not match the verified data-plane context.", "data_plane_tenant_mismatch");
       const original = originalRegistryEntry || null;
 
       if (

@@ -8,6 +8,7 @@ test("session proxy forwards Cookie, Origin, CSRF, and correlation headers but s
     "x-request-id": "corr",
     "x-forwarded-for": "attacker-controlled",
     "x-claimguard-role": "platform_administrator",
+    "x-cg-service-organisation": "org-attacker",
     authorization: "Bearer browser-controlled",
   }, socket: { remoteAddress: "192.0.2.10" } }, { mode: "session", trustProxy: false });
   expect(headers.get("cookie")).toBe("__Host-cg_session=opaque");
@@ -16,6 +17,7 @@ test("session proxy forwards Cookie, Origin, CSRF, and correlation headers but s
   expect(headers.get("x-request-id")).toBe("corr");
   expect(headers.has("x-claimguard-role")).toBe(false);
   expect(headers.has("authorization")).toBe(false);
+  expect(headers.has("x-cg-service-organisation")).toBe(false);
   expect(headers.get("x-forwarded-for")).toBe("192.0.2.10");
 });
 

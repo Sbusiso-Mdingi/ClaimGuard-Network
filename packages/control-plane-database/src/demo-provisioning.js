@@ -35,7 +35,28 @@ async function ensureOrganisation({ repositories, service, displayName, slug, or
   return activateOrganisation(service, organisation);
 }
 
-async function ensureVerifiedMapping({ executor, organisation, tenant }) {
+async function ensureRoute({ repositories, service, organisation, routeType, databaseName = null }) {
+  const existing = await repositories.routes.getSafeActiveForOrganisation(organisation.organisationId);
+  if (existing) {
+    if (existing.routeType !== routeType || existing.provisioningStatus !== "active") {
+      throw new Error(`Active route for ${organisation.canonicalSlug} is not an eligible ${routeType} route.`);
+    }
+    return existing;
+  }
+  return service.registerRoute({
+    organisationId: organisation.organisationId,
+    routeType,
+    logicalDatabaseIdentifier: routeType === "platform_none" ? "platform-control-plane" : "legacy-operational-shared",
+    databaseName: routeType === "platform_none" ? null : databaseName,
+    secretReference: routeType === "platform_none" ? null : "secret://runtime/MYSQL_URL",
+    schemaVersion: routeType === "platform_none" ? null : "8",
+    provisioningStatus: "active",
+    healthStatus: "unknown",
+    activate: true,
+  }, { type: "system", id: "demo-provisioner", source: "demo-provisioner" });
+}
+
+async function ensureVerifiedMapping({ executor, organisation, tenant, route }) {
   const [rows] = await executor.execute("SELECT * FROM legacy_tenant_mappings WHERE organisation_id = ? LIMIT 1", [organisation.organisationId]);
   const existing = rows?.[0];
   if (existing && (existing.legacy_tenant_id !== tenant.tenantId || existing.legacy_tenant_slug !== tenant.tenantSlug)) {
@@ -43,16 +64,17 @@ async function ensureVerifiedMapping({ executor, organisation, tenant }) {
   }
   if (existing) {
     await executor.execute(
-      "UPDATE legacy_tenant_mappings SET migration_status = 'verified', verified_at = UTC_TIMESTAMP(3) WHERE mapping_id = ?",
-      [existing.mapping_id],
+      "UPDATE legacy_tenant_mappings SET migration_status = 'verified', route_id = ?, verified_at = UTC_TIMESTAMP(3) WHERE mapping_id = ?",
+      [route.routeId, existing.mapping_id],
     );
     return;
   }
   await executor.execute(
     `INSERT INTO legacy_tenant_mappings
-      (mapping_id, legacy_tenant_id, legacy_tenant_slug, organisation_id, migration_status, verified_at, migration_metadata)
-     VALUES (?, ?, ?, ?, 'verified', UTC_TIMESTAMP(3), ?)`,
-    [crypto.randomUUID(), tenant.tenantId, tenant.tenantSlug, organisation.organisationId, JSON.stringify({ source: "demo-provisioner", shadowOnly: false })],
+      (mapping_id, legacy_tenant_id, legacy_tenant_slug, organisation_id, migration_status, route_id, verified_at, migration_metadata)
+     VALUES (?, ?, ?, ?, 'verified', ?, UTC_TIMESTAMP(3), ?)`,
+    [crypto.randomUUID(), tenant.tenantId, tenant.tenantSlug, organisation.organisationId, route.routeId,
+      JSON.stringify({ source: "demo-provisioner", shadowOnly: false })],
   );
 }
 
@@ -112,7 +134,7 @@ async function ensureAccount({ executor, repositories, service, organisation, ro
   return { organisation: organisation.canonicalSlug, role: roleKey, username, password };
 }
 
-export async function provisionDemoAccounts({ tenants, repositories, service, executor }) {
+export async function provisionDemoAccounts({ tenants, repositories, service, executor, operationalDatabaseName = null }) {
   if (!Array.isArray(tenants) || tenants.length === 0) throw new Error("At least one operational demo tenant is required.");
   const oneTimeCredentials = [];
   for (const tenant of tenants) {
@@ -120,7 +142,8 @@ export async function provisionDemoAccounts({ tenants, repositories, service, ex
       repositories, service, displayName: tenant.tenantName, slug: tenant.tenantSlug,
       organisationType: "medical_scheme",
     });
-    await ensureVerifiedMapping({ executor, organisation, tenant });
+    const route = await ensureRoute({ repositories, service, organisation, routeType: "legacy_shared", databaseName: operationalDatabaseName });
+    await ensureVerifiedMapping({ executor, organisation, tenant, route });
     for (let index = 0; index < SCHEME_DEMO_ROLES.length; index += 1) {
       const [roleKey, username, roleLabel] = SCHEME_DEMO_ROLES[index];
       oneTimeCredentials.push(await ensureAccount({
@@ -131,6 +154,7 @@ export async function provisionDemoAccounts({ tenants, repositories, service, ex
   const platform = await ensureOrganisation({
     repositories, service, displayName: "ClaimGuard", slug: "claimguard", organisationType: "platform",
   });
+  await ensureRoute({ repositories, service, organisation: platform, routeType: "platform_none" });
   oneTimeCredentials.push(await ensureAccount({
     executor, repositories, service, organisation: platform, roleKey: "platform_administrator",
     username: "platform.admin.demo", roleLabel: "Platform Administrator", order: 1,

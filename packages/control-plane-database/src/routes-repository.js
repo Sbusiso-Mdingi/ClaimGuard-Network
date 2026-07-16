@@ -63,5 +63,15 @@ export function createDataPlaneRoutesRepository(defaultExecutor) {
       );
       return projectSafeRoute(rows?.[0]);
     },
+
+    async listInternalActiveForOrganisation(organisationId, { executor } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT * FROM data_plane_routes
+         WHERE organisation_id = ? AND active_route_slot = organisation_id
+         ORDER BY route_generation DESC LIMIT 2`,
+        [organisationId],
+      );
+      return rows || [];
+    },
   };
 }

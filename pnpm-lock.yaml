@@ -53,6 +53,9 @@ importers:
 
   apps/simulator-worker:
     dependencies:
+      '@claimguard/control-plane-database':
+        specifier: workspace:*
+        version: link:../../packages/control-plane-database
       '@claimguard/database':
         specifier: workspace:*
         version: link:../../packages/database

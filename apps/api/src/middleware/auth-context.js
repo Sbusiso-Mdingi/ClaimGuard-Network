@@ -131,14 +131,16 @@ export function createSessionAuthenticationProvider({ authenticationService, con
         const userId = normalizeHeaderValue(request.headers.get("x-cg-service-actor"));
         const roleHeader = normalizeHeaderValue(request.headers.get("x-cg-service-role"));
         const tenantId = normalizeHeaderValue(request.headers.get("x-cg-service-tenant"));
+        const organisationId = normalizeHeaderValue(request.headers.get("x-cg-service-organisation"));
         const roles = parseRoles(roleHeader || "");
-        if (!userId || !tenantId || roles.length === 0) {
+        const allowedOrganisations = configuration.internalServiceOrganisationIds || [];
+        if (!userId || !tenantId || !organisationId || roles.length === 0 || !allowedOrganisations.includes(organisationId)) {
           const error = new ForbiddenError("Internal service identity is incomplete.");
           error.code = "INTERNAL_SERVICE_IDENTITY_INVALID";
           throw error;
         }
         return {
-          authContext: createAuthenticatedAuthContext({ userId, roles, tenantId, source: "internal_service" }),
+          authContext: createAuthenticatedAuthContext({ userId, roles, tenantId, organisationId, source: "internal_service" }),
           resolvedSession: null,
           metadata,
         };

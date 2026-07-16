@@ -47,6 +47,14 @@ export function createLegacyTenantMappingsRepository(defaultExecutor) {
       return mapRow(rows?.[0]);
     },
 
+    async getByOrganisationId(organisationId, { executor } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        "SELECT * FROM legacy_tenant_mappings WHERE organisation_id = ? LIMIT 2",
+        [organisationId],
+      );
+      return rows?.length === 1 ? mapRow(rows[0]) : null;
+    },
+
     async list({ executor } = {}) {
       const [rows] = await executorOr(defaultExecutor, executor).execute("SELECT * FROM legacy_tenant_mappings ORDER BY legacy_tenant_id");
       return (rows || []).map(mapRow);
