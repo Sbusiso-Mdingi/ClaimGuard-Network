@@ -2,7 +2,8 @@ import React from "react";
 import { useRole } from "../../context/RoleContext";
 
 export function RoleSwitcher() {
-  const { identity, identities, setIdentityId } = useRole();
+  const { identity, identities, setIdentityId, mode } = useRole();
+  if (mode !== "demo_headers") return null;
 
   return (
     <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">

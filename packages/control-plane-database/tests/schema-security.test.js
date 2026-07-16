@@ -45,10 +45,11 @@ test("canonical authorization seed is insert-only and grants platform admin no p
   assert.doesNotMatch(sql, /DELETE\s+FROM|UPDATE\s+role_permissions/i);
 });
 
-test("Phase 11B adds no login endpoint or active API control-plane dependency", async () => {
+test("Phase 11C activates only identity/session control-plane dependencies and no data-plane routing", async () => {
   const backend = await readFile(new URL("../../../apps/api/src/backend.js", import.meta.url), "utf8");
   const server = await readFile(new URL("../../../apps/api/src/backend-server.js", import.meta.url), "utf8");
-  assert.doesNotMatch(`${backend}\n${server}`, /control-plane-database|CONTROL_PLANE_MYSQL_URL|\/auth\/login/);
+  assert.match(`${backend}\n${server}`, /control-plane-database|CONTROL_PLANE_MYSQL_URL|registerAuthRoutes/);
+  assert.doesNotMatch(`${backend}\n${server}`, /getSafeActiveForOrganisation|data_plane_routes|secret_reference/);
 });
 
 test("schema constraints encode immutable IDs, scoped identities, aliases, and one active route", async () => {
@@ -72,4 +73,14 @@ test("schema represents suspended organisations, disabled credentials, revocatio
   assert.match(sql, /revoked_at TIMESTAMP\(3\) NULL/);
   assert.match(sql, /compensation_status VARCHAR\(32\) NOT NULL DEFAULT 'not_required'/);
   assert.match(sql, /'pending', 'running', 'completed', 'failed', 'compensating', 'compensated', 'quarantined'/);
+});
+
+test("Phase 11C migration adds only hashed CSRF/session authority and durable throttling", async () => {
+  const sql = await readFile(new URL("../migrations/0005_session_authority_and_throttling.sql", import.meta.url), "utf8");
+  assert.match(sql, /csrf_token_hash CHAR\(64\) NOT NULL/);
+  assert.match(sql, /CREATE TABLE login_throttle_buckets/);
+  assert.match(sql, /source_network_hash CHAR\(64\) NOT NULL/);
+  assert.match(sql, /organisation_slug_hash CHAR\(64\) NOT NULL/);
+  assert.match(sql, /username_hash CHAR\(64\) NOT NULL/);
+  assert.doesNotMatch(sql, /plaintext|raw_session|password VARCHAR|csrf_token\s/);
 });

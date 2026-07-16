@@ -7,6 +7,7 @@ import { PageFrame, SectionCard, MetricPill, StatusIndicator, severityStatusTone
 import { useRole } from "../../context/RoleContext";
 import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
 import { addTrackedInvestigation } from "../../lib/trackedInvestigations";
+import { apiRequest } from "../../lib/apiClient";
 
 function RiskPanel({ claim, risk, ledgerReference }) {
   const ledgerLinked =
@@ -70,7 +71,7 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
   const params = useParams();
   const claimId = decodeURIComponent(params.claimId || "");
 
-  const { authHeaders, identity } = useRole();
+  const { identity } = useRole();
   const [escalateMessage, setEscalateMessage] = useState(null);
   const canEscalate = [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR].includes(identity.role);
 
@@ -96,9 +97,9 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
   async function handleEscalate() {
     setEscalateMessage(null);
     try {
-      const response = await fetch("/api/investigations", {
+      const response = await apiRequest("/investigations", {
         method: "POST",
-        headers: { "content-type": "application/json", ...authHeaders },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ claimId: claim?.claimId }),
       });
       const json = await response.json();

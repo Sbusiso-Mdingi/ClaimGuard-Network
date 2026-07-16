@@ -13,7 +13,8 @@ import { RiskPage } from "./features/investigator/RiskPage";
 import { HistoryPage } from "./features/investigator/HistoryPage";
 
 // 1. Added top-level context and page imports
-import { RoleProvider } from "./context/RoleContext";
+import { RoleProvider, useRole } from "./context/RoleContext";
+import { LoginPage } from "./features/auth/LoginPage";
 import { InvestigationsPage } from "./features/investigator/InvestigationsPage";
 import { InvestigationWorkspacePage } from "./features/investigator/InvestigationWorkspacePage";
 import { CommitteeRegistryPage } from "./features/investigator/CommitteeRegistryPage";
@@ -40,7 +41,9 @@ function StatusScreen({ title, description, actionLabel, onAction }) {
 }
 
 function InvestigatorRoutes() {
-  const data = useInvestigatorData();
+  const { identity } = useRole();
+  const platformOnly = identity.organisationType === "platform";
+  const data = useInvestigatorData({ enabled: !platformOnly });
 
   function renderPageContent(readyElement, options = {}) {
     if (data.status === "loading") {
@@ -86,7 +89,7 @@ function InvestigatorRoutes() {
         <Route
           index
           element={
-            <RequireRoleAccess navKey="dashboard">
+            platformOnly ? <Navigate to="/admin/platform" replace /> : <RequireRoleAccess navKey="dashboard">
               {renderPageContent(
                 <DashboardPage metrics={data.metrics} status={data.status} lastRefresh={data.lastRefresh} />,
                 {
@@ -166,13 +169,22 @@ function InvestigatorRoutes() {
   );
 }
 
+function AuthenticationBoundary() {
+  const { status, authenticated, mode } = useRole();
+  if (status === "loading") {
+    return <StatusScreen title="Checking your session" description="Verifying the secure server-side session…" />;
+  }
+  if (!authenticated && mode === "session") return <LoginPage />;
+  return <InvestigatorRoutes />;
+}
+
 export default function AppRoot() {
   return (
     <ErrorBoundary>
       {/* 3. Wrapped the router with the RoleProvider state element wrapper */}
       <RoleProvider>
         <BrowserRouter>
-          <InvestigatorRoutes />
+          <AuthenticationBoundary />
         </BrowserRouter>
       </RoleProvider>
     </ErrorBoundary>

@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { useRole } from "../../context/RoleContext";
+import { apiRequest } from "../../lib/apiClient";
 import { PageFrame, SectionCard, StatusIndicator } from "./InvestigatorUI";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
 
 export function CommitteeRegistryPage() {
-  const { authHeaders, identity } = useRole();
+  const { identity } = useRole();
   const [subjectToken, setSubjectToken] = useState("");
   const [results, setResults] = useState(null);
   const [history, setHistory] = useState(null);
@@ -19,7 +20,7 @@ export function CommitteeRegistryPage() {
     setError(null);
     setHistory(null);
     try {
-      const response = await fetch(`/api/registry/search?subjectToken=${encodeURIComponent(subjectToken.trim())}`, { headers: authHeaders });
+      const response = await apiRequest(`/registry/search?subjectToken=${encodeURIComponent(subjectToken.trim())}`);
       const json = await response.json();
       if (!response.ok || !json.available) {
         setError(json.message || "Search failed.");
@@ -37,7 +38,7 @@ export function CommitteeRegistryPage() {
   async function loadHistory() {
     if (!subjectToken.trim()) return;
     try {
-      const response = await fetch(`/api/registry/history/${encodeURIComponent(subjectToken.trim())}`, { headers: authHeaders });
+      const response = await apiRequest(`/registry/history/${encodeURIComponent(subjectToken.trim())}`);
       const json = await response.json();
       if (response.ok && json.available) setHistory(json.history);
     } catch {

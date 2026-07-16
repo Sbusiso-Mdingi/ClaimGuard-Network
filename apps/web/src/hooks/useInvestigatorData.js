@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRole } from "../context/RoleContext";
+import { apiRequest } from "../lib/apiClient";
 
 const POLL_INTERVAL_MS = 15000;
 
@@ -66,8 +66,7 @@ function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = [])
   };
 }
 
-export function useInvestigatorData() {
-  const { authHeaders } = useRole();
+export function useInvestigatorData({ enabled = true } = {}) {
   const [liveRefreshEnabled, setLiveRefreshEnabled] = useState(true);
   const [simulatorState, setSimulatorState] = useState({
     status: "loading",
@@ -92,9 +91,9 @@ export function useInvestigatorData() {
 
     try {
       const [reportRes, graphRes, riskRes] = await Promise.all([
-        fetch("/api/detection/report", { cache: "no-store", headers: authHeaders }),
-        fetch("/api/detection/graph", { cache: "no-store", headers: authHeaders }),
-        fetch("/api/detection/risk", { cache: "no-store", headers: authHeaders }),
+        apiRequest("/detection/report", { cache: "no-store" }),
+        apiRequest("/detection/graph", { cache: "no-store" }),
+        apiRequest("/detection/risk", { cache: "no-store" }),
       ]);
 
       const [reportPayload, graphPayload, riskPayload] = await Promise.all([
@@ -126,11 +125,11 @@ export function useInvestigatorData() {
         lastRefresh: fetchedAt,
       }));
     }
-  }, [authHeaders]);
+  }, []);
 
   const loadSimulatorStatus = useCallback(async () => {
     try {
-      const response = await fetch("/api/simulator/status", { cache: "no-store", headers: authHeaders });
+      const response = await apiRequest("/simulator/status", { cache: "no-store" });
       const payload = await response.json();
       if (!response.ok || !payload.available || !payload.simulator) {
         throw new Error(payload.message || `Simulator status unavailable (${response.status})`);
@@ -143,14 +142,14 @@ export function useInvestigatorData() {
         error: error instanceof Error ? error.message : "Simulator status unavailable.",
       }));
     }
-  }, [authHeaders]);
+  }, []);
 
   const sendSimulatorCommand = useCallback(async (action, payload = null) => {
     setSimulatorState((previous) => ({ ...previous, controlPending: true, error: null }));
     try {
-      const response = await fetch(`/api/simulator/${action}`, {
+      const response = await apiRequest(`/simulator/${action}`, {
         method: "POST",
-        headers: { ...authHeaders, "content-type": "application/json" },
+        headers: { "content-type": "application/json" },
         body: payload ? JSON.stringify(payload) : undefined,
       });
       const result = await response.json();
@@ -168,21 +167,26 @@ export function useInvestigatorData() {
       }));
       return false;
     }
-  }, [authHeaders]);
+  }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      setState((previous) => ({ ...previous, status: "ready", error: null }));
+      setSimulatorState((previous) => ({ ...previous, status: "ready", error: null }));
+      return;
+    }
     load();
     loadSimulatorStatus();
-  }, [load, loadSimulatorStatus]);
+  }, [enabled, load, loadSimulatorStatus]);
 
   useEffect(() => {
-    if (!liveRefreshEnabled) return undefined;
+    if (!enabled || !liveRefreshEnabled) return undefined;
     const id = window.setInterval(() => {
       load();
       loadSimulatorStatus();
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [liveRefreshEnabled, load, loadSimulatorStatus]);
+  }, [enabled, liveRefreshEnabled, load, loadSimulatorStatus]);
 
   const metrics = useMemo(() => {
     const { report, claims } = state;

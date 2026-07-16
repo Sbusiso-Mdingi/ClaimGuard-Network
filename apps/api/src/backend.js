@@ -3,8 +3,11 @@ import { Hono } from "hono";
 import crypto from "node:crypto";
 
 import { FileReportStorage } from "./report-storage.js";
+import { createSessionAuthenticationProvider } from "./middleware/auth-context.js";
 import { createAuthenticationMiddleware } from "./middleware/authorization-middleware.js";
 import { createTenantContextMiddleware } from "./middleware/tenant-context-middleware.js";
+import { createSessionCsrfMiddleware } from "./session-security-middleware.js";
+import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerAdminRoutes } from "./routes/admin-routes.js";
 import { registerClaimsRoutes } from "./routes/claims-routes.js";
 import { registerDetectionRoutes } from "./routes/detection-routes.js";
@@ -77,6 +80,9 @@ export function createBackendApp({
   claimIngestionService = null,
   tenantRepository = null,
   authenticationProvider = null,
+  authenticationConfiguration = Object.freeze({ mode: "demo_headers" }),
+  authenticationService = null,
+  controlPlaneConfigurationRepository = null,
   reportStorage = null,
   detectionAnalyzeProxyUrl = null,
   detectionReportPath = null,
@@ -100,26 +106,11 @@ export function createBackendApp({
 
   const app = new Hono();
 
-  app.use(
-    "*",
-    createAuthenticationMiddleware({
-      authenticationProvider: authenticationProvider || undefined,
-    }),
-  );
-
-  app.use(
-    "*",
-    createTenantContextMiddleware({
-      tenantRepository,
-    }),
-  );
-
   app.use("*", async (c, next) => {
     const requestStart = Date.now();
     const requestId = c.req.header("x-request-id") || crypto.randomUUID();
     c.set("requestId", requestId);
     c.header("x-request-id", requestId);
-
     try {
       await next();
     } finally {
@@ -132,6 +123,42 @@ export function createBackendApp({
       });
     }
   });
+
+  if (authenticationConfiguration.mode === "session" && !authenticationService) {
+    throw new TypeError("Session authentication mode requires authenticationService.");
+  }
+
+  const resolvedAuthenticationProvider = authenticationProvider || (
+    authenticationConfiguration.mode === "session"
+      ? createSessionAuthenticationProvider({ authenticationService, configuration: authenticationConfiguration })
+      : undefined
+  );
+
+  app.use(
+    "*",
+    createAuthenticationMiddleware({
+      authenticationProvider: resolvedAuthenticationProvider,
+    }),
+  );
+
+  if (authenticationConfiguration.mode === "session") {
+    app.use("*", createSessionCsrfMiddleware({ authenticationService, configuration: authenticationConfiguration }));
+  }
+
+  app.use(
+    "*",
+    createTenantContextMiddleware({
+      tenantRepository,
+    }),
+  );
+
+  if (authenticationConfiguration.mode === "session") {
+    registerAuthRoutes(app, {
+      authenticationService,
+      configuration: authenticationConfiguration,
+      configurationRepository: controlPlaneConfigurationRepository,
+    });
+  }
 
   registerAdminRoutes(app, {
     reportService: services.reportService,

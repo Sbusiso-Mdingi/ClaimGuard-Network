@@ -282,7 +282,14 @@ function specialtyToClaimFamily(specialty) {
   return "consultation";
 }
 
-function createHeaders({ tenantId, userId, role }) {
+function createHeaders({ tenantId, userId, role, authorityMode = "demo_headers" }) {
+  if (authorityMode === "session") {
+    return {
+      "x-cg-service-actor": userId,
+      "x-cg-service-role": role,
+      "x-cg-service-tenant": tenantId,
+    };
+  }
   return {
     "content-type": "application/json",
     "x-claimguard-user": userId,
@@ -533,6 +540,7 @@ export function createLiveDemoSimulator({
   timelineConfig,
   initialCheckpoint = null,
   maxClaimsPerTick = 3,
+  authorityMode = "demo_headers",
 } = {}) {
   const random = new SeededRandom(seed);
   const timeline = defaultTimeline(timelineConfig);
@@ -609,7 +617,7 @@ export function createLiveDemoSimulator({
     return apiClient.request({
       path,
       method,
-      headers: createHeaders({ tenantId, role, userId }),
+      headers: createHeaders({ tenantId, role, userId, authorityMode }),
       body,
     });
   }

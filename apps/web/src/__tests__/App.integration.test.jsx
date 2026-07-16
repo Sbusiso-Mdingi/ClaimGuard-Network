@@ -119,12 +119,10 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.getByText(/Total claims/i)).toBeInTheDocument();
 
   for (const [, requestOptions] of global.fetch.mock.calls.slice(0, 3)) {
-    expect(requestOptions.headers).toMatchObject({
-      "x-claimguard-user": "analyst-alpha",
-      "x-claimguard-role": "fraud_analyst",
-      "x-claimguard-user-tenant": "tenant_alpha",
-      "x-claimguard-tenant": "tenant_alpha",
-    });
+    expect(requestOptions.headers.get("x-claimguard-user")).toBe("analyst-alpha");
+    expect(requestOptions.headers.get("x-claimguard-role")).toBe("fraud_analyst");
+    expect(requestOptions.headers.get("x-claimguard-user-tenant")).toBe("tenant_alpha");
+    expect(requestOptions.headers.get("x-claimguard-tenant")).toBe("tenant_alpha");
   }
 
   await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));

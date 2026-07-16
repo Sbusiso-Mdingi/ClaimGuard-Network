@@ -40,7 +40,7 @@ export function InvestigatorLayout({
   ledgerStatus,
   dataSource,
 }) {
-  const { identity } = useRole();
+  const { identity, logout, mode } = useRole();
   const location = useLocation();
   const visibleNavGroups = useMemo(
     () =>
@@ -185,8 +185,15 @@ export function InvestigatorLayout({
             ))}
           </nav>
 
-          <div className="mt-auto pt-4">
+          <div className="mt-auto space-y-3 pt-4">
             <RoleSwitcher />
+            {mode === "session" ? (
+              <div className="rounded-xl border border-border bg-background/50 p-4">
+                <p className="text-sm font-semibold">{identity.label}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{identity.tenantLabel}</p>
+                <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={logout}>Sign out</Button>
+              </div>
+            ) : null}
           </div>
         </aside>
 
@@ -201,7 +208,7 @@ export function InvestigatorLayout({
               </Badge>
               <Badge variant="outline" className="gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
                 <Activity className="h-3.5 w-3.5" />
-                Demo Mode
+                {mode === "session" ? "Session Authenticated" : "Demo Header Mode"}
               </Badge>
               {usingDemoDataset ? (
                 <Badge variant="warning" className="gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">

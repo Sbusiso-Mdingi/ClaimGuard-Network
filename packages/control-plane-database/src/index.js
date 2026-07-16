@@ -6,7 +6,9 @@ export {
   requireOperationalDatabaseUrl,
 } from "./config.js";
 export { createControlPlaneService } from "./control-plane-service.js";
+export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
 export { getShadowDiagnostics } from "./diagnostics.js";
+export { provisionDemoAccounts } from "./demo-provisioning.js";
 export * from "./errors.js";
 export {
   applyUnambiguousLegacyMappings,
@@ -28,6 +30,14 @@ export {
   projectSafeSession,
   projectSafeUser,
 } from "./projections.js";
+export {
+  ARGON2ID_VERSION,
+  DEFAULT_ARGON2ID_PARAMETERS,
+  hashPassword,
+  passwordHashNeedsRehash,
+  passwordParametersRecord,
+  verifyPassword,
+} from "./password.js";
 export { createControlPlaneRepositories } from "./repositories.js";
 export { withControlPlaneTransaction } from "./transaction.js";
 export {

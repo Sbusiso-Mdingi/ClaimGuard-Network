@@ -39,6 +39,19 @@ export function createConfigurationRepository(defaultExecutor) {
       return (rows || []).map(projectSafeDemoCatalogueEntry).filter(Boolean);
     },
 
+    async listSafeEnabledDemoCatalogueAll({ executor } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT d.*, o.canonical_slug, o.display_name AS organisation_name
+         FROM demo_account_catalogue d JOIN organisations o ON o.organisation_id = d.organisation_id
+         WHERE d.enabled = 1 AND o.deployment_class = 'demo'
+         ORDER BY o.canonical_slug, d.display_order, d.catalogue_entry_id`,
+      );
+      return (rows || []).map((row) => {
+        const safe = projectSafeDemoCatalogueEntry(row);
+        return safe ? { ...safe, organisationSlug: row.canonical_slug, organisationName: row.organisation_name } : null;
+      }).filter(Boolean);
+    },
+
     async setFeatureFlag(input, { executor } = {}) {
       const scopeKey = input.organisationId || "platform";
       await executorOr(defaultExecutor, executor).execute(

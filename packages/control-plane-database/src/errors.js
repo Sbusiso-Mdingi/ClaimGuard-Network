@@ -26,6 +26,20 @@ export class ControlPlaneNotFoundError extends ControlPlaneError {
   }
 }
 
+export class AuthenticationRejectedError extends ControlPlaneError {
+  constructor(internalReason = "invalid_credentials") {
+    super("The organisation or credentials could not be verified.", { code: "AUTHENTICATION_FAILED", status: 401 });
+    Object.defineProperty(this, "internalReason", { value: internalReason, enumerable: false });
+  }
+}
+
+export class SessionRejectedError extends ControlPlaneError {
+  constructor(internalReason = "invalid_session") {
+    super("The authenticated session is not valid.", { code: "SESSION_INVALID", status: 401 });
+    Object.defineProperty(this, "internalReason", { value: internalReason, enumerable: false });
+  }
+}
+
 export class ControlPlaneConflictError extends ControlPlaneError {
   constructor(message, code = "CONTROL_PLANE_CONFLICT", details = null) {
     super(message, { code, status: 409, details });

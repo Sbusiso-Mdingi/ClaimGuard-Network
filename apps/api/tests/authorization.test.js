@@ -194,7 +194,7 @@ test("permission evaluation grants only the capabilities assigned to each role",
   assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE), true);
 });
 
-test("tenant access denies cross-tenant resources and permits a platform administrator bypass", () => {
+test("tenant access denies cross-tenant resources and gives platform administrators no bypass", () => {
   const schemeUser = resolveAuthContextFromHeaders({
     request: new Request("http://localhost", {
       headers: {
@@ -238,8 +238,9 @@ test("tenant access denies cross-tenant resources and permits a platform adminis
   assert.equal(sameTenant.allowed, true);
   assert.equal(crossTenant.allowed, false);
   assert.equal(crossTenant.reason, "resource_tenant_mismatch");
-  assert.equal(platformBypass.allowed, true);
-  assert.equal(platformBypass.bypass, true);
+  assert.equal(platformBypass.allowed, false);
+  assert.equal(platformBypass.bypass, false);
+  assert.equal(platformBypass.reason, "resource_tenant_mismatch");
 });
 
 test("only investigators can confirm fraud for their tenant", async () => {

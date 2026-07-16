@@ -361,7 +361,7 @@ test("investigation APIs enforce status transitions and investigator or analyst 
     body: JSON.stringify({ priority: "LOW" }),
   });
 
-  assert.equal(platformRead.status, 200);
+  assert.equal(platformRead.status, 403);
   assert.equal(platformUpdate.status, 403);
 });
 

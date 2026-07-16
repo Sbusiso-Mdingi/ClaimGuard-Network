@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useRole } from "../../context/RoleContext";
+import { apiRequest } from "../../lib/apiClient";
 import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
 import { PageFrame, SectionCard, MetricPill, StatusIndicator } from "./InvestigatorUI";
 import { Button } from "../../components/ui/button";
@@ -18,7 +19,7 @@ const canUploadEvidence = (role) => role === CLAIMGUARD_ROLES.INVESTIGATOR;
 
 export function InvestigationWorkspacePage() {
   const { investigationId } = useParams();
-  const { authHeaders, identity } = useRole();
+  const { identity } = useRole();
   const [state, setState] = useState({ status: "loading", investigation: null, error: null });
   const [noteText, setNoteText] = useState("");
   const [evidenceForm, setEvidenceForm] = useState({ filename: "", description: "", evidenceType: "" });
@@ -27,7 +28,7 @@ export function InvestigationWorkspacePage() {
   const load = useCallback(async () => {
     setState((prev) => ({ ...prev, status: "loading" }));
     try {
-      const response = await fetch(`/api/investigations/${encodeURIComponent(investigationId)}`, { headers: authHeaders });
+      const response = await apiRequest(`/investigations/${encodeURIComponent(investigationId)}`);
       const json = await response.json();
       if (!response.ok || !json.available) {
         setState({ status: "error", investigation: null, error: json.message || "Investigation unavailable." });
@@ -37,7 +38,7 @@ export function InvestigationWorkspacePage() {
     } catch (error) {
       setState({ status: "error", investigation: null, error: error.message || "Request failed." });
     }
-  }, [investigationId, authHeaders]);
+  }, [investigationId]);
 
   useEffect(() => {
     load();
@@ -46,9 +47,9 @@ export function InvestigationWorkspacePage() {
   async function callAction(path, body, method = "POST") {
     setActionMessage(null);
     try {
-      const response = await fetch(`/api${path}`, {
+      const response = await apiRequest(path, {
         method,
-        headers: { "content-type": "application/json", ...authHeaders },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
       const json = await response.json();

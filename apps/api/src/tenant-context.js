@@ -34,10 +34,15 @@ export async function resolveTenantContext({
 
   const membershipTenant = normalizeHeaderValue(authContext.tenant_id);
   if (!membershipTenant) {
-    throw new ForbiddenError("Authenticated tenant membership is required.");
+    if (authContext.organisation?.organisationType === "platform") {
+      return createTenantContext({ tenant_id: null, tenant_slug: null, scheme_id: null, source: "platform_no_private_tenant" });
+    }
+    throw new ForbiddenError("Authenticated operational tenant mapping is required.");
   }
 
-  const requestTenantHeader = normalizeHeaderValue(request?.headers?.get("x-claimguard-tenant"));
+  const requestTenantHeader = authContext.source === "session"
+    ? null
+    : normalizeHeaderValue(request?.headers?.get("x-claimguard-tenant"));
   let tenant = null;
 
   if (tenantRepository) {

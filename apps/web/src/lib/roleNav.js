@@ -22,7 +22,7 @@ export const NAV_GROUPS = [
         key: "investigations",
         to: "/investigations",
         label: "Investigations",
-        roles: [CLAIMGUARD_ROLES.INVESTIGATOR, CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR],
+        roles: [CLAIMGUARD_ROLES.INVESTIGATOR, CLAIMGUARD_ROLES.FRAUD_ANALYST],
       },
       {
         key: "network",
@@ -58,7 +58,6 @@ export const NAV_GROUPS = [
           CLAIMGUARD_ROLES.INVESTIGATOR,
           CLAIMGUARD_ROLES.FRAUD_ANALYST,
           CLAIMGUARD_ROLES.SCHEME_USER,
-          CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR,
         ],
       },
     ],

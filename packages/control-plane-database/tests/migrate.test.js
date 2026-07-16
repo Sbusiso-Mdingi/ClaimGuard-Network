@@ -65,10 +65,10 @@ test("migration status reports exact applied and pending migrations", async () =
   const pool = createFakePool();
   const before = await getControlPlaneMigrationStatus(pool);
   assert.equal(before.applied.length, 0);
-  assert.equal(before.pending.length, 4);
+  assert.equal(before.pending.length, 5);
   await applyControlPlaneMigrations(pool);
   const after = await getControlPlaneMigrationStatus(pool);
-  assert.equal(after.applied.length, 4);
+  assert.equal(after.applied.length, 5);
   assert.equal(after.pending.length, 0);
 });
 

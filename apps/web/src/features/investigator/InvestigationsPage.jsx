@@ -1,13 +1,14 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useRole } from "../../context/RoleContext";
+import { apiRequest } from "../../lib/apiClient";
 import { PageFrame, SectionCard } from "./InvestigatorUI";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
 import { listTrackedInvestigations, addTrackedInvestigation } from "../../lib/trackedInvestigations";
 
 export function InvestigationsPage() {
-  const { authHeaders, identity } = useRole();
+  const { identity } = useRole();
   const [tracked, setTracked] = useState(() => listTrackedInvestigations());
   const [lookupId, setLookupId] = useState("");
   const [lookupError, setLookupError] = useState(null);
@@ -19,7 +20,7 @@ export function InvestigationsPage() {
     setChecking(true);
     setLookupError(null);
     try {
-      const response = await fetch(`/api/investigations/${encodeURIComponent(lookupId.trim())}`, { headers: authHeaders });
+      const response = await apiRequest(`/investigations/${encodeURIComponent(lookupId.trim())}`);
       const json = await response.json();
       if (!response.ok || !json.available) {
         setLookupError(json.message || "Investigation not found for the active tenant.");

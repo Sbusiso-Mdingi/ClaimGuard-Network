@@ -47,14 +47,18 @@ export function createAuthenticationMiddleware({
   authenticationProvider = createHeaderAuthenticationProvider(),
 } = {}) {
   return async (c, next) => {
-    const authContext = await authenticationProvider.resolveAuthContext({
-      request: c.req.raw,
-      tenantContext: null,
-    });
-
-    c.set("authContext", authContext);
-    c.req.raw.authContext = authContext;
-    await next();
+    try {
+      const resolved = await authenticationProvider.resolveAuthContext({ request: c.req.raw, tenantContext: null });
+      const authContext = resolved?.authContext || resolved;
+      c.set("authContext", authContext);
+      c.set("resolvedSession", resolved?.resolvedSession || null);
+      c.set("authenticationMetadata", resolved?.metadata || {});
+      c.req.raw.authContext = authContext;
+      await next();
+    } catch (error) {
+      if (error?.status) return applicationErrorResponse(c, error);
+      throw error;
+    }
   };
 }
 

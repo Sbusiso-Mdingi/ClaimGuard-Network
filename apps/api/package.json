@@ -5,8 +5,9 @@
   "dependencies": {
     "@azure/identity": "^4.5.0",
     "@azure/storage-blob": "^12.25.0",
-    "@claimguard/shared-schema": "workspace:*",
+    "@claimguard/control-plane-database": "workspace:^",
     "@claimguard/database": "workspace:*",
+    "@claimguard/shared-schema": "workspace:*",
     "@hono/node-server": "^1.14.0",
     "@sentry/node": "^8.0.0",
     "@trpc/server": "^11.0.0",

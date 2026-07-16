@@ -11,7 +11,7 @@ test("real MySQL clean/repeated migration and constraints", { skip: !databaseUrl
     const first = await applyControlPlaneMigrations(pool, { applicationVersion: "integration-test" });
     const second = await applyControlPlaneMigrations(pool, { applicationVersion: "integration-test" });
     const status = await getControlPlaneMigrationStatus(pool);
-    assert.equal(first.applied.length + first.skipped.length, 4);
+    assert.equal(first.applied.length + first.skipped.length, 5);
     assert.equal(second.applied.length, 0);
     assert.equal(status.pending.length, 0);
     const [forbidden] = await pool.execute(

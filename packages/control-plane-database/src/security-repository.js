@@ -5,8 +5,9 @@ import { executorOr } from "./transaction.js";
 import { assertSafeControlPlaneSummary } from "./validation.js";
 
 const AUTH_EVENT_TYPES = new Set([
-  "login_success", "login_failure", "login_throttled", "login_locked", "logout", "session_revoked",
+  "login_success", "login_failure", "login_throttled", "login_locked", "credential_temporarily_locked", "logout", "session_revoked",
   "password_changed", "password_reset_requested", "password_reset_completed", "credential_disabled",
+  "session_expired", "authorization_version_mismatch", "header_spoof_attempt", "csrf_rejection",
 ]);
 
 function assertHash(value, fieldName) {
@@ -23,10 +24,11 @@ export function createSecurityRepository(defaultExecutor) {
       const sessionId = input.sessionId || crypto.randomUUID();
       await executorOr(defaultExecutor, executor).execute(
         `INSERT INTO login_sessions
-          (session_id, hashed_bearer_secret, signing_key_id, user_id, organisation_id, membership_id,
+          (session_id, hashed_bearer_secret, csrf_token_hash, signing_key_id, user_id, organisation_id, membership_id,
            issued_at, last_activity_at, idle_expires_at, absolute_expires_at, authorization_version, client_metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [sessionId, assertHash(input.hashedBearerSecret, "hashedBearerSecret"), input.signingKeyId, input.userId,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [sessionId, assertHash(input.hashedBearerSecret, "hashedBearerSecret"),
+          assertHash(input.csrfTokenHash, "csrfTokenHash"), input.signingKeyId, input.userId,
           input.organisationId, input.membershipId, input.issuedAt, input.lastActivityAt || input.issuedAt,
           input.idleExpiresAt, input.absoluteExpiresAt, input.authorizationVersion,
           input.clientMetadata ? JSON.stringify(input.clientMetadata) : null],

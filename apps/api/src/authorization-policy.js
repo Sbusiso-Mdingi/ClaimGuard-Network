@@ -1,7 +1,9 @@
 export const CLAIMGUARD_ROLES = Object.freeze({
+  CLAIMS_ANALYST: "claims_analyst",
   SCHEME_USER: "scheme_user",
   FRAUD_ANALYST: "fraud_analyst",
   INVESTIGATOR: "investigator",
+  APPLICATIONS_COMMITTEE_MEMBER: "applications_committee_member",
   NEW_APPLICATIONS_OFFICER: "new_applications_officer",
   SCHEME_ADMINISTRATOR: "scheme_administrator",
   PLATFORM_ADMINISTRATOR: "platform_administrator",
@@ -91,16 +93,13 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
     CLAIMGUARD_PERMISSIONS.PLATFORM_HEALTH_VIEW,
     CLAIMGUARD_PERMISSIONS.TELEMETRY_VIEW,
-    CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW,
-    CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
-    CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW,
-    CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
     CLAIMGUARD_PERMISSIONS.SIMULATOR_STATUS_VIEW,
     CLAIMGUARD_PERMISSIONS.SIMULATOR_CONTROL,
   ]),
 });
 
 const canonicalRoleByAlias = Object.freeze({
+  claims_analyst: CLAIMGUARD_ROLES.CLAIMS_ANALYST,
   "scheme user": CLAIMGUARD_ROLES.SCHEME_USER,
   scheme_user: CLAIMGUARD_ROLES.SCHEME_USER,
   schemeuser: CLAIMGUARD_ROLES.SCHEME_USER,
@@ -108,6 +107,7 @@ const canonicalRoleByAlias = Object.freeze({
   fraud_analyst: CLAIMGUARD_ROLES.FRAUD_ANALYST,
   fraudanalyst: CLAIMGUARD_ROLES.FRAUD_ANALYST,
   investigator: CLAIMGUARD_ROLES.INVESTIGATOR,
+  applications_committee_member: CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER,
   "new applications officer": CLAIMGUARD_ROLES.NEW_APPLICATIONS_OFFICER,
   new_applications_officer: CLAIMGUARD_ROLES.NEW_APPLICATIONS_OFFICER,
   newapplicationsofficer: CLAIMGUARD_ROLES.NEW_APPLICATIONS_OFFICER,
@@ -188,14 +188,6 @@ export function evaluateTenantAccess({
   resourceTenantIds = [],
   resourceSchemeIds = [],
 } = {}) {
-  if (isPlatformAdministrator(authContext)) {
-    return {
-      allowed: true,
-      bypass: true,
-      reason: "platform_admin",
-    };
-  }
-
   const normalizedResourceTenantIds = normalizeDistinctNonEmpty(resourceTenantIds);
   const normalizedResourceSchemeIds = normalizeDistinctNonEmpty(resourceSchemeIds);
 

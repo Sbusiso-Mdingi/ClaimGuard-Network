@@ -51,13 +51,21 @@ async function main() {
           initialCheckpoint: instance.checkpoint,
           maxClaimsPerTick,
           bootstrap,
+          authorityMode: String(process.env.AUTHENTICATION_MODE || "session").toLowerCase(),
           apiClient: {
             async request({ path, method = "GET", headers = {}, body = null }) {
               await assertMutationAllowed();
               const remaining = Math.max(1, deadline - Date.now());
               const response = await fetch(`${apiBaseUrl}${path}`, {
                 method,
-                headers: { ...headers, "content-type": "application/json", "x-request-id": `${instance.id}:tick:${instance.tickNumber + 1}` },
+                headers: {
+                  ...headers,
+                  ...(String(process.env.AUTHENTICATION_MODE || "session").toLowerCase() === "session" && process.env.INTERNAL_SERVICE_TOKEN
+                    ? { authorization: `Bearer ${process.env.INTERNAL_SERVICE_TOKEN}` }
+                    : {}),
+                  "content-type": "application/json",
+                  "x-request-id": `${instance.id}:tick:${instance.tickNumber + 1}`,
+                },
                 body: body ? JSON.stringify(body) : undefined,
                 signal: AbortSignal.timeout(remaining),
               });

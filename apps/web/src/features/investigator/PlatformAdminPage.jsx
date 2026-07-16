@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { PageFrame, SectionCard, StatusIndicator } from "./InvestigatorUI";
+import { apiRequest } from "../../lib/apiClient";
 
 const HEALTH_REQUEST_TIMEOUT_MS = 15000;
 
@@ -8,7 +9,7 @@ async function fetchJsonWithTimeout(url, timeoutMs = HEALTH_REQUEST_TIMEOUT_MS) 
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    const response = await apiRequest(url, { signal: controller.signal, cache: "no-store" });
     if (!response.ok) {
       return {
         status: "error",
@@ -75,7 +76,7 @@ export function PlatformAdminPage() {
     <PageFrame
       eyebrow="Platform Administration"
       title="ClaimGuard platform operations"
-      description="Cross-tenant operational view for ClaimGuard staff. Platform administrators do not investigate or confirm fraud."
+      description="Platform-safe operational view for ClaimGuard staff. Platform administrators have no private-tenant data bypass."
     >
       <SectionCard title="API health" description="Live read from the API's existing /health and /ready endpoints.">
         <div className="flex flex-wrap gap-3">
@@ -93,7 +94,7 @@ export function PlatformAdminPage() {
           <PlannedCapability title="Tenant onboarding" />
           <PlannedCapability title="Storage & deployment monitoring" />
           <PlannedCapability title="Telemetry dashboards" />
-          <PlannedCapability title="Cross-tenant investigation oversight" />
+          <PlannedCapability title="Control-plane audit review" />
         </div>
       </SectionCard>
     </PageFrame>

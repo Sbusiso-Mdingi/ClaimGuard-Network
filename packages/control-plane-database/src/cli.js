@@ -10,6 +10,7 @@ import {
   requireOperationalDatabaseUrl,
 } from "./config.js";
 import { createControlPlaneService } from "./control-plane-service.js";
+import { provisionDemoAccounts } from "./demo-provisioning.js";
 import { getShadowDiagnostics } from "./diagnostics.js";
 import {
   applyUnambiguousLegacyMappings,
@@ -74,17 +75,44 @@ async function runInventory({ flags, values }) {
   }
 }
 
+async function runDemoProvisioning({ values }) {
+  if (String(process.env.DEPLOYMENT_CLASS || "").toLowerCase() !== "demo") {
+    throw new Error("Demo provisioning requires DEPLOYMENT_CLASS=demo.");
+  }
+  if (values.get("confirm") !== "PROVISION_DEMO_ACCOUNTS") {
+    throw new Error("Demo provisioning requires --confirm=PROVISION_DEMO_ACCOUNTS.");
+  }
+  const controlUrl = requireControlPlaneDatabaseUrl();
+  const operationalUrl = requireOperationalDatabaseUrl();
+  assertDistinctDatabaseUrls(controlUrl, operationalUrl);
+  const controlPool = createControlPlanePool(controlUrl);
+  const operationalPool = mysql.createPool((await import("./client.js")).buildControlPlaneConnectionOptions(operationalUrl));
+  try {
+    const repositories = createControlPlaneRepositories(controlPool);
+    const service = createControlPlaneService({ pool: controlPool, repositories });
+    const tenants = await readLegacyTenantInventory(operationalPool);
+    const result = await provisionDemoAccounts({ tenants, repositories, service, executor: controlPool });
+    json({
+      warning: "These generated demo passwords are shown once. Store them only in the approved deployment secret mechanism.",
+      ...result,
+    });
+  } finally {
+    await Promise.all([controlPool.end(), operationalPool.end()]);
+  }
+}
+
 export async function runControlPlaneCli(argv = process.argv.slice(2)) {
   const command = argv[0];
   const args = parseArguments(argv.slice(1));
   if (command === "inventory") return runInventory(args);
+  if (command === "provision-demo") return runDemoProvisioning(args);
 
   const pool = createControlPlanePool(requireControlPlaneDatabaseUrl());
   try {
     if (command === "migrate") json(await applyControlPlaneMigrations(pool));
     else if (command === "status") json(await getControlPlaneMigrationStatus(pool));
     else if (command === "diagnose") json(await getShadowDiagnostics(pool));
-    else throw new Error("Command must be one of: migrate, status, diagnose, inventory.");
+    else throw new Error("Command must be one of: migrate, status, diagnose, inventory, provision-demo.");
   } finally {
     await pool.end();
   }

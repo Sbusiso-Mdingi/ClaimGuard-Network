@@ -6,16 +6,17 @@ import { SectionCard } from "./InvestigatorUI";
 export function RequireRoleAccess({ navKey, children }) {
   const { identity } = useRole();
   const item = NAV_ITEMS.find((entry) => entry.key === navKey);
-  const allowed = !item || item.roles.includes(identity.role);
+  const activeRoles = identity.roles || [identity.role].filter(Boolean);
+  const allowed = !item || item.roles.some((role) => activeRoles.includes(role));
 
   if (!allowed) {
     return (
       <SectionCard
         title="Not available for this role"
-        description={`The current demo identity (${identity.label}) does not have access to this section.`}
+        description={`The authenticated account (${identity.label}) does not have access to this section.`}
       >
         <p className="text-sm text-muted-foreground">
-          Switch identities using the development role switcher in the sidebar.
+          Access is derived from your active server-side organisation membership.
         </p>
       </SectionCard>
     );
