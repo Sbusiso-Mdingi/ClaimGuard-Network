@@ -8,7 +8,7 @@ export {
 } from "./ledger-entry.js";
 export { appendLedgerEntry, LedgerConcurrencyConflictError } from "./ledger-chain.js";
 
-export { createDatabase, createDatabaseFromPool, createMysqlConnection } from "./client.js";
+export { createDatabase, createDatabaseFromPool, createMysqlConnection, buildConnectionOptions } from "./client.js";
 export {
   createDataPlaneContext,
   dataPlanePoolKey,
