@@ -30,8 +30,8 @@ const approvedEnvironment = Object.freeze({
   PROVISIONING_MAX_OPERATIONS: "1",
 });
 
-function databaseName(organisationId) {
-  return `claimguard_tenant_${organisationId.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 32)}`;
+function databaseName(canonicalSlug) {
+  return `claimguard_tenant_${canonicalSlug.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase().slice(0, 40)}`;
 }
 
 function credentialUsername(organisationId) {
@@ -116,7 +116,7 @@ integration("real MySQL onboarding is leased, isolated, retryable, and leaves ro
   try {
     first = await createOrganisation(service, repositories, { slug: "phase11e-first", withAdministrator: true });
     second = await createOrganisation(service, repositories, { slug: "phase11e-retry", withAdministrator: false });
-    generatedDatabases = [databaseName(first.organisation.organisationId), databaseName(second.organisation.organisationId)];
+    generatedDatabases = [databaseName(first.organisation.canonicalSlug), databaseName(second.organisation.canonicalSlug)];
     generatedUsers = [credentialUsername(first.organisation.organisationId), credentialUsername(second.organisation.organisationId)];
     await controlPool.execute(
       `INSERT INTO organisations

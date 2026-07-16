@@ -58,7 +58,7 @@ function deriveProvisioningReview({ organisation, azurePolicy, databaseName }) {
   };
 }
 
-function approvedAzurePolicy({ organisationId, deploymentClass }) {
+function approvedAzurePolicy({ organisationId, canonicalSlug, deploymentClass }) {
   const subscriptionId = process.env.AZURE_APPROVED_SUBSCRIPTION_ID || process.env.AZURE_SUBSCRIPTION_ID || null;
   const resourceGroup = process.env.AZURE_APPROVED_RESOURCE_GROUP || "ClaimGuard";
   const mysqlServerName = process.env.AZURE_APPROVED_MYSQL_SERVER || "claimguard";
@@ -68,7 +68,7 @@ function approvedAzurePolicy({ organisationId, deploymentClass }) {
   const reportContainer = process.env.AZURE_APPROVED_REPORT_CONTAINER || "claimguard-reports";
   const reportPartitionStrategy = process.env.REPORT_PARTITION_STRATEGY || "prefix";
   const privateSchemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "8";
-  const safeSlug = String(organisationId || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 24) || "tenant";
+  const safeSlug = String(canonicalSlug || "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase().slice(0, 40) || "tenant";
   return {
     subscriptionId,
     resourceGroup,
@@ -145,7 +145,7 @@ export function registerPlatformAdminRoutes(app, {
         }, actor);
       }
 
-      const azurePolicy = approvedAzurePolicy({ organisationId: organisation.organisationId, deploymentClass: requestedDeploymentClass });
+      const azurePolicy = approvedAzurePolicy({ organisationId: organisation.organisationId, canonicalSlug: organisation.canonicalSlug, deploymentClass: requestedDeploymentClass });
       return c.json({
         available: true,
         organisation,

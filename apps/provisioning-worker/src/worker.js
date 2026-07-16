@@ -46,8 +46,8 @@ function requireEnv(name) {
   return value;
 }
 
-function organisationSafeDatabaseName(organisationId) {
-  const safe = String(organisationId || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 32) || "tenant";
+function organisationSafeDatabaseName(canonicalSlug) {
+  const safe = String(canonicalSlug || "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase().slice(0, 40) || "tenant";
   return `claimguard_tenant_${safe}`;
 }
 
@@ -55,7 +55,7 @@ function organisationSecretPrefix(organisationId) {
   return `claimguard--tenant--${String(organisationId || "").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase()}`;
 }
 
-function parseAzurePolicy(organisationId) {
+function parseAzurePolicy(organisation) {
   const resourceGroup = requireEnv("AZURE_APPROVED_RESOURCE_GROUP");
   const mysqlServerName = requireEnv("AZURE_APPROVED_MYSQL_SERVER");
   const keyVaultName = requireEnv("AZURE_APPROVED_KEYVAULT");
@@ -76,9 +76,28 @@ function parseAzurePolicy(organisationId) {
     schemaVersion,
     environmentKey,
     subscriptionId,
-    logicalDatabaseIdentifier: `private:${organisationId}`,
-    databaseName: organisationSafeDatabaseName(organisationId),
+    logicalDatabaseIdentifier: `private:${organisation.organisationId}`,
+    databaseName: organisationSafeDatabaseName(organisation.canonicalSlug),
   };
+}
+
+async function assertDatabaseUnclaimed(adminPool, policy) {
+  const [tableRows] = await adminPool.execute(
+    `SELECT COUNT(*) AS count FROM information_schema.tables
+     WHERE table_schema = ? AND table_name = 'data_plane_metadata'`,
+    [policy.databaseName],
+  );
+  if (Number(tableRows?.[0]?.count || 0) === 0) return;
+  const [metadataRows] = await adminPool.execute(
+    `SELECT database_mode, logical_database_identifier FROM \`${policy.databaseName}\`.data_plane_metadata
+     WHERE metadata_key = 'primary'`,
+  );
+  const metadata = metadataRows?.[0];
+  if (!metadata
+    || metadata.database_mode !== "private_database"
+    || metadata.logical_database_identifier !== policy.logicalDatabaseIdentifier) {
+    throw new Error("Allocated database is already initialized for a different data-plane identity.");
+  }
 }
 
 async function createSecretStore() {
@@ -273,7 +292,7 @@ async function runProvisioningOperation({
     throw new Error("Organisation not found for operation.");
   }
 
-  const policy = parseAzurePolicy(organisation.organisationId);
+  const policy = parseAzurePolicy(organisation);
   const secretPrefix = organisationSecretPrefix(organisation.organisationId);
   const serverHost = `${policy.mysqlServerName}.mysql.database.azure.com`;
   const runtimeUsernameSecretName = `${secretPrefix}--mysql-username`;
@@ -311,6 +330,7 @@ async function runProvisioningOperation({
 
   await runStep("create_database", async () => {
     await adminPool.execute(`CREATE DATABASE IF NOT EXISTS \`${policy.databaseName}\``);
+    await assertDatabaseUnclaimed(adminPool, policy);
   }, { resourceReference: `mysql-database:${policy.databaseName}` });
 
   await runStep("create_database_principal", async () => {
