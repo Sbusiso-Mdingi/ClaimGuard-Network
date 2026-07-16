@@ -3,8 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-import { LEGACY_DEFAULT_TENANT_ID } from "@claimguard/database";
-
 function runCommand({ command, args, cwd, env }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -50,7 +48,7 @@ export function scopeClaimsForTenant(claims, tenantId) {
 
   return claims.map((claim) => ({
     ...claim,
-    tenant_id: claim?.tenant_id || tenantId,
+    tenant_id: tenantId,
   }));
 }
 
@@ -98,9 +96,15 @@ export function createProducerRuntimeTriggerFromEnvironment({ repoRoot }) {
 
   return {
     async triggerAfterIngestion({ claims, source = "api", tenantContext = null }) {
+      const tenantId = tenantContext?.tenant_id || null;
+      if (!tenantId) {
+        const error = new Error("Canonical tenant context is required for report production.");
+        error.code = "TENANT_CONTEXT_REQUIRED";
+        throw error;
+      }
+
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "claimguard-ingest-"));
       const claimsPath = path.join(tempDir, "claims.json");
-      const tenantId = tenantContext?.tenant_id || process.env.DEFAULT_TENANT_ID || LEGACY_DEFAULT_TENANT_ID;
 
       try {
         const scopedClaims = scopeClaimsForTenant(claims, tenantId);

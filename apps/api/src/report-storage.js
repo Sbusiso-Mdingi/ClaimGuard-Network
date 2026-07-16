@@ -1,11 +1,7 @@
 import path from "node:path";
 import { access, readFile } from "node:fs/promises";
 
-import {
-  LEGACY_DEFAULT_TENANT_ID,
-  LEGACY_DEFAULT_TENANT_SLUG,
-  getActiveTenantContext,
-} from "@claimguard/database";
+import { getActiveTenantContext } from "@claimguard/database";
 
 function parseJson(content, source) {
   try {
@@ -41,9 +37,9 @@ export class FileReportStorage {
     return path.dirname(this.reportPath);
   }
 
-  async getLatestReport() {
+  async getLatestReport({ tenantContext = getActiveTenantContext() } = {}) {
     const reportsRoot = this.#getResolvedReportsRoot();
-    const tenantCandidates = buildTenantCandidates();
+    const tenantCandidates = buildTenantCandidates(tenantContext);
 
     for (const tenantCandidate of tenantCandidates) {
       const prefixed = await this.#loadTenantScopedReport({
@@ -56,26 +52,12 @@ export class FileReportStorage {
       }
     }
 
-    if (!this.reportPath) {
-      return null;
-    }
-
-    const content = await readFile(this.reportPath, "utf-8");
-    const report = parseJson(content, this.reportPath);
-    return {
-      report,
-      metadata: {
-        source: "file",
-        location: this.reportPath,
-        version: path.basename(this.reportPath),
-        tenant: LEGACY_DEFAULT_TENANT_ID,
-      },
-    };
+    return null;
   }
 
-  async checkReadiness() {
+  async checkReadiness({ tenantContext = getActiveTenantContext() } = {}) {
     const reportsRoot = this.#getResolvedReportsRoot();
-    const tenantCandidates = buildTenantCandidates();
+    const tenantCandidates = buildTenantCandidates(tenantContext);
 
     for (const tenantCandidate of tenantCandidates) {
       const reportPathCandidate = await this.#resolveTenantScopedReportPath({
@@ -91,16 +73,9 @@ export class FileReportStorage {
       }
     }
 
-    if (!this.reportPath) {
-      return {
-        reachable: true,
-        available: false,
-      };
-    }
-
     return {
       reachable: true,
-      available: await this.#fileExists(this.reportPath),
+      available: false,
     };
   }
 
@@ -203,7 +178,6 @@ export class AzureBlobReportStorage {
   constructor({
     containerClient,
     latestPointerBlobName = "latest.json",
-    fallbackReportBlobName = null,
   }) {
     if (!containerClient) {
       throw new Error("AzureBlobReportStorage requires a containerClient.");
@@ -211,7 +185,6 @@ export class AzureBlobReportStorage {
 
     this.containerClient = containerClient;
     this.latestPointerBlobName = latestPointerBlobName;
-    this.fallbackReportBlobName = fallbackReportBlobName;
   }
 
   static async fromEnvironment({
@@ -219,7 +192,6 @@ export class AzureBlobReportStorage {
     connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING,
     containerName = process.env.REPORT_STORAGE_CONTAINER,
     latestPointerBlobName = process.env.REPORT_STORAGE_LATEST_POINTER || "latest.json",
-    fallbackReportBlobName = process.env.REPORT_STORAGE_REPORT_BLOB || null,
   } = {}) {
     if (!containerName) {
       throw new Error("REPORT_STORAGE_CONTAINER is required for Azure blob report storage.");
@@ -243,12 +215,11 @@ export class AzureBlobReportStorage {
     return new AzureBlobReportStorage({
       containerClient,
       latestPointerBlobName,
-      fallbackReportBlobName,
     });
   }
 
-  async getLatestReport() {
-    const tenantCandidates = buildTenantCandidates();
+  async getLatestReport({ tenantContext = getActiveTenantContext() } = {}) {
+    const tenantCandidates = buildTenantCandidates(tenantContext);
 
     for (const tenantCandidate of tenantCandidates) {
       const tenantScoped = await this.#readTenantScopedReport(tenantCandidate);
@@ -257,40 +228,11 @@ export class AzureBlobReportStorage {
       }
     }
 
-    const pointer = await this.#readPointer(this.latestPointerBlobName);
-    const reportBlobName =
-      pointer?.reportBlobName ||
-      pointer?.report_blob_name ||
-      pointer?.reportPath ||
-      pointer?.report_path ||
-      this.fallbackReportBlobName;
-
-    if (!reportBlobName) {
-      return null;
-    }
-
-    const reportContent = await this.#readBlobAsString(reportBlobName);
-    if (!reportContent) {
-      return null;
-    }
-
-    const report = parseJson(reportContent, reportBlobName);
-    return {
-      report,
-      metadata: {
-        source: "azure_blob",
-        container: this.containerClient.containerName,
-        pointerBlob: this.latestPointerBlobName,
-        reportBlob: reportBlobName,
-        version: pointer?.version || pointer?.reportVersion || null,
-        generatedAt: pointer?.generatedAt || pointer?.generated_at || null,
-        tenant: LEGACY_DEFAULT_TENANT_ID,
-      },
-    };
+    return null;
   }
 
-  async checkReadiness() {
-    const tenantCandidates = buildTenantCandidates();
+  async checkReadiness({ tenantContext = getActiveTenantContext() } = {}) {
+    const tenantCandidates = buildTenantCandidates(tenantContext);
 
     for (const tenantCandidate of tenantCandidates) {
       const reportBlobName = await this.#resolveTenantScopedReportBlob(tenantCandidate);
@@ -304,24 +246,9 @@ export class AzureBlobReportStorage {
       };
     }
 
-    const pointer = await this.#readPointer(this.latestPointerBlobName);
-    const reportBlobName =
-      pointer?.reportBlobName ||
-      pointer?.report_blob_name ||
-      pointer?.reportPath ||
-      pointer?.report_path ||
-      this.fallbackReportBlobName;
-
-    if (!reportBlobName) {
-      return {
-        reachable: true,
-        available: false,
-      };
-    }
-
     return {
       reachable: true,
-      available: await this.#blobExists(reportBlobName),
+      available: false,
     };
   }
 
@@ -463,13 +390,11 @@ export async function createReportStorageFromEnvironment({
   });
 }
 
-function buildTenantCandidates() {
-  const activeTenant = getActiveTenantContext() || null;
+function buildTenantCandidates(tenantContext = getActiveTenantContext()) {
+  const activeTenant = tenantContext || null;
   const candidates = [
     activeTenant?.tenant_slug || null,
     activeTenant?.tenant_id || null,
-    LEGACY_DEFAULT_TENANT_SLUG,
-    LEGACY_DEFAULT_TENANT_ID,
   ].filter(Boolean);
 
   return [...new Set(candidates)];
@@ -480,15 +405,24 @@ function resolveReportReference({ reference, rootPath, tenantRootPath }) {
     return null;
   }
 
-  if (path.isAbsolute(reference)) {
-    return reference;
+  const candidate = path.isAbsolute(reference)
+    ? path.resolve(reference)
+    : path.resolve(rootPath, reference);
+  const tenantRelativePath = path.relative(tenantRootPath, candidate);
+
+  if (!tenantRelativePath.startsWith("..") && !path.isAbsolute(tenantRelativePath)) {
+    return candidate;
   }
 
-  if (reference.startsWith("./") || reference.startsWith("../")) {
-    return path.resolve(tenantRootPath, reference);
+  if (!path.isAbsolute(reference) && !reference.split(/[\\/]+/).includes("..")) {
+    const tenantRelativeCandidate = path.resolve(tenantRootPath, reference.replace(/^\.\//, ""));
+    const relativePath = path.relative(tenantRootPath, tenantRelativeCandidate);
+    if (!relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+      return tenantRelativeCandidate;
+    }
   }
 
-  return path.resolve(rootPath, reference);
+  return null;
 }
 
 function resolveBlobReference({ reference, tenantPrefix }) {
@@ -496,21 +430,10 @@ function resolveBlobReference({ reference, tenantPrefix }) {
     return null;
   }
 
-  if (reference.startsWith("/")) {
-    return reference.slice(1);
+  const normalized = reference.replace(/^\.\//, "").replace(/^\/+/, "");
+  if (normalized.split("/").includes("..")) {
+    return null;
   }
 
-  if (reference.startsWith("./")) {
-    return `${tenantPrefix}${reference.slice(2)}`;
-  }
-
-  if (reference.startsWith("../")) {
-    return reference.replace(/^\.\.\//, "");
-  }
-
-  if (!reference.includes("/")) {
-    return `${tenantPrefix}${reference}`;
-  }
-
-  return reference;
+  return normalized.startsWith(tenantPrefix) ? normalized : `${tenantPrefix}${normalized}`;
 }

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createClaimIngestionRepository, runWithTenantContext } from "../src/index.js";
+import {
+  ClaimOwnershipConflictError,
+  createClaimIngestionRepository,
+  runWithTenantContext,
+} from "../src/index.js";
 
 function createFakePool() {
   const executions = [];
@@ -13,6 +17,9 @@ function createFakePool() {
         async beginTransaction() {},
         async execute(sql, params) {
           executions.push({ sql, params });
+          if (/SELECT tenant_id FROM claims/i.test(sql)) {
+            return [[]];
+          }
           return [{ affectedRows: 1 }];
         },
         async commit() {},
@@ -46,9 +53,9 @@ test("claim ingestion repository inserts claims through transaction", async () =
   assert.equal(result.inserted, 1);
   assert.equal(result.updated, 0);
   assert.equal(result.source, "synthetic-run");
-  assert.equal(pool.executions.length, 1);
-  assert.match(pool.executions[0].sql, /INSERT INTO claims/i);
-  assert.equal(pool.executions[0].params[7], "tenant_default");
+  assert.equal(pool.executions.length, 2);
+  assert.match(pool.executions[1].sql, /INSERT INTO claims/i);
+  assert.equal(pool.executions[1].params[7], "tenant_default");
 });
 
 test("claim ingestion repository validates required fields", async () => {
@@ -98,7 +105,99 @@ test("claim ingestion repository persists tenant_id from active tenant context",
     },
   );
 
-  assert.equal(pool.executions.length, 1);
-  assert.equal(pool.executions[0].params[7], "tenant_alpha");
-  assert.match(pool.executions[0].sql, /tenant_id/i);
+  assert.equal(pool.executions.length, 2);
+  assert.equal(pool.executions[1].params[7], "tenant_alpha");
+  assert.match(pool.executions[1].sql, /tenant_id/i);
+});
+
+function createStatefulClaimPool() {
+  const claims = new Map();
+  let rollbackCount = 0;
+
+  return {
+    claims,
+    get rollbackCount() {
+      return rollbackCount;
+    },
+    async getConnection() {
+      let transactionSnapshot = null;
+      return {
+        async beginTransaction() {
+          transactionSnapshot = new Map([...claims].map(([id, claim]) => [id, { ...claim }]));
+        },
+        async execute(sql, params) {
+          if (/SELECT tenant_id FROM claims/i.test(sql)) {
+            const claim = claims.get(params[0]);
+            return [claim ? [{ tenant_id: claim.tenant_id }] : []];
+          }
+          if (/INSERT INTO claims/i.test(sql)) {
+            const [claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id] = params;
+            if (claims.has(claim_id)) {
+              const error = new Error("duplicate");
+              error.code = "ER_DUP_ENTRY";
+              throw error;
+            }
+            claims.set(claim_id, { claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id });
+            return [{ affectedRows: 1 }];
+          }
+          if (/UPDATE claims/i.test(sql)) {
+            const [scheme_id, member_id, provider_id, service_date, billing_code, amount, claim_id, tenant_id] = params;
+            const existing = claims.get(claim_id);
+            if (existing?.tenant_id === tenant_id) {
+              claims.set(claim_id, { ...existing, scheme_id, member_id, provider_id, service_date, billing_code, amount });
+              return [{ affectedRows: 1 }];
+            }
+            return [{ affectedRows: 0 }];
+          }
+          throw new Error(`Unexpected SQL: ${sql}`);
+        },
+        async commit() {
+          transactionSnapshot = null;
+        },
+        async rollback() {
+          rollbackCount += 1;
+          claims.clear();
+          for (const [id, claim] of transactionSnapshot || []) claims.set(id, claim);
+        },
+        release() {},
+      };
+    },
+  };
+}
+
+function claimInput(amount) {
+  return {
+    claim_id: "C-IMMUTABLE",
+    scheme_id: "scheme_a",
+    member_id: "M-1",
+    provider_id: "P-1",
+    service_date: "2026-07-16",
+    billing_code: "CONSULT",
+    amount,
+  };
+}
+
+test("claim ownership is immutable while same-tenant updates remain idempotent", async () => {
+  const pool = createStatefulClaimPool();
+  const repository = createClaimIngestionRepository(pool);
+
+  await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
+    repository.ingestClaims({ claims: [claimInput(100)] }),
+  );
+  const update = await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
+    repository.ingestClaims({ claims: [claimInput(125)] }),
+  );
+
+  await assert.rejects(
+    () => runWithTenantContext({ tenant_id: "tenant_beta" }, () =>
+      repository.ingestClaims({ claims: [claimInput(999)] }),
+    ),
+    ClaimOwnershipConflictError,
+  );
+
+  assert.equal(update.inserted, 0);
+  assert.equal(update.updated, 1);
+  assert.equal(pool.claims.get("C-IMMUTABLE").tenant_id, "tenant_alpha");
+  assert.equal(pool.claims.get("C-IMMUTABLE").amount, 125);
+  assert.equal(pool.rollbackCount, 1);
 });

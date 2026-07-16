@@ -368,7 +368,7 @@ test("registry endpoints allow global read access across tenants", async () => {
   assert.equal(historyData.history.length, 1);
 });
 
-test("registry read endpoints are protected by authorization roles", async () => {
+test("registry read endpoints reject incomplete authentication context", async () => {
   const sharedFraudRegistryRepository = createSharedFraudRegistryRepositoryStub();
   const app = createBackendApp({
     sharedFraudRegistryRepository,
@@ -386,15 +386,15 @@ test("registry read endpoints are protected by authorization roles", async () =>
   const searchResp = await app.request("http://localhost/registry/search?subjectToken=tok", {
     headers: noRolesHeader,
   });
-  assert.equal(searchResp.status, 403);
+  assert.equal(searchResp.status, 401);
 
   const getResp = await app.request("http://localhost/registry/reg-1", {
     headers: noRolesHeader,
   });
-  assert.equal(getResp.status, 403);
+  assert.equal(getResp.status, 401);
   
   const histResp = await app.request("http://localhost/registry/history/tok", {
     headers: noRolesHeader,
   });
-  assert.equal(histResp.status, 403);
+  assert.equal(histResp.status, 401);
 });

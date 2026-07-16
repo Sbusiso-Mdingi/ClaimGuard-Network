@@ -81,7 +81,6 @@ export function createBackendApp({
   producerRuntimeTrigger = null,
   tenantRepository = null,
   authenticationProvider = null,
-  defaultTenantId = process.env.DEFAULT_TENANT_ID || null,
   reportStorage = null,
   detectionAnalyzeProxyUrl = null,
   detectionReportPath = null,
@@ -106,16 +105,15 @@ export function createBackendApp({
 
   app.use(
     "*",
-    createTenantContextMiddleware({
-      tenantRepository,
-      defaultTenantId,
+    createAuthenticationMiddleware({
+      authenticationProvider: authenticationProvider || undefined,
     }),
   );
 
   app.use(
     "*",
-    createAuthenticationMiddleware({
-      authenticationProvider: authenticationProvider || undefined,
+    createTenantContextMiddleware({
+      tenantRepository,
     }),
   );
 
@@ -144,10 +142,12 @@ export function createBackendApp({
 
   registerLedgerRoutes(app, {
     ledgerRepository,
+    tenantRepository,
   });
 
   registerDetectionRoutes(app, {
     reportService: services.reportService,
+    tenantRepository,
   });
 
   registerClaimsRoutes(app, {

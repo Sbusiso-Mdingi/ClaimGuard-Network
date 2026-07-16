@@ -3,6 +3,13 @@ import test from "node:test";
 
 import { createBackendApp } from "../src/backend.js";
 
+const ledgerHeaders = {
+  "x-claimguard-user": "investigator-default",
+  "x-claimguard-role": "investigator",
+  "x-claimguard-user-tenant": "tenant_default",
+  "x-claimguard-tenant": "tenant_default",
+};
+
 function createLedgerRepositoryStub(entry) {
   return {
     async getLatestEntry() {
@@ -13,7 +20,7 @@ function createLedgerRepositoryStub(entry) {
 
 test("latest ledger endpoint returns 503 when mysql is unavailable", async () => {
   const app = createBackendApp();
-  const response = await app.request("http://localhost/ledger/latest");
+  const response = await app.request("http://localhost/ledger/latest", { headers: ledgerHeaders });
   const json = await response.json();
 
   assert.equal(response.status, 503);
@@ -31,7 +38,7 @@ test("latest ledger endpoint returns the repository entry when mysql is availabl
     }),
   });
 
-  const response = await app.request("http://localhost/ledger/latest");
+  const response = await app.request("http://localhost/ledger/latest", { headers: ledgerHeaders });
   const json = await response.json();
 
   assert.equal(response.status, 200);

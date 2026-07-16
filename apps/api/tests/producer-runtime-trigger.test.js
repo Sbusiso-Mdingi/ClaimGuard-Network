@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildProducerTriggerArgs,
+  createProducerRuntimeTriggerFromEnvironment,
   scopeClaimsForTenant,
 } from "../src/producer-runtime-trigger.js";
 
@@ -21,7 +22,7 @@ test("scopeClaimsForTenant injects tenant_id when missing", () => {
   assert.equal(scoped[0].tenant_id, "tenant_alpha");
 });
 
-test("scopeClaimsForTenant preserves existing tenant_id values", () => {
+test("scopeClaimsForTenant overrides untrusted claim tenant values with canonical tenant", () => {
   const scoped = scopeClaimsForTenant(
     [
       {
@@ -33,7 +34,7 @@ test("scopeClaimsForTenant preserves existing tenant_id values", () => {
     "tenant_alpha",
   );
 
-  assert.equal(scoped[0].tenant_id, "tenant_beta");
+  assert.equal(scoped[0].tenant_id, "tenant_alpha");
 });
 
 test("buildProducerTriggerArgs includes tenant-id and file output options", () => {
@@ -78,4 +79,13 @@ test("buildProducerTriggerArgs omits file output flag for non-file backends", ()
 
   assert.equal(args.includes("--output-dir"), false);
   assert.equal(args.includes("--tenant-id"), true);
+});
+
+test("producer trigger fails closed without canonical tenant context", async () => {
+  const trigger = createProducerRuntimeTriggerFromEnvironment({ repoRoot: process.cwd() });
+
+  await assert.rejects(
+    () => trigger.triggerAfterIngestion({ claims: [], tenantContext: null }),
+    (error) => error?.code === "TENANT_CONTEXT_REQUIRED",
+  );
 });

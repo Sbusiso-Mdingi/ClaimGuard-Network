@@ -9,14 +9,14 @@ function normalizeHeaderValue(value) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function createAnonymousAuthContext({ tenantContext = null } = {}) {
+export function createAnonymousAuthContext({ source = "anonymous" } = {}) {
   return Object.freeze({
     is_authenticated: false,
     user_id: null,
     roles: Object.freeze([]),
     permissions: new Set(),
-    tenant_id: tenantContext?.tenant_id || null,
-    source: "anonymous",
+    tenant_id: null,
+    source,
   });
 }
 
@@ -38,15 +38,18 @@ export function createAuthenticatedAuthContext({
   });
 }
 
-export function resolveAuthContextFromHeaders({ request, tenantContext = null } = {}) {
+export function resolveAuthContextFromHeaders({ request } = {}) {
   const userId = normalizeHeaderValue(request?.headers?.get("x-claimguard-user"));
-  if (!userId) {
-    return createAnonymousAuthContext({ tenantContext });
-  }
-
   const roleHeader = normalizeHeaderValue(request?.headers?.get("x-claimguard-role"));
   const userTenantId = normalizeHeaderValue(request?.headers?.get("x-claimguard-user-tenant"));
   const roles = parseRoles(roleHeader || "");
+
+  if (!userId || !roleHeader || !userTenantId) {
+    const hasPartialHeaderContext = Boolean(userId || roleHeader || userTenantId);
+    return createAnonymousAuthContext({
+      source: hasPartialHeaderContext ? "incomplete_header" : "anonymous",
+    });
+  }
 
   return createAuthenticatedAuthContext({
     userId,
@@ -58,8 +61,8 @@ export function resolveAuthContextFromHeaders({ request, tenantContext = null } 
 
 export function createHeaderAuthenticationProvider() {
   return {
-    async resolveAuthContext({ request, tenantContext }) {
-      return resolveAuthContextFromHeaders({ request, tenantContext });
+    async resolveAuthContext({ request }) {
+      return resolveAuthContextFromHeaders({ request });
     },
   };
 }

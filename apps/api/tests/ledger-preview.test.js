@@ -5,7 +5,14 @@ import { createBackendApp } from "../src/backend.js";
 
 test("ledger preview endpoint returns a chained entry", async () => {
   const app = createBackendApp();
-  const response = await app.request("http://localhost/ledger/preview");
+  const response = await app.request("http://localhost/ledger/preview", {
+    headers: {
+      "x-claimguard-user": "investigator-default",
+      "x-claimguard-role": "investigator",
+      "x-claimguard-user-tenant": "tenant_default",
+      "x-claimguard-tenant": "tenant_default",
+    },
+  });
   const json = await response.json();
 
   assert.equal(response.status, 200);

@@ -1,5 +1,11 @@
 import { createHeaderAuthenticationProvider } from "./auth-context.js";
 import { evaluateTenantAccess, hasPermission } from "../authorization-policy.js";
+import {
+  applicationErrorResponse,
+  ForbiddenError,
+  TenantMismatchError,
+  UnauthenticatedError,
+} from "../application-errors.js";
 
 function normalizeDistinctSchemeIds(schemeIds) {
   const normalized = (schemeIds || [])
@@ -41,11 +47,9 @@ export function createAuthenticationMiddleware({
   authenticationProvider = createHeaderAuthenticationProvider(),
 } = {}) {
   return async (c, next) => {
-    const tenantContext = c.get("tenantContext") || null;
-
     const authContext = await authenticationProvider.resolveAuthContext({
       request: c.req.raw,
-      tenantContext,
+      tenantContext: null,
     });
 
     c.set("authContext", authContext);
@@ -59,23 +63,11 @@ export function createRequirePermissionMiddleware({ permission } = {}) {
     const authContext = c.get("authContext") || null;
 
     if (!authContext?.is_authenticated) {
-      return c.json(
-        {
-          available: false,
-          message: "Authentication is required.",
-        },
-        401,
-      );
+      return applicationErrorResponse(c, new UnauthenticatedError());
     }
 
     if (!hasPermission(authContext, permission)) {
-      return c.json(
-        {
-          available: false,
-          message: "You do not have permission to perform this operation.",
-        },
-        403,
-      );
+      return applicationErrorResponse(c, new ForbiddenError());
     }
 
     await next();
@@ -86,13 +78,7 @@ function createPermissionFailureResponse(c, permissions, mode) {
   const authContext = c.get("authContext") || null;
 
   if (!authContext?.is_authenticated) {
-    return c.json(
-      {
-        available: false,
-        message: "Authentication is required.",
-      },
-      401,
-    );
+    return applicationErrorResponse(c, new UnauthenticatedError());
   }
 
   const permitted =
@@ -101,13 +87,7 @@ function createPermissionFailureResponse(c, permissions, mode) {
       : permissions.every((permission) => hasPermission(authContext, permission));
 
   if (!permitted) {
-    return c.json(
-      {
-        available: false,
-        message: "You do not have permission to perform this operation.",
-      },
-      403,
-    );
+    return applicationErrorResponse(c, new ForbiddenError());
   }
 
   return null;
@@ -136,6 +116,16 @@ export function authorizePermissions({ c, permissions = [], mode = "all" } = {})
       };
 }
 
+export function createRequireTenantAccessMiddleware({ tenantRepository = null } = {}) {
+  return async (c, next) => {
+    const decision = await authorizeTenantScopedRequest({ c, tenantRepository });
+    if (!decision.ok) {
+      return decision.response;
+    }
+    await next();
+  };
+}
+
 export async function authorizeTenantScopedRequest({
   c,
   tenantRepository = null,
@@ -153,13 +143,7 @@ export async function authorizeTenantScopedRequest({
   if (resolvedResources.unresolvedSchemeIds.length > 0) {
     return {
       ok: false,
-      response: c.json(
-        {
-          available: false,
-          message: "Tenant authorization failed for this request.",
-        },
-        403,
-      ),
+      response: applicationErrorResponse(c, new TenantMismatchError()),
     };
   }
 
@@ -173,13 +157,7 @@ export async function authorizeTenantScopedRequest({
   if (!decision.allowed) {
     return {
       ok: false,
-      response: c.json(
-        {
-          available: false,
-          message: "Tenant authorization failed for this request.",
-        },
-        403,
-      ),
+      response: applicationErrorResponse(c, new TenantMismatchError()),
     };
   }
 

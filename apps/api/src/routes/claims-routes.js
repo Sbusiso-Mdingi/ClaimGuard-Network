@@ -1,3 +1,5 @@
+import { ClaimOwnershipConflictError } from "@claimguard/database";
+
 import { authorizeTenantScopedRequest, createRequirePermissionMiddleware } from "../middleware/authorization-middleware.js";
 import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
 
@@ -65,12 +67,17 @@ export function registerClaimsRoutes(app, {
           message: error?.message || "Claim ingestion failed.",
         });
 
+        const isOwnershipConflict = error instanceof ClaimOwnershipConflictError || error?.code === "CLAIM_OWNERSHIP_CONFLICT";
+
         return c.json(
           {
             available: false,
-            message: error?.message || "Claim ingestion failed.",
+            ...(isOwnershipConflict ? { code: "CLAIM_OWNERSHIP_CONFLICT" } : {}),
+            message: isOwnershipConflict
+              ? "Claim identifier is already owned by another tenant."
+              : error?.message || "Claim ingestion failed.",
           },
-          400,
+          isOwnershipConflict ? 409 : 400,
         );
       }
     },

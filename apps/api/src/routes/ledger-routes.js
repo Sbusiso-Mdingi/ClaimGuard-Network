@@ -1,5 +1,11 @@
 import crypto from "node:crypto";
 
+import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import {
+  createRequirePermissionMiddleware,
+  createRequireTenantAccessMiddleware,
+} from "../middleware/authorization-middleware.js";
+
 const genesisPreviousHash = "0".repeat(64);
 
 function createLedgerEntry({ sequenceNumber, previousHash = genesisPreviousHash, entryType, payload }) {
@@ -19,8 +25,13 @@ function createLedgerEntry({ sequenceNumber, previousHash = genesisPreviousHash,
   };
 }
 
-export function registerLedgerRoutes(app, { ledgerRepository }) {
-  app.get("/ledger/preview", (c) => {
+export function registerLedgerRoutes(app, { ledgerRepository, tenantRepository = null }) {
+  const requireLedgerPermission = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
+  });
+  const requireTenantAccess = createRequireTenantAccessMiddleware({ tenantRepository });
+
+  app.get("/ledger/preview", requireLedgerPermission, requireTenantAccess, (c) => {
     const entry = createLedgerEntry({
       sequenceNumber: 1,
       previousHash: genesisPreviousHash,
@@ -37,7 +48,7 @@ export function registerLedgerRoutes(app, { ledgerRepository }) {
     });
   });
 
-  app.get("/ledger/latest", async (c) => {
+  app.get("/ledger/latest", requireLedgerPermission, requireTenantAccess, async (c) => {
     if (!ledgerRepository) {
       return c.json(
         {

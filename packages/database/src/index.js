@@ -3,7 +3,10 @@ import crypto from "node:crypto";
 import { int, json, mysqlTable, varchar } from "drizzle-orm/mysql-core";
 
 export { createDatabase, createMysqlConnection } from "./client.js";
-export { createClaimIngestionRepository } from "./claim-ingestion-repository.js";
+export {
+  ClaimOwnershipConflictError,
+  createClaimIngestionRepository,
+} from "./claim-ingestion-repository.js";
 export {
   assertInvestigationStatusTransition,
   canTransitionInvestigationStatus,

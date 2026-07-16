@@ -9,6 +9,7 @@ import {
   hasPermission,
 } from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
+import { ClaimOwnershipConflictError, getActiveTenantId } from "@claimguard/database";
 
 const alphaTenant = {
   tenant_id: "tenant_alpha",
@@ -157,6 +158,7 @@ test("permission evaluation grants only the capabilities assigned to each role",
       headers: {
         "x-claimguard-user": "analyst-alpha",
         "x-claimguard-role": "fraud analyst",
+        "x-claimguard-user-tenant": alphaTenant.tenant_id,
       },
     }),
     tenantContext: alphaTenant,
@@ -166,6 +168,7 @@ test("permission evaluation grants only the capabilities assigned to each role",
       headers: {
         "x-claimguard-user": "scheme-user-alpha",
         "x-claimguard-role": "scheme_user",
+        "x-claimguard-user-tenant": alphaTenant.tenant_id,
       },
     }),
     tenantContext: alphaTenant,
@@ -175,6 +178,7 @@ test("permission evaluation grants only the capabilities assigned to each role",
       headers: {
         "x-claimguard-user": "platform-admin",
         "x-claimguard-role": "platform administrator",
+        "x-claimguard-user-tenant": alphaTenant.tenant_id,
       },
     }),
     tenantContext: alphaTenant,
@@ -194,6 +198,7 @@ test("tenant access denies cross-tenant resources and permits a platform adminis
       headers: {
         "x-claimguard-user": "scheme-user-alpha",
         "x-claimguard-role": "scheme user",
+        "x-claimguard-user-tenant": alphaTenant.tenant_id,
       },
     }),
     tenantContext: alphaTenant,
@@ -203,6 +208,7 @@ test("tenant access denies cross-tenant resources and permits a platform adminis
       headers: {
         "x-claimguard-user": "platform-admin",
         "x-claimguard-role": "platform_administrator",
+        "x-claimguard-user-tenant": alphaTenant.tenant_id,
       },
     }),
     tenantContext: alphaTenant,
@@ -322,13 +328,13 @@ test("tenant-scoped confirmation and claim ingestion reject a foreign scheme", a
 test("the pluggable authentication provider can replace development headers", async () => {
   const app = createBackendApp({
     authenticationProvider: {
-      async resolveAuthContext({ tenantContext }) {
+      async resolveAuthContext() {
         return {
           is_authenticated: true,
           user_id: "future-entra-user",
           roles: [CLAIMGUARD_ROLES.INVESTIGATOR],
           permissions: new Set([CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD]),
-          tenant_id: tenantContext.tenant_id,
+          tenant_id: "tenant_default",
           source: "test-provider",
         };
       },
@@ -345,4 +351,137 @@ test("the pluggable authentication provider can replace development headers", as
 
   assert.equal(response.status, 201);
   assert.equal((await response.json()).entry.payload.claimId, "claim-100");
+});
+
+test("detection routes require authentication, tenant match, and report permission", async () => {
+  const observedStorageTenants = [];
+  const app = createBackendApp({
+    tenantRepository: createTenantRepositoryStub(),
+    reportStorage: {
+      async getLatestReport({ tenantContext }) {
+        observedStorageTenants.push(tenantContext.tenant_id);
+        return {
+          report: {
+            tenantId: tenantContext.tenant_id,
+            detection: {
+              risk_score: { riskScore: 33, severity: "Low", reasons: [] },
+              graph_summary: { entity_count: 0, relationship_count: 0 },
+            },
+          },
+          metadata: { tenant: tenantContext.tenant_id, version: "v1" },
+        };
+      },
+    },
+  });
+
+  const unauthenticated = await app.request("http://localhost/detection/report");
+  const contradictory = await app.request("http://localhost/detection/report", {
+    headers: authHeaders({ role: "scheme_user", requestTenantId: betaTenant.tenant_id }),
+  });
+  const insufficient = await app.request("http://localhost/detection/report", {
+    headers: authHeaders({ role: "scheme_administrator" }),
+  });
+  const permitted = await app.request("http://localhost/detection/report", {
+    headers: authHeaders({ role: "scheme_user" }),
+  });
+  const permittedBody = await permitted.json();
+
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(contradictory.status, 403);
+  assert.equal(insufficient.status, 403);
+  assert.equal(permitted.status, 200);
+  assert.equal(permittedBody.report.tenantId, alphaTenant.tenant_id);
+  assert.deepEqual(observedStorageTenants, [alphaTenant.tenant_id]);
+});
+
+test("ledger routes require authorization and propagate the canonical tenant", async () => {
+  const observedLedgerTenants = [];
+  const app = createBackendApp({
+    tenantRepository: createTenantRepositoryStub(),
+    ledgerRepository: {
+      async getLatestEntry() {
+        observedLedgerTenants.push(getActiveTenantId());
+        return { sequenceNumber: 1, tenantId: getActiveTenantId() };
+      },
+    },
+  });
+
+  const unauthenticated = await app.request("http://localhost/ledger/latest");
+  const contradictory = await app.request("http://localhost/ledger/latest", {
+    headers: authHeaders({ role: "investigator", requestTenantId: betaTenant.tenant_id }),
+  });
+  const insufficient = await app.request("http://localhost/ledger/latest", {
+    headers: authHeaders({ role: "scheme_user" }),
+  });
+  const permitted = await app.request("http://localhost/ledger/latest", {
+    headers: authHeaders({ role: "investigator" }),
+  });
+  const permittedBody = await permitted.json();
+
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(contradictory.status, 403);
+  assert.equal(insufficient.status, 403);
+  assert.equal(permitted.status, 200);
+  assert.equal(permittedBody.entry.tenantId, alphaTenant.tenant_id);
+  assert.deepEqual(observedLedgerTenants, [alphaTenant.tenant_id]);
+});
+
+test("cross-tenant claim ownership conflict returns 409 and does not trigger production", async () => {
+  const claims = new Map();
+  let producerTriggerCount = 0;
+  const app = createBackendApp({
+    tenantRepository: createTenantRepositoryStub(),
+    claimIngestionService: {
+      async ingestClaims({ claims: incomingClaims, source }) {
+        for (const claim of incomingClaims) {
+          const existing = claims.get(claim.claim_id);
+          const activeTenantId = getActiveTenantId();
+          if (existing && existing.tenantId !== activeTenantId) {
+            throw new ClaimOwnershipConflictError();
+          }
+          claims.set(claim.claim_id, { tenantId: activeTenantId, amount: claim.amount });
+        }
+        return { received: incomingClaims.length, inserted: 1, updated: 0, source };
+      },
+    },
+    producerRuntimeTrigger: {
+      async triggerAfterIngestion() {
+        producerTriggerCount += 1;
+      },
+    },
+  });
+
+  const claim = {
+    claim_id: "C1",
+    scheme_id: alphaTenant.scheme_id,
+    member_id: "member-1",
+    provider_id: "provider-1",
+    service_date: "2026-07-16",
+    billing_code: "CONSULT",
+    amount: 100,
+  };
+  const alphaResponse = await app.request("http://localhost/claims/ingest", {
+    method: "POST",
+    headers: authHeaders({ role: "scheme_user" }),
+    body: JSON.stringify({ claims: [claim] }),
+  });
+  const betaResponse = await app.request("http://localhost/claims/ingest", {
+    method: "POST",
+    headers: authHeaders({
+      user: "user-beta",
+      role: "scheme_user",
+      tenantId: betaTenant.tenant_id,
+      requestTenantId: betaTenant.tenant_id,
+    }),
+    body: JSON.stringify({
+      claims: [{ ...claim, scheme_id: betaTenant.scheme_id, amount: 999 }],
+    }),
+  });
+  const betaBody = await betaResponse.json();
+
+  assert.equal(alphaResponse.status, 202);
+  assert.equal(betaResponse.status, 409);
+  assert.equal(betaBody.code, "CLAIM_OWNERSHIP_CONFLICT");
+  assert.deepEqual(claims.get("C1"), { tenantId: alphaTenant.tenant_id, amount: 100 });
+  assert.equal(producerTriggerCount, 1);
 });

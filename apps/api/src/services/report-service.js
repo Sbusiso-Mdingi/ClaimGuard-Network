@@ -1,10 +1,13 @@
-function reportStorageFailure(error) {
+import { TenantReportNotFoundError } from "../application-errors.js";
+
+function reportStorageFailure() {
   return {
     ok: false,
     status: 503,
     body: {
       available: false,
-      message: `The configured report storage could not be read yet.${error?.message ? ` ${error.message}` : ""}`,
+      code: "REPORT_STORAGE_UNAVAILABLE",
+      message: "The configured report storage could not be read yet.",
     },
   };
 }
@@ -65,22 +68,37 @@ export function createReportService({
   const reportCacheTtlMsRaw = Number.parseInt(process.env.REPORT_CACHE_TTL_MS || "15000", 10);
   const reportCacheTtlMs = Number.isFinite(reportCacheTtlMsRaw) && reportCacheTtlMsRaw >= 0 ? reportCacheTtlMsRaw : 15000;
 
-  let cachedReport = null;
-  let cachedReportAt = 0;
-  let inflightLoadPromise = null;
+  const reportCache = new Map();
+  const latestCacheKeyByTenant = new Map();
+  const inflightLoadByTenant = new Map();
+  const cacheGenerationByTenant = new Map();
 
-  const readFromStorage = async () => {
+  const readFromStorage = async (tenantContext) => {
     try {
-      const loaded = await reportStorage.getLatestReport();
+      const loaded = await reportStorage.getLatestReport({ tenantContext });
       if (!loaded || !loaded.report) {
+        const error = new TenantReportNotFoundError();
         return {
           ok: false,
-          status: 503,
+          status: error.status,
           body: {
             available: false,
-            message: "No detection report is available from the configured report storage.",
+            code: error.code,
+            message: error.message,
           },
         };
+      }
+
+      const storageTenant = loaded.metadata?.tenant || null;
+      const allowedStorageTenants = new Set([
+        tenantContext.tenant_id,
+        tenantContext.tenant_slug,
+      ].filter(Boolean));
+
+      if (storageTenant && !allowedStorageTenants.has(storageTenant)) {
+        const error = new Error("Report storage returned data outside the authenticated tenant partition.");
+        error.code = "REPORT_TENANT_MISMATCH";
+        throw error;
       }
 
       return {
@@ -94,29 +112,92 @@ export function createReportService({
   };
 
   return {
-    async loadReportOrFail() {
+    async loadReportOrFail(tenantContext) {
+      const tenantId = tenantContext?.tenant_id || null;
+      if (!tenantId) {
+        return {
+          ok: false,
+          status: 403,
+          body: {
+            available: false,
+            code: "TENANT_CONTEXT_REQUIRED",
+            message: "Tenant authorization failed for this request.",
+          },
+        };
+      }
+
       const now = Date.now();
-      const cacheIsFresh =
-        cachedReport && reportCacheTtlMs > 0 && now - cachedReportAt <= reportCacheTtlMs;
+      const latestCacheKey = latestCacheKeyByTenant.get(tenantId) || null;
+      const cachedEntry = latestCacheKey ? reportCache.get(latestCacheKey) : null;
+      const cacheIsFresh = cachedEntry && reportCacheTtlMs > 0 && now - cachedEntry.cachedAt <= reportCacheTtlMs;
 
       if (cacheIsFresh) {
-        return cachedReport;
+        return cachedEntry.result;
       }
 
-      if (!inflightLoadPromise) {
-        inflightLoadPromise = readFromStorage().finally(() => {
-          inflightLoadPromise = null;
+      if (!inflightLoadByTenant.has(tenantId)) {
+        const generation = cacheGenerationByTenant.get(tenantId) || 0;
+        const loadPromise = readFromStorage(tenantContext).finally(() => {
+          if (inflightLoadByTenant.get(tenantId)?.promise === loadPromise) {
+            inflightLoadByTenant.delete(tenantId);
+          }
         });
+        inflightLoadByTenant.set(tenantId, { generation, promise: loadPromise });
       }
 
-      const result = await inflightLoadPromise;
+      const inflightLoad = inflightLoadByTenant.get(tenantId);
+      const result = await inflightLoad.promise;
 
-      if (result?.ok) {
-        cachedReport = result;
-        cachedReportAt = Date.now();
+      if (
+        result?.ok &&
+        inflightLoad.generation === (cacheGenerationByTenant.get(tenantId) || 0)
+      ) {
+        const pointerIdentity =
+          result.metadata?.version ||
+          result.metadata?.pointer ||
+          result.metadata?.pointerBlob ||
+          result.metadata?.reportBlob ||
+          result.metadata?.location ||
+          "unversioned";
+        const cacheKey = `${tenantId}:${pointerIdentity}`;
+        const previousCacheKey = latestCacheKeyByTenant.get(tenantId);
+        if (previousCacheKey && previousCacheKey !== cacheKey) {
+          reportCache.delete(previousCacheKey);
+        }
+        reportCache.set(cacheKey, {
+          cachedAt: Date.now(),
+          result,
+        });
+        latestCacheKeyByTenant.set(tenantId, cacheKey);
       }
 
       return result;
+    },
+
+    invalidateReportCache(tenantId = null) {
+      if (!tenantId) {
+        reportCache.clear();
+        latestCacheKeyByTenant.clear();
+        for (const activeTenantId of inflightLoadByTenant.keys()) {
+          cacheGenerationByTenant.set(
+            activeTenantId,
+            (cacheGenerationByTenant.get(activeTenantId) || 0) + 1,
+          );
+        }
+        inflightLoadByTenant.clear();
+        return;
+      }
+
+      const cacheKey = latestCacheKeyByTenant.get(tenantId);
+      if (cacheKey) {
+        reportCache.delete(cacheKey);
+      }
+      latestCacheKeyByTenant.delete(tenantId);
+      cacheGenerationByTenant.set(
+        tenantId,
+        (cacheGenerationByTenant.get(tenantId) || 0) + 1,
+      );
+      inflightLoadByTenant.delete(tenantId);
     },
 
     async checkReadiness() {
@@ -170,8 +251,8 @@ export function createReportService({
       };
     },
 
-    async getDetectionReport() {
-      const loaded = await this.loadReportOrFail();
+    async getDetectionReport(tenantContext) {
+      const loaded = await this.loadReportOrFail(tenantContext);
       if (!loaded.ok) {
         return loaded;
       }
@@ -197,8 +278,8 @@ export function createReportService({
       };
     },
 
-    async getDetectionGraph() {
-      const loaded = await this.loadReportOrFail();
+    async getDetectionGraph(tenantContext) {
+      const loaded = await this.loadReportOrFail(tenantContext);
       if (!loaded.ok) {
         return loaded;
       }
@@ -233,8 +314,8 @@ export function createReportService({
       };
     },
 
-    async getDetectionRisk() {
-      const loaded = await this.loadReportOrFail();
+    async getDetectionRisk(tenantContext) {
+      const loaded = await this.loadReportOrFail(tenantContext);
       if (!loaded.ok) {
         return loaded;
       }

@@ -1,4 +1,4 @@
-import { LEGACY_DEFAULT_TENANT_ID, LEGACY_DEFAULT_TENANT_SLUG } from "@claimguard/database";
+import { ForbiddenError, TenantMismatchError } from "./application-errors.js";
 
 export function createTenantContext({ tenant_id = null, tenant_slug = null, scheme_id = null, source }) {
   return Object.freeze({
@@ -20,64 +20,62 @@ function normalizeHeaderValue(value) {
 
 export async function resolveTenantContext({
   request,
+  authContext = null,
   tenantRepository = null,
-  defaultTenantId = process.env.DEFAULT_TENANT_ID || null,
-  nodeEnv = process.env.NODE_ENV || "development",
-  legacyDefaultTenantId = LEGACY_DEFAULT_TENANT_ID,
 } = {}) {
-  const isDevelopment = nodeEnv !== "production";
+  if (!authContext?.is_authenticated) {
+    return createTenantContext({
+      tenant_id: null,
+      tenant_slug: null,
+      scheme_id: null,
+      source: "anonymous",
+    });
+  }
+
+  const membershipTenant = normalizeHeaderValue(authContext.tenant_id);
+  if (!membershipTenant) {
+    throw new ForbiddenError("Authenticated tenant membership is required.");
+  }
+
   const requestTenantHeader = normalizeHeaderValue(request?.headers?.get("x-claimguard-tenant"));
-
-  if (requestTenantHeader && isDevelopment && tenantRepository) {
-    const byId = await tenantRepository.lookupTenantById(requestTenantHeader);
-    const bySlug = byId ? null : await tenantRepository.lookupTenantBySlug(requestTenantHeader);
-    const tenant = byId || bySlug;
-
-    if (tenant) {
-      return createTenantContext({
-        tenant_id: tenant.tenant_id,
-        tenant_slug: tenant.tenant_slug,
-        scheme_id: tenant.scheme_id || null,
-        source: "header",
-      });
-    }
-  }
-
-  if (defaultTenantId && tenantRepository) {
-    const configured = await tenantRepository.lookupTenantById(defaultTenantId);
-    if (configured) {
-      return createTenantContext({
-        tenant_id: configured.tenant_id,
-        tenant_slug: configured.tenant_slug,
-        scheme_id: configured.scheme_id || null,
-        source: "default_config",
-      });
-    }
-  }
+  let tenant = null;
 
   if (tenantRepository) {
-    const legacyDefault = await tenantRepository.getDefaultTenant({
-      defaultTenantId: legacyDefaultTenantId,
-    });
+    const byId = await tenantRepository.lookupTenantById(membershipTenant);
+    const bySlug = byId ? null : await tenantRepository.lookupTenantBySlug(membershipTenant);
+    tenant = byId || bySlug;
 
-    if (legacyDefault) {
-      return createTenantContext({
-        tenant_id: legacyDefault.tenant_id,
-        tenant_slug: legacyDefault.tenant_slug,
-        scheme_id: legacyDefault.scheme_id || null,
-        source: "legacy_fallback",
-      });
+    if (!tenant) {
+      throw new ForbiddenError("Authenticated tenant membership could not be resolved.");
+    }
+  } else {
+    tenant = {
+      tenant_id: membershipTenant,
+      tenant_slug: null,
+      scheme_id: null,
+    };
+  }
+
+  if (requestTenantHeader) {
+    let requestedTenantId = requestTenantHeader;
+
+    if (tenantRepository) {
+      const requestedById = await tenantRepository.lookupTenantById(requestTenantHeader);
+      const requestedBySlug = requestedById
+        ? null
+        : await tenantRepository.lookupTenantBySlug(requestTenantHeader);
+      requestedTenantId = (requestedById || requestedBySlug)?.tenant_id || null;
+    }
+
+    if (!requestedTenantId || requestedTenantId !== tenant.tenant_id) {
+      throw new TenantMismatchError();
     }
   }
 
-  const fallbackTenantId = defaultTenantId || legacyDefaultTenantId || null;
-  const fallbackTenantSlug =
-    fallbackTenantId === LEGACY_DEFAULT_TENANT_ID ? LEGACY_DEFAULT_TENANT_SLUG : null;
-
   return createTenantContext({
-    tenant_id: fallbackTenantId,
-    tenant_slug: fallbackTenantSlug,
-    scheme_id: null,
-    source: "legacy_fallback",
+    tenant_id: tenant.tenant_id,
+    tenant_slug: tenant.tenant_slug || null,
+    scheme_id: tenant.scheme_id || null,
+    source: "authenticated_membership",
   });
 }

@@ -154,7 +154,9 @@ test("detection report endpoint returns a configured report", async () => {
     }),
   });
 
-  const response = await app.request("http://localhost/detection/report");
+  const response = await app.request("http://localhost/detection/report", {
+    headers: developmentAuthHeaders(),
+  });
   const json = await response.json();
 
   assert.equal(response.status, 200);
@@ -187,7 +189,9 @@ test("detection report endpoint includes runtime ledger reference when available
     }),
   });
 
-  const response = await app.request("http://localhost/detection/report");
+  const response = await app.request("http://localhost/detection/report", {
+    headers: developmentAuthHeaders(),
+  });
   const json = await response.json();
 
   assert.equal(response.status, 200);
@@ -214,7 +218,9 @@ test("detection report endpoint marks ledger unavailable when no confirmed fraud
     },
   });
 
-  const response = await app.request("http://localhost/detection/report");
+  const response = await app.request("http://localhost/detection/report", {
+    headers: developmentAuthHeaders(),
+  });
   const json = await response.json();
 
   assert.equal(response.status, 200);
@@ -236,7 +242,9 @@ test("detection graph endpoint returns graph payload", async () => {
     }),
   });
 
-  const response = await app.request("http://localhost/detection/graph");
+  const response = await app.request("http://localhost/detection/graph", {
+    headers: developmentAuthHeaders(),
+  });
   const json = await response.json();
 
   assert.equal(response.status, 200);
@@ -257,7 +265,9 @@ test("detection risk endpoint returns deterministic risk payload", async () => {
     }),
   });
 
-  const response = await app.request("http://localhost/detection/risk");
+  const response = await app.request("http://localhost/detection/risk", {
+    headers: developmentAuthHeaders(),
+  });
   const json = await response.json();
 
   assert.equal(response.status, 200);
@@ -299,6 +309,7 @@ test("detection analyze endpoint is deprecated when no producer proxy is configu
     method: "POST",
     headers: {
       "content-type": "application/json",
+      ...developmentAuthHeaders({ role: "scheme_administrator" }),
     },
     body: JSON.stringify(payload),
   });
@@ -339,6 +350,7 @@ test("detection analyze endpoint proxies to producer when configured", async () 
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...developmentAuthHeaders({ role: "scheme_administrator" }),
       },
       body: JSON.stringify({ claims: [{ claim_id: "C1" }] }),
     });
@@ -361,10 +373,12 @@ test("detection report endpoint is unavailable without configured report storage
     },
   });
 
-  const response = await app.request("http://localhost/detection/report");
+  const response = await app.request("http://localhost/detection/report", {
+    headers: developmentAuthHeaders(),
+  });
   const json = await response.json();
 
-  assert.equal(response.status, 503);
+  assert.equal(response.status, 404);
   assert.equal(json.available, false);
 });
 
@@ -609,7 +623,9 @@ test("claims ingestion triggers producer wiring and detection report reads the n
   assert.equal(ingestJson.available, true);
   assert.equal(state.triggerCount, 1);
 
-  const reportResponse = await app.request("http://localhost/detection/report");
+  const reportResponse = await app.request("http://localhost/detection/report", {
+    headers: developmentAuthHeaders(),
+  });
   const reportJson = await reportResponse.json();
   assert.equal(reportResponse.status, 200);
   assert.equal(reportJson.available, true);

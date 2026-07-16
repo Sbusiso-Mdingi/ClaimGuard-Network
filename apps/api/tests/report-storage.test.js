@@ -34,7 +34,7 @@ function createFakeContainerClient(initial = {}) {
   };
 }
 
-test("FileReportStorage returns latest report payload", async () => {
+test("FileReportStorage does not read an unpartitioned legacy report", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "claimguard-report-storage-"));
   const reportPath = path.join(tempDir, "latest-report.json");
   await writeFile(reportPath, JSON.stringify({ schemes: [{ scheme_id: "S1" }] }), "utf-8");
@@ -42,9 +42,7 @@ test("FileReportStorage returns latest report payload", async () => {
   const storage = new FileReportStorage({ reportPath });
   const loaded = await storage.getLatestReport();
 
-  assert.ok(loaded);
-  assert.equal(loaded.report.schemes[0].scheme_id, "S1");
-  assert.equal(loaded.metadata.source, "file");
+  assert.equal(loaded, null);
 });
 
 test("FileReportStorage returns null without configured path", async () => {
@@ -53,7 +51,7 @@ test("FileReportStorage returns null without configured path", async () => {
   assert.equal(loaded, null);
 });
 
-test("AzureBlobReportStorage loads report using latest pointer", async () => {
+test("AzureBlobReportStorage ignores a global latest pointer", async () => {
   const containerClient = createFakeContainerClient({
     "latest.json": JSON.stringify({ reportBlobName: "reports/report-v1.json", version: "v1" }),
     "reports/report-v1.json": JSON.stringify({ detection: { risk_score: { riskScore: 88 } } }),
@@ -62,13 +60,10 @@ test("AzureBlobReportStorage loads report using latest pointer", async () => {
   const storage = new AzureBlobReportStorage({ containerClient });
   const loaded = await storage.getLatestReport();
 
-  assert.ok(loaded);
-  assert.equal(loaded.report.detection.risk_score.riskScore, 88);
-  assert.equal(loaded.metadata.source, "azure_blob");
-  assert.equal(loaded.metadata.version, "v1");
+  assert.equal(loaded, null);
 });
 
-test("AzureBlobReportStorage falls back to configured report blob", async () => {
+test("AzureBlobReportStorage does not fall back to a configured global report blob", async () => {
   const containerClient = createFakeContainerClient({
     "reports/report-v2.json": JSON.stringify({ detection: { risk_score: { riskScore: 25 } } }),
   });
@@ -81,8 +76,7 @@ test("AzureBlobReportStorage falls back to configured report blob", async () => 
 
   const loaded = await storage.getLatestReport();
 
-  assert.ok(loaded);
-  assert.equal(loaded.report.detection.risk_score.riskScore, 25);
+  assert.equal(loaded, null);
 });
 
 test("FileReportStorage loads tenant-scoped report using tenant latest pointer", async () => {
@@ -111,7 +105,7 @@ test("FileReportStorage loads tenant-scoped report using tenant latest pointer",
   assert.equal(loaded.metadata.version, "v1");
 });
 
-test("FileReportStorage falls back to default tenant partition", async () => {
+test("FileReportStorage does not fall back to the default tenant partition", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "claimguard-tenant-fallback-"));
   const defaultTenantDir = path.join(tempDir, "default");
   const defaultReportPath = path.join(defaultTenantDir, "versions", "report-default.json");
@@ -131,9 +125,7 @@ test("FileReportStorage falls back to default tenant partition", async () => {
     () => storage.getLatestReport(),
   );
 
-  assert.ok(loaded);
-  assert.equal(loaded.report.schemes[0].scheme_id, "S-default");
-  assert.equal(loaded.metadata.tenant, "default");
+  assert.equal(loaded, null);
 });
 
 test("AzureBlobReportStorage enforces tenant-specific report isolation", async () => {
@@ -174,7 +166,7 @@ test("AzureBlobReportStorage enforces tenant-specific report isolation", async (
   assert.equal(betaLoaded.metadata.tenant, "tenant-beta");
 });
 
-test("AzureBlobReportStorage falls back to default tenant when tenant-specific pointer is absent", async () => {
+test("AzureBlobReportStorage does not fall back to default when tenant pointer is absent", async () => {
   const containerClient = createFakeContainerClient({
     "default/latest.json": JSON.stringify({ reportBlobName: "default/versions/report-v1.json", version: "default-v1" }),
     "default/versions/report-v1.json": JSON.stringify({ detection: { risk_score: { riskScore: 44 } } }),
@@ -191,7 +183,49 @@ test("AzureBlobReportStorage falls back to default tenant when tenant-specific p
     () => storage.getLatestReport(),
   );
 
-  assert.ok(loaded);
-  assert.equal(loaded.report.detection.risk_score.riskScore, 44);
-  assert.equal(loaded.metadata.tenant, "default");
+  assert.equal(loaded, null);
+});
+
+test("missing beta file report never returns alpha report", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "claimguard-strict-file-storage-"));
+  const alphaDir = path.join(tempDir, "tenant-alpha");
+  await mkdir(path.join(alphaDir, "versions"), { recursive: true });
+  await writeFile(
+    path.join(alphaDir, "latest.json"),
+    JSON.stringify({ reportPath: "tenant-alpha/versions/report-alpha.json" }),
+    "utf-8",
+  );
+  await writeFile(
+    path.join(alphaDir, "versions", "report-alpha.json"),
+    JSON.stringify({ tenant: "alpha" }),
+    "utf-8",
+  );
+
+  const storage = new FileReportStorage({ tenantReportsRoot: tempDir });
+  const loaded = await storage.getLatestReport({
+    tenantContext: {
+      tenant_id: "tenant_beta",
+      tenant_slug: "tenant-beta",
+    },
+  });
+
+  assert.equal(loaded, null);
+});
+
+test("production mode cannot enable a global legacy report fallback", async () => {
+  const containerClient = createFakeContainerClient({
+    "latest.json": JSON.stringify({ reportBlobName: "reports/global.json" }),
+    "reports/global.json": JSON.stringify({ tenant: "legacy-global" }),
+  });
+  const storage = new AzureBlobReportStorage({
+    containerClient,
+    fallbackReportBlobName: "reports/global.json",
+  });
+
+  const loaded = await storage.getLatestReport({
+    tenantContext: { tenant_id: "tenant_beta", tenant_slug: "beta" },
+    nodeEnv: "production",
+  });
+
+  assert.equal(loaded, null);
 });

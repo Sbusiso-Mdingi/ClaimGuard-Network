@@ -1,5 +1,14 @@
 import { getActiveTenantId } from "./tenant-context-store.js";
 
+export class ClaimOwnershipConflictError extends Error {
+  constructor(message = "Claim identifier is already owned by another tenant.") {
+    super(message);
+    this.name = "ClaimOwnershipConflictError";
+    this.code = "CLAIM_OWNERSHIP_CONFLICT";
+    this.status = 409;
+  }
+}
+
 function normalizeClaim(claim) {
   return {
     claim_id: claim.claim_id,
@@ -50,36 +59,69 @@ export function createClaimIngestionRepository(pool) {
 
         for (const rawClaim of claims) {
           const claim = normalizeClaim(rawClaim);
-          const [result] = await connection.execute(
-            `
-              INSERT INTO claims (
-                claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-              ON DUPLICATE KEY UPDATE
-                scheme_id = VALUES(scheme_id),
-                member_id = VALUES(member_id),
-                provider_id = VALUES(provider_id),
-                service_date = VALUES(service_date),
-                billing_code = VALUES(billing_code),
-                amount = VALUES(amount),
-                tenant_id = VALUES(tenant_id)
-            `,
-            [
-              claim.claim_id,
-              claim.scheme_id,
-              claim.member_id,
-              claim.provider_id,
-              claim.service_date,
-              claim.billing_code,
-              claim.amount,
-              tenantId,
-            ],
+          const [ownershipRows] = await connection.execute(
+            "SELECT tenant_id FROM claims WHERE claim_id = ? FOR UPDATE",
+            [claim.claim_id],
           );
+          const existingTenantId = ownershipRows?.[0]?.tenant_id ?? null;
 
-          if (result?.affectedRows === 1) {
-            inserted += 1;
-          } else if (result?.affectedRows >= 2) {
+          if (ownershipRows?.length > 0 && existingTenantId !== tenantId) {
+            throw new ClaimOwnershipConflictError();
+          }
+
+          const claimValues = [
+            claim.scheme_id,
+            claim.member_id,
+            claim.provider_id,
+            claim.service_date,
+            claim.billing_code,
+            claim.amount,
+          ];
+
+          if (ownershipRows?.length > 0) {
+            await connection.execute(
+              `
+                UPDATE claims
+                SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?, billing_code = ?, amount = ?
+                WHERE claim_id = ? AND tenant_id = ?
+              `,
+              [...claimValues, claim.claim_id, tenantId],
+            );
             updated += 1;
+          } else {
+            try {
+              await connection.execute(
+                `
+                  INSERT INTO claims (
+                    claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `,
+                [claim.claim_id, ...claimValues, tenantId],
+              );
+            } catch (error) {
+              if (error?.code !== "ER_DUP_ENTRY") {
+                throw error;
+              }
+
+              const [racedOwnershipRows] = await connection.execute(
+                "SELECT tenant_id FROM claims WHERE claim_id = ? FOR UPDATE",
+                [claim.claim_id],
+              );
+              if (racedOwnershipRows?.[0]?.tenant_id !== tenantId) {
+                throw new ClaimOwnershipConflictError();
+              }
+              await connection.execute(
+                `
+                  UPDATE claims
+                  SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?, billing_code = ?, amount = ?
+                  WHERE claim_id = ? AND tenant_id = ?
+                `,
+                [...claimValues, claim.claim_id, tenantId],
+              );
+              updated += 1;
+              continue;
+            }
+            inserted += 1;
           }
         }
 

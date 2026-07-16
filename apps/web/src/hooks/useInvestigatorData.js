@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRole } from "../context/RoleContext";
 import { demoInvestigatorArtifacts } from "../features/investigator/demoInvestigatorData";
 
 const POLL_INTERVAL_MS = 15000;
@@ -102,6 +103,7 @@ function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = [])
 }
 
 export function useInvestigatorData() {
+  const { authHeaders } = useRole();
   const [mode, setMode] = useState("live");
   const [state, setState] = useState({
     status: "loading",
@@ -120,9 +122,9 @@ export function useInvestigatorData() {
 
     try {
       const [reportRes, graphRes, riskRes] = await Promise.all([
-        fetch("/api/detection/report", { cache: "no-store" }),
-        fetch("/api/detection/graph", { cache: "no-store" }),
-        fetch("/api/detection/risk", { cache: "no-store" }),
+        fetch("/api/detection/report", { cache: "no-store", headers: authHeaders }),
+        fetch("/api/detection/graph", { cache: "no-store", headers: authHeaders }),
+        fetch("/api/detection/risk", { cache: "no-store", headers: authHeaders }),
       ]);
 
       const [reportPayload, graphPayload, riskPayload] = await Promise.all([
@@ -160,7 +162,7 @@ export function useInvestigatorData() {
         dataSource: "demo",
       });
     }
-  }, []);
+  }, [authHeaders]);
 
   useEffect(() => {
     load();

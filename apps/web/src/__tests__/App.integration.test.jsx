@@ -100,6 +100,7 @@ function mockFetchFailure() {
 
 beforeEach(() => {
   window.history.pushState({}, "", "/");
+  window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
   vi.useRealTimers();
   mockFetch();
 });
@@ -114,6 +115,15 @@ test("renders dashboard and routes to claim details", async () => {
 
   expect(await screen.findByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
   expect(screen.getByText(/Total claims/i)).toBeInTheDocument();
+
+  for (const [, requestOptions] of global.fetch.mock.calls.slice(0, 3)) {
+    expect(requestOptions.headers).toMatchObject({
+      "x-claimguard-user": "analyst-alpha",
+      "x-claimguard-role": "fraud_analyst",
+      "x-claimguard-user-tenant": "tenant_alpha",
+      "x-claimguard-tenant": "tenant_alpha",
+    });
+  }
 
   await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
   expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
