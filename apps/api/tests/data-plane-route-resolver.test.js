@@ -32,7 +32,8 @@ test("active medical-scheme route resolves canonical immutable DataPlaneContext"
   assert.equal(context.routeId, "route-alpha");
   assert.equal(context.routeGeneration, 3);
   assert.equal(Object.isFrozen(context), true);
-  assert.equal(Object.hasOwn(context, "secretReference"), false);
+  assert.equal(Object.hasOwn(context, "secretReference"), true);
+  assert.equal(context.secretReference, null);
 });
 
 test("route resolution fails closed for no route, multiple routes, suspension, retirement, unsupported type/schema, and missing mapping", async () => {
@@ -46,7 +47,6 @@ test("route resolution fails closed for no route, multiple routes, suspension, r
     fixture({ routes: [baseRoute, { ...baseRoute, route_id: "route-2", route_generation: 2 }] }),
     fixture({ organisation: { status: "suspended" } }),
     fixture({ routes: [{ ...baseRoute, retired_at: new Date() }] }),
-    fixture({ routes: [{ ...baseRoute, route_type: "private_database" }] }),
     fixture({ routes: [{ ...baseRoute, schema_version: "999" }] }),
     fixture({ mapping: null }),
   ];

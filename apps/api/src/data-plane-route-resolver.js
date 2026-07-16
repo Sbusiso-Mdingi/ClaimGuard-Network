@@ -34,7 +34,7 @@ export function createControlPlaneDataPlaneRouteResolver({
       if (route.retired_at || route.provisioning_status !== "active" || ["suspended", "unreachable"].includes(route.health_status)) {
         throw routeFailure("The active data-plane route is unavailable.", "DATA_PLANE_ROUTE_INACTIVE");
       }
-      if (!["legacy_shared", "platform_none"].includes(route.route_type)) {
+      if (!["legacy_shared", "private_database", "platform_none"].includes(route.route_type)) {
         throw routeFailure("The active data-plane route type is unsupported.", "DATA_PLANE_ROUTE_UNSUPPORTED");
       }
       if (!Number.isSafeInteger(Number(route.route_generation)) || Number(route.route_generation) < 1) {
@@ -69,6 +69,7 @@ export function createControlPlaneDataPlaneRouteResolver({
         routeGeneration: Number(route.route_generation),
         logicalDatabaseIdentifier: route.logical_database_identifier,
         databaseName: route.database_name || null,
+        secretReference: route.secret_reference || null,
         schemaVersion: route.schema_version || null,
         deploymentClass: organisation.deploymentClass,
         region: route.region || null,

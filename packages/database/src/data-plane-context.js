@@ -1,4 +1,4 @@
-const ROUTE_TYPES = new Set(["legacy_shared", "platform_none"]);
+const ROUTE_TYPES = new Set(["legacy_shared", "private_database", "platform_none"]);
 const ORGANISATION_TYPES = new Set(["medical_scheme", "platform"]);
 
 export class DataPlaneContextValidationError extends Error {
@@ -52,6 +52,7 @@ export function createDataPlaneContext(input = {}) {
     routeGeneration,
     logicalDatabaseIdentifier: required(input.logicalDatabaseIdentifier, "logicalDatabaseIdentifier"),
     databaseName: optional(input.databaseName),
+    secretReference: optional(input.secretReference),
     schemaVersion: routeType === "platform_none" ? null : required(input.schemaVersion, "schemaVersion"),
     deploymentClass: required(input.deploymentClass, "deploymentClass"),
     region: optional(input.region),
@@ -68,8 +69,11 @@ export function dataPlanePoolKey(context) {
 
 export function requireOperationalDataPlaneContext(context) {
   const verified = createDataPlaneContext(context);
-  if (verified.routeType !== "legacy_shared" || !verified.operationalTenantId) {
+  if (verified.routeType === "platform_none") {
     throw new DataPlaneContextValidationError("This organisation has no private operational data plane.", "DATA_PLANE_NOT_AVAILABLE");
+  }
+  if (verified.routeType === "legacy_shared" && !verified.operationalTenantId) {
+    throw new DataPlaneContextValidationError("A verified legacy tenant mapping is required.", "DATA_PLANE_MAPPING_REQUIRED");
   }
   return verified;
 }

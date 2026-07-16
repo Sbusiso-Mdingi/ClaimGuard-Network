@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0",
     "@azure/storage-blob": "^12.25.0",
     "@claimguard/control-plane-database": "workspace:^",
     "@claimguard/database": "workspace:*",

@@ -26,6 +26,7 @@ import { createBackendApp } from "./backend.js";
 import { resolveAuthenticationConfiguration } from "./authentication-config.js";
 import { createControlPlaneDataPlaneRouteResolver } from "./data-plane-route-resolver.js";
 import { createReportStorageFromEnvironment } from "./report-storage.js";
+import { createPrivateDatabaseAdapter } from "./private-database-adapter.js";
 import { logEvent } from "./services/log-event.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
@@ -101,7 +102,14 @@ if (authenticationConfiguration.mode === "session") {
     connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
   });
   const connectionManager = createTenantConnectionManager({
-    adapters: { legacy_shared: legacySharedAdapter },
+    adapters: {
+      legacy_shared: legacySharedAdapter,
+      private_database: createPrivateDatabaseAdapter({
+        expectedEnvironment: process.env.DATA_PLANE_PRIVATE_ENVIRONMENT || "production",
+        supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "8").split(",").map((value) => value.trim()).filter(Boolean),
+        connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
+      }),
+    },
     maxPools: Number(process.env.DATA_PLANE_MAX_POOLS || 32),
     idleTimeoutMs: Number(process.env.DATA_PLANE_POOL_IDLE_MS || 600_000),
     creationTimeoutMs: Number(process.env.DATA_PLANE_POOL_CREATION_TIMEOUT_MS || 10_000),
