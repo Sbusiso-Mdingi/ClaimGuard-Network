@@ -124,7 +124,7 @@ function createControlPlaneHarness() {
         error.code = "PROVISIONING_OPERATION_NOT_FOUND";
         throw error;
       }
-      const updated = { ...operation, status: "running" };
+      const updated = { ...operation, status: "pending" };
       operations.set(operationId, updated);
       return updated;
     },

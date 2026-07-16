@@ -62,6 +62,9 @@ importers:
       '@claimguard/control-plane-database':
         specifier: workspace:*
         version: link:../../packages/control-plane-database
+      '@claimguard/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       mysql2:
         specifier: ^3.12.0
         version: 3.22.6(@types/node@26.1.1)

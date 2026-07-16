@@ -67,7 +67,7 @@ function approvedAzurePolicy({ organisationId, deploymentClass }) {
   const region = process.env.AZURE_APPROVED_REGION || "southafricanorth";
   const reportContainer = process.env.AZURE_APPROVED_REPORT_CONTAINER || "claimguard-reports";
   const reportPartitionStrategy = process.env.REPORT_PARTITION_STRATEGY || "prefix";
-  const privateSchemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "11e-baseline-v1";
+  const privateSchemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "8";
   const safeSlug = String(organisationId || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 24) || "tenant";
   return {
     subscriptionId,
@@ -79,7 +79,7 @@ function approvedAzurePolicy({ organisationId, deploymentClass }) {
     reportContainer,
     reportPartitionStrategy,
     privateSchemaVersion,
-    logicalDatabaseIdentifier: `private-${safeSlug}`,
+    logicalDatabaseIdentifier: `private:${organisationId}`,
     generatedDatabaseName: `claimguard_tenant_${safeSlug}`,
     deploymentClass,
   };
@@ -129,7 +129,7 @@ export function registerPlatformAdminRoutes(app, {
         const user = await controlPlaneRepositories.identity.createUser({
           displayName: adminDisplayName,
           canonicalContact: adminUsername,
-          status: "invited",
+          status: "active",
         });
         const membership = await controlPlaneService.createMembership({
           userId: user.userId,

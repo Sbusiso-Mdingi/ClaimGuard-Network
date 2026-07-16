@@ -14,6 +14,16 @@ properties:
     manualTriggerConfig:
       parallelism: 1
       replicaCompletionCount: 1
+    secrets:
+      - name: control-plane-mysql-url
+        keyVaultUrl: https://claimguard-kv-ufs.vault.azure.net/secrets/claimguard--provisioning--control-plane-mysql-url
+        identity: /subscriptions/896d3c72-d979-4bdc-a37f-060988d12032/resourceGroups/ClaimGuard/providers/Microsoft.ManagedIdentity/userAssignedIdentities/claimguard-provisioner-identity
+      - name: mysql-server-admin-url
+        keyVaultUrl: https://claimguard-kv-ufs.vault.azure.net/secrets/claimguard--provisioning--mysql-server-admin-url
+        identity: /subscriptions/896d3c72-d979-4bdc-a37f-060988d12032/resourceGroups/ClaimGuard/providers/Microsoft.ManagedIdentity/userAssignedIdentities/claimguard-provisioner-identity
+    registries:
+      - server: claimguardacr11e.azurecr.io
+        identity: /subscriptions/896d3c72-d979-4bdc-a37f-060988d12032/resourceGroups/ClaimGuard/providers/Microsoft.ManagedIdentity/userAssignedIdentities/claimguard-provisioner-identity
   template:
     containers:
       - name: provisioning-worker
@@ -23,9 +33,9 @@ properties:
           memory: 1Gi
         env:
           - name: CONTROL_PLANE_MYSQL_URL
-            value: mysql://<user>:<password>@claimguard.mysql.database.azure.com:3306/claimguard?ssl-mode=require
+            secretRef: control-plane-mysql-url
           - name: MYSQL_SERVER_ADMIN_URL
-            value: mysql://<user>:<password>@claimguard.mysql.database.azure.com:3306/mysql?ssl-mode=require
+            secretRef: mysql-server-admin-url
           - name: PROVISIONING_KEYVAULT_URI
             value: https://claimguard-kv-ufs.vault.azure.net/
           - name: AZURE_APPROVED_SUBSCRIPTION_ID
@@ -40,12 +50,11 @@ properties:
             value: cgrpt0715sa
           - name: AZURE_APPROVED_REGION
             value: southafricanorth
+          - name: AZURE_APPROVED_ENVIRONMENT_KEY
+            value: production
           - name: AZURE_APPROVED_REPORT_CONTAINER
             value: claimguard-reports
           - name: PRIVATE_TENANT_SCHEMA_VERSION
-            value: 11e-baseline-v1
+            value: "8"
           - name: PROVISIONING_MAX_OPERATIONS
             value: "1"
-    registries:
-      - server: claimguardacr11e.azurecr.io
-        identity: /subscriptions/896d3c72-d979-4bdc-a37f-060988d12032/resourceGroups/ClaimGuard/providers/Microsoft.ManagedIdentity/userAssignedIdentities/claimguard-provisioner-identity

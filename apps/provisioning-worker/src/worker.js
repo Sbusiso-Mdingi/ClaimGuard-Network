@@ -1,11 +1,7 @@
 import crypto from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import mysql from "mysql2/promise";
-import { DefaultAzureCredential } from "@azure/identity";
-import { SecretClient } from "@azure/keyvault-secrets";
+import { applyMigrations } from "@claimguard/database/migrate";
 import {
   createControlPlanePool,
   createControlPlaneRepositories,
@@ -31,9 +27,6 @@ const REQUIRED_STEPS = Object.freeze([
   "run_activation_checks",
   "ready_for_activation",
 ]);
-
-const moduleDir = fileURLToPath(new URL(".", import.meta.url));
-const privateSchemaBaselinePath = path.join(moduleDir, "private-schema-baseline.sql");
 
 function log(level, event, details = {}) {
   const payload = {
@@ -63,14 +56,16 @@ function organisationSecretPrefix(organisationId) {
 }
 
 function parseAzurePolicy(organisationId) {
-  const resourceGroup = process.env.AZURE_APPROVED_RESOURCE_GROUP || "ClaimGuard";
-  const mysqlServerName = process.env.AZURE_APPROVED_MYSQL_SERVER || "claimguard";
-  const keyVaultName = process.env.AZURE_APPROVED_KEYVAULT || "claimguard-kv-ufs";
-  const region = process.env.AZURE_APPROVED_REGION || "southafricanorth";
-  const storageAccount = process.env.AZURE_APPROVED_STORAGE_ACCOUNT || "cgrpt0715sa";
-  const reportContainer = process.env.AZURE_APPROVED_REPORT_CONTAINER || "claimguard-reports";
-  const schemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "11e-baseline-v1";
-  const subscriptionId = process.env.AZURE_APPROVED_SUBSCRIPTION_ID || process.env.AZURE_SUBSCRIPTION_ID || null;
+  const resourceGroup = requireEnv("AZURE_APPROVED_RESOURCE_GROUP");
+  const mysqlServerName = requireEnv("AZURE_APPROVED_MYSQL_SERVER");
+  const keyVaultName = requireEnv("AZURE_APPROVED_KEYVAULT");
+  const region = requireEnv("AZURE_APPROVED_REGION");
+  const storageAccount = requireEnv("AZURE_APPROVED_STORAGE_ACCOUNT");
+  const reportContainer = requireEnv("AZURE_APPROVED_REPORT_CONTAINER");
+  const schemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION?.trim() || "8";
+  const environmentKey = process.env.AZURE_APPROVED_ENVIRONMENT_KEY?.trim() || "production";
+  const subscriptionId = requireEnv("AZURE_APPROVED_SUBSCRIPTION_ID");
+  if (schemaVersion !== "8") throw new Error("PRIVATE_TENANT_SCHEMA_VERSION must be 8 for the canonical operational schema.");
   return {
     resourceGroup,
     mysqlServerName,
@@ -79,8 +74,9 @@ function parseAzurePolicy(organisationId) {
     storageAccount,
     reportContainer,
     schemaVersion,
+    environmentKey,
     subscriptionId,
-    logicalDatabaseIdentifier: `private-${String(organisationId || "").slice(0, 8)}`,
+    logicalDatabaseIdentifier: `private:${organisationId}`,
     databaseName: organisationSafeDatabaseName(organisationId),
   };
 }
@@ -100,9 +96,17 @@ async function createSecretStore() {
         process.env[`CLAIMGUARD_PROVISIONING_SECRET_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`] = value;
         return { id: `env://${name}` };
       },
+      async getSecret(name) {
+        const value = process.env[`CLAIMGUARD_PROVISIONING_SECRET_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
+        return value ? { value } : null;
+      },
     };
   }
 
+  const [{ DefaultAzureCredential }, { SecretClient }] = await Promise.all([
+    import("@azure/identity"),
+    import("@azure/keyvault-secrets"),
+  ]);
   const credential = new DefaultAzureCredential();
   const client = new SecretClient(keyVaultUri, credential);
   return {
@@ -110,42 +114,40 @@ async function createSecretStore() {
     async setSecret(name, value) {
       return client.setSecret(name, value);
     },
+    async getSecret(name) {
+      try {
+        return await client.getSecret(name);
+      } catch (error) {
+        if (error?.statusCode === 404) return null;
+        throw error;
+      }
+    },
   };
 }
 
-async function parseSqlStatements(filePath) {
-  const source = await readFile(filePath, "utf8");
-  return source
-    .split(";\n")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-async function ensurePrivateSchema(adminPool, databaseName, organisationId, schemaVersion) {
-  const statements = await parseSqlStatements(privateSchemaBaselinePath);
+async function ensurePrivateSchema(adminPool, databaseName, organisation, policy) {
   const connection = await adminPool.getConnection();
   try {
     await connection.query(`USE \`${databaseName}\``);
-    for (const statement of statements) {
-      await connection.query(statement);
-    }
+    await applyMigrations(connection, undefined, { applicationVersion: `private-${policy.schemaVersion}` });
     await connection.query(
-      `INSERT INTO private_migration_history (migration_id)
-       VALUES (?)
-       ON DUPLICATE KEY UPDATE migration_id = migration_id`,
-      [schemaVersion],
+      "DELETE FROM ledger_chain_heads WHERE tenant_id = 'tenant_default'",
     );
     await connection.query(
-      `INSERT INTO data_plane_metadata
-        (metadata_key, organisation_id, route_type, logical_database_identifier, schema_version, migration_version)
-       VALUES ('primary', ?, 'private_database', ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-        organisation_id = VALUES(organisation_id),
-        route_type = VALUES(route_type),
-        logical_database_identifier = VALUES(logical_database_identifier),
-        schema_version = VALUES(schema_version),
-        migration_version = VALUES(migration_version)`,
-      [organisationId, `private-${organisationId.slice(0, 8)}`, schemaVersion, schemaVersion],
+      "DELETE FROM tenants WHERE tenant_id = 'tenant_default'",
+    );
+    await connection.query(
+      `INSERT INTO tenants (tenant_id, tenant_slug, tenant_name, status)
+       VALUES (?, ?, ?, 'active')
+       ON DUPLICATE KEY UPDATE tenant_slug = VALUES(tenant_slug), tenant_name = VALUES(tenant_name), status = 'active'`,
+      [organisation.organisationId, organisation.canonicalSlug, organisation.displayName],
+    );
+    await connection.query(
+      `UPDATE data_plane_metadata
+       SET database_mode = 'private_database', logical_database_identifier = ?,
+         schema_version = ?, environment_key = ?, migration_version = 8
+       WHERE metadata_key = 'primary'`,
+      [policy.logicalDatabaseIdentifier, policy.schemaVersion, policy.environmentKey],
     );
   } finally {
     connection.release();
@@ -160,37 +162,58 @@ async function ensureTenantPrincipal(adminPool, { databaseName, username, passwo
   try {
     await connection.query(`CREATE USER IF NOT EXISTS ${escapedUser}@'%' IDENTIFIED BY ${escapedPassword}`);
     await connection.query(`ALTER USER ${escapedUser}@'%' IDENTIFIED BY ${escapedPassword}`);
-    await connection.query(`GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON ${escapedDatabase}.* TO ${escapedUser}@'%'`);
+    await connection.query(`REVOKE ALL PRIVILEGES, GRANT OPTION FROM ${escapedUser}@'%'`);
+    await connection.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${escapedDatabase}.* TO ${escapedUser}@'%'`);
     await connection.query("FLUSH PRIVILEGES");
   } finally {
     connection.release();
   }
 }
 
-async function verifyIsolation(adminPool, { tenantUsername, tenantPassword, databaseName }) {
-  const tenantConnection = await mysql.createConnection({
-    uri: requireEnv("MYSQL_SERVER_ADMIN_URL").replace(/\/[^/?#]+(\?|$)/, `/${databaseName}$1`),
-    user: tenantUsername,
+function tenantDatabaseUrl(adminDatabaseUrl, { databaseName, username, password }) {
+  const url = new URL(adminDatabaseUrl);
+  url.pathname = `/${databaseName}`;
+  url.username = username;
+  url.password = password;
+  return url.toString();
+}
+
+async function verifyIsolation(adminPool, { tenantUsername, tenantPassword, databaseName, adminDatabaseUrl }) {
+  const tenantConnection = await mysql.createConnection(tenantDatabaseUrl(adminDatabaseUrl, {
+    databaseName,
+    username: tenantUsername,
     password: tenantPassword,
-    ssl: { rejectUnauthorized: true },
-  });
+  }));
   try {
     await tenantConnection.query("SELECT 1");
-    let blocked = false;
+    const [otherRows] = await adminPool.execute(
+      `SELECT schema_name AS schema_name FROM information_schema.schemata
+       WHERE schema_name LIKE 'claimguard\\_tenant\\_%' AND schema_name <> ?
+       ORDER BY schema_name LIMIT 1`,
+      [databaseName],
+    );
+    const otherDatabaseName = otherRows?.[0]?.schema_name || null;
+    if (!otherDatabaseName) throw new Error("A second tenant database is required for negative isolation verification.");
+    let crossDatabaseBlocked = false;
     try {
-      await tenantConnection.query("SELECT 1 FROM mysql.user LIMIT 1");
+      await tenantConnection.query(`SELECT 1 FROM \`${String(otherDatabaseName).replace(/`/g, "``")}\`.data_plane_metadata LIMIT 1`);
     } catch {
-      blocked = true;
+      crossDatabaseBlocked = true;
     }
-    if (!blocked) {
-      throw new Error("Tenant principal unexpectedly has server-wide access.");
+    if (!crossDatabaseBlocked) throw new Error("Tenant principal unexpectedly has cross-database access.");
+    const [grants] = await tenantConnection.query("SHOW GRANTS FOR CURRENT_USER()");
+    const grantStatements = (grants || []).flatMap((row) => Object.values(row).map(String));
+    if (grantStatements.some((grant) => !/^GRANT USAGE ON \*\.\*/i.test(grant) && / ON `?\*`?\.`?\*`? /i.test(grant))) {
+      throw new Error("Tenant principal unexpectedly has server-wide grants.");
     }
+    return { otherDatabaseName, crossDatabaseBlocked: true };
   } finally {
     await tenantConnection.end();
   }
 }
 
-async function stepRunner(repositories, operationId, stepKey, runner, { resourceReference = null } = {}) {
+async function stepRunner(repositories, operationId, stepKey, runner, { resourceReference = null, leaseToken } = {}) {
+  await repositories.provisioning.renewOperationLease({ operationId, leaseToken });
   const existing = await repositories.provisioning.listSteps(operationId);
   const found = existing.find((step) => step.stepKey === stepKey);
   if (found?.status === "completed") return { skipped: true };
@@ -206,25 +229,23 @@ async function stepRunner(repositories, operationId, stepKey, runner, { resource
   }
 }
 
-async function findLeasableOperation(repositories) {
-  const pending = await repositories.provisioning.listOperations({ statuses: ["pending"], limit: 25 });
-  for (const operation of pending) {
-    try {
-      return repositories.provisioning.transitionOperation(operation.operationId, ["pending"], "running");
-    } catch {
-      // Lost the race; keep scanning.
-    }
-  }
-
-  const running = await repositories.provisioning.listOperations({ statuses: ["running"], limit: 1 });
-  return running[0] || null;
-}
-
 function generateTenantCredential(organisationId) {
-  const slug = String(organisationId || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 24).toLowerCase() || "tenant";
+  const slug = String(organisationId || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 20).toLowerCase() || "tenant";
   const username = `cg_runtime_${slug}`;
   const password = crypto.randomBytes(24).toString("base64url");
   return { username, password };
+}
+
+async function resolveTenantCredential(secretStore, organisationId, usernameSecretName, passwordSecretName) {
+  const [storedUsername, storedPassword] = await Promise.all([
+    secretStore.getSecret(usernameSecretName),
+    secretStore.getSecret(passwordSecretName),
+  ]);
+  if (storedUsername?.value && storedPassword?.value) {
+    return { username: storedUsername.value, password: storedPassword.value, persisted: true };
+  }
+  const generated = generateTenantCredential(organisationId);
+  return { ...generated, persisted: false };
 }
 
 async function ensureInitialSchemeAdministrator(controlPool, organisationId) {
@@ -254,62 +275,91 @@ async function runProvisioningOperation({
 
   const policy = parseAzurePolicy(organisation.organisationId);
   const secretPrefix = organisationSecretPrefix(organisation.organisationId);
-  const tenantCredential = generateTenantCredential(organisation.organisationId);
   const serverHost = `${policy.mysqlServerName}.mysql.database.azure.com`;
   const runtimeUsernameSecretName = `${secretPrefix}--mysql-username`;
   const runtimePasswordSecretName = `${secretPrefix}--mysql-password`;
   const runtimeHostSecretName = `${secretPrefix}--mysql-host`;
   const runtimeDatabaseSecretName = `${secretPrefix}--mysql-database`;
+  const tenantCredential = await resolveTenantCredential(
+    secretStore,
+    organisation.organisationId,
+    runtimeUsernameSecretName,
+    runtimePasswordSecretName,
+  );
+  const runStep = (stepKey, runner, options = {}) => stepRunner(
+    repositories,
+    operation.operationId,
+    stepKey,
+    runner,
+    { ...options, leaseToken: operation.leaseToken },
+  );
 
-  await stepRunner(repositories, operation.operationId, "validate_request", async () => {
+  await runStep("validate_request", async () => {
     if (organisation.organisationType !== "medical_scheme") {
       throw new Error("Only medical_scheme organisations can be provisioned.");
     }
   });
 
-  await stepRunner(repositories, operation.operationId, "reserve_slug", async () => {});
-  await stepRunner(repositories, operation.operationId, "create_organisation_record", async () => {
+  await runStep("reserve_slug", async () => {});
+  await runStep("create_organisation_record", async () => {
     if (organisation.status !== "provisioning") {
       await service.transitionOrganisation(organisation.organisationId, "provisioning", { actor: { type: "system", id: "provisioning-worker" } });
     }
   });
 
-  await stepRunner(repositories, operation.operationId, "allocate_database_name", async () => {});
+  await runStep("allocate_database_name", async () => {});
 
-  await stepRunner(repositories, operation.operationId, "create_database", async () => {
+  await runStep("create_database", async () => {
     await adminPool.execute(`CREATE DATABASE IF NOT EXISTS \`${policy.databaseName}\``);
   }, { resourceReference: `mysql-database:${policy.databaseName}` });
 
-  await stepRunner(repositories, operation.operationId, "create_database_principal", async () => {
+  await runStep("create_database_principal", async () => {
     await ensureTenantPrincipal(adminPool, {
       databaseName: policy.databaseName,
       username: tenantCredential.username,
       password: tenantCredential.password,
     });
+    await secretStore.setSecret(runtimeUsernameSecretName, tenantCredential.username);
+    await secretStore.setSecret(runtimePasswordSecretName, tenantCredential.password);
   }, { resourceReference: `mysql-user:${tenantCredential.username}` });
 
-  await stepRunner(repositories, operation.operationId, "store_secret_references", async () => {
+  await runStep("store_secret_references", async () => {
     await secretStore.setSecret(runtimeUsernameSecretName, tenantCredential.username);
     await secretStore.setSecret(runtimePasswordSecretName, tenantCredential.password);
     await secretStore.setSecret(runtimeHostSecretName, serverHost);
     await secretStore.setSecret(runtimeDatabaseSecretName, policy.databaseName);
   }, { resourceReference: `${policy.keyVaultName}:${secretPrefix}` });
 
-  await stepRunner(repositories, operation.operationId, "apply_tenant_schema", async () => {
-    await ensurePrivateSchema(adminPool, policy.databaseName, organisation.organisationId, policy.schemaVersion);
+  await runStep("apply_tenant_schema", async () => {
+    await ensurePrivateSchema(adminPool, policy.databaseName, organisation, policy);
   }, { resourceReference: `schema:${policy.databaseName}:${policy.schemaVersion}` });
 
-  await stepRunner(repositories, operation.operationId, "write_data_plane_metadata", async () => {});
+  await runStep("write_data_plane_metadata", async () => {
+    const [rows] = await adminPool.execute(
+      `SELECT database_mode, logical_database_identifier, schema_version, environment_key, migration_version
+       FROM \`${policy.databaseName}\`.data_plane_metadata WHERE metadata_key = 'primary'`,
+    );
+    const metadata = rows?.[0];
+    if (!metadata
+      || metadata.database_mode !== "private_database"
+      || metadata.logical_database_identifier !== policy.logicalDatabaseIdentifier
+      || String(metadata.schema_version) !== policy.schemaVersion
+      || metadata.environment_key !== policy.environmentKey
+      || Number(metadata.migration_version) !== 8) {
+      throw new Error("Private data-plane metadata verification failed.");
+    }
+  });
 
-  await stepRunner(repositories, operation.operationId, "verify_database_isolation", async () => {
+  await runStep("verify_database_isolation", async () => {
     await verifyIsolation(adminPool, {
       tenantUsername: tenantCredential.username,
       tenantPassword: tenantCredential.password,
       databaseName: policy.databaseName,
+      adminDatabaseUrl: requireEnv("MYSQL_SERVER_ADMIN_URL"),
     });
   });
 
-  await stepRunner(repositories, operation.operationId, "create_report_partition", async () => {
+  await runStep("create_report_partition", async () => {
     await controlPool.execute(
       `INSERT INTO report_storage_partitions
         (partition_id, organisation_id, storage_type, logical_partition_key, resource_reference, provisioning_status, health_status, active_at)
@@ -319,12 +369,12 @@ async function runProvisioningOperation({
         crypto.randomUUID(),
         organisation.organisationId,
         `${organisation.organisationId}/`,
-        `/subscriptions/${policy.subscriptionId || "unknown"}/resourceGroups/${policy.resourceGroup}/providers/Microsoft.Storage/storageAccounts/${policy.storageAccount}/blobServices/default/containers/${policy.reportContainer}`,
+        `/subscriptions/${policy.subscriptionId}/resourceGroups/${policy.resourceGroup}/providers/Microsoft.Storage/storageAccounts/${policy.storageAccount}/blobServices/default/containers/${policy.reportContainer}`,
       ],
     );
   });
 
-  await stepRunner(repositories, operation.operationId, "register_worker_routing", async () => {
+  await runStep("register_worker_routing", async () => {
     await controlPool.execute(
       `INSERT INTO worker_routing_status
         (organisation_id, worker_type, status, routing_generation)
@@ -337,7 +387,7 @@ async function runProvisioningOperation({
     );
   });
 
-  await stepRunner(repositories, operation.operationId, "register_private_route", async () => {
+  await runStep("register_private_route", async () => {
     const [existingRows] = await controlPool.execute(
       `SELECT route_id FROM data_plane_routes
        WHERE organisation_id = ? AND route_type = 'private_database' AND retired_at IS NULL
@@ -350,7 +400,7 @@ async function runProvisioningOperation({
       organisationId: organisation.organisationId,
       routeType: "private_database",
       logicalDatabaseIdentifier: policy.logicalDatabaseIdentifier,
-      azureResourceIdentifier: `/subscriptions/${policy.subscriptionId || "unknown"}/resourceGroups/${policy.resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${policy.mysqlServerName}`,
+      azureResourceIdentifier: `/subscriptions/${policy.subscriptionId}/resourceGroups/${policy.resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${policy.mysqlServerName}`,
       databaseName: policy.databaseName,
       secretReference: `https://${policy.keyVaultName}.vault.azure.net/secrets/${runtimeUsernameSecretName},https://${policy.keyVaultName}.vault.azure.net/secrets/${runtimePasswordSecretName},https://${policy.keyVaultName}.vault.azure.net/secrets/${runtimeHostSecretName},https://${policy.keyVaultName}.vault.azure.net/secrets/${runtimeDatabaseSecretName}`,
       region: policy.region,
@@ -361,17 +411,22 @@ async function runProvisioningOperation({
     }, { type: "system", id: "provisioning-worker", source: "provisioning-worker" });
   });
 
-  await stepRunner(repositories, operation.operationId, "create_initial_scheme_admin", async () => {
+  await runStep("create_initial_scheme_admin", async () => {
     const exists = await ensureInitialSchemeAdministrator(controlPool, organisation.organisationId);
     if (!exists) {
       throw new Error("No scheme administrator membership is registered for organisation.");
     }
   });
 
-  await stepRunner(repositories, operation.operationId, "run_activation_checks", async () => {
+  await runStep("run_activation_checks", async () => {
     const checks = [
       async () => {
-        const [rows] = await adminPool.execute(`SELECT COUNT(*) AS count FROM \`${policy.databaseName}\`.data_plane_metadata`);
+        const [rows] = await adminPool.execute(
+          `SELECT COUNT(*) AS count FROM \`${policy.databaseName}\`.data_plane_metadata
+           WHERE metadata_key = 'primary' AND database_mode = 'private_database'
+             AND logical_database_identifier = ? AND schema_version = ? AND migration_version = 8`,
+          [policy.logicalDatabaseIdentifier, policy.schemaVersion],
+        );
         return Number(rows?.[0]?.count || 0) === 1;
       },
       async () => {
@@ -385,10 +440,18 @@ async function runProvisioningOperation({
       async () => {
         const [rows] = await controlPool.execute(
           `SELECT COUNT(*) AS count FROM data_plane_routes
-           WHERE organisation_id = ? AND route_type = 'legacy_shared' AND active_route_slot = organisation_id`,
+           WHERE organisation_id = ? AND route_type = 'private_database' AND active_route_slot IS NOT NULL`,
           [organisation.organisationId],
         );
-        return Number(rows?.[0]?.count || 0) === 1;
+        return Number(rows?.[0]?.count || 0) === 0;
+      },
+      async () => {
+        const [rows] = await controlPool.execute(
+          `SELECT COUNT(*) AS count FROM data_plane_routes
+           WHERE organisation_id = ? AND active_route_slot = organisation_id AND route_type <> 'legacy_shared'`,
+          [organisation.organisationId],
+        );
+        return Number(rows?.[0]?.count || 0) === 0;
       },
     ];
     for (const check of checks) {
@@ -399,13 +462,13 @@ async function runProvisioningOperation({
     }
   });
 
-  await stepRunner(repositories, operation.operationId, "ready_for_activation", async () => {
+  await runStep("ready_for_activation", async () => {
     await service.transitionOrganisation(organisation.organisationId, "ready_for_activation", {
       actor: { type: "system", id: "provisioning-worker", source: "provisioning-worker" },
     });
   });
 
-  await repositories.provisioning.transitionOperation(operation.operationId, ["running"], "completed");
+  await repositories.provisioning.transitionOperation(operation.operationId, ["running"], "completed", { leaseToken: operation.leaseToken });
 }
 
 export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
@@ -415,11 +478,16 @@ export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
   const service = createControlPlaneService({ pool: controlPool, repositories });
   const secretStore = await createSecretStore();
   const adminPool = mysql.createPool(requireEnv("MYSQL_SERVER_ADMIN_URL"));
+  const workerInstanceId = process.env.CONTAINER_APP_JOB_EXECUTION_NAME?.trim() || `provisioning-worker-${crypto.randomUUID()}`;
 
   let processed = 0;
   try {
     while (processed < maxOperations) {
-      const operation = await findLeasableOperation(repositories);
+      const operation = await withControlPlaneTransaction(controlPool, (executor) => repositories.provisioning.leaseNextOperation({
+        leaseOwner: workerInstanceId,
+        leaseSeconds: 2100,
+        executor,
+      }));
       if (!operation) break;
       log("info", "provisioning_operation_leased", {
         operationId: operation.operationId,
@@ -441,7 +509,7 @@ export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
             operation.operationId,
             ["running", "pending", "compensating"],
             "failed",
-            { error, executor },
+            { error, executor, leaseToken: operation.leaseToken },
           );
         }).catch(() => undefined);
         log("error", "provisioning_operation_failed", {

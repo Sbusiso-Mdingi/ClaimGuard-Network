@@ -63,12 +63,13 @@ test("clean migrations record checksums and repeat without replay", async () => 
 
 test("migration status reports exact applied and pending migrations", async () => {
   const pool = createFakePool();
+  const migrations = await loadControlPlaneMigrations();
   const before = await getControlPlaneMigrationStatus(pool);
   assert.equal(before.applied.length, 0);
-  assert.equal(before.pending.length, 5);
+  assert.equal(before.pending.length, migrations.length);
   await applyControlPlaneMigrations(pool);
   const after = await getControlPlaneMigrationStatus(pool);
-  assert.equal(after.applied.length, 5);
+  assert.equal(after.applied.length, migrations.length);
   assert.equal(after.pending.length, 0);
 });
 

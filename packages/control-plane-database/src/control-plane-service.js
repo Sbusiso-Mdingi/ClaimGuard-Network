@@ -14,7 +14,7 @@ const ORGANISATION_TRANSITIONS = Object.freeze({
 const PROVISIONING_TRANSITIONS = Object.freeze({
   pending: ["running", "failed", "quarantined"],
   running: ["completed", "failed", "compensating", "quarantined"],
-  failed: ["running", "compensating", "quarantined"],
+  failed: ["pending", "compensating", "quarantined"],
   compensating: ["compensated", "failed", "quarantined"],
   completed: [],
   compensated: [],
@@ -230,7 +230,7 @@ export function createControlPlaneService({ pool, repositories }) {
         const updated = await repositories.provisioning.transitionOperation(
           operationId,
           [operation.status],
-          "running",
+          "pending",
           { executor },
         );
         await audit(executor, {

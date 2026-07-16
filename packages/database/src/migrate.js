@@ -3,8 +3,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildConnectionOptions, createMysqlConnection } from "./client.js";
-
 export const defaultMigrationPath = fileURLToPath(new URL("../migrations/0001_initial.sql", import.meta.url));
 export const defaultMigrationPaths = Object.freeze([
   defaultMigrationPath,
@@ -184,6 +182,7 @@ export async function applyMigrations(pool, migrationPath = defaultMigrationPath
 }
 
 async function ensureDatabaseExists(databaseUrl) {
+  const { buildConnectionOptions } = await import("./client.js");
   const connectionOptions = buildConnectionOptions(databaseUrl, { includeDatabase: false });
   const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
   const adminPool = await import("mysql2/promise").then(({ default: mysql }) => mysql.createPool(connectionOptions));
@@ -205,12 +204,14 @@ if (isDirectExecution) {
     if (!databaseUrl) throw new Error("MYSQL_URL must be set to run migrations");
     let pool;
     try {
+      const { createMysqlConnection } = await import("./client.js");
       pool = createMysqlConnection(databaseUrl);
       console.log(JSON.stringify(await applyMigrations(pool), null, 2));
     } catch (error) {
       if (error && error.code === "ER_BAD_DB_ERROR") {
         await ensureDatabaseExists(databaseUrl);
         if (pool) await pool.end();
+        const { createMysqlConnection } = await import("./client.js");
         pool = createMysqlConnection(databaseUrl);
         console.log(JSON.stringify(await applyMigrations(pool), null, 2));
       } else {

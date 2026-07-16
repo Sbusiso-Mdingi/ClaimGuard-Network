@@ -25,10 +25,25 @@ test("required provisioning steps include phase 11E activation gate sequence", (
   ]);
 });
 
-test("private schema baseline includes data-plane metadata and outbox tables", async () => {
-  const sql = await readFile(new URL("../src/private-schema-baseline.sql", import.meta.url), "utf8");
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS data_plane_metadata/i);
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS claim_processing_outbox/i);
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS trust_publication_outbox/i);
-  assert.doesNotMatch(sql, /control_plane_users|login_sessions|platform_audit_events/i);
+test("private databases use canonical operational migrations and private metadata", async () => {
+  const worker = await readFile(new URL("../src/worker.js", import.meta.url), "utf8");
+  assert.match(worker, /applyMigrations\(connection/);
+  assert.match(worker, /database_mode = 'private_database'/);
+  assert.match(worker, /migration_version = 8/);
+  assert.match(worker, /cross-database access/);
+  assert.match(worker, /GRANT SELECT, INSERT, UPDATE, DELETE ON/);
+  assert.doesNotMatch(worker, /GRANT .*CREATE.*ALTER.* ON/i);
+});
+
+test("Container Apps Job is manual, single-replica, identity-based, and contains no connection strings", async () => {
+  const manifest = await readFile(new URL("../aca-job.phase11e.yaml", import.meta.url), "utf8");
+  assert.match(manifest, /triggerType: Manual/);
+  assert.match(manifest, /parallelism: 1/);
+  assert.match(manifest, /replicaCompletionCount: 1/);
+  assert.match(manifest, /type: UserAssigned/);
+  assert.match(manifest, /secretRef: control-plane-mysql-url/);
+  assert.match(manifest, /secretRef: mysql-server-admin-url/);
+  assert.match(manifest, /keyVaultUrl:/);
+  assert.doesNotMatch(manifest, /mysql:\/\//);
+  assert.doesNotMatch(manifest, /<user>|<password>|phase11e-pending/);
 });
