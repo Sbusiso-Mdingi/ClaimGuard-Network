@@ -31,7 +31,8 @@ test("switching the dev role switcher to Scheme Administrator reveals admin nav 
   const user = userEvent.setup();
   renderLayout();
 
-  await user.selectOptions(screen.getByRole("combobox", { name: /demo identity/i }), "scheme-admin-alpha");
+  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
+  await user.selectOptions(identitySelect, "scheme-admin-alpha");
 
   expect(await screen.findByRole("link", { name: /Scheme Administration/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Claims Explorer/i })).not.toBeInTheDocument();
