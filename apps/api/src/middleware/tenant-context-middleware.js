@@ -10,6 +10,9 @@ export function createTenantContextMiddleware({
     try {
       const currentAuthContext = c.get("authContext") || null;
       const dataPlaneContext = c.get("dataPlaneContext") || null;
+      const resolvedTenantRepository = typeof tenantRepository?.lookupTenantById === "function"
+        ? tenantRepository
+        : null;
       const tenantContext = dataPlaneContext?.routeType === "legacy_shared"
         ? Object.freeze({
             tenant_id: dataPlaneContext.operationalTenantId,
@@ -20,7 +23,7 @@ export function createTenantContextMiddleware({
         : await resolveTenantContext({
             request: c.req.raw,
             authContext: currentAuthContext,
-            tenantRepository,
+            tenantRepository: resolvedTenantRepository,
           });
 
       const authContext = currentAuthContext?.is_authenticated

@@ -114,3 +114,20 @@ test("tenant middleware canonicalizes auth, request, and async tenant context", 
   assert.equal(json.authContext.tenant_id, "tenant_alpha");
   assert.equal(json.requestTenantContext.tenant_slug, "alpha");
 });
+
+test("session control routes use the already verified membership when no routed repository bundle exists", async () => {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true, user_id: "user-alpha", organisation_id: "org-alpha",
+      tenant_id: "tenant-alpha", roles: ["investigator"], permissions: new Set(), source: "session",
+    });
+    await next();
+  });
+  const unavailableOperationalProxy = new Proxy({}, { get() { return undefined; } });
+  app.use("*", createTenantContextMiddleware({ tenantRepository: unavailableOperationalProxy }));
+  app.post("/auth/logout", (c) => c.json({ tenantId: c.get("tenantContext").tenant_id }));
+  const response = await app.request("/auth/logout", { method: "POST" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { tenantId: "tenant-alpha" });
+});

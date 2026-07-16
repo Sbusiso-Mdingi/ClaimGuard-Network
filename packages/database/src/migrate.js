@@ -1,4 +1,6 @@
+import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildConnectionOptions, createMysqlConnection } from "./client.js";
@@ -13,7 +15,39 @@ export const defaultMigrationPaths = Object.freeze([
   fileURLToPath(new URL("../migrations/0006_tenant_snapshot_reports.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0007_simulation_runtime.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0008_data_plane_metadata.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0009_data_plane_metadata_singleton.sql", import.meta.url)),
 ]);
+
+const MIGRATION_LOCK_NAME = "claimguard_operational_migrations";
+const migrationHistorySql = `
+  CREATE TABLE IF NOT EXISTS operational_migration_history (
+    migration_id VARCHAR(255) PRIMARY KEY,
+    checksum CHAR(64) NOT NULL,
+    applied_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    execution_duration_ms INT UNSIGNED NOT NULL,
+    application_version VARCHAR(128) NULL
+  )
+`;
+
+export class OperationalMigrationChecksumMismatchError extends Error {
+  constructor(migrationId) {
+    super(`Applied operational migration ${migrationId} no longer matches its recorded checksum.`);
+    this.name = "OperationalMigrationChecksumMismatchError";
+    this.code = "OPERATIONAL_MIGRATION_CHECKSUM_MISMATCH";
+    this.migrationId = migrationId;
+  }
+}
+
+export class OperationalMigrationExecutionError extends Error {
+  constructor(migrationId, statementIndex, cause) {
+    super(`Operational migration ${migrationId} failed at statement ${statementIndex}.`);
+    this.name = "OperationalMigrationExecutionError";
+    this.code = "OPERATIONAL_MIGRATION_FAILED";
+    this.migrationId = migrationId;
+    this.statementIndex = statementIndex;
+    this.cause = cause;
+  }
+}
 
 function splitSqlStatements(sql) {
   return sql
@@ -22,48 +56,137 @@ function splitSqlStatements(sql) {
     .filter(Boolean);
 }
 
-export async function applyMigrations(pool, migrationPath = defaultMigrationPaths) {
+export function operationalMigrationChecksum(sql) {
+  return crypto.createHash("sha256").update(sql.replace(/\r\n/g, "\n")).digest("hex");
+}
+
+async function loadMigrations(migrationPath = defaultMigrationPaths) {
   const migrationPaths = Array.isArray(migrationPath) ? migrationPath : [migrationPath];
-  let appliedStatements = 0;
+  return Promise.all(migrationPaths.map(async (filePath) => {
+    const sql = await readFile(filePath, "utf8");
+    return {
+      id: path.basename(filePath, path.extname(filePath)),
+      filePath,
+      checksum: operationalMigrationChecksum(sql),
+      statements: splitSqlStatements(sql),
+    };
+  }));
+}
 
-  for (const currentMigrationPath of migrationPaths) {
-    const sql = await readFile(currentMigrationPath, "utf8");
-    const statements = splitSqlStatements(sql);
+async function withConnection(pool, operation) {
+  if (typeof pool?.getConnection !== "function") return operation(pool);
+  const connection = await pool.getConnection();
+  try {
+    return await operation(connection);
+  } finally {
+    connection.release();
+  }
+}
 
-    for (const statement of statements) {
-      try {
-        await pool.query(statement);
-      } catch (error) {
-        if (
-          error.code === "ER_DUP_FIELDNAME" ||
-          error.code === "ER_DUP_KEY" ||
-          error.code === "ER_DUP_KEYNAME" ||
-          error.code === "ER_FK_DUP_NAME" ||
-          error.code === "ER_TABLE_EXISTS_ERROR"
-        ) {
-          // Ignore idempotency errors for raw SQL migrations
+function isAdoptionIdempotencyError(error) {
+  return [
+    "ER_DUP_FIELDNAME",
+    "ER_DUP_KEY",
+    "ER_DUP_KEYNAME",
+    "ER_FK_DUP_NAME",
+    "ER_TABLE_EXISTS_ERROR",
+  ].includes(error?.code);
+}
+
+export async function getOperationalMigrationStatus(pool, { migrationPath = defaultMigrationPaths } = {}) {
+  const migrations = await loadMigrations(migrationPath);
+  return withConnection(pool, async (connection) => {
+    await connection.query(migrationHistorySql);
+    const [rows] = await connection.query(
+      "SELECT migration_id, checksum, applied_at, execution_duration_ms, application_version FROM operational_migration_history ORDER BY migration_id",
+    );
+    const appliedById = new Map((rows || []).map((row) => [row.migration_id, row]));
+    for (const migration of migrations) {
+      const applied = appliedById.get(migration.id);
+      if (applied && applied.checksum !== migration.checksum) throw new OperationalMigrationChecksumMismatchError(migration.id);
+    }
+    return {
+      applied: (rows || []).map((row) => ({
+        id: row.migration_id,
+        checksum: row.checksum,
+        appliedAt: row.applied_at,
+        executionDurationMs: Number(row.execution_duration_ms),
+        applicationVersion: row.application_version || null,
+      })),
+      pending: migrations.filter((migration) => !appliedById.has(migration.id)).map((migration) => ({
+        id: migration.id,
+        checksum: migration.checksum,
+        statementCount: migration.statements.length,
+      })),
+    };
+  });
+}
+
+export async function applyMigrations(pool, migrationPath = defaultMigrationPaths, {
+  applicationVersion = process.env.CLAIMGUARD_APP_VERSION || null,
+} = {}) {
+  const migrations = await loadMigrations(migrationPath);
+  return withConnection(pool, async (connection) => {
+    const [lockRows] = await connection.query("SELECT GET_LOCK(?, 30) AS acquired", [MIGRATION_LOCK_NAME]);
+    if (Number(lockRows?.[0]?.acquired) !== 1) throw new Error("Could not acquire the operational migration lock.");
+    try {
+      await connection.query(migrationHistorySql);
+      const [historyRows] = await connection.query("SELECT migration_id, checksum FROM operational_migration_history ORDER BY migration_id");
+      const appliedById = new Map((historyRows || []).map((row) => [row.migration_id, row]));
+      const applied = [];
+      const skipped = [];
+      let appliedStatements = 0;
+
+      for (const migration of migrations) {
+        const existing = appliedById.get(migration.id);
+        if (existing) {
+          if (existing.checksum !== migration.checksum) throw new OperationalMigrationChecksumMismatchError(migration.id);
+          skipped.push(migration.id);
           continue;
         }
-        throw error;
+        const startedAt = Date.now();
+        for (let index = 0; index < migration.statements.length; index += 1) {
+          try {
+            await connection.query(migration.statements[index]);
+          } catch (error) {
+            // This permits a one-time adoption of checksum history by databases
+            // created with the previous raw-SQL runner. Once history is present,
+            // every migration is skipped or checksum-validated.
+            if (!isAdoptionIdempotencyError(error)) {
+              throw new OperationalMigrationExecutionError(migration.id, index + 1, error);
+            }
+          }
+          appliedStatements += 1;
+        }
+        const executionDurationMs = Math.max(0, Date.now() - startedAt);
+        await connection.query(
+          `INSERT INTO operational_migration_history
+            (migration_id, checksum, execution_duration_ms, application_version)
+           VALUES (?, ?, ?, ?)`,
+          [migration.id, migration.checksum, executionDurationMs, applicationVersion],
+        );
+        applied.push({ id: migration.id, checksum: migration.checksum, executionDurationMs });
       }
+
+      return {
+        applied,
+        skipped,
+        pending: [],
+        appliedStatements,
+        migrationPath: migrations.length === 1 ? migrations[0].filePath : null,
+        migrationPaths: migrations.map((migration) => migration.filePath),
+        warning: "MySQL DDL can implicitly commit; a failed migration is visible because its history row is not recorded.",
+      };
+    } finally {
+      await connection.query("SELECT RELEASE_LOCK(?) AS released", [MIGRATION_LOCK_NAME]).catch(() => undefined);
     }
-
-    appliedStatements += statements.length;
-  }
-
-  return {
-    appliedStatements,
-    migrationPath: migrationPaths.length === 1 ? migrationPaths[0] : null,
-    migrationPaths,
-  };
+  });
 }
 
 async function ensureDatabaseExists(databaseUrl) {
   const connectionOptions = buildConnectionOptions(databaseUrl, { includeDatabase: false });
   const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
-
   const adminPool = await import("mysql2/promise").then(({ default: mysql }) => mysql.createPool(connectionOptions));
-
   try {
     await adminPool.query(`CREATE DATABASE IF NOT EXISTS \`${databaseName}\``);
   } finally {
@@ -79,36 +202,25 @@ if (isDirectExecution) {
       throw new Error("Operational migrations require OPERATIONAL_ADMIN_MODE=legacy_shared.");
     }
     const databaseUrl = process.env.MYSQL_URL;
-    if (!databaseUrl) {
-      throw new Error("MYSQL_URL must be set to run migrations");
-    }
-
+    if (!databaseUrl) throw new Error("MYSQL_URL must be set to run migrations");
     let pool;
-
     try {
       pool = createMysqlConnection(databaseUrl);
-      const result = await applyMigrations(pool);
-      console.log(`Applied ${result.appliedStatements} migration statements from ${result.migrationPath}`);
+      console.log(JSON.stringify(await applyMigrations(pool), null, 2));
     } catch (error) {
       if (error && error.code === "ER_BAD_DB_ERROR") {
         await ensureDatabaseExists(databaseUrl);
-        if (pool) {
-          await pool.end();
-        }
-
+        if (pool) await pool.end();
         pool = createMysqlConnection(databaseUrl);
-        const result = await applyMigrations(pool);
-        console.log(`Applied ${result.appliedStatements} migration statements from ${result.migrationPath}`);
+        console.log(JSON.stringify(await applyMigrations(pool), null, 2));
       } else {
         throw error;
       }
     } finally {
-      if (pool) {
-        await pool.end();
-      }
+      if (pool) await pool.end();
     }
-  })().catch(err => {
-    console.error(err);
+  })().catch((error) => {
+    console.error(error);
     process.exit(1);
   });
 }

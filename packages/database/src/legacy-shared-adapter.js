@@ -17,6 +17,7 @@ export function createLegacySharedAdapter({
   expectedEnvironment = "legacy",
   supportedSchemaVersions = ["8"],
   expectedLogicalDatabaseIdentifier = "legacy-operational-shared",
+  expectedMigrationVersion = 8,
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),
 } = {}) {
@@ -32,6 +33,7 @@ export function createLegacySharedAdapter({
     if (!supportedSchemaVersions.includes(String(metadata.schema_version))) throw new DataPlaneMetadataMismatchError("Operational schema version is unsupported.", "DATA_PLANE_SCHEMA_UNSUPPORTED");
     if (metadata.environment_key !== expectedEnvironment) throw new DataPlaneMetadataMismatchError("Operational environment verification failed.", "DATA_PLANE_ENVIRONMENT_MISMATCH");
     if (metadata.logical_database_identifier !== expectedLogicalDatabaseIdentifier) throw new DataPlaneMetadataMismatchError("Logical database identity verification failed.", "DATA_PLANE_LOGICAL_IDENTITY_MISMATCH");
+    if (Number(metadata.migration_version) !== expectedMigrationVersion) throw new DataPlaneMetadataMismatchError("Operational migration version verification failed.", "DATA_PLANE_MIGRATION_VERSION_MISMATCH");
   }
 
   return Object.freeze({

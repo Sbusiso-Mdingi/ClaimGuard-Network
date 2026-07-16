@@ -87,6 +87,35 @@ test("manager isolates organisations on one physical adapter, deduplicates same-
   await manager.invalidateOrganisation("org-alpha", "suspended");
   assert.equal(manager.metrics().pools.some((entry) => entry.organisationId === "org-alpha"), false);
   assert.equal(manager.metrics().pools.some((entry) => entry.organisationId === "org-beta"), true);
+  await assert.rejects(
+    () => manager.acquire(alpha),
+    (error) => error.code === "DATA_PLANE_ROUTE_GENERATION_STALE",
+  );
+});
+
+test("a late old-generation creation cannot publish after a newer generation is observed", async () => {
+  let releaseOldCreation;
+  const oldCreationHeld = new Promise((resolve) => { releaseOldCreation = resolve; });
+  const pools = [];
+  const adapter = {
+    async create(ctx) {
+      if (ctx.routeGeneration === 1) await oldCreationHeld;
+      const pool = fakePool(`generation-${ctx.routeGeneration}`);
+      pools.push(pool);
+      return pool;
+    },
+    async verify() { return { schemaVersion: "8" }; },
+    async close(pool) { await pool.end(); },
+  };
+  const manager = createTenantConnectionManager({ adapters: { legacy_shared: adapter } });
+  const oldAcquire = manager.acquire(context());
+  await new Promise((resolve) => setImmediate(resolve));
+  const current = await manager.acquire(context({ routeGeneration: 2 }));
+  releaseOldCreation();
+  await assert.rejects(oldAcquire, (error) => error.code === "DATA_PLANE_ROUTE_GENERATION_STALE");
+  assert.equal(pools.find((pool) => pool.id === "generation-1").closed, true);
+  assert.deepEqual(manager.metrics().pools.map((entry) => entry.routeGeneration), [2]);
+  await current.release();
 });
 
 test("pool limit, idle eviction, and tenant-specific creation failure fail closed without poisoning another tenant", async () => {
@@ -148,6 +177,17 @@ test("legacy_shared adapter verifies metadata before publication and closes mism
   await assert.rejects(() => manager.acquire(context()), (error) => error.code === "DATA_PLANE_ENVIRONMENT_MISMATCH");
   assert.equal(created.at(-1).closed, true);
   assert.equal(manager.metrics().cachedPools, 0);
+
+  const wrongMigrationAdapter = createLegacySharedAdapter({
+    databaseUrl: "mysql://user:pass@localhost/operational",
+    poolFactory() { return fakePool("wrong-migration", { migration_version: 7 }); },
+  });
+  const wrongMigrationManager = createTenantConnectionManager({ adapters: { legacy_shared: wrongMigrationAdapter } });
+  await assert.rejects(
+    () => wrongMigrationManager.acquire(context()),
+    (error) => error.code === "DATA_PLANE_MIGRATION_VERSION_MISMATCH",
+  );
+  assert.equal(wrongMigrationManager.metrics().cachedPools, 0);
 });
 
 test("explicit repository factory pins canonical tenant even when AsyncLocalStorage disagrees", async () => {

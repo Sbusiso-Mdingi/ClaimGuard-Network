@@ -163,7 +163,7 @@ export function createControlPlaneAuthenticationService({
     const invalidate = async (reason) => {
       await authenticationRepository.revokeSession(session.sessionId, reason);
       await recordEvent("session_revoked", "failure", metadata, references, reason);
-      throw new SessionRejectedError(reason);
+      throw new SessionRejectedError(reason, { organisationId: session.organisationId });
     };
     if (!session || session.revokedAt) throw new SessionRejectedError("revoked_or_unknown_session");
     if (isPast(session.absoluteExpiresAt, timestamp) || isPast(session.idleExpiresAt, timestamp)) {

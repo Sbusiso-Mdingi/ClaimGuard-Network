@@ -18,6 +18,15 @@ export class TenantPoolTimeoutError extends Error {
   }
 }
 
+export class TenantPoolStaleGenerationError extends Error {
+  constructor() {
+    super("The data-plane route generation is stale.");
+    this.name = "TenantPoolStaleGenerationError";
+    this.code = "DATA_PLANE_ROUTE_GENERATION_STALE";
+    this.status = 503;
+  }
+}
+
 function withTimeout(promise, timeoutMs, stage) {
   let timer;
   return Promise.race([
@@ -42,6 +51,23 @@ export function createTenantConnectionManager({
   const entries = new Map();
   const creating = new Map();
   const failures = new Map();
+  const latestGenerationByOrganisation = new Map();
+
+  function observeGeneration(context) {
+    const latest = latestGenerationByOrganisation.get(context.organisationId);
+    if (latest && (
+      context.routeGeneration < latest.routeGeneration ||
+      (context.routeGeneration === latest.routeGeneration && context.routeId !== latest.routeId)
+    )) {
+      throw new TenantPoolStaleGenerationError();
+    }
+    if (!latest || context.routeGeneration > latest.routeGeneration) {
+      latestGenerationByOrganisation.set(context.organisationId, {
+        routeId: context.routeId,
+        routeGeneration: context.routeGeneration,
+      });
+    }
+  }
 
   function safeLog(event, context, extra = {}) {
     logger?.("info", event, {
@@ -102,6 +128,7 @@ export function createTenantConnectionManager({
       creationPromise = Promise.resolve(adapter.create(context));
       pool = await withTimeout(creationPromise, creationTimeoutMs, "creation");
       const metadata = await withTimeout(Promise.resolve(adapter.verify(pool, context)), creationTimeoutMs, "creation");
+      observeGeneration(context);
       const entry = {
         key, context, pool, adapter, metadata, active: 0, retiring: false, closed: false,
         createdAt: now(), lastUsedAt: now(), lastSuccessfulConnectionAt: new Date(now()).toISOString(),
@@ -121,6 +148,7 @@ export function createTenantConnectionManager({
 
   async function acquire(inputContext) {
     const context = requireOperationalDataPlaneContext(inputContext);
+    observeGeneration(context);
     const key = dataPlanePoolKey(context);
     await retirePreviousGenerations(context, key);
     let entry = entries.get(key);

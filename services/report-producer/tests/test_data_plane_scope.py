@@ -1,9 +1,19 @@
 import unittest
 
+from claimguard_report_producer.data_plane import DataPlaneRouteError, resolve_worker_data_plane_scope
 from claimguard_report_producer.outbox import OutboxJob, PyMySqlOutboxRepository
 
 
 class DataPlaneScopedOutboxTests(unittest.TestCase):
+    def test_service_identity_scope_rejects_another_organisation_before_connecting(self):
+        with self.assertRaisesRegex(DataPlaneRouteError, "outside the internal service identity scope"):
+            resolve_worker_data_plane_scope(
+                control_plane_url="unused",
+                operational_url="unused",
+                organisation_ids=["org-beta"],
+                allowed_organisation_ids=frozenset({"org-alpha"}),
+            )
+
     def test_job_tenant_cannot_expand_verified_worker_scope(self):
         repository = PyMySqlOutboxRepository(
             lambda: self.fail("no connection should be opened for a rejected scope"),

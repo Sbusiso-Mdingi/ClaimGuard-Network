@@ -105,6 +105,20 @@ def config() -> WorkerConfig:
 
 
 class WorkerTests(TestCase):
+    def test_scope_is_revalidated_before_any_job_is_leased(self) -> None:
+        repository = FakeRepository([job()])
+        worker = ReportProducerWorker(
+            repository=repository,
+            publisher=FakePublisher(),
+            snapshot_repository=FakeSnapshots(),
+            config=config(),
+            logger=FakeLogger(),
+            scope_validator=lambda: (_ for _ in ()).throw(RuntimeError("stale generation")),
+        )
+        with self.assertRaisesRegex(RuntimeError, "stale generation"):
+            worker.run_once()
+        self.assertEqual(len(repository.jobs), 1)
+
     @patch("claimguard_report_producer.worker.build_report_from_tenant_snapshot")
     def test_same_tenant_jobs_coalesce_into_one_snapshot_and_publication(self, build_report) -> None:
         build_report.side_effect = lambda snapshot, **_kwargs: canonical_report(snapshot.tenant_id)

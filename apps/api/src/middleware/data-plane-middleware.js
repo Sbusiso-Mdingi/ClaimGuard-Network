@@ -15,7 +15,11 @@ export function createDataPlaneMiddleware({ routeResolver, connectionManager, cr
   return async (c, next) => {
     if (!requiresOperationalDataPlane(c.req.path)) return next();
     const auth = c.get("authContext") || null;
-    if (!auth?.is_authenticated) return next();
+    if (!auth?.is_authenticated) {
+      const organisationId = c.get("dataPlaneOrganisationToRetire") || null;
+      if (organisationId) await connectionManager.retireOrganisation?.(organisationId, "session_organisation_inactive");
+      return next();
+    }
     let lease = null;
     try {
       const dataPlaneContext = await routeResolver.resolve({

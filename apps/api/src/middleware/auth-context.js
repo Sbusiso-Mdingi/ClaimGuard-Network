@@ -165,8 +165,13 @@ export function createSessionAuthenticationProvider({ authenticationService, con
             source: "session",
           }),
         };
-      } catch {
-        return { authContext: createAnonymousAuthContext({ source: "invalid_session" }), resolvedSession: null, metadata };
+      } catch (error) {
+        return {
+          authContext: createAnonymousAuthContext({ source: "invalid_session" }),
+          resolvedSession: null,
+          metadata,
+          dataPlaneOrganisationToRetire: error?.organisationId || null,
+        };
       }
     },
   };

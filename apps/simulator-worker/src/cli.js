@@ -23,11 +23,23 @@ async function main() {
   const controlRepositories = createControlPlaneRepositories(controlPool);
   const routeResolver = createControlPlaneDataPlaneRouteResolver({ repositories: controlRepositories });
   const stateOrganisationId = requireEnvironment("SIMULATOR_STATE_ORGANISATION_ID");
-  const dataPlaneContext = await routeResolver.resolve({
-    organisationId: stateOrganisationId,
-    serviceIdentityId: "simulator-worker",
-    correlationId: `${command}:${Date.now()}`,
-  });
+  const allowedOrganisationIds = String(process.env.INTERNAL_SERVICE_ORGANISATION_IDS || "")
+    .split(",").map((value) => value.trim()).filter(Boolean);
+  if (!allowedOrganisationIds.includes(stateOrganisationId)) {
+    await controlPool.end();
+    throw new Error("The simulator organisation is outside the internal service identity scope.");
+  }
+  let dataPlaneContext;
+  try {
+    dataPlaneContext = await routeResolver.resolve({
+      organisationId: stateOrganisationId,
+      serviceIdentityId: "simulator-worker",
+      correlationId: `${command}:${Date.now()}`,
+    });
+  } catch (error) {
+    await controlPool.end();
+    throw error;
+  }
   const connectionManager = createTenantConnectionManager({
     adapters: { legacy_shared: createLegacySharedAdapter({
       databaseUrl: requireEnvironment("MYSQL_URL"),
@@ -39,9 +51,18 @@ async function main() {
       console.log(JSON.stringify({ timestamp: new Date().toISOString(), level, service: "simulator-worker", event, ...details }));
     },
   });
-  const dataPlaneLease = await connectionManager.acquire(dataPlaneContext);
+  let dataPlaneLease;
+  try {
+    dataPlaneLease = await connectionManager.acquire(dataPlaneContext);
+  } catch (error) {
+    await controlPool.end();
+    throw error;
+  }
   const repository = createOperationalRepositories(dataPlaneContext, dataPlaneLease.pool).simulatorState;
-  const config = simulatorWorkerConfigFromEnvironment(process.env);
+  const config = {
+    ...simulatorWorkerConfigFromEnvironment(process.env),
+    instanceId: process.env.SIMULATOR_INSTANCE_ID || dataPlaneContext.operationalTenantId,
+  };
   const apiBaseUrl = requireEnvironment("SIMULATOR_API_BASE_URL").replace(/\/$/, "");
   const authorityMode = String(process.env.AUTHENTICATION_MODE || "session").toLowerCase();
   const organisationScope = { [dataPlaneContext.operationalTenantId]: stateOrganisationId };

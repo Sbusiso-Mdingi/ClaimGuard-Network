@@ -16,7 +16,12 @@ export {
   requireOperationalDataPlaneContext,
 } from "./data-plane-context.js";
 export { createLegacySharedAdapter, DataPlaneMetadataMismatchError } from "./legacy-shared-adapter.js";
-export { createTenantConnectionManager, TenantPoolLimitError, TenantPoolTimeoutError } from "./tenant-connection-manager.js";
+export {
+  createTenantConnectionManager,
+  TenantPoolLimitError,
+  TenantPoolStaleGenerationError,
+  TenantPoolTimeoutError,
+} from "./tenant-connection-manager.js";
 export { createOperationalRepositories } from "./operational-repositories.js";
 export {
   ClaimOwnershipConflictError,
@@ -75,7 +80,15 @@ export {
   getLegacyDefaultTenantContext,
   runWithTenantContext,
 } from "./tenant-context-store.js";
-export { applyMigrations, defaultMigrationPath, defaultMigrationPaths } from "./migrate.js";
+export {
+  applyMigrations,
+  defaultMigrationPath,
+  defaultMigrationPaths,
+  getOperationalMigrationStatus,
+  operationalMigrationChecksum,
+  OperationalMigrationChecksumMismatchError,
+  OperationalMigrationExecutionError,
+} from "./migrate.js";
 export {
   createSimulationStateRepository,
   DEFAULT_SIMULATION_ID,

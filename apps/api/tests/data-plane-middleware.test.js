@@ -72,6 +72,28 @@ test("suspension failure retires only the authenticated organisation cache", asy
   assert.deepEqual(retired, ["org-alpha"]);
 });
 
+test("a session invalidated by organisation suspension retires that organisation before private authorization", async () => {
+  const retired = [];
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", { is_authenticated: false, source: "invalid_session" });
+    c.set("dataPlaneOrganisationToRetire", "org-alpha");
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { throw new Error("must not resolve an invalid session"); } },
+    connectionManager: {
+      async acquire() { throw new Error("must not acquire"); },
+      async retireOrganisation(id, reason) { retired.push([id, reason]); },
+    },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/investigations/private", (c) => c.json({ authenticated: false }, 401));
+  const response = await app.request("/investigations/private");
+  assert.equal(response.status, 401);
+  assert.deepEqual(retired, [["org-alpha", "session_organisation_inactive"]]);
+});
+
 test("backend operational services are constructed request-scoped from the verified routed pool", async () => {
   let resolutions = 0;
   const routedContext = context();

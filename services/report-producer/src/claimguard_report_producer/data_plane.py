@@ -37,10 +37,13 @@ class WorkerDataPlaneScope:
 
 
 def resolve_worker_data_plane_scope(
-    *, control_plane_url: str, operational_url: str, organisation_ids: list[str], environment_key: str = "legacy"
+    *, control_plane_url: str, operational_url: str, organisation_ids: list[str],
+    allowed_organisation_ids: frozenset[str] | None = None, environment_key: str = "legacy"
 ) -> WorkerDataPlaneScope:
     if len(organisation_ids) != 1:
         raise DataPlaneRouteError("Exactly one REPORT_WORKER_ORGANISATION_ID is required per worker instance.")
+    if allowed_organisation_ids is None or organisation_ids[0] not in allowed_organisation_ids:
+        raise DataPlaneRouteError("The report-worker organisation is outside the internal service identity scope.")
     import pymysql
 
     control = pymysql.connect(cursorclass=pymysql.cursors.DictCursor, **_connect_options(control_plane_url))
@@ -97,7 +100,7 @@ def resolve_worker_data_plane_scope(
     try:
         with operational.cursor() as cursor:
             cursor.execute(
-                """SELECT database_mode, logical_database_identifier, schema_version, environment_key
+                """SELECT database_mode, logical_database_identifier, schema_version, environment_key, migration_version
                    FROM data_plane_metadata WHERE metadata_key = 'primary' LIMIT 1"""
             )
             metadata = cursor.fetchone()
@@ -107,6 +110,7 @@ def resolve_worker_data_plane_scope(
                 or metadata["logical_database_identifier"] != "legacy-operational-shared"
                 or str(metadata["schema_version"]) != "8"
                 or metadata["environment_key"] != environment_key
+                or int(metadata["migration_version"]) != 8
             ):
                 raise DataPlaneRouteError("Report-worker data-plane metadata verification failed.")
     finally:

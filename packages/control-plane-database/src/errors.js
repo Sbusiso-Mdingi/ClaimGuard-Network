@@ -34,9 +34,10 @@ export class AuthenticationRejectedError extends ControlPlaneError {
 }
 
 export class SessionRejectedError extends ControlPlaneError {
-  constructor(internalReason = "invalid_session") {
+  constructor(internalReason = "invalid_session", { organisationId = null } = {}) {
     super("The authenticated session is not valid.", { code: "SESSION_INVALID", status: 401 });
     Object.defineProperty(this, "internalReason", { value: internalReason, enumerable: false });
+    Object.defineProperty(this, "organisationId", { value: organisationId, enumerable: false });
   }
 }
 

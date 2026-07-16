@@ -102,14 +102,18 @@ class ReportProducerWorker:
         snapshot_repository,
         config: WorkerConfig,
         logger: StructuredWorkerLogger | None = None,
+        scope_validator=None,
     ) -> None:
         self.repository = repository
         self.publisher = publisher
         self.snapshot_repository = snapshot_repository
         self.config = config
         self.logger = logger or StructuredWorkerLogger()
+        self.scope_validator = scope_validator
 
     def run_once(self) -> int:
+        if self.scope_validator is not None:
+            self.scope_validator()
         jobs = self.repository.lease_next_available_jobs(
             worker_id=self.config.worker_id,
             limit=self.config.batch_size,
@@ -249,12 +253,27 @@ def create_worker_from_environment(*, backend: str | None = None, output_dir: Pa
     database_url = os.environ.get("MYSQL_URL", "")
     organisation_ids = [os.environ.get("REPORT_WORKER_ORGANISATION_ID", "").strip()]
     organisation_ids = [value for value in organisation_ids if value]
+    allowed_organisation_ids = frozenset(
+        value.strip() for value in os.environ.get("INTERNAL_SERVICE_ORGANISATION_IDS", "").split(",") if value.strip()
+    )
     scope = resolve_worker_data_plane_scope(
         control_plane_url=os.environ.get("CONTROL_PLANE_MYSQL_URL", ""),
         operational_url=database_url,
         organisation_ids=organisation_ids,
+        allowed_organisation_ids=allowed_organisation_ids,
         environment_key=os.environ.get("DATA_PLANE_ENVIRONMENT", "legacy"),
     )
+
+    def validate_scope() -> None:
+        current = resolve_worker_data_plane_scope(
+            control_plane_url=os.environ.get("CONTROL_PLANE_MYSQL_URL", ""),
+            operational_url=database_url,
+            organisation_ids=organisation_ids,
+            allowed_organisation_ids=allowed_organisation_ids,
+            environment_key=os.environ.get("DATA_PLANE_ENVIRONMENT", "legacy"),
+        )
+        if current.route_keys != scope.route_keys or current.tenant_ids != scope.tenant_ids:
+            raise RuntimeError("The report-worker data-plane route generation changed; restart on the fresh route.")
     print(json.dumps({
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "level": "info",
@@ -282,4 +301,5 @@ def create_worker_from_environment(*, backend: str | None = None, output_dir: Pa
         publisher=publisher,
         snapshot_repository=snapshot_repository,
         config=WorkerConfig.from_environment(),
+        scope_validator=validate_scope,
     )

@@ -53,6 +53,7 @@ export function createAuthenticationMiddleware({
       c.set("authContext", authContext);
       c.set("resolvedSession", resolved?.resolvedSession || null);
       c.set("authenticationMetadata", resolved?.metadata || {});
+      c.set("dataPlaneOrganisationToRetire", resolved?.dataPlaneOrganisationToRetire || null);
       c.req.raw.authContext = authContext;
       await next();
     } catch (error) {

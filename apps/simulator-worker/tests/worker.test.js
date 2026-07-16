@@ -7,6 +7,9 @@ import { createSimulatorWorker } from "../src/worker.js";
 test("simulator CLI resolves a verified organisation route and never opens an implicit global database", async () => {
   const source = await readFile(new URL("../src/cli.js", import.meta.url), "utf8");
   assert.match(source, /SIMULATOR_STATE_ORGANISATION_ID/);
+  assert.match(source, /INTERNAL_SERVICE_ORGANISATION_IDS/);
+  assert.match(source, /outside the internal service identity scope/);
+  assert.match(source, /catch \(error\) \{\s*await controlPool\.end\(\)/);
   assert.match(source, /createTenantConnectionManager/);
   assert.match(source, /createOperationalRepositories/);
   assert.doesNotMatch(source, /createDatabase\(/);

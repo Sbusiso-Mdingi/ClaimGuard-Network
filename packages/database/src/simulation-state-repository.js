@@ -123,10 +123,11 @@ async function withTransaction(pool, operation) {
   }
 }
 
-async function loadLockedInstance(connection, instanceId) {
+async function loadLockedInstance(connection, instanceId, tenantId = null) {
   const [rows] = await connection.execute(
-    "SELECT * FROM simulation_instances WHERE id = ? LIMIT 1 FOR UPDATE",
-    [instanceId],
+    `SELECT * FROM simulation_instances WHERE id = ?
+     ${tenantId ? "AND tenant_id = ?" : ""} LIMIT 1 FOR UPDATE`,
+    tenantId ? [instanceId, tenantId] : [instanceId],
   );
   return mapInstance(rows?.[0]);
 }
@@ -161,6 +162,9 @@ function assertCheckpoint(checkpoint, expectedTick) {
   if (Number(checkpoint.tickNumber) !== expectedTick) {
     throw new SimulationCheckpointError("Simulator checkpoint tick does not match the expected next tick.");
   }
+  if (!checkpoint.simulatedTime || Number.isNaN(new Date(checkpoint.simulatedTime).getTime())) {
+    throw new SimulationCheckpointError("Simulator checkpoint time is invalid.");
+  }
 }
 
 export function createSimulationStateRepository(pool, { dataPlaneContext = null } = {}) {
@@ -168,19 +172,33 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
     throw new TypeError("A MySQL pool with execute and getConnection is required.");
   }
   if (dataPlaneContext && dataPlaneContext.routeType !== "legacy_shared") throw new TypeError("Simulator state requires an operational DataPlaneContext.");
+  const canonicalTenantId = dataPlaneContext?.operationalTenantId || null;
+  const resolveInstanceId = (instanceId = DEFAULT_SIMULATION_ID) =>
+    canonicalTenantId && instanceId === DEFAULT_SIMULATION_ID ? canonicalTenantId : instanceId;
+
+  async function assertOwnedInstance(instanceId) {
+    if (!canonicalTenantId) return;
+    const [rows] = await pool.execute(
+      "SELECT id FROM simulation_instances WHERE id = ? AND tenant_id = ? LIMIT 1",
+      [instanceId, canonicalTenantId],
+    );
+    if (!rows?.[0]) throw new SimulationConflictError("The simulation instance is unavailable in the active tenant.");
+  }
 
   return {
     async ensureDefaultInstance({ createdBy = "system", mode = "off", seed = 42, tickIntervalMs = 8000, storyKey = null, config = {} } = {}) {
       if (!SIMULATION_MODES.includes(mode)) throw new TypeError("Unsupported simulation mode.");
       await pool.execute(
         `INSERT INTO simulation_instances (
-          id, scope_key, scope_type, mode, status, story_key, seed,
+          id, scope_key, scope_type, tenant_id, mode, status, story_key, seed,
           tick_interval_ms, checkpoint_version, config, created_by
-        ) VALUES (?, ?, 'global', ?, 'stopped', ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 'stopped', ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE id = id`,
         [
-          DEFAULT_SIMULATION_ID,
-          DEFAULT_SIMULATION_SCOPE_KEY,
+          canonicalTenantId || DEFAULT_SIMULATION_ID,
+          canonicalTenantId ? `tenant:${canonicalTenantId}` : DEFAULT_SIMULATION_SCOPE_KEY,
+          canonicalTenantId ? "tenant" : "global",
+          canonicalTenantId,
           mode,
           storyKey,
           Number(seed) || 42,
@@ -190,13 +208,14 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
           requireText(createdBy, "createdBy"),
         ],
       );
-      return this.getStatus(DEFAULT_SIMULATION_ID);
+      return this.getStatus(canonicalTenantId || DEFAULT_SIMULATION_ID);
     },
 
     async getStatus(instanceId = DEFAULT_SIMULATION_ID) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
       const [instanceRows] = await pool.execute(
-        "SELECT * FROM simulation_instances WHERE id = ? LIMIT 1",
-        [instanceId],
+        `SELECT * FROM simulation_instances WHERE id = ? ${canonicalTenantId ? "AND tenant_id = ?" : ""} LIMIT 1`,
+        canonicalTenantId ? [resolvedInstanceId, canonicalTenantId] : [resolvedInstanceId],
       );
       const instance = mapInstance(instanceRows?.[0]);
       if (!instance) return null;
@@ -204,17 +223,18 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
         `SELECT * FROM simulation_leases
          WHERE simulation_instance_id = ? AND lease_expires_at > UTC_TIMESTAMP(3)
          LIMIT 1`,
-        [instanceId],
+        [resolvedInstanceId],
       );
       return { ...instance, lease: mapLease(leaseRows?.[0]) };
     },
 
     async command({ instanceId = DEFAULT_SIMULATION_ID, action, actorId, correlationId, mode, storyKey } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
       const canonicalAction = requireText(action, "action").toLowerCase();
       const canonicalActor = requireText(actorId, "actorId");
       const canonicalCorrelationId = requireText(correlationId, "correlationId");
       return withTransaction(pool, async (connection) => {
-        const instance = await loadLockedInstance(connection, instanceId);
+        const instance = await loadLockedInstance(connection, resolvedInstanceId, canonicalTenantId);
         if (!instance) throw new SimulationConflictError("The simulation instance does not exist.");
         let nextStatus = instance.status;
         let nextMode = instance.mode;
@@ -245,7 +265,7 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
                leased_by = ?, fencing_token = fencing_token + 1,
                heartbeat_at = UTC_TIMESTAMP(3), lease_expires_at = UTC_TIMESTAMP(3)
              WHERE simulation_instance_id = ?`,
-            [`control:${canonicalActor}`, instanceId],
+            [`control:${canonicalActor}`, resolvedInstanceId],
           );
         } else if (canonicalAction === "mode") {
           if (!SIMULATION_MODES.includes(mode)) throw new SimulationConflictError("Unsupported simulation mode.");
@@ -287,21 +307,22 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
             canonicalAction,
             canonicalActor,
             canonicalCorrelationId,
-            instanceId,
+            resolvedInstanceId,
           ],
         );
-        const updated = await loadLockedInstance(connection, instanceId);
+        const updated = await loadLockedInstance(connection, resolvedInstanceId, canonicalTenantId);
         return { ...updated, commandedBy: canonicalActor };
       });
     },
 
     async acquireLease({ instanceId = DEFAULT_SIMULATION_ID, workerId, leaseSeconds = 60 } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
       const canonicalWorkerId = requireText(workerId, "workerId");
       const duration = positiveInteger(leaseSeconds, 60, 3600);
       return withTransaction(pool, async (connection) => {
-        const instance = await loadLockedInstance(connection, instanceId);
+        const instance = await loadLockedInstance(connection, resolvedInstanceId, canonicalTenantId);
         if (!instance || !["starting", "running"].includes(instance.status) || instance.mode === "off") return null;
-        const lease = await loadLockedLease(connection, instanceId);
+        const lease = await loadLockedLease(connection, resolvedInstanceId);
         const [clockRows] = await connection.execute("SELECT UTC_TIMESTAMP(3) AS now");
         const now = new Date(clockRows?.[0]?.now || Date.now());
         if (lease && new Date(lease.leaseExpiresAt) > now && lease.leasedBy !== canonicalWorkerId) return null;
@@ -314,56 +335,64 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
              leased_by = VALUES(leased_by), fencing_token = VALUES(fencing_token),
              leased_at = VALUES(leased_at), lease_expires_at = VALUES(lease_expires_at),
              heartbeat_at = VALUES(heartbeat_at)`,
-          [instanceId, canonicalWorkerId, fencingToken, duration],
+          [resolvedInstanceId, canonicalWorkerId, fencingToken, duration],
         );
         if (instance.status === "starting") {
           await connection.execute(
             "UPDATE simulation_instances SET status = 'running', updated_at = UTC_TIMESTAMP(3) WHERE id = ? AND status = 'starting'",
-            [instanceId],
+            [resolvedInstanceId],
           );
         }
-        return { instance: { ...instance, status: "running" }, lease: { simulationInstanceId: instanceId, leasedBy: canonicalWorkerId, fencingToken } };
+        return { instance: { ...instance, status: "running" }, lease: { simulationInstanceId: resolvedInstanceId, leasedBy: canonicalWorkerId, fencingToken } };
       });
     },
 
     async assertLease({ instanceId = DEFAULT_SIMULATION_ID, workerId, fencingToken } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
+      await assertOwnedInstance(resolvedInstanceId);
       const [rows] = await pool.execute(
         `SELECT fencing_token FROM simulation_leases
          WHERE simulation_instance_id = ? AND leased_by = ? AND fencing_token = ?
            AND lease_expires_at > UTC_TIMESTAMP(3) LIMIT 1`,
-        [instanceId, requireText(workerId, "workerId"), Number(fencingToken)],
+        [resolvedInstanceId, requireText(workerId, "workerId"), Number(fencingToken)],
       );
       if (!rows?.[0]) throw new SimulationLeaseLostError();
       return true;
     },
 
     async renewLease({ instanceId = DEFAULT_SIMULATION_ID, workerId, fencingToken, leaseSeconds = 60 } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
+      await assertOwnedInstance(resolvedInstanceId);
       const [result] = await pool.execute(
         `UPDATE simulation_leases SET
            heartbeat_at = UTC_TIMESTAMP(3),
            lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ? SECOND)
          WHERE simulation_instance_id = ? AND leased_by = ? AND fencing_token = ?
            AND lease_expires_at > UTC_TIMESTAMP(3)`,
-        [positiveInteger(leaseSeconds, 60, 3600), instanceId, requireText(workerId, "workerId"), Number(fencingToken)],
+        [positiveInteger(leaseSeconds, 60, 3600), resolvedInstanceId, requireText(workerId, "workerId"), Number(fencingToken)],
       );
       if (Number(result?.affectedRows || 0) !== 1) throw new SimulationLeaseLostError();
       return true;
     },
 
     async releaseLease({ instanceId = DEFAULT_SIMULATION_ID, workerId, fencingToken } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
+      await assertOwnedInstance(resolvedInstanceId);
       const [result] = await pool.execute(
         `UPDATE simulation_leases SET
            heartbeat_at = UTC_TIMESTAMP(3), lease_expires_at = UTC_TIMESTAMP(3)
          WHERE simulation_instance_id = ? AND leased_by = ? AND fencing_token = ?`,
-        [instanceId, requireText(workerId, "workerId"), Number(fencingToken)],
+        [resolvedInstanceId, requireText(workerId, "workerId"), Number(fencingToken)],
       );
       return Number(result?.affectedRows || 0) === 1;
     },
 
     async recordTickStarted({ instanceId = DEFAULT_SIMULATION_ID, workerId, fencingToken, tickNumber, correlationId } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
       await withTransaction(pool, async (connection) => {
-        await loadLockedInstance(connection, instanceId);
-        await requireLockedLease(connection, { instanceId, workerId, fencingToken });
+        const instance = await loadLockedInstance(connection, resolvedInstanceId, canonicalTenantId);
+        if (!instance) throw new SimulationConflictError("The simulation instance is unavailable in the active tenant.");
+        await requireLockedLease(connection, { instanceId: resolvedInstanceId, workerId, fencingToken });
         await connection.execute(
           `INSERT INTO simulation_tick_history (
              simulation_instance_id, tick_number, correlation_id, fencing_token,
@@ -373,15 +402,17 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
              correlation_id = VALUES(correlation_id), fencing_token = VALUES(fencing_token),
              status = 'running', started_at = UTC_TIMESTAMP(3), completed_at = NULL,
              duration_ms = NULL, outcome_summary = NULL, error_type = NULL`,
-          [instanceId, Number(tickNumber), requireText(correlationId, "correlationId"), Number(fencingToken), SIMULATION_CHECKPOINT_VERSION],
+          [resolvedInstanceId, Number(tickNumber), requireText(correlationId, "correlationId"), Number(fencingToken), SIMULATION_CHECKPOINT_VERSION],
         );
       });
     },
 
     async saveSuccessfulTick({ instanceId = DEFAULT_SIMULATION_ID, workerId, fencingToken, checkpoint, correlationId, outcome = {}, durationMs = 0, pauseAfterTick = false } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
       return withTransaction(pool, async (connection) => {
-        const instance = await loadLockedInstance(connection, instanceId);
-        await requireLockedLease(connection, { instanceId, workerId, fencingToken });
+        const instance = await loadLockedInstance(connection, resolvedInstanceId, canonicalTenantId);
+        if (!instance) throw new SimulationConflictError("The simulation instance is unavailable in the active tenant.");
+        await requireLockedLease(connection, { instanceId: resolvedInstanceId, workerId, fencingToken });
         const nextTick = Number(instance.tickNumber) + 1;
         assertCheckpoint(checkpoint, nextTick);
         const shouldPause = pauseAfterTick || instance.status === "pausing" || instance.mode === "static";
@@ -393,21 +424,21 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
              paused_at = CASE WHEN ? = 'paused' THEN UTC_TIMESTAMP(3) ELSE paused_at END,
              updated_at = UTC_TIMESTAMP(3)
            WHERE id = ?`,
-          [nextStatus, nextTick, checkpoint.simulatedTime, SIMULATION_CHECKPOINT_VERSION, JSON.stringify(checkpoint), correlationId, nextStatus, instanceId],
+          [nextStatus, nextTick, new Date(checkpoint.simulatedTime), SIMULATION_CHECKPOINT_VERSION, JSON.stringify(checkpoint), correlationId, nextStatus, resolvedInstanceId],
         );
         await connection.execute(
           `UPDATE simulation_tick_history SET
              status = 'completed', completed_at = UTC_TIMESTAMP(3), duration_ms = ?,
              outcome_summary = ?, error_type = NULL, checkpoint_version = ?
            WHERE simulation_instance_id = ? AND tick_number = ? AND correlation_id = ?`,
-          [Math.max(0, Math.round(durationMs)), JSON.stringify(outcome || {}), SIMULATION_CHECKPOINT_VERSION, instanceId, nextTick, correlationId],
+          [Math.max(0, Math.round(durationMs)), JSON.stringify(outcome || {}), SIMULATION_CHECKPOINT_VERSION, resolvedInstanceId, nextTick, correlationId],
         );
         if (shouldPause) {
           await connection.execute(
             `UPDATE simulation_leases SET
                heartbeat_at = UTC_TIMESTAMP(3), lease_expires_at = UTC_TIMESTAMP(3)
              WHERE simulation_instance_id = ? AND leased_by = ? AND fencing_token = ?`,
-            [instanceId, workerId, Number(fencingToken)],
+            [resolvedInstanceId, workerId, Number(fencingToken)],
           );
         }
         return { ...instance, status: nextStatus, tickNumber: nextTick, checkpoint };
@@ -415,34 +446,38 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
     },
 
     async recordTickFailure({ instanceId = DEFAULT_SIMULATION_ID, workerId, fencingToken, tickNumber, correlationId, errorType, durationMs = 0 } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
       await withTransaction(pool, async (connection) => {
-        await loadLockedInstance(connection, instanceId);
-        await requireLockedLease(connection, { instanceId, workerId, fencingToken });
+        const instance = await loadLockedInstance(connection, resolvedInstanceId, canonicalTenantId);
+        if (!instance) throw new SimulationConflictError("The simulation instance is unavailable in the active tenant.");
+        await requireLockedLease(connection, { instanceId: resolvedInstanceId, workerId, fencingToken });
         const canonicalErrorType = requireText(errorType, "errorType");
         await connection.execute(
           `UPDATE simulation_tick_history SET status = 'failed', completed_at = UTC_TIMESTAMP(3),
              duration_ms = ?, error_type = ?
            WHERE simulation_instance_id = ? AND tick_number = ? AND correlation_id = ?`,
-          [Math.max(0, Math.round(durationMs)), canonicalErrorType, instanceId, Number(tickNumber), correlationId],
+          [Math.max(0, Math.round(durationMs)), canonicalErrorType, resolvedInstanceId, Number(tickNumber), correlationId],
         );
         await connection.execute(
           `UPDATE simulation_instances SET status = 'failed', last_error = ?, updated_at = UTC_TIMESTAMP(3)
            WHERE id = ?`,
-          [JSON.stringify({ type: canonicalErrorType, tickNumber: Number(tickNumber), at: new Date().toISOString() }), instanceId],
+          [JSON.stringify({ type: canonicalErrorType, tickNumber: Number(tickNumber), at: new Date().toISOString() }), resolvedInstanceId],
         );
         await connection.execute(
           `UPDATE simulation_leases SET
              heartbeat_at = UTC_TIMESTAMP(3), lease_expires_at = UTC_TIMESTAMP(3)
            WHERE simulation_instance_id = ? AND leased_by = ? AND fencing_token = ?`,
-          [instanceId, workerId, Number(fencingToken)],
+          [resolvedInstanceId, workerId, Number(fencingToken)],
         );
       });
     },
 
     async getBackpressure() {
+      const tenantClause = canonicalTenantId ? " AND tenant_id = ?" : "";
+      const tenantParams = canonicalTenantId ? [canonicalTenantId] : [];
       const [[outboxRows], [investigationRows]] = await Promise.all([
-        pool.execute("SELECT COUNT(*) AS count FROM claim_processing_outbox WHERE status IN ('pending', 'retry', 'processing')"),
-        pool.execute("SELECT COUNT(*) AS count FROM investigations WHERE status <> 'CLOSED'"),
+        pool.execute(`SELECT COUNT(*) AS count FROM claim_processing_outbox WHERE status IN ('pending', 'retry', 'processing')${tenantClause}`, tenantParams),
+        pool.execute(`SELECT COUNT(*) AS count FROM investigations WHERE status <> 'CLOSED'${tenantClause}`, tenantParams),
       ]);
       return {
         reportOutboxBacklog: Number(outboxRows?.[0]?.count || 0),
@@ -451,9 +486,11 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
     },
 
     async recordBackpressure({ instanceId = DEFAULT_SIMULATION_ID, workerId, fencingToken, reason, details = {} } = {}) {
+      const resolvedInstanceId = resolveInstanceId(instanceId);
       await withTransaction(pool, async (connection) => {
-        await loadLockedInstance(connection, instanceId);
-        await requireLockedLease(connection, { instanceId, workerId, fencingToken });
+        const instance = await loadLockedInstance(connection, resolvedInstanceId, canonicalTenantId);
+        if (!instance) throw new SimulationConflictError("The simulation instance is unavailable in the active tenant.");
+        await requireLockedLease(connection, { instanceId: resolvedInstanceId, workerId, fencingToken });
         await connection.execute(
           `UPDATE simulation_instances SET last_error = ?, updated_at = UTC_TIMESTAMP(3)
            WHERE id = ?`,
@@ -464,7 +501,7 @@ export function createSimulationStateRepository(pool, { dataPlaneContext = null 
               details,
               at: new Date().toISOString(),
             }),
-            instanceId,
+            resolvedInstanceId,
           ],
         );
       });

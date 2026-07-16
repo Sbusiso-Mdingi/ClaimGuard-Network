@@ -124,3 +124,33 @@ test("expired database lease is recovered with a higher fencing generation", asy
   const recovered = await repository.acquireLease({ workerId: "worker-b", leaseSeconds: 30 });
   assert.equal(recovered.lease.fencingToken, first.lease.fencingToken + 1);
 });
+
+test("a routed simulator repository cannot read or lease another tenant's instance", async () => {
+  const alpha = {
+    id: "tenant-alpha", tenant_id: "tenant-alpha", scope_key: "tenant:tenant-alpha", scope_type: "tenant",
+    mode: "static", status: "starting", seed: 42, tick_interval_ms: 8000, tick_number: 0,
+    checkpoint_version: 1, checkpoint: null, config: "{}",
+  };
+  const pool = {
+    async execute(sql, params = []) {
+      const statement = String(sql).replace(/\s+/g, " ");
+      if (statement.includes("FROM simulation_instances")) {
+        const requestedTenant = params[1];
+        return [requestedTenant === alpha.tenant_id ? [alpha] : [], []];
+      }
+      throw new Error(`Unexpected SQL: ${statement}`);
+    },
+    async getConnection() {
+      return { execute: this.execute.bind(this), beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+    },
+  };
+  const betaRepository = createSimulationStateRepository(pool, {
+    dataPlaneContext: { routeType: "legacy_shared", operationalTenantId: "tenant-beta" },
+  });
+  assert.equal(await betaRepository.getStatus("tenant-alpha"), null);
+  assert.equal(await betaRepository.acquireLease({ instanceId: "tenant-alpha", workerId: "beta-worker" }), null);
+  await assert.rejects(
+    () => betaRepository.assertLease({ instanceId: "tenant-alpha", workerId: "beta-worker", fencingToken: 1 }),
+    /unavailable in the active tenant/,
+  );
+});
