@@ -1,0 +1,21 @@
+{
+  "name": "@claimguard/control-plane-database",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "dependencies": {
+    "mysql2": "^3.12.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp -R src migrations dist/",
+    "lint": "node -e \"import('./src/index.js')\" && node --check src/cli.js",
+    "test": "node --test tests",
+    "migrate": "node src/cli.js migrate",
+    "status": "node src/cli.js status",
+    "diagnose": "node src/cli.js diagnose",
+    "inventory": "node src/cli.js inventory"
+  }
+}
