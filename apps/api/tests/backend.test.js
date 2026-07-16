@@ -407,6 +407,13 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
           inserted: claims.length,
           updated: 0,
           source,
+          processing: {
+            status: "queued",
+            asynchronous: true,
+            jobId: "job-200",
+            correlationId: "request-200",
+            reused: false,
+          },
         };
       },
     },
@@ -437,6 +444,10 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
   const json = await response.json();
   assert.equal(response.status, 202);
   assert.equal(json.available, true);
+  assert.equal(json.committed, true);
+  assert.equal(json.processing.status, "queued");
+  assert.equal(json.processing.asynchronous, true);
+  assert.equal(json.processing.jobId, "job-200");
   assert.equal(json.ingestion.received, 1);
   assert.equal(json.ingestion.source, "synthetic-loader");
 });
@@ -501,11 +512,9 @@ test("investigation confirm-fraud endpoint writes confirmed ledger entry", async
   assert.equal(json.entry.payload.claimId, "C-300");
 });
 
-test("claims ingestion triggers producer wiring and detection report reads the newly published payload", async () => {
+test("claims ingestion never runs the legacy producer trigger and remains committed when it would fail", async () => {
   const state = {
     ingestedClaims: [],
-    report: null,
-    version: null,
     triggerCount: 0,
   };
 
@@ -521,6 +530,13 @@ test("claims ingestion triggers producer wiring and detection report reads the n
         inserted: claims.length,
         updated: 0,
         source,
+        processing: {
+          status: "queued",
+          asynchronous: true,
+          jobId: "job-500",
+          correlationId: "request-500",
+          reused: false,
+        },
       };
     },
   };
@@ -528,65 +544,13 @@ test("claims ingestion triggers producer wiring and detection report reads the n
   const producerRuntimeTrigger = {
     async triggerAfterIngestion() {
       state.triggerCount += 1;
-      const first = state.ingestedClaims[0];
-      state.version = "ingestion-v1";
-      state.report = {
-        data_dir: "ingested-claims",
-        schemes: [],
-        network: {
-          exact_banking_links: [],
-          behavioral_provider_links: [],
-          resolved_entities: [],
-          network_nodes: [],
-        },
-        evaluation: {
-          available: false,
-          single_scheme: { detected: 0, total: 0, recall: 0 },
-          cross_scheme: { detected: 0, total: 0, recall: 0 },
-        },
-        detection: {
-          entities: [
-            { entity_id: `claimant:${first.member_id}`, entity_type: "claimant", value: first.member_id },
-          ],
-          relationships: [
-            {
-              relationship_type: "observed_with",
-              source_entity_id: `claimant:${first.member_id}`,
-              target_entity_id: `provider:${first.provider_id}`,
-              claim_id: first.claim_id,
-            },
-          ],
-          triggered_rules: [],
-          risk_score: {
-            riskScore: 0,
-            severity: "Low",
-            reasons: ["No detection rules were triggered"],
-          },
-          evidence: [],
-          graph_summary: {
-            entity_count: 1,
-            relationship_count: 1,
-            max_degree: 1,
-            claimant_count: 1,
-          },
-        },
-      };
+      throw new Error("legacy producer failure must be unreachable");
     },
   };
 
   const reportStorage = {
     async getLatestReport() {
-      if (!state.report) {
-        return null;
-      }
-
-      return {
-        report: state.report,
-        metadata: {
-          source: "test",
-          version: state.version,
-        },
-      };
+      return null;
     },
   };
 
@@ -621,14 +585,15 @@ test("claims ingestion triggers producer wiring and detection report reads the n
   const ingestJson = await ingestResponse.json();
   assert.equal(ingestResponse.status, 202);
   assert.equal(ingestJson.available, true);
-  assert.equal(state.triggerCount, 1);
+  assert.equal(ingestJson.committed, true);
+  assert.equal(ingestJson.processing.status, "queued");
+  assert.equal(ingestJson.processing.jobId, "job-500");
+  assert.equal(state.triggerCount, 0);
 
   const reportResponse = await app.request("http://localhost/detection/report", {
     headers: developmentAuthHeaders(),
   });
   const reportJson = await reportResponse.json();
-  assert.equal(reportResponse.status, 200);
-  assert.equal(reportJson.available, true);
-  assert.equal(reportJson.report.data_dir, "ingested-claims");
-  assert.equal(reportJson.report.detection.relationships[0].claim_id, "C-500");
+  assert.equal(reportResponse.status, 404);
+  assert.equal(reportJson.available, false);
 });

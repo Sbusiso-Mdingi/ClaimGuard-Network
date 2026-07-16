@@ -1,4 +1,5 @@
 import { getActiveTenantId } from "./tenant-context-store.js";
+import { enqueueClaimProcessingJob } from "./claim-processing-outbox-repository.js";
 
 export class ClaimOwnershipConflictError extends Error {
   constructor(message = "Claim identifier is already owned by another tenant.") {
@@ -38,9 +39,21 @@ function validateClaim(claim) {
   }
 }
 
-export function createClaimIngestionRepository(pool) {
+function outboxClaim(rawClaim) {
+  const { tenant_id: _untrustedTenantId, ...claim } = rawClaim;
+  return claim;
+}
+
+function configuredMaxAttempts(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 5;
+}
+
+export function createClaimIngestionRepository(pool, {
+  maxOutboxAttempts = process.env.REPORT_WORKER_MAX_ATTEMPTS || process.env.CLAIM_OUTBOX_MAX_ATTEMPTS,
+} = {}) {
   return {
-    async ingestClaims({ claims, source = "api" }) {
+    async ingestClaims({ claims, source = "api", correlationId = null }) {
       if (!Array.isArray(claims) || claims.length === 0) {
         throw new Error("claims must be a non-empty array");
       }
@@ -52,6 +65,7 @@ export function createClaimIngestionRepository(pool) {
       const connection = await pool.getConnection();
       let inserted = 0;
       let updated = 0;
+      let outboxJob = null;
       const tenantId = getActiveTenantId();
 
       try {
@@ -125,6 +139,14 @@ export function createClaimIngestionRepository(pool) {
           }
         }
 
+        outboxJob = await enqueueClaimProcessingJob(connection, {
+          tenantId,
+          claims: claims.map(outboxClaim),
+          source,
+          correlationId: correlationId || undefined,
+          maxAttempts: configuredMaxAttempts(maxOutboxAttempts),
+        });
+
         await connection.commit();
       } catch (error) {
         await connection.rollback();
@@ -138,6 +160,15 @@ export function createClaimIngestionRepository(pool) {
         inserted,
         updated,
         source,
+        processing: {
+          status: ["pending", "processing", "retry"].includes(outboxJob.status)
+            ? "queued"
+            : outboxJob.status,
+          asynchronous: true,
+          jobId: outboxJob.id,
+          correlationId: outboxJob.correlationId,
+          reused: !outboxJob.enqueued,
+        },
       };
     },
   };

@@ -8,6 +8,7 @@ export const defaultMigrationPaths = Object.freeze([
   defaultMigrationPath,
   fileURLToPath(new URL("../migrations/0002_investigations.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0003_shared_fraud_registry.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0004_claim_processing_outbox.sql", import.meta.url)),
 ]);
 
 function splitSqlStatements(sql) {

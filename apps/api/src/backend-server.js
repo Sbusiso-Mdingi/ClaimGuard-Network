@@ -12,7 +12,6 @@ import {
 } from "@claimguard/database";
 
 import { createBackendApp } from "./backend.js";
-import { createProducerRuntimeTriggerFromEnvironment } from "./producer-runtime-trigger.js";
 import { createReportStorageFromEnvironment } from "./report-storage.js";
 import {
   createLiveDemoBootstrapFromDatabase,
@@ -30,7 +29,6 @@ let ledgerRepository = null;
 let investigationRepository = null;
 let sharedFraudRegistryRepository = null;
 let claimIngestionService = null;
-let producerRuntimeTrigger = null;
 let tenantRepository = null;
 let databasePool = null;
 let liveDemoSimulator = null;
@@ -42,7 +40,6 @@ if (databaseUrl) {
   sharedFraudRegistryRepository = createSharedFraudRegistryRepository(database.pool);
   claimIngestionService = createClaimIngestionRepository(database.pool);
   tenantRepository = createTenantRepository(database.pool);
-  producerRuntimeTrigger = createProducerRuntimeTriggerFromEnvironment({ repoRoot });
   databasePool = database.pool;
 }
 
@@ -57,7 +54,6 @@ const app = createBackendApp({
   investigationRepository,
   sharedFraudRegistryRepository,
   claimIngestionService,
-  producerRuntimeTrigger,
   tenantRepository,
   reportStorage,
   detectionAnalyzeProxyUrl,
@@ -155,7 +151,6 @@ console.log(
     port,
     hasDatabase: Boolean(databasePool),
     hasTenantRepository: Boolean(tenantRepository),
-    hasProducerTrigger: Boolean(producerRuntimeTrigger),
     liveDemoMode: liveDemoConfig.mode,
     liveDemoEnabled: Boolean(liveDemoSimulator),
     reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),

@@ -7,6 +7,12 @@ name = "claimguard-report-producer"
 version = "0.1.0"
 description = "ClaimGuard report producer runtime and publishers"
 requires-python = ">=3.11"
+dependencies = [
+  "azure-identity>=1.19.0",
+  "azure-storage-blob>=12.24.0",
+  "claimguard-detection-engine>=0.1.0",
+  "PyMySQL>=1.1.1",
+]
 
 [project.scripts]
 claimguard-produce-report = "claimguard_report_producer.cli:main"
@@ -16,3 +22,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv.sources]
+claimguard-detection-engine = { path = "../detection-engine", editable = true }

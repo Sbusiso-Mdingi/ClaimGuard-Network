@@ -8,6 +8,14 @@ export {
   createClaimIngestionRepository,
 } from "./claim-ingestion-repository.js";
 export {
+  CLAIM_PROCESSING_AGGREGATE_TYPE,
+  CLAIM_PROCESSING_JOB_TYPE,
+  CLAIM_PROCESSING_STATUS,
+  createClaimBatchIdempotencyKey,
+  createClaimProcessingOutboxRepository,
+  enqueueClaimProcessingJob,
+} from "./claim-processing-outbox-repository.js";
+export {
   assertInvestigationStatusTransition,
   canTransitionInvestigationStatus,
   createInvestigationRepository,
@@ -43,7 +51,7 @@ export {
   getLegacyDefaultTenantContext,
   runWithTenantContext,
 } from "./tenant-context-store.js";
-export { applyMigrations, defaultMigrationPath } from "./migrate.js";
+export { applyMigrations, defaultMigrationPath, defaultMigrationPaths } from "./migrate.js";
 export { loadSyntheticPhase1Data, seedSyntheticDatabase } from "./seed.js";
 
 export const ledgerEntriesTable = mysqlTable("ledger_entries", {

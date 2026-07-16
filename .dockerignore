@@ -1,0 +1,6 @@
+.git
+**/.turbo
+**/.venv
+**/__pycache__
+**/node_modules
+**/*.pyc

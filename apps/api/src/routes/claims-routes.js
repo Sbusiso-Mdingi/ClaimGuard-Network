@@ -60,7 +60,12 @@ export function registerClaimsRoutes(app, {
           requestId: c.get("requestId") || null,
         });
 
-        return c.json({ available: true, ingestion: summary }, 202);
+        return c.json({
+          available: true,
+          committed: true,
+          processing: summary.processing,
+          ingestion: summary,
+        }, 202);
       } catch (error) {
         logger?.("error", "claims_ingestion_failed", {
           requestId: c.get("requestId") || null,

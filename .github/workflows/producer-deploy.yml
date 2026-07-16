@@ -2,15 +2,8 @@ name: report-producer-deploy
 
 on:
   workflow_dispatch:
-    inputs:
-      imageTag:
-        description: Image tag for report producer
-        required: true
-        default: latest
-      trigger:
-        description: Producer trigger label
-        required: false
-        default: manual
+  schedule:
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
@@ -25,9 +18,13 @@ env:
   AZURE_CONTAINERAPPS_JOB: claimguard-report-producer
   AZURE_ACR_NAME: claimguardacr
   AZURE_ACR_LOGIN_SERVER: claimguardacr.azurecr.io
+  REPORT_STORAGE_CONTAINER: ${{ vars.REPORT_STORAGE_CONTAINER }}
+  MYSQL_URL: ${{ secrets.CLAIMGUARD_MYSQL_URL }}
+  AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.REPORT_STORAGE_CONNECTION_STRING }}
 
 jobs:
   build-and-deploy:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,12 +40,17 @@ jobs:
 
       - name: Build and push producer image
         run: |
-          IMAGE_TAG=${{ github.event.inputs.imageTag }}
           az acr build \
             --registry "$AZURE_ACR_NAME" \
-            --image "report-producer:${IMAGE_TAG}" \
+            --image "report-producer:${GITHUB_SHA}" \
             --file services/report-producer/Dockerfile \
             .
+
+      - name: Validate worker configuration inputs
+        run: |
+          test -n "$MYSQL_URL" || { echo "CLAIMGUARD_MYSQL_URL secret is required"; exit 1; }
+          test -n "$AZURE_STORAGE_CONNECTION_STRING" || { echo "REPORT_STORAGE_CONNECTION_STRING secret is required"; exit 1; }
+          test -n "$REPORT_STORAGE_CONTAINER" || { echo "REPORT_STORAGE_CONTAINER variable is required"; exit 1; }
 
       - name: Ensure container app job exists
         run: |
@@ -61,23 +63,74 @@ jobs:
               --environment "$AZURE_CONTAINERAPPS_ENVIRONMENT" \
               --trigger-type Manual \
               --replica-timeout 1800 \
-              --replica-retry-limit 3 \
+              --replica-retry-limit 0 \
               --parallelism 1 \
               --replica-completion-count 1 \
-              --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${{ github.event.inputs.imageTag }}" \
+              --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${GITHUB_SHA}" \
               --cpu 1.0 \
               --memory 2Gi \
-              --env-vars REPORT_STORAGE_BACKEND=azure_blob REPORT_STORAGE_LATEST_POINTER=latest.json
+              --command claimguard-produce-report \
+              --args worker --once \
+              --secrets "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING" \
+              --env-vars \
+                MYSQL_URL=secretref:mysql-url \
+                AZURE_STORAGE_CONNECTION_STRING=secretref:storage-connection \
+                REPORT_STORAGE_BACKEND=azure_blob \
+                REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+                REPORT_WORKER_BATCH_SIZE=10 \
+                REPORT_WORKER_LEASE_SECONDS=300 \
+                REPORT_WORKER_MAX_ATTEMPTS=5 \
+                REPORT_WORKER_RETRY_INITIAL_SECONDS=30 \
+                REPORT_WORKER_RETRY_MAX_SECONDS=900
           fi
 
-      - name: Update container app job image
+      - name: Update container app job runtime
         run: |
+          az containerapp job secret set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --secrets "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING"
+
           az containerapp job update \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINERAPPS_JOB" \
-            --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${{ github.event.inputs.imageTag }}"
+            --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${GITHUB_SHA}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --command claimguard-produce-report \
+            --args worker --once \
+            --set-env-vars \
+              MYSQL_URL=secretref:mysql-url \
+              AZURE_STORAGE_CONNECTION_STRING=secretref:storage-connection \
+              REPORT_STORAGE_BACKEND=azure_blob \
+              REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+              REPORT_WORKER_BATCH_SIZE=10 \
+              REPORT_WORKER_LEASE_SECONDS=300 \
+              REPORT_WORKER_MAX_ATTEMPTS=5 \
+              REPORT_WORKER_RETRY_INITIAL_SECONDS=30 \
+              REPORT_WORKER_RETRY_MAX_SECONDS=900
 
       - name: Start producer job execution
+        run: |
+          az containerapp job start \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB"
+
+  scheduled-drain:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+
+      - name: Start scheduled outbox drain
         run: |
           az containerapp job start \
             --resource-group "$AZURE_RESOURCE_GROUP" \

@@ -26,19 +26,16 @@ function createDomainServices({
   investigationRepository,
   sharedFraudRegistryRepository,
   claimIngestionRepository,
-  producerRuntimeTrigger,
   detectionAnalyzeProxyUrl,
 } = {}) {
   const reportService = createReportService({
     reportStorage,
     ledgerRepository,
-    producerRuntimeTrigger,
     detectionAnalyzeProxyUrl,
   });
 
   const claimIngestionService = createClaimIngestionService({
     claimIngestionRepository,
-    producerRuntimeTrigger,
     logger: logEvent,
   });
 
@@ -78,7 +75,6 @@ export function createBackendApp({
   investigationRepository = null,
   sharedFraudRegistryRepository = null,
   claimIngestionService = null,
-  producerRuntimeTrigger = null,
   tenantRepository = null,
   authenticationProvider = null,
   reportStorage = null,
@@ -97,7 +93,6 @@ export function createBackendApp({
     investigationRepository,
     sharedFraudRegistryRepository,
     claimIngestionRepository: claimIngestionService,
-    producerRuntimeTrigger,
     detectionAnalyzeProxyUrl,
   });
 

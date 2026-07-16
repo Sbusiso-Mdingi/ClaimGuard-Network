@@ -109,7 +109,7 @@ class DetectionReportProducer:
                         "attempt": attempt,
                         "trigger": trigger,
                         "tenant_id": self.tenant_id,
-                        "message": str(error),
+                        "error_type": type(error).__name__,
                         "attempt_duration_ms": round((time.perf_counter() - attempt_started_at) * 1000, 3),
                     },
                 )

@@ -62,7 +62,6 @@ async function proxyDetectionAnalyze(detectionAnalyzeProxyUrl, payload) {
 export function createReportService({
   reportStorage,
   ledgerRepository = null,
-  producerRuntimeTrigger = null,
   detectionAnalyzeProxyUrl = null,
 } = {}) {
   const reportCacheTtlMsRaw = Number.parseInt(process.env.REPORT_CACHE_TTL_MS || "15000", 10);
@@ -207,7 +206,6 @@ export function createReportService({
         reportAvailable: false,
         databaseConfigured: Boolean(ledgerRepository),
         databaseReachable: null,
-        producerTriggerConfigured: Boolean(producerRuntimeTrigger),
       };
 
       try {
