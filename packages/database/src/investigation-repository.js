@@ -7,6 +7,7 @@ export const INVESTIGATION_STATUS = Object.freeze({
   UNDER_REVIEW: "UNDER_REVIEW",
   AWAITING_EVIDENCE: "AWAITING_EVIDENCE",
   CONFIRMED_FRAUD: "CONFIRMED_FRAUD",
+  REVERSED: "REVERSED",
   NO_FRAUD_FOUND: "NO_FRAUD_FOUND",
   CLOSED: "CLOSED",
 });
@@ -43,6 +44,7 @@ const allowedStatusTransitions = Object.freeze({
     INVESTIGATION_STATUS.CLOSED,
   ]),
   [INVESTIGATION_STATUS.CONFIRMED_FRAUD]: Object.freeze([INVESTIGATION_STATUS.CLOSED]),
+  [INVESTIGATION_STATUS.REVERSED]: Object.freeze([INVESTIGATION_STATUS.CLOSED]),
   [INVESTIGATION_STATUS.NO_FRAUD_FOUND]: Object.freeze([INVESTIGATION_STATUS.CLOSED]),
   [INVESTIGATION_STATUS.CLOSED]: Object.freeze([]),
 });
@@ -126,6 +128,7 @@ function mapInvestigation(row) {
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
     fraudConfirmedAt: row.fraud_confirmed_at,
+    reversedAt: row.reversed_at ?? null,
   };
 }
 
@@ -260,7 +263,7 @@ export function createInvestigationRepository(pool) {
         `
           SELECT
             investigation_id, tenant_id, claim_id, assigned_investigator, assigned_by,
-            status, priority, created_at, updated_at, closed_at, fraud_confirmed_at
+            status, priority, created_at, updated_at, closed_at, fraud_confirmed_at, reversed_at
           FROM investigations
           WHERE investigation_id = ? AND tenant_id = ?
           LIMIT 1

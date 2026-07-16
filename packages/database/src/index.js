@@ -1,6 +1,12 @@
-import crypto from "node:crypto";
-
 import { int, json, mysqlTable, varchar } from "drizzle-orm/mysql-core";
+
+export {
+  computeLedgerEntryHash,
+  createLedgerEntry,
+  genesisPreviousHash,
+  stableStringify,
+} from "./ledger-entry.js";
+export { appendLedgerEntry, LedgerConcurrencyConflictError } from "./ledger-chain.js";
 
 export { createDatabase, createMysqlConnection } from "./client.js";
 export {
@@ -31,6 +37,15 @@ export {
   normalizeInvestigationStatus,
 } from "./investigation-repository.js";
 export { createLedgerRepository } from "./ledger-repository.js";
+export {
+  createFraudWorkflowRepository,
+  FRAUD_WORKFLOW_OPERATION,
+  FRAUD_WORKFLOW_VERSION,
+  FraudWorkflowConflictError,
+  FraudWorkflowIdempotencyConflictError,
+  FraudWorkflowNotFoundError,
+  FraudWorkflowValidationError,
+} from "./fraud-workflow-repository.js";
 export {
   createSharedFraudRegistryRepository,
   FRAUD_REGISTRY_STATUS,
@@ -63,54 +78,3 @@ export const ledgerEntriesTable = mysqlTable("ledger_entries", {
   payload: json("payload").notNull(),
   tenantId: varchar("tenant_id", { length: 64 }),
 });
-
-export const genesisPreviousHash = "0".repeat(64);
-
-function sortValue(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortValue);
-  }
-
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, sortValue(value[key])]),
-    );
-  }
-
-  return value;
-}
-
-export function stableStringify(value) {
-  return JSON.stringify(sortValue(value));
-}
-
-export function computeLedgerEntryHash({ previousHash, entryType, payload }) {
-  const digest = crypto.createHash("sha256");
-  digest.update(previousHash);
-  digest.update("|");
-  digest.update(entryType);
-  digest.update("|");
-  digest.update(stableStringify(payload));
-  return digest.digest("hex");
-}
-
-export function createLedgerEntry({
-  sequenceNumber,
-  previousHash = genesisPreviousHash,
-  entryType,
-  payload,
-  tenantId,
-}) {
-  const entryHash = computeLedgerEntryHash({ previousHash, entryType, payload });
-
-  return {
-    sequenceNumber,
-    entryType,
-    previousHash,
-    entryHash,
-    payload,
-    tenantId,
-  };
-}

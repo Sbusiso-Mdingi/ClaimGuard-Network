@@ -152,7 +152,6 @@ export function InvestigationWorkspacePage() {
                   callAction("/investigations/confirm-fraud", {
                     investigationId: investigation.investigationId,
                     claimId: investigation.claimId,
-                    investigatorId: identity.userId,
                     reason: "Confirmed via investigator workspace.",
                   })
                 }
@@ -165,7 +164,6 @@ export function InvestigationWorkspacePage() {
                   callAction("/investigations/reverse-fraud", {
                     investigationId: investigation.investigationId,
                     claimId: investigation.claimId,
-                    investigatorId: identity.userId,
                     reason: "Reversed via investigator workspace.",
                   })
                 }

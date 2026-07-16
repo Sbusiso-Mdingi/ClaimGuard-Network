@@ -10,6 +10,7 @@ import {
 } from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
 import { ClaimOwnershipConflictError, getActiveTenantId } from "@claimguard/database";
+import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
 
 const alphaTenant = {
   tenant_id: "tenant_alpha",
@@ -241,9 +242,9 @@ test("tenant access denies cross-tenant resources and permits a platform adminis
 });
 
 test("only investigators can confirm fraud for their tenant", async () => {
-  const ledgerRepository = createLedgerRepositoryStub();
+  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub();
   const app = createBackendApp({
-    ledgerRepository,
+    fraudWorkflowRepository,
     investigationRepository: createConfirmedInvestigationRepositoryStub(),
     tenantRepository: createTenantRepositoryStub(),
   });
@@ -273,14 +274,16 @@ test("only investigators can confirm fraud for their tenant", async () => {
   assert.equal(analystResponse.status, 403);
   assert.equal(schemeUserResponse.status, 403);
   assert.equal(platformAdminResponse.status, 403);
-  assert.equal(ledgerRepository.writes.length, 1);
+  assert.equal(fraudWorkflowRepository.confirmations.length, 1);
+  assert.equal(fraudWorkflowRepository.confirmations[0].actorId, "user-alpha");
+  assert.equal(fraudWorkflowRepository.confirmations[0].actorRole, "investigator");
 });
 
-test("tenant-scoped confirmation and claim ingestion reject a foreign scheme", async () => {
-  const ledgerRepository = createLedgerRepositoryStub();
+test("confirmation ignores untrusted scheme metadata while claim ingestion rejects a foreign scheme", async () => {
+  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub();
   const ingestedClaims = [];
   const app = createBackendApp({
-    ledgerRepository,
+    fraudWorkflowRepository,
     investigationRepository: createConfirmedInvestigationRepositoryStub(),
     tenantRepository: createTenantRepositoryStub(),
     claimIngestionService: {
@@ -319,9 +322,9 @@ test("tenant-scoped confirmation and claim ingestion reject a foreign scheme", a
     }),
   });
 
-  assert.equal(confirmationResponse.status, 403);
+  assert.equal(confirmationResponse.status, 201);
   assert.equal(ingestionResponse.status, 403);
-  assert.equal(ledgerRepository.writes.length, 0);
+  assert.equal(fraudWorkflowRepository.confirmations.length, 1);
   assert.deepEqual(ingestedClaims, []);
 });
 
@@ -339,7 +342,7 @@ test("the pluggable authentication provider can replace development headers", as
         };
       },
     },
-    ledgerRepository: createLedgerRepositoryStub(),
+    fraudWorkflowRepository: createFraudWorkflowRepositoryStub(),
     investigationRepository: createConfirmedInvestigationRepositoryStub({ tenantId: "tenant_default" }),
   });
 

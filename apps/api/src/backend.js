@@ -25,6 +25,7 @@ function createDomainServices({
   ledgerRepository,
   investigationRepository,
   sharedFraudRegistryRepository,
+  fraudWorkflowRepository,
   claimIngestionRepository,
   detectionAnalyzeProxyUrl,
 } = {}) {
@@ -44,15 +45,12 @@ function createDomainServices({
   });
 
   const fraudConfirmationService = createFraudConfirmationService({
-    ledgerRepository,
-    investigationService,
-    sharedFraudRegistryRepository,
+    fraudWorkflowRepository,
     logger: logEvent,
   });
 
   const fraudReversalService = createFraudReversalService({
-    ledgerRepository,
-    sharedFraudRegistryRepository,
+    fraudWorkflowRepository,
     logger: logEvent,
   });
 
@@ -74,6 +72,7 @@ export function createBackendApp({
   ledgerRepository = null,
   investigationRepository = null,
   sharedFraudRegistryRepository = null,
+  fraudWorkflowRepository = null,
   claimIngestionService = null,
   tenantRepository = null,
   authenticationProvider = null,
@@ -92,6 +91,7 @@ export function createBackendApp({
     ledgerRepository,
     investigationRepository,
     sharedFraudRegistryRepository,
+    fraudWorkflowRepository,
     claimIngestionRepository: claimIngestionService,
     detectionAnalyzeProxyUrl,
   });

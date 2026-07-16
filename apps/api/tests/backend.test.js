@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
 
 import { createBackendApp } from "../src/backend.js";
 
@@ -454,17 +455,7 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
 
 test("investigation confirm-fraud endpoint writes confirmed ledger entry", async () => {
   const app = createBackendApp({
-    ledgerRepository: {
-      async createConfirmedFraudEntry(payload) {
-        return {
-          sequenceNumber: 3,
-          entryType: "INVESTIGATOR_CONFIRMED_FRAUD",
-          previousHash: "a".repeat(64),
-          entryHash: "b".repeat(64),
-          payload,
-        };
-      },
-    },
+    fraudWorkflowRepository: createFraudWorkflowRepositoryStub(),
     investigationRepository: {
       async getInvestigationById(investigationId) {
         if (investigationId !== "investigation-300") {
@@ -510,6 +501,53 @@ test("investigation confirm-fraud endpoint writes confirmed ledger entry", async
   assert.equal(json.available, true);
   assert.equal(json.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
   assert.equal(json.entry.payload.claimId, "C-300");
+});
+
+test("confirmation route uses authenticated actor and returns 200 for an idempotent replay", async () => {
+  const seen = new Map();
+  const workflow = createFraudWorkflowRepositoryStub({
+    async confirm(input, helpers) {
+      const existing = seen.get(input.idempotencyKey);
+      if (existing) {
+        return { ...existing, replayed: true };
+      }
+      const ledgerEntry = helpers.entry("INVESTIGATOR_CONFIRMED_FRAUD", input, 1);
+      const result = {
+        entry: ledgerEntry,
+        registryEntry: helpers.registry(input, ledgerEntry, "ACTIVE"),
+        replayed: false,
+      };
+      seen.set(input.idempotencyKey, result);
+      return result;
+    },
+  });
+  const app = createBackendApp({ fraudWorkflowRepository: workflow });
+  const request = () => app.request("http://localhost/investigations/confirm-fraud", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": "route-key-1",
+      ...developmentAuthHeaders({ user: "authenticated-investigator", role: "investigator" }),
+    },
+    body: JSON.stringify({
+      investigationId: "investigation-route",
+      claimId: "claim-route",
+      investigatorId: "untrusted-body-user",
+      registryMetadata: { investigatorReference: "untrusted-body-user" },
+      reason: "Persisted evidence confirms fraud.",
+    }),
+  });
+
+  const first = await request();
+  const replay = await request();
+  const replayBody = await replay.json();
+
+  assert.equal(first.status, 201);
+  assert.equal(replay.status, 200);
+  assert.equal(replayBody.replayed, true);
+  assert.equal(workflow.confirmations[0].actorId, "authenticated-investigator");
+  assert.equal(workflow.confirmations[0].idempotencyKey, "route-key-1");
+  assert.equal(Object.hasOwn(workflow.confirmations[0], "registryMetadata"), false);
 });
 
 test("claims ingestion never runs the legacy producer trigger and remains committed when it would fail", async () => {

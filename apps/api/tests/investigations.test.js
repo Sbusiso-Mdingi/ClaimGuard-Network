@@ -10,6 +10,7 @@ import {
 } from "@claimguard/database";
 
 import { createBackendApp } from "../src/backend.js";
+import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
 
 const alphaTenant = {
   tenant_id: "tenant_alpha",
@@ -195,6 +196,36 @@ function createLedgerRepositoryStub() {
   };
 }
 
+function createLifecycleFraudWorkflowStub(investigationRepository) {
+  return createFraudWorkflowRepositoryStub({
+    async confirm(input, helpers) {
+      const investigation = await investigationRepository.getInvestigationById(input.investigationId);
+      if (!investigation) {
+        throw Object.assign(new Error("The investigation was not found in the active tenant."), {
+          code: "investigation_not_found",
+          status: 404,
+        });
+      }
+      if (investigation.status !== "CONFIRMED_FRAUD" || investigation.fraudConfirmedAt) {
+        throw Object.assign(new Error("Investigation status must be CONFIRMED_FRAUD before fraud can be confirmed."), {
+          code: "invalid_confirmation_lifecycle",
+          status: 409,
+        });
+      }
+      const ledgerEntry = helpers.entry(
+        "INVESTIGATOR_CONFIRMED_FRAUD",
+        { ...input, requestedClaimId: investigation.claimId },
+        helpers.confirmations.length + helpers.reversals.length,
+      );
+      return {
+        entry: ledgerEntry,
+        registryEntry: helpers.registry(input, ledgerEntry, "ACTIVE"),
+        replayed: false,
+      };
+    },
+  });
+}
+
 test("investigation endpoints create, progress, annotate, and retrieve the lifecycle", async () => {
   const investigationRepository = createInvestigationRepositoryStub();
   const app = createBackendApp({
@@ -352,10 +383,10 @@ test("investigation resources are isolated to the active tenant", async () => {
       },
     ],
   });
-  const ledgerRepository = createLedgerRepositoryStub();
+  const fraudWorkflowRepository = createLifecycleFraudWorkflowStub(investigationRepository);
   const app = createBackendApp({
     investigationRepository,
-    ledgerRepository,
+    fraudWorkflowRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
   const betaHeaders = authHeaders({
@@ -387,7 +418,7 @@ test("investigation resources are isolated to the active tenant", async () => {
   assert.equal(getResponse.status, 404);
   assert.equal(noteResponse.status, 404);
   assert.equal(confirmResponse.status, 404);
-  assert.equal(ledgerRepository.writes.length, 0);
+  assert.equal(fraudWorkflowRepository.confirmations.length, 1);
 });
 
 test("confirmation requires an existing CONFIRMED_FRAUD investigation and retains the existing response shape", async () => {
@@ -421,10 +452,10 @@ test("confirmation requires an existing CONFIRMED_FRAUD investigation and retain
       },
     ],
   });
-  const ledgerRepository = createLedgerRepositoryStub();
+  const fraudWorkflowRepository = createLifecycleFraudWorkflowStub(investigationRepository);
   const app = createBackendApp({
     investigationRepository,
-    ledgerRepository,
+    fraudWorkflowRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
   const headers = authHeaders({ user: "investigator-alpha", role: "investigator" });
@@ -469,6 +500,6 @@ test("confirmation requires an existing CONFIRMED_FRAUD investigation and retain
   assert.equal(confirmed.available, true);
   assert.equal(confirmed.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
   assert.equal(confirmed.entry.payload.claimId, "claim-alpha-confirmed");
-  assert.equal(confirmed.entry.payload.reportVersion, "v20260714");
-  assert.equal(ledgerRepository.writes.length, 1);
+  assert.equal(confirmed.entry.payload.actor.id, "investigator-alpha");
+  assert.equal(fraudWorkflowRepository.confirmations.length, 3);
 });

@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 
 import { createBackendApp } from "../src/backend.js";
 import { INVESTIGATION_STATUS, FRAUD_REGISTRY_STATUS } from "@claimguard/database";
+import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
 
 const alphaTenant = {
   tenant_id: "tenant_alpha",
@@ -216,11 +217,20 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
   });
   const ledgerRepository = createLedgerRepositoryStub();
   const sharedFraudRegistryRepository = createSharedFraudRegistryRepositoryStub();
+  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub({
+    async confirm(input, helpers) {
+      const ledgerEntry = helpers.entry("INVESTIGATOR_CONFIRMED_FRAUD", input, 1);
+      const registryEntry = helpers.registry(input, ledgerEntry, "ACTIVE");
+      sharedFraudRegistryRepository.records.push(registryEntry);
+      return { entry: ledgerEntry, registryEntry, replayed: false };
+    },
+  });
   
   const app = createBackendApp({
     investigationRepository,
     ledgerRepository,
     sharedFraudRegistryRepository,
+    fraudWorkflowRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
 
@@ -247,7 +257,8 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
   const data = await response.json();
   assert.equal(data.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
   assert.equal(data.registryEntry.status, "ACTIVE");
-  assert.equal(data.registryEntry.subjectToken, "prov-123");
+  assert.notEqual(data.registryEntry.subjectToken, "prov-123");
+  assert.equal(data.registryEntry.investigatorReference, "investigator-alpha");
   assert.equal(sharedFraudRegistryRepository.records.length, 1);
 });
 
@@ -282,11 +293,21 @@ test("reverse-fraud creates ledger event and REVERSED registry entry", async () 
     status: "ACTIVE",
     reversesRegistryEntryId: null,
   });
+  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub({
+    async reverse(input, helpers) {
+      const ledgerEntry = helpers.entry("INVESTIGATOR_REVERSED_FRAUD", input, 2);
+      const registryEntry = helpers.registry(input, ledgerEntry, "REVERSED", "reg-active");
+      registryEntry.subjectToken = "mem-456";
+      sharedFraudRegistryRepository.records.push(registryEntry);
+      return { entry: ledgerEntry, registryEntry, replayed: false };
+    },
+  });
   
   const app = createBackendApp({
     investigationRepository,
     ledgerRepository,
     sharedFraudRegistryRepository,
+    fraudWorkflowRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
 

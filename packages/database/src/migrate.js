@@ -9,6 +9,7 @@ export const defaultMigrationPaths = Object.freeze([
   fileURLToPath(new URL("../migrations/0002_investigations.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0003_shared_fraud_registry.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0004_claim_processing_outbox.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0005_atomic_fraud_workflows.sql", import.meta.url)),
 ]);
 
 function splitSqlStatements(sql) {
@@ -34,6 +35,7 @@ export async function applyMigrations(pool, migrationPath = defaultMigrationPath
           error.code === "ER_DUP_FIELDNAME" ||
           error.code === "ER_DUP_KEY" ||
           error.code === "ER_DUP_KEYNAME" ||
+          error.code === "ER_FK_DUP_NAME" ||
           error.code === "ER_TABLE_EXISTS_ERROR"
         ) {
           // Ignore idempotency errors for raw SQL migrations

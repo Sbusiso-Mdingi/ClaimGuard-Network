@@ -1,12 +1,14 @@
 import { and, desc, eq } from "drizzle-orm";
 
-import { createLedgerEntry, genesisPreviousHash, ledgerEntriesTable } from "./index.js";
+import { createLedgerEntry, genesisPreviousHash } from "./ledger-entry.js";
+import { appendLedgerEntry } from "./ledger-chain.js";
+import { ledgerEntriesTable } from "./index.js";
 import { getActiveTenantId } from "./tenant-context-store.js";
 
 const CONFIRMED_FRAUD_ENTRY_TYPE = "INVESTIGATOR_CONFIRMED_FRAUD";
 const REVERSED_FRAUD_ENTRY_TYPE = "INVESTIGATOR_REVERSED_FRAUD";
 
-export function createLedgerRepository(db) {
+export function createLedgerRepository(db, pool = null) {
   async function getLatestGlobalEntry() {
     const [latestEntry] = await db
       .select()
@@ -32,6 +34,22 @@ export function createLedgerRepository(db) {
 
     async createEntry({ entryType, payload }) {
       const tenantId = getActiveTenantId();
+      if (pool && typeof pool.getConnection === "function") {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const entry = await appendLedgerEntry(connection, { tenantId, entryType, payload });
+          await connection.commit();
+          return entry;
+        } catch (error) {
+          await connection.rollback();
+          throw error;
+        } finally {
+          connection.release();
+        }
+      }
+
+      // In-memory unit-test compatibility. Production construction always supplies the pool.
       const latestTenantEntry = await this.getLatestEntry();
       const latestGlobalEntry = await getLatestGlobalEntry();
       const nextSequenceNumber = latestGlobalEntry ? latestGlobalEntry.sequenceNumber + 1 : 1;

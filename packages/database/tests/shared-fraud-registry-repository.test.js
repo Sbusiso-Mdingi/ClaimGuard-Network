@@ -58,7 +58,7 @@ function createFakePool() {
 
         if (trimmedSql.includes("WHERE subject_token = ?")) {
           const token = params[0];
-          const subjectType = params[1];
+          const subjectType = trimmedSql.includes("fraud_subject_type = ?") ? params[1] : null;
           const matching = rows.filter(
             (r) =>
               r.subject_token === token &&

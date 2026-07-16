@@ -1,24 +1,43 @@
 import {
-  INVESTIGATION_STATUS,
-  FraudRegistryConflictError,
-  FraudRegistryValidationError,
-  isFraudConfirmationPermitted,
-} from "@claimguard/database";
-
-import {
   authorizePermissions,
-  authorizeTenantScopedRequest,
   createRequireAnyPermissionMiddleware,
   createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
-import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import { CLAIMGUARD_PERMISSIONS, CLAIMGUARD_ROLES } from "../authorization-policy.js";
 import {
   investigationErrorResponse,
   investigationRepositoryUnavailable,
   loadInvestigationOrFail,
-  registryErrorResponse,
-  sharedRegistryUnavailable,
 } from "./http-response-helpers.js";
+
+function workflowActor(c) {
+  const authContext = c.get("authContext") || {};
+  const roles = Array.isArray(authContext.roles) ? authContext.roles : [];
+  const actorRole = roles.includes(CLAIMGUARD_ROLES.INVESTIGATOR)
+    ? CLAIMGUARD_ROLES.INVESTIGATOR
+    : roles.includes(CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR)
+      ? CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR
+      : roles[0] || "unknown";
+
+  return {
+    actorId: authContext.user_id || null,
+    actorRole,
+    tenantId: c.get("tenantContext")?.tenant_id || authContext.tenant_id || null,
+  };
+}
+
+function workflowErrorResponse(c, error, fallbackMessage) {
+  const isTypedError = Number.isInteger(error?.status) && typeof error?.code === "string";
+  const status = isTypedError ? error.status : 500;
+  return c.json(
+    {
+      available: false,
+      code: isTypedError ? error.code : "fraud_workflow_failed",
+      message: isTypedError ? error.message : fallbackMessage,
+    },
+    status,
+  );
+}
 
 export function registerInvestigationsRoutes(
   app,
@@ -216,90 +235,45 @@ export function registerInvestigationsRoutes(
 
       const payload = await c.req.json().catch(() => null);
       const investigationId = payload?.investigationId;
-      const claimId = payload?.claimId;
-      const investigatorId = payload?.investigatorId;
       const reason = payload?.reason;
 
-      if (!investigationId || !claimId || !investigatorId || !reason) {
+      if (!investigationId || !reason) {
         return c.json(
           {
             available: false,
-            message: "investigationId, claimId, investigatorId, and reason are required.",
+            message: "investigationId and reason are required.",
           },
           400,
         );
       }
 
-      if (!investigationService.hasMethod("getInvestigationById")) {
-        return investigationRepositoryUnavailable(c);
-      }
-
-      let investigation;
       try {
-        const loaded = await loadInvestigationOrFail(c, investigationService, investigationId);
-        if (!loaded.ok) {
-          return loaded.response;
-        }
-        investigation = loaded.investigation;
-      } catch (error) {
-        return investigationErrorResponse(c, error);
-      }
-
-      if (investigation.claimId !== claimId) {
-        return c.json(
-          {
-            available: false,
-            message: "claimId must match the investigation claim.",
-          },
-          400,
-        );
-      }
-
-      if (!isFraudConfirmationPermitted(investigation)) {
-        return c.json(
-          {
-            available: false,
-            message:
-              investigation.status === INVESTIGATION_STATUS.CONFIRMED_FRAUD
-                ? "This investigation has already published a fraud decision."
-                : "Investigation status must be CONFIRMED_FRAUD before fraud can be confirmed.",
-          },
-          409,
-        );
-      }
-
-      const tenantDecision = await authorizeTenantScopedRequest({
-        c,
-        tenantRepository,
-        resourceTenantIds: [investigation.tenantId],
-        resourceSchemeIds: [payload?.schemeId].filter(Boolean),
-      });
-
-      if (!tenantDecision.ok) {
-        return tenantDecision.response;
-      }
-
-      try {
+        const actor = workflowActor(c);
         const result = await fraudConfirmationService.confirmFraud({
-          payload,
-          investigation,
-          requestId: c.get("requestId") || null,
+          investigationId,
+          requestedClaimId: payload?.claimId || null,
+          reason,
+          ...actor,
+          correlationId: c.get("requestId") || null,
+          idempotencyKey: c.req.header("idempotency-key") || payload?.idempotencyKey || null,
         });
 
-        return c.json({ available: true, entry: result.entry, registryEntry: result.registryEntry }, 201);
+        return c.json(
+          {
+            available: true,
+            entry: result.entry,
+            registryEntry: result.registryEntry,
+            replayed: result.replayed,
+          },
+          result.replayed ? 200 : 201,
+        );
       } catch (error) {
         logger?.("error", "fraud_confirmation_failed", {
           requestId: c.get("requestId") || null,
           message: error?.message || "Failed to persist confirmed fraud decision.",
         });
 
-        return c.json(
-          {
-            available: false,
-            message: error?.message || "Failed to persist confirmed fraud decision.",
-          },
-          400,
-        );
+        return workflowErrorResponse(c, error, "Failed to persist confirmed fraud decision.");
       }
     },
   );
@@ -320,80 +294,39 @@ export function registerInvestigationsRoutes(
         );
       }
 
-      if (!fraudReversalService.isRegistryConfigured()) {
-        return sharedRegistryUnavailable(c);
-      }
-
       const payload = await c.req.json().catch(() => null);
       const investigationId = payload?.investigationId;
-      const claimId = payload?.claimId;
-      const investigatorId = payload?.investigatorId;
       const reason = payload?.reason;
 
-      if (!investigationId || !claimId || !investigatorId || !reason) {
+      if (!investigationId || !reason) {
         return c.json(
           {
             available: false,
-            message: "investigationId, claimId, investigatorId, and reason are required.",
+            message: "investigationId and reason are required.",
           },
           400,
         );
       }
 
-      if (!investigationService.hasMethod("getInvestigationById")) {
-        return investigationRepositoryUnavailable(c);
-      }
-
-      let investigation;
       try {
-        const loaded = await loadInvestigationOrFail(c, investigationService, investigationId);
-        if (!loaded.ok) {
-          return loaded.response;
-        }
-
-        investigation = loaded.investigation;
-      } catch (error) {
-        return investigationErrorResponse(c, error);
-      }
-
-      if (investigation.claimId !== claimId) {
-        return c.json(
-          {
-            available: false,
-            message: "claimId must match the investigation claim.",
-          },
-          400,
-        );
-      }
-
-      const tenantDecision = await authorizeTenantScopedRequest({
-        c,
-        tenantRepository,
-        resourceTenantIds: [investigation.tenantId],
-      });
-
-      if (!tenantDecision.ok) {
-        return tenantDecision.response;
-      }
-
-      try {
+        const actor = workflowActor(c);
         const result = await fraudReversalService.reverseFraud({
-          payload,
-          investigation,
-          requestId: c.get("requestId") || null,
+          investigationId,
+          requestedClaimId: payload?.claimId || null,
+          reason,
+          ...actor,
+          correlationId: c.get("requestId") || null,
+          idempotencyKey: c.req.header("idempotency-key") || payload?.idempotencyKey || null,
         });
-
-        if (!result.ok) {
-          return c.json(result.body, result.status);
-        }
 
         return c.json(
           {
             available: true,
             entry: result.entry,
             registryEntry: result.registryEntry,
+            replayed: result.replayed,
           },
-          201,
+          result.replayed ? 200 : 201,
         );
       } catch (error) {
         logger?.("error", "fraud_reversal_failed", {
@@ -401,17 +334,7 @@ export function registerInvestigationsRoutes(
           message: error?.message || "Failed to reverse fraud decision.",
         });
 
-        if (error instanceof FraudRegistryConflictError || error instanceof FraudRegistryValidationError) {
-          return registryErrorResponse(c, error);
-        }
-
-        return c.json(
-          {
-            available: false,
-            message: error?.message || "Failed to reverse fraud decision.",
-          },
-          400,
-        );
+        return workflowErrorResponse(c, error, "Failed to reverse fraud decision.");
       }
     },
   );

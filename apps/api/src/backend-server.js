@@ -6,6 +6,7 @@ import {
   createClaimIngestionRepository,
   createDatabase,
   createInvestigationRepository,
+  createFraudWorkflowRepository,
   createLedgerRepository,
   createSharedFraudRegistryRepository,
   createTenantRepository,
@@ -28,6 +29,7 @@ const detectionAnalyzeProxyUrl = process.env.DETECTION_ANALYZE_PROXY_URL || null
 let ledgerRepository = null;
 let investigationRepository = null;
 let sharedFraudRegistryRepository = null;
+let fraudWorkflowRepository = null;
 let claimIngestionService = null;
 let tenantRepository = null;
 let databasePool = null;
@@ -35,9 +37,10 @@ let liveDemoSimulator = null;
 
 if (databaseUrl) {
   const database = createDatabase(databaseUrl);
-  ledgerRepository = createLedgerRepository(database.db);
+  ledgerRepository = createLedgerRepository(database.db, database.pool);
   investigationRepository = createInvestigationRepository(database.pool);
   sharedFraudRegistryRepository = createSharedFraudRegistryRepository(database.pool);
+  fraudWorkflowRepository = createFraudWorkflowRepository(database.pool);
   claimIngestionService = createClaimIngestionRepository(database.pool);
   tenantRepository = createTenantRepository(database.pool);
   databasePool = database.pool;
@@ -53,6 +56,7 @@ const app = createBackendApp({
   ledgerRepository,
   investigationRepository,
   sharedFraudRegistryRepository,
+  fraudWorkflowRepository,
   claimIngestionService,
   tenantRepository,
   reportStorage,

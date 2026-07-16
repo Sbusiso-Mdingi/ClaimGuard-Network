@@ -1012,23 +1012,8 @@ export function createLiveDemoSimulator({
       body: {
         investigationId: investigation.investigationId,
         claimId: investigation.claimId,
-        investigatorId: `sim-investigator-${tenantState.tenantId}`,
         reason: investigation.scenario.reason,
-        schemeId: null,
-        reportVersion: "live-demo",
-        notes: `Scenario: ${investigation.scenario.key}`,
-        registryMetadata: createRegistryMetadata({
-          tenant: {
-            name: tenantState.tenantName,
-          },
-          claim: {
-            member_id: investigation.memberId,
-            provider_id: investigation.providerId,
-          },
-          scenario: investigation.scenario,
-          investigatorId: `sim-investigator-${tenantState.tenantId}`,
-          timelineDate: toIsoDate(timelineNow),
-        }),
+        idempotencyKey: `sim-confirm:${investigation.investigationId}`,
       },
     });
 
@@ -1065,8 +1050,8 @@ export function createLiveDemoSimulator({
       body: {
         investigationId: investigation.investigationId,
         claimId: investigation.claimId,
-        investigatorId: `sim-investigator-${tenantState.tenantId}`,
         reason: "Synthetic appeal accepted after committee review.",
+        idempotencyKey: `sim-reverse:${investigation.investigationId}`,
       },
     });
 
