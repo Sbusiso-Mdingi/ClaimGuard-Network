@@ -197,12 +197,25 @@ function tenantDatabaseUrl(adminDatabaseUrl, { databaseName, username, password 
   return url.toString();
 }
 
+function mysqlConnectionConfig(connectionUrl) {
+  const url = new URL(connectionUrl);
+  const isAzureMySqlHost = url.hostname.endsWith(".mysql.database.azure.com");
+  if (!isAzureMySqlHost) return connectionUrl;
+  // Azure MySQL enforces secure transport; ensure mysql2 sends an SSL/TLS config.
+  return {
+    uri: connectionUrl,
+    ssl: {
+      minVersion: "TLSv1.2",
+    },
+  };
+}
+
 async function verifyIsolation(adminPool, { tenantUsername, tenantPassword, databaseName, adminDatabaseUrl }) {
-  const tenantConnection = await mysql.createConnection(tenantDatabaseUrl(adminDatabaseUrl, {
+  const tenantConnection = await mysql.createConnection(mysqlConnectionConfig(tenantDatabaseUrl(adminDatabaseUrl, {
     databaseName,
     username: tenantUsername,
     password: tenantPassword,
-  }));
+  })));
   try {
     await tenantConnection.query("SELECT 1");
     const [otherRows] = await adminPool.execute(
@@ -497,7 +510,7 @@ export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
   const repositories = createControlPlaneRepositories(controlPool);
   const service = createControlPlaneService({ pool: controlPool, repositories });
   const secretStore = await createSecretStore();
-  const adminPool = mysql.createPool(requireEnv("MYSQL_SERVER_ADMIN_URL"));
+  const adminPool = mysql.createPool(mysqlConnectionConfig(requireEnv("MYSQL_SERVER_ADMIN_URL")));
   const workerInstanceId = process.env.CONTAINER_APP_JOB_EXECUTION_NAME?.trim() || `provisioning-worker-${crypto.randomUUID()}`;
 
   let processed = 0;
