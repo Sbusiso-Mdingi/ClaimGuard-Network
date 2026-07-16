@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createReportService } from "../src/services/report-service.js";
+import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
 
 const alphaTenant = {
   tenant_id: "tenant_alpha",
@@ -15,13 +16,12 @@ const betaTenant = {
 
 function reportFor(tenantId, version) {
   return {
-    report: {
+    report: createCanonicalDetectionReport({
       tenantId,
-      reportVersion: version,
-      detection: {
-        risk_score: { riskScore: tenantId === "tenant_alpha" ? 91 : 12 },
-      },
-    },
+      version,
+      riskScore: tenantId === "tenant_alpha" ? 91 : 12,
+      severity: tenantId === "tenant_alpha" ? "High" : "Low",
+    }),
     metadata: {
       tenant: tenantId,
       version,
@@ -53,18 +53,18 @@ test("report cache and in-flight reads are isolated by immutable tenant ID", asy
 
     pending.get("tenant_beta")(reportFor("tenant_beta", "beta-v1"));
     const beta = await betaPromise;
-    assert.equal(beta.body.report.tenantId, "tenant_beta");
+    assert.equal(beta.body.report.metadata.tenant.tenantId, "tenant_beta");
 
     pending.get("tenant_alpha")(reportFor("tenant_alpha", "alpha-v1"));
     const alpha = await alphaPromise;
-    assert.equal(alpha.body.report.tenantId, "tenant_alpha");
+    assert.equal(alpha.body.report.metadata.tenant.tenantId, "tenant_alpha");
 
     const [cachedAlpha, cachedBeta] = await Promise.all([
       service.getDetectionReport(alphaTenant),
       service.getDetectionReport(betaTenant),
     ]);
-    assert.equal(cachedAlpha.body.report.tenantId, "tenant_alpha");
-    assert.equal(cachedBeta.body.report.tenantId, "tenant_beta");
+    assert.equal(cachedAlpha.body.report.metadata.tenant.tenantId, "tenant_alpha");
+    assert.equal(cachedBeta.body.report.metadata.tenant.tenantId, "tenant_beta");
     assert.equal(reads.filter((tenantId) => tenantId === "tenant_alpha").length, 1);
     assert.equal(reads.filter((tenantId) => tenantId === "tenant_beta").length, 1);
   } finally {
@@ -100,8 +100,8 @@ test("expired alpha cache and invalidation never evict or replace beta", async (
     const refreshedAlpha = await service.getDetectionReport(alphaTenant);
     const cachedBeta = await service.getDetectionReport(betaTenant);
 
-    assert.equal(refreshedAlpha.body.report.tenantId, "tenant_alpha");
-    assert.equal(cachedBeta.body.report.tenantId, "tenant_beta");
+    assert.equal(refreshedAlpha.body.report.metadata.tenant.tenantId, "tenant_alpha");
+    assert.equal(cachedBeta.body.report.metadata.tenant.tenantId, "tenant_beta");
     assert.equal(readCounts.get("tenant_alpha"), 2);
     assert.equal(readCounts.get("tenant_beta"), 1);
 
@@ -139,12 +139,12 @@ test("tenant invalidation prevents an older in-flight read from repopulating cac
 
     assert.equal(pendingReads.length, 2);
     pendingReads[1](reportFor("tenant_alpha", "alpha-v2"));
-    assert.equal((await currentRequest).body.report.tenantId, "tenant_alpha");
+    assert.equal((await currentRequest).body.report.metadata.tenant.tenantId, "tenant_alpha");
     pendingReads[0](reportFor("tenant_alpha", "alpha-v1"));
     await staleRequest;
 
     const cached = await service.getDetectionReport(alphaTenant);
-    assert.equal(cached.body.report.reportVersion, "alpha-v2");
+    assert.equal(cached.body.report.metadata.source.watermark, "alpha-v2");
     assert.equal(pendingReads.length, 2);
   } finally {
     if (originalTtl === undefined) delete process.env.REPORT_CACHE_TTL_MS;

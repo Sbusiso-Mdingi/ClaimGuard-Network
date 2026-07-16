@@ -140,3 +140,92 @@ def load_data_bundle(data_dir: Path) -> DataBundle:
     )
     schemes = {scheme_dir.name.split("_")[-1].upper(): _load_scheme_dir(scheme_dir) for scheme_dir in scheme_dirs}
     return DataBundle(data_dir=data_dir, schemes=schemes)
+
+
+def build_data_bundle_from_records(
+    *,
+    schemes: list[dict[str, object]],
+    members: list[dict[str, object]],
+    providers: list[dict[str, object]],
+    claims: list[dict[str, object]],
+    data_dir: Path | None = None,
+) -> DataBundle:
+    """Adapt persisted tenant rows to the same immutable model used by CSV input."""
+
+    scheme_ids = {str(row.get("scheme_id") or "").strip() for row in schemes}
+    scheme_ids.discard("")
+    if not scheme_ids:
+        raise ValueError("At least one authoritative scheme record is required.")
+
+    member_records: dict[str, dict[str, MemberRecord]] = {scheme_id: {} for scheme_id in scheme_ids}
+    provider_records: dict[str, dict[str, ProviderRecord]] = {scheme_id: {} for scheme_id in scheme_ids}
+    claim_records: dict[str, list[ClaimRecord]] = {scheme_id: [] for scheme_id in scheme_ids}
+
+    for row in members:
+        scheme_id = str(row.get("scheme_id") or "").strip()
+        member_id = str(row.get("member_id") or "").strip()
+        if scheme_id not in scheme_ids or not member_id:
+            raise ValueError("Member rows must reference an authoritative scheme and member ID.")
+        member_records[scheme_id][member_id] = MemberRecord(
+            member_id=member_id,
+            scheme_id=scheme_id,
+            first_name=str(row.get("first_name") or ""),
+            last_name=str(row.get("last_name") or ""),
+            date_of_birth=str(row.get("date_of_birth") or ""),
+            gender=str(row.get("gender") or ""),
+            synthetic_id_number=str(row.get("synthetic_id_number") or ""),
+            synthetic_banking_detail=str(row.get("synthetic_banking_detail") or ""),
+            home_region=str(row.get("home_region") or ""),
+            home_lat=float(row.get("home_lat") or 0.0),
+            home_lon=float(row.get("home_lon") or 0.0),
+            join_date=str(row.get("join_date") or ""),
+        )
+
+    for row in providers:
+        scheme_id = str(row.get("scheme_id") or "").strip()
+        provider_id = str(row.get("provider_id") or "").strip()
+        if scheme_id not in scheme_ids or not provider_id:
+            raise ValueError("Provider rows must reference an authoritative scheme and provider ID.")
+        provider_records[scheme_id][provider_id] = ProviderRecord(
+            provider_id=provider_id,
+            scheme_id=scheme_id,
+            practice_number=str(row.get("practice_number") or ""),
+            specialty=str(row.get("specialty") or ""),
+            practice_name=str(row.get("practice_name") or ""),
+            synthetic_banking_detail=str(row.get("synthetic_banking_detail") or ""),
+            practice_region=str(row.get("practice_region") or ""),
+            practice_lat=float(row.get("practice_lat") or 0.0),
+            practice_lon=float(row.get("practice_lon") or 0.0),
+        )
+
+    for row in claims:
+        scheme_id = str(row.get("scheme_id") or "").strip()
+        member_id = str(row.get("member_id") or "").strip()
+        provider_id = str(row.get("provider_id") or "").strip()
+        claim_id = str(row.get("claim_id") or "").strip()
+        if scheme_id not in scheme_ids or not claim_id:
+            raise ValueError("Claim rows must reference an authoritative scheme and claim ID.")
+        if member_id not in member_records[scheme_id] or provider_id not in provider_records[scheme_id]:
+            raise ValueError("Claim rows must reference tenant-scoped member and provider records.")
+        claim_records[scheme_id].append(
+            ClaimRecord(
+                claim_id=claim_id,
+                scheme_id=scheme_id,
+                member_id=member_id,
+                provider_id=provider_id,
+                service_date=str(row.get("service_date") or ""),
+                billing_code=str(row.get("billing_code") or ""),
+                amount=float(row.get("amount") or 0.0),
+            )
+        )
+
+    bundle_schemes = {
+        scheme_id: SchemeData(
+            scheme_id=scheme_id,
+            members=member_records[scheme_id],
+            providers=provider_records[scheme_id],
+            claims=sorted(claim_records[scheme_id], key=lambda claim: claim.claim_id),
+        )
+        for scheme_id in sorted(scheme_ids)
+    }
+    return DataBundle(data_dir=data_dir or Path("tenant-snapshot"), schemes=bundle_schemes)

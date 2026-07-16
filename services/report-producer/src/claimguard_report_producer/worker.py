@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from .contract import ReportContractError
 from .outbox import OutboxJob, PyMySqlOutboxRepository
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
 from .runtime import DetectionReportProducer
-from .sources import build_report_from_ingested_claims
+from .snapshot import PyMySqlTenantSnapshotRepository
+from .sources import build_report_from_tenant_snapshot
 
 
 class TerminalJobError(ValueError):
@@ -96,11 +98,13 @@ class ReportProducerWorker:
         *,
         repository,
         publisher,
+        snapshot_repository,
         config: WorkerConfig,
         logger: StructuredWorkerLogger | None = None,
     ) -> None:
         self.repository = repository
         self.publisher = publisher
+        self.snapshot_repository = snapshot_repository
         self.config = config
         self.logger = logger or StructuredWorkerLogger()
 
@@ -111,9 +115,22 @@ class ReportProducerWorker:
             lease_seconds=self.config.lease_seconds,
         )
         self.logger.emit("info", "outbox_batch_leased", job_count=len(jobs), worker_id=self.config.worker_id)
+        jobs_by_tenant: dict[str, list[OutboxJob]] = {}
         for job in jobs:
             self.logger.emit("info", "outbox_job_leased", job)
-            self._process_job(job)
+            try:
+                self._validate_job(job)
+            except TerminalJobError as error:
+                self.repository.mark_dead_letter(
+                    job=job,
+                    worker_id=self.config.worker_id,
+                    last_error=type(error).__name__,
+                )
+                self.logger.emit("error", "outbox_job_dead_lettered", job, error_type=type(error).__name__)
+                continue
+            jobs_by_tenant.setdefault(job.tenant_id, []).append(job)
+        for tenant_jobs in jobs_by_tenant.values():
+            self._process_tenant_jobs(tenant_jobs)
         return len(jobs)
 
     def run_continuously(self) -> None:
@@ -122,12 +139,23 @@ class ReportProducerWorker:
             if processed == 0:
                 time.sleep(self.config.poll_seconds)
 
-    def _process_job(self, job: OutboxJob) -> None:
+    def _process_tenant_jobs(self, jobs: list[OutboxJob]) -> None:
+        job = jobs[0]
         try:
-            claims = self._canonical_claim_batch(job)
+            for candidate in jobs:
+                if candidate.tenant_id != job.tenant_id:
+                    raise InvalidTenantMetadataError("A coalesced batch crossed tenant boundaries.")
+
+            snapshot = self.snapshot_repository.load_tenant_snapshot(tenant_id=job.tenant_id)
+            correlation_id = ",".join(sorted(candidate.correlation_id for candidate in jobs))
+            report = build_report_from_tenant_snapshot(
+                snapshot,
+                correlation_id=correlation_id,
+                top_n=self.config.top_n,
+            )
 
             def detector(_data_dir: Path, _top_n: int) -> dict[str, object]:
-                return build_report_from_ingested_claims(claims)
+                return report
 
             producer = DetectionReportProducer(
                 data_dir=Path("."),
@@ -137,51 +165,68 @@ class ReportProducerWorker:
                 detector=detector,
                 tenant_id=job.tenant_id,
             )
-            producer.run(trigger=f"outbox-{job.id}")
-            if not self.repository.mark_completed(job=job, worker_id=self.config.worker_id):
-                raise RuntimeError("The active job lease was lost before completion could be recorded.")
-            self.logger.emit("info", "outbox_job_completed", job)
-        except TerminalJobError as error:
+            result = producer.run(trigger=f"outbox-tenant-{job.tenant_id}")
+            if not self.repository.mark_completed_many(
+                jobs=jobs,
+                worker_id=self.config.worker_id,
+                report_id=result.published.version,
+                watermark=snapshot.watermark,
+            ):
+                raise RuntimeError("An active job lease was lost before coalesced completion could be recorded.")
+            for candidate in jobs:
+                self.logger.emit(
+                    "info",
+                    "outbox_job_completed",
+                    candidate,
+                    covered_report_id=result.published.version,
+                    covered_watermark=snapshot.watermark,
+                )
+        except (TerminalJobError, ReportContractError) as error:
+            for candidate in jobs:
+                self.repository.mark_dead_letter(
+                    job=candidate,
+                    worker_id=self.config.worker_id,
+                    last_error=type(error).__name__,
+                )
+                self.logger.emit("error", "outbox_job_dead_lettered", candidate, error_type=type(error).__name__)
+        except Exception as error:  # noqa: BLE001
+            for candidate in jobs:
+                self._retry_or_dead_letter(candidate, error)
+
+    def _retry_or_dead_letter(self, job: OutboxJob, error: Exception) -> None:
+        effective_maximum_attempts = min(
+            job.max_attempts if job.max_attempts > 0 else self.config.maximum_attempts,
+            self.config.maximum_attempts,
+        )
+        if job.attempt_count >= effective_maximum_attempts:
             self.repository.mark_dead_letter(
                 job=job,
                 worker_id=self.config.worker_id,
                 last_error=type(error).__name__,
             )
             self.logger.emit("error", "outbox_job_dead_lettered", job, error_type=type(error).__name__)
-        except Exception as error:  # noqa: BLE001
-            effective_maximum_attempts = min(
-                job.max_attempts if job.max_attempts > 0 else self.config.maximum_attempts,
-                self.config.maximum_attempts,
-            )
-            if job.attempt_count >= effective_maximum_attempts:
-                self.repository.mark_dead_letter(
-                    job=job,
-                    worker_id=self.config.worker_id,
-                    last_error=type(error).__name__,
-                )
-                self.logger.emit("error", "outbox_job_dead_lettered", job, error_type=type(error).__name__)
-                return
+            return
 
-            delay = min(
-                self.config.maximum_retry_delay_seconds,
-                self.config.initial_retry_delay_seconds * (2 ** min(max(0, job.attempt_count - 1), 20)),
-            )
-            self.repository.mark_retry(
-                job=job,
-                worker_id=self.config.worker_id,
-                delay_seconds=delay,
-                last_error=type(error).__name__,
-            )
-            self.logger.emit(
-                "warning",
-                "outbox_job_retry_scheduled",
-                job,
-                retry_delay_seconds=delay,
-                error_type=type(error).__name__,
-            )
+        delay = min(
+            self.config.maximum_retry_delay_seconds,
+            self.config.initial_retry_delay_seconds * (2 ** min(max(0, job.attempt_count - 1), 20)),
+        )
+        self.repository.mark_retry(
+            job=job,
+            worker_id=self.config.worker_id,
+            delay_seconds=delay,
+            last_error=type(error).__name__,
+        )
+        self.logger.emit(
+            "warning",
+            "outbox_job_retry_scheduled",
+            job,
+            retry_delay_seconds=delay,
+            error_type=type(error).__name__,
+        )
 
     @staticmethod
-    def _canonical_claim_batch(job: OutboxJob) -> list[dict[str, object]]:
+    def _validate_job(job: OutboxJob) -> None:
         if job.job_type != "report_production":
             raise UnsupportedJobTypeError("Unsupported outbox job type.")
         if job.aggregate_type != "claim_batch":
@@ -196,28 +241,27 @@ class ReportProducerWorker:
         if not all(isinstance(claim, dict) for claim in claims):
             raise MalformedJobPayloadError("Each claim must be an object.")
 
-        return [
-            {
-                **claim,
-                "tenant_id": job.tenant_id,
-            }
-            for claim in claims
-        ]
+        # Payload contents are trigger metadata only. Detection always reloads the tenant snapshot.
 
 
 def create_worker_from_environment(*, backend: str | None = None, output_dir: Path | None = None) -> ReportProducerWorker:
     database_url = os.environ.get("MYSQL_URL", "")
     repository = PyMySqlOutboxRepository.from_url(database_url)
+    snapshot_repository = PyMySqlTenantSnapshotRepository(repository.connection_factory)
     resolved_backend = (backend or os.environ.get("REPORT_STORAGE_BACKEND", "file")).lower()
     if resolved_backend == "azure_blob":
         publisher = AzureBlobReportPublisher.from_environment()
     elif resolved_backend == "file":
-        publisher = FileReportPublisher(output_dir or Path(os.environ.get("REPORT_OUTPUT_DIR", "reports")))
+        publisher = FileReportPublisher(
+            output_dir or Path(os.environ.get("REPORT_OUTPUT_DIR", "reports")),
+            retention_versions=_positive_number(os.environ.get("REPORT_RETENTION_VERSIONS"), 10),
+        )
     else:
         raise ValueError("REPORT_STORAGE_BACKEND must be file or azure_blob.")
 
     return ReportProducerWorker(
         repository=repository,
         publisher=publisher,
+        snapshot_repository=snapshot_repository,
         config=WorkerConfig.from_environment(),
     )

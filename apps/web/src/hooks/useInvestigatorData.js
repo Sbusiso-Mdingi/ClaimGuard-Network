@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRole } from "../context/RoleContext";
-import { demoInvestigatorArtifacts } from "../features/investigator/demoInvestigatorData";
 
 const POLL_INTERVAL_MS = 15000;
 
@@ -24,70 +23,35 @@ function isLedgerLinked(ledgerReference) {
   return false;
 }
 
-function selectClaimantForClaim(relationships, claimId) {
-  const row = relationships.find((rel) => rel.claim_id === claimId && String(rel.source_entity_id).startsWith("claimant:"));
-  return row?.source_entity_id?.replace("claimant:", "") || "Unknown";
-}
-
-function extractClaimRows(report, riskResponse, fetchedAt) {
-  const relationships = report?.detection?.relationships || [];
-  const claimIds = Array.from(new Set(relationships.map((rel) => rel.claim_id).filter(Boolean))).sort();
-  const backendRiskScore = Number.isFinite(riskResponse?.riskScore)
-    ? riskResponse.riskScore
-    : Number.isFinite(report?.detection?.risk_score?.riskScore)
-      ? report.detection.risk_score.riskScore
-      : null;
-  const backendSeverity =
-    typeof riskResponse?.severity === "string"
-      ? riskResponse.severity
-      : typeof report?.detection?.risk_score?.severity === "string"
-        ? report.detection.risk_score.severity
-        : null;
-  const triggeredRules = (report?.detection?.triggered_rules || []).map((rule) => rule.title);
-  const evidence = report?.detection?.evidence || [];
-
-  return claimIds.map((claimId) => {
-    const claimant = selectClaimantForClaim(relationships, claimId);
-
-    return {
-      claimId,
-      riskScore: backendRiskScore,
-      severity: backendSeverity || "Unavailable",
-      status: riskResponse?.status || "Unavailable",
-      policyHolder: claimant,
-      detectionDate: fetchedAt,
-      triggeredRules,
-      evidence,
-    };
-  });
+function extractClaimRows(report) {
+  return (report?.claims || []).map((claim) => ({
+    ...claim,
+    policyHolder: claim.memberId,
+    status: claim.processingStatus ?? "Unavailable",
+    detectionDate: report?.metadata?.generatedAt ?? null,
+    triggeredRules: (claim.ruleHits || []).map((rule) => rule.title),
+    evidence: claim.evidenceReferences || [],
+  }));
 }
 
 function createSnapshot(report, graph, risk, fetchedAt, claims) {
-  const backendRiskScore = Number.isFinite(risk?.riskScore)
-    ? risk.riskScore
-    : Number.isFinite(report?.detection?.risk_score?.riskScore)
-      ? report.detection.risk_score.riskScore
-      : null;
-  const backendHighRiskClaims = Number.isFinite(risk?.highRiskClaims)
-    ? risk.highRiskClaims
-    : Number.isFinite(report?.detection?.risk_score?.highRiskClaims)
-      ? report.detection.risk_score.highRiskClaims
-      : null;
+  const backendRiskScore = Number.isFinite(risk?.riskScore) ? risk.riskScore : null;
+  const backendHighRiskClaims = Number.isFinite(risk?.highRiskClaims) ? risk.highRiskClaims : null;
 
   return {
     id: `${fetchedAt}-${claims.length}`,
     timestamp: fetchedAt,
-    totalClaims: claims.length,
-    highRiskClaims: backendHighRiskClaims,
-    avgRisk: backendRiskScore,
-    schemes: (report?.schemes || []).length,
+    totalClaims: Number.isFinite(report?.summary?.totalClaims) ? report.summary.totalClaims : null,
+    highRiskClaims: Number.isFinite(report?.summary?.highRiskClaims) ? report.summary.highRiskClaims : backendHighRiskClaims,
+    avgRisk: Number.isFinite(report?.summary?.averageRiskScore) ? report.summary.averageRiskScore : backendRiskScore,
+    schemes: new Set(claims.map((claim) => claim.schemeId)).size,
     risk,
     graphSummary: graph?.summary || null,
   };
 }
 
 function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = []) {
-  const claims = extractClaimRows(report, risk, fetchedAt);
+  const claims = extractClaimRows(report);
   const snapshot = createSnapshot(report, graph, risk, fetchedAt, claims);
 
   return {
@@ -148,19 +112,13 @@ export function useInvestigatorData() {
         dataSource: "live",
       }));
     } catch (error) {
-      const fallbackState = buildReadyState(
-        demoInvestigatorArtifacts.report,
-        demoInvestigatorArtifacts.graph,
-        demoInvestigatorArtifacts.risk,
-        fetchedAt,
-        demoInvestigatorArtifacts.snapshots,
-      );
-
-      setState({
-        ...fallbackState,
+      setState((previous) => ({
+        ...previous,
+        status: "error",
         error: error instanceof Error ? error.message : "Failed to load investigator data.",
-        dataSource: "demo",
-      });
+        dataSource: "unavailable",
+        lastRefresh: fetchedAt,
+      }));
     }
   }, [authHeaders]);
 
@@ -178,19 +136,15 @@ export function useInvestigatorData() {
 
   const metrics = useMemo(() => {
     const { report, claims } = state;
-    const highRisk = Number.isFinite(state.risk?.highRiskClaims)
-      ? state.risk.highRiskClaims
-      : Number.isFinite(report?.detection?.risk_score?.highRiskClaims)
-        ? report.detection.risk_score.highRiskClaims
-        : "Unavailable";
-    const avgRisk = Number.isFinite(state.risk?.riskScore)
-      ? state.risk.riskScore
-      : Number.isFinite(report?.detection?.risk_score?.riskScore)
-        ? report.detection.risk_score.riskScore
-        : "Unavailable";
+    const highRisk = Number.isFinite(report?.summary?.highRiskClaims)
+      ? report.summary.highRiskClaims
+      : "Unavailable";
+    const avgRisk = Number.isFinite(report?.summary?.averageRiskScore)
+      ? report.summary.averageRiskScore
+      : "Unavailable";
 
-    const activeFraudSchemes = Number.isFinite(report?.detection?.risk_score?.activeFraudSchemes)
-      ? report.detection.risk_score.activeFraudSchemes
+    const activeFraudSchemes = Number.isFinite(report?.summary?.activeFraudPatterns)
+      ? report.summary.activeFraudPatterns
       : "Unavailable";
 
     const recentDetections = claims
@@ -198,12 +152,12 @@ export function useInvestigatorData() {
       .slice(0, 8);
 
     return {
-      totalClaims: claims.length,
+      totalClaims: Number.isFinite(report?.summary?.totalClaims) ? report.summary.totalClaims : "Unavailable",
       highRiskClaims: highRisk,
       averageRiskScore: avgRisk,
       activeFraudSchemes,
       recentDetections,
-      ledgerStatus: isLedgerLinked(report?.detection?.ledger_reference) ? "Connected" : "Not linked",
+      ledgerStatus: isLedgerLinked(report?.ledgerReference) ? "Connected" : "Unavailable",
     };
   }, [state.report, state.claims, state.risk]);
 

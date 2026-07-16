@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Filter, Search, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import Filter from "lucide-react/dist/esm/icons/filter.mjs";
+import Search from "lucide-react/dist/esm/icons/search.mjs";
+import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.mjs";
+import ArrowUp from "lucide-react/dist/esm/icons/arrow-up.mjs";
+import ArrowUpDown from "lucide-react/dist/esm/icons/arrow-up-down.mjs";
+import ChevronLeft from "lucide-react/dist/esm/icons/chevron-left.mjs";
+import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.mjs";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
 import { PageFrame, SectionCard, StatusIndicator, RiskScoreBar, claimStatusTone } from "./InvestigatorUI";

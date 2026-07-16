@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
 
 import { resolveAuthContextFromHeaders } from "../src/auth-context.js";
 import {
@@ -364,13 +365,7 @@ test("detection routes require authentication, tenant match, and report permissi
       async getLatestReport({ tenantContext }) {
         observedStorageTenants.push(tenantContext.tenant_id);
         return {
-          report: {
-            tenantId: tenantContext.tenant_id,
-            detection: {
-              risk_score: { riskScore: 33, severity: "Low", reasons: [] },
-              graph_summary: { entity_count: 0, relationship_count: 0 },
-            },
-          },
+          report: createCanonicalDetectionReport({ tenantId: tenantContext.tenant_id, riskScore: 33, severity: "Low" }),
           metadata: { tenant: tenantContext.tenant_id, version: "v1" },
         };
       },
@@ -393,7 +388,7 @@ test("detection routes require authentication, tenant match, and report permissi
   assert.equal(contradictory.status, 403);
   assert.equal(insufficient.status, 403);
   assert.equal(permitted.status, 200);
-  assert.equal(permittedBody.report.tenantId, alphaTenant.tenant_id);
+  assert.equal(permittedBody.report.metadata.tenant.tenantId, alphaTenant.tenant_id);
   assert.deepEqual(observedStorageTenants, [alphaTenant.tenant_id]);
 });
 

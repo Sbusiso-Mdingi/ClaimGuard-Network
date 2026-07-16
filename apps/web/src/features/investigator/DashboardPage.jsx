@@ -1,6 +1,13 @@
 import React, { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowUpRight, Building2, FileText, Gauge, Radar, ShieldAlert, ShieldCheck } from "lucide-react";
+import AlertTriangle from "lucide-react/dist/esm/icons/alert-triangle.mjs";
+import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.mjs";
+import Building2 from "lucide-react/dist/esm/icons/building-2.mjs";
+import FileText from "lucide-react/dist/esm/icons/file-text.mjs";
+import Gauge from "lucide-react/dist/esm/icons/gauge.mjs";
+import Radar from "lucide-react/dist/esm/icons/radar.mjs";
+import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
+import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
 import { Skeleton } from "../../components/ui/skeleton";
 import { PageFrame, SectionCard, StatCard, MetricPill, StatusIndicator, RiskScoreBar, severityStatusTone } from "./InvestigatorUI";
 
@@ -57,13 +64,13 @@ function SeverityBreakdown({ detections }) {
 }
 
 export function DashboardPage({ metrics, status, lastRefresh }) {
-  const totalClaims = metrics.totalClaims ?? 0;
-  const highRiskClaims = Number.isFinite(metrics.highRiskClaims) ? metrics.highRiskClaims : 0;
-  const averageRiskScore = Number.isFinite(metrics.averageRiskScore) ? metrics.averageRiskScore : 0;
+  const totalClaims = Number.isFinite(metrics.totalClaims) ? metrics.totalClaims : "Unavailable";
+  const highRiskClaims = Number.isFinite(metrics.highRiskClaims) ? metrics.highRiskClaims : "Unavailable";
+  const averageRiskScore = Number.isFinite(metrics.averageRiskScore) ? metrics.averageRiskScore : "Unavailable";
   const confirmedFraud = metrics.recentDetections.filter((item) => item.status === "CONFIRMED_FRAUD").length;
   const openInvestigations = metrics.recentDetections.filter((item) => item.status === "UNDER_INVESTIGATION").length;
   const providersFlagged = metrics.recentDetections.length;
-  const activeNetworks = Number.isFinite(metrics.activeFraudSchemes) ? metrics.activeFraudSchemes : 0;
+  const activeNetworks = Number.isFinite(metrics.activeFraudSchemes) ? metrics.activeFraudSchemes : "Unavailable";
 
   if (status === "loading") {
     return (
@@ -154,7 +161,7 @@ export function DashboardPage({ metrics, status, lastRefresh }) {
                 </div>
                 <AlertTriangle className="h-6 w-6 text-primary" />
               </div>
-              <RiskScoreBar score={averageRiskScore} className="mt-3" />
+              {Number.isFinite(averageRiskScore) ? <RiskScoreBar score={averageRiskScore} className="mt-3" /> : null}
               <p className="mt-2 text-sm text-muted-foreground">Mean score across the currently indexed claims.</p>
             </div>
 
@@ -166,7 +173,7 @@ export function DashboardPage({ metrics, status, lastRefresh }) {
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
               <div className="rounded-xl border border-border/70 px-4 py-3">
                 <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">High-risk claim rate</p>
-                <p className="mt-1 text-lg font-semibold">{totalClaims ? `${Math.round((highRiskClaims / totalClaims) * 100)}%` : "0%"}</p>
+                <p className="mt-1 text-lg font-semibold">{Number.isFinite(totalClaims) && Number.isFinite(highRiskClaims) && totalClaims > 0 ? `${Math.round((highRiskClaims / totalClaims) * 100)}%` : "Unavailable"}</p>
               </div>
               <div className="rounded-xl border border-border/70 px-4 py-3">
                 <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Recent activity</p>

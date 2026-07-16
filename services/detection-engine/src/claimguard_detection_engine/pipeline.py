@@ -82,22 +82,22 @@ def build_internal_graph(normalized_claims: list[NormalizedClaim]) -> GraphDocum
     for claim in normalized_claims:
         claimant_entity_id = f"claimant:{claim.claimant_id}"
         provider_entity_id = f"provider:{claim.provider_id}"
-        phone_entity_id = f"phone:{claim.phone}"
-        email_entity_id = f"email:{claim.email}"
-        address_entity_id = f"address:{claim.address}"
-        bank_entity_id = f"bank_account:{claim.bank_account}"
-        device_entity_id = f"device:{claim.device_id}"
-        ip_entity_id = f"ip:{claim.ip_address}"
+        phone_entity_id = _stable_token("phone", claim.phone)
+        email_entity_id = _stable_token("email", claim.email)
+        address_entity_id = _stable_token("address", claim.address)
+        bank_entity_id = _stable_token("bank_account", claim.bank_account)
+        device_entity_id = _stable_token("device", claim.device_id)
+        ip_entity_id = _stable_token("ip", claim.ip_address)
 
         for entity in (
             _entity("claimant", claimant_entity_id, claim.claimant_id),
             _entity("provider", provider_entity_id, claim.provider_id),
-            _entity("phone", phone_entity_id, claim.phone),
-            _entity("email", email_entity_id, claim.email),
-            _entity("address", address_entity_id, claim.address),
-            _entity("bank_account", bank_entity_id, claim.bank_account),
-            _entity("device", device_entity_id, claim.device_id),
-            _entity("ip", ip_entity_id, claim.ip_address),
+            _entity("phone", phone_entity_id),
+            _entity("email", email_entity_id),
+            _entity("address", address_entity_id),
+            _entity("bank_account", bank_entity_id),
+            _entity("device", device_entity_id),
+            _entity("ip", ip_entity_id),
         ):
             entities[entity["entity_id"]] = entity
 

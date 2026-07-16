@@ -12,7 +12,7 @@ export function NetworkPage({ graph }) {
   const [selectedNodeId, setSelectedNodeId] = useState(null);
 
   const nodes = useMemo(() => {
-    const entities = graph?.entities || [];
+    const entities = graph?.nodes || [];
     return entities.map((entity, idx) => ({
       id: entity.entity_id,
       position: { x: (idx % 8) * 180, y: Math.floor(idx / 8) * 120 },
@@ -27,14 +27,14 @@ export function NetworkPage({ graph }) {
 
   const selectedDetails = useMemo(() => {
     if (!selectedNodeId) return null;
-    const entity = (graph?.entities || []).find((item) => item.entity_id === selectedNodeId) || null;
-    const links = (graph?.relationships || []).filter((rel) => rel.source_entity_id === selectedNodeId || rel.target_entity_id === selectedNodeId);
+    const entity = (graph?.nodes || []).find((item) => item.entity_id === selectedNodeId) || null;
+    const links = (graph?.edges || []).filter((rel) => rel.source_entity_id === selectedNodeId || rel.target_entity_id === selectedNodeId);
     return { entity, links };
   }, [graph, selectedNodeId]);
 
   const graphStats = useMemo(() => {
-    const entities = graph?.entities || [];
-    const relationships = graph?.relationships || [];
+    const entities = graph?.nodes || [];
+    const relationships = graph?.edges || [];
     return {
       entities: entities.length,
       relationships: relationships.length,
@@ -44,7 +44,7 @@ export function NetworkPage({ graph }) {
   }, [graph, selectedDetails]);
 
   const edges = useMemo(() => {
-    const relationships = graph?.relationships || [];
+    const relationships = graph?.edges || [];
     const connected = new Set();
     if (selectedNodeId) {
       relationships.forEach((rel) => {
@@ -87,7 +87,7 @@ export function NetworkPage({ graph }) {
             <StatusIndicator key="selected" variant="badge">{selectedNodeId ? "Node selected" : "No node selected"}</StatusIndicator>,
           ]}
         >
-          {(graph?.entities || []).length === 0 ? (
+          {(graph?.nodes || []).length === 0 ? (
             <p className="rounded-2xl border border-dashed border-border p-8 text-sm text-muted-foreground">No graph entities found in current snapshot.</p>
           ) : (
             <div className="relative h-[620px] overflow-hidden rounded-2xl border border-border/70 bg-background/70" data-testid="network-graph">

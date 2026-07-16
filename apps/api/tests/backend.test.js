@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
+import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
 
 import { createBackendApp } from "../src/backend.js";
 
@@ -115,10 +116,18 @@ test("trpc ping endpoint returns pong", async () => {
 });
 
 function createReportStorageStub(report) {
+  const risk = report?.detection?.risk_score || {};
+  const canonicalReport = report?.contractVersion ? report : createCanonicalDetectionReport({
+    riskScore: Number.isFinite(risk.riskScore) ? risk.riskScore : null,
+    severity: risk.severity || null,
+    reasons: risk.reasons || [],
+    nodes: report?.detection?.entities || [],
+    edges: report?.detection?.relationships || [],
+  });
   return {
     async getLatestReport() {
       return {
-        report,
+        report: canonicalReport,
         metadata: {
           source: "test",
           version: "test-v1",
@@ -162,11 +171,11 @@ test("detection report endpoint returns a configured report", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(json.available, true);
-  assert.equal(json.report.schemes[0].scheme_id, "scheme_a");
-  assert.equal(json.report.detection.risk_score.riskScore, 87);
+  assert.equal(json.report.contractVersion, "1.0");
+  assert.equal(json.report.risk.riskScore, 87);
 });
 
-test("detection report endpoint includes runtime ledger reference when available", async () => {
+test("detection report endpoint does not mutate the detection artifact with runtime ledger data", async () => {
   const app = createBackendApp({
     reportStorage: createReportStorageStub({
       detection: {
@@ -197,11 +206,10 @@ test("detection report endpoint includes runtime ledger reference when available
 
   assert.equal(response.status, 200);
   assert.equal(json.available, true);
-  assert.equal(json.report.detection.ledger_reference.available, true);
-  assert.equal(json.report.detection.ledger_reference.entry.sequenceNumber, 9);
+  assert.equal(json.report.ledgerReference, undefined);
 });
 
-test("detection report endpoint marks ledger unavailable when no confirmed fraud entries exist", async () => {
+test("detection report endpoint does not invent a ledger reference when none exists", async () => {
   const app = createBackendApp({
     reportStorage: createReportStorageStub({
       detection: {
@@ -225,8 +233,7 @@ test("detection report endpoint marks ledger unavailable when no confirmed fraud
   const json = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(json.report.detection.ledger_reference.available, false);
-  assert.equal(json.report.detection.ledger_reference.entry, null);
+  assert.equal(json.report.ledgerReference, undefined);
 });
 
 test("detection graph endpoint returns graph payload", async () => {
@@ -237,7 +244,7 @@ test("detection graph endpoint returns graph payload", async () => {
           entity_count: 3,
           relationship_count: 4,
         },
-        entities: [{ entity_id: "claimant:M1" }],
+        entities: [{ entity_id: "claimant:M1" }, { entity_id: "device:D1" }],
         relationships: [{ source_entity_id: "claimant:M1", target_entity_id: "device:D1" }],
       },
     }),
@@ -250,7 +257,7 @@ test("detection graph endpoint returns graph payload", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(json.available, true);
-  assert.equal(json.graph.summary.entity_count, 3);
+  assert.equal(json.graph.summary.entity_count, 2);
 });
 
 test("detection risk endpoint returns deterministic risk payload", async () => {
@@ -275,6 +282,19 @@ test("detection risk endpoint returns deterministic risk payload", async () => {
   assert.equal(json.available, true);
   assert.equal(json.risk.riskScore, 72);
   assert.equal(json.risk.severity, "High");
+});
+
+test("unsupported detection report contract returns a typed unavailable response", async () => {
+  const report = createCanonicalDetectionReport();
+  report.contractVersion = "2.0";
+  const app = createBackendApp({ reportStorage: createReportStorageStub(report) });
+  const response = await app.request("http://localhost/detection/report", {
+    headers: developmentAuthHeaders(),
+  });
+  const json = await response.json();
+  assert.equal(response.status, 422);
+  assert.equal(json.available, false);
+  assert.equal(json.code, "REPORT_CONTRACT_UNSUPPORTED");
 });
 
 test("detection analyze endpoint is deprecated when no producer proxy is configured", async () => {

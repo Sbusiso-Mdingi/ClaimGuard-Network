@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 
+from .snapshot import TenantSnapshot
+
 
 def load_claims_from_json(claims_json_path: Path) -> list[dict[str, object]]:
     payload = json.loads(claims_json_path.read_text(encoding="utf-8"))
@@ -15,48 +17,53 @@ def load_claims_from_json(claims_json_path: Path) -> list[dict[str, object]]:
 
 
 def build_report_from_ingested_claims(claims: list[dict[str, object]]) -> dict[str, object]:
+    raise ValueError(
+        "Claim-only runtime detection is unsupported; authoritative members, providers, and schemes are required."
+    )
+
+
+def _detection_imports():
     try:
-        from claimguard_detection_engine.pipeline import run_detection_pipeline
+        from claimguard_detection_engine.loader import build_data_bundle_from_records
+        from claimguard_detection_engine.orchestration import DetectionSnapshot, run_detection_orchestration
     except ModuleNotFoundError:
         repo_root = Path(__file__).resolve().parents[4]
         detection_engine_src = repo_root / "services" / "detection-engine" / "src"
         if str(detection_engine_src) not in sys.path:
             sys.path.append(str(detection_engine_src))
-        from claimguard_detection_engine.pipeline import run_detection_pipeline
+        from claimguard_detection_engine.loader import build_data_bundle_from_records
+        from claimguard_detection_engine.orchestration import DetectionSnapshot, run_detection_orchestration
+    return build_data_bundle_from_records, DetectionSnapshot, run_detection_orchestration
 
-    detection = run_detection_pipeline(
-        claims,
-        ledger_reference={
-            "type": "runtime-ledger",
-            "available": False,
-            "note": "Attach runtime ledger entries from the API service when database-backed ledger is enabled.",
-        },
+
+def build_report_from_tenant_snapshot(
+    snapshot: TenantSnapshot,
+    *,
+    correlation_id: str,
+    top_n: int = 10,
+) -> dict[str, object]:
+    build_data_bundle_from_records, DetectionSnapshot, run_detection_orchestration = _detection_imports()
+    bundle = build_data_bundle_from_records(
+        schemes=snapshot.schemes,
+        members=snapshot.members,
+        providers=snapshot.providers,
+        claims=snapshot.claims,
+        data_dir=Path("tenant-snapshot"),
     )
-
-    return {
-        "data_dir": "ingested-claims",
-        "schemes": [],
-        "network": {
-            "exact_banking_links": [],
-            "behavioral_provider_links": [],
-            "resolved_entities": [],
-            "network_nodes": [],
-        },
-        "evaluation": {
-            "available": False,
-            "single_scheme": {
-                "detected": 0,
-                "total": 0,
-                "recall": 0.0,
-            },
-            "cross_scheme": {
-                "detected": 0,
-                "total": 0,
-                "recall": 0.0,
-            },
-        },
-        "detection": detection,
-    }
+    return run_detection_orchestration(
+        DetectionSnapshot(
+            bundle=bundle,
+            tenant_id=snapshot.tenant_id,
+            tenant_slug=snapshot.tenant_slug,
+            tenant_display_name=snapshot.tenant_display_name,
+            snapshot_cutoff=snapshot.captured_at,
+            source_type="mysql_tenant_snapshot",
+            source_watermark=snapshot.watermark,
+            generation_correlation_id=correlation_id,
+            producer_version="report-producer-0.2.0",
+        ),
+        top_n=top_n,
+    )
 
 
 def filter_claims_for_tenant(

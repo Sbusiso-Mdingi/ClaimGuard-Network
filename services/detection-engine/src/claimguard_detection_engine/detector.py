@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from statistics import median
+import hashlib
+import json
+from dataclasses import asdict
 
-from .analytics import analyze_member, analyze_provider, build_report
-from .loader import SchemeData, load_scheme_directory
+from .analytics import analyze_member, analyze_provider
+from .loader import SchemeData, load_data_bundle, load_scheme_directory
+from .orchestration import DetectionSnapshot, run_detection_orchestration
 
 
 def analyze_scheme_directory(scheme_dir: Path, top_n: int = 10) -> dict[str, object]:
@@ -28,8 +32,38 @@ def analyze_scheme_directory(scheme_dir: Path, top_n: int = 10) -> dict[str, obj
     }
 
 
-def analyze_directory(data_dir: Path, top_n: int = 10) -> dict[str, object]:
-    return build_report(data_dir, top_n=top_n)
+def analyze_directory(
+    data_dir: Path,
+    top_n: int = 10,
+    *,
+    tenant_id: str = "tenant_default",
+    tenant_slug: str | None = None,
+    correlation_id: str = "static-csv",
+) -> dict[str, object]:
+    bundle = load_data_bundle(data_dir)
+    canonical_rows = {
+        "claims": [asdict(claim) for scheme in bundle.schemes.values() for claim in scheme.claims],
+        "providers": [asdict(provider) for scheme in bundle.schemes.values() for provider in scheme.providers.values()],
+        "members": [asdict(member) for scheme in bundle.schemes.values() for member in scheme.members.values()],
+    }
+    watermark = hashlib.sha256(
+        json.dumps(canonical_rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    service_dates = [claim.service_date for scheme in bundle.schemes.values() for claim in scheme.claims]
+    snapshot_cutoff = f"{max(service_dates)}T23:59:59Z" if service_dates else "1970-01-01T00:00:00Z"
+    return run_detection_orchestration(
+        DetectionSnapshot(
+            bundle=bundle,
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+            tenant_display_name=tenant_slug,
+            snapshot_cutoff=snapshot_cutoff,
+            source_type="static_csv",
+            source_watermark=f"sha256:{watermark}",
+            generation_correlation_id=correlation_id,
+        ),
+        top_n=top_n,
+    )
 
 
 def _provider_claims(scheme: SchemeData) -> dict[str, list]:

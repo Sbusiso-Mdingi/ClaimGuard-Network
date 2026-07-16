@@ -1,5 +1,5 @@
 import React from "react";
-import { Clock3 } from "lucide-react";
+import Clock3 from "lucide-react/dist/esm/icons/clock-3.mjs";
 import { PageFrame, SectionCard, MetricPill } from "./InvestigatorUI";
 
 export function HistoryPage({ snapshots }) {

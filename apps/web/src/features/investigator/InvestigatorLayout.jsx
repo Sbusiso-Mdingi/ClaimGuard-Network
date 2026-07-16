@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { Activity, Menu, Moon, Sparkles, Sun, X } from "lucide-react";
+import Activity from "lucide-react/dist/esm/icons/activity.mjs";
+import Menu from "lucide-react/dist/esm/icons/menu.mjs";
+import Moon from "lucide-react/dist/esm/icons/moon.mjs";
+import Sparkles from "lucide-react/dist/esm/icons/sparkles.mjs";
+import Sun from "lucide-react/dist/esm/icons/sun.mjs";
+import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { useRole } from "../../context/RoleContext";

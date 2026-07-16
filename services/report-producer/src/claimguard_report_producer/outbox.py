@@ -208,6 +208,54 @@ class PyMySqlOutboxRepository:
             params=[job.id, job.tenant_id, worker_id],
         )
 
+    def mark_completed_many(
+        self,
+        *,
+        jobs: list[OutboxJob],
+        worker_id: str,
+        report_id: str,
+        watermark: str,
+    ) -> bool:
+        if not jobs:
+            return True
+        tenant_ids = {job.tenant_id for job in jobs}
+        if len(tenant_ids) != 1:
+            raise ValueError("Coalesced outbox completion cannot cross tenant boundaries.")
+        connection = self.connection_factory()
+        try:
+            connection.begin()
+            with connection.cursor() as cursor:
+                affected = 0
+                for job in jobs:
+                    affected += cursor.execute(
+                        """
+                        UPDATE claim_processing_outbox
+                        SET
+                          status = 'completed',
+                          completed_at = UTC_TIMESTAMP(3),
+                          covered_report_id = %s,
+                          covered_watermark = %s,
+                          covered_at = UTC_TIMESTAMP(3),
+                          leased_at = NULL,
+                          lease_expires_at = NULL,
+                          leased_by = NULL,
+                          last_error = NULL
+                        WHERE id = %s AND tenant_id = %s
+                          AND status = 'processing' AND leased_by = %s
+                        """,
+                        [report_id, watermark, job.id, job.tenant_id, worker_id],
+                    )
+            if affected != len(jobs):
+                connection.rollback()
+                return False
+            connection.commit()
+            return True
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def mark_retry(
         self,
         *,

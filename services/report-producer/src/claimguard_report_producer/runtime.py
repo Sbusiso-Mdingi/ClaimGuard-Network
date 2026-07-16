@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .contract import ReportContractError, validate_detection_report
 from .publisher import PublishedReport, ReportPublisher
 
 
-def _default_detector(data_dir: Path, top_n: int) -> dict[str, object]:
+def _default_detector(data_dir: Path, top_n: int, tenant_id: str, correlation_id: str) -> dict[str, object]:
     from claimguard_detection_engine.detector import analyze_directory
 
-    return analyze_directory(data_dir, top_n=top_n)
+    return analyze_directory(data_dir, top_n=top_n, tenant_id=tenant_id, correlation_id=correlation_id)
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,7 @@ class DetectionReportProducer:
         top_n: int = 10,
         max_retries: int = 2,
         retry_delay_seconds: float = 1.0,
-        detector: Callable[[Path, int], dict[str, object]] | None = None,
+        detector: Callable[..., dict[str, object]] | None = None,
         tenant_id: str = "tenant_default",
         logger=None,
     ) -> None:
@@ -65,10 +66,14 @@ class DetectionReportProducer:
                         "tenant_id": self.tenant_id,
                     },
                 )
-                report = self.detector(self.data_dir, self.top_n)
+                if self.detector is _default_detector:
+                    report = self.detector(self.data_dir, self.top_n, self.tenant_id, trigger)
+                else:
+                    report = self.detector(self.data_dir, self.top_n)
+                validate_detection_report(report, expected_tenant_id=self.tenant_id)
                 published = self.publisher.publish(
                     report,
-                    run_id=f"{trigger}-{self.tenant_id}-{attempt}",
+                    run_id=f"{trigger}-{self.tenant_id}",
                     tenant_id=self.tenant_id,
                 )
                 self._log(
@@ -113,6 +118,8 @@ class DetectionReportProducer:
                         "attempt_duration_ms": round((time.perf_counter() - attempt_started_at) * 1000, 3),
                     },
                 )
+                if isinstance(error, ReportContractError):
+                    raise
                 if attempt > self.max_retries:
                     break
                 time.sleep(self.retry_delay_seconds)

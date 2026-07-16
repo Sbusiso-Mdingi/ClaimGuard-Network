@@ -77,8 +77,8 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
   const claim = claims.find((row) => row.claimId === claimId);
 
   const related = useMemo(() => {
-    const relationships = graph?.relationships || report?.detection?.relationships || [];
-    const entities = graph?.entities || report?.detection?.entities || [];
+    const relationships = graph?.edges || [];
+    const entities = graph?.nodes || [];
     const entityMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
     const claimRelationships = relationships.filter((rel) => rel.claim_id === claimId);
     const entityIds = new Set();

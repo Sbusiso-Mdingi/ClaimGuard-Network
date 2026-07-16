@@ -7,7 +7,6 @@ import sys
 
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
 from .runtime import DetectionReportProducer
-from .sources import build_report_from_ingested_claims, filter_claims_for_tenant, load_claims_from_json
 from .worker import create_worker_from_environment
 
 
@@ -75,25 +74,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.data_dir and args.claims_json:
         parser.error("Use only one of --data-dir or --claims-json.")
 
+    if args.claims_json:
+        parser.error("Claim-only JSON report generation is unsupported; use the tenant snapshot worker.")
+
     if args.backend == "azure_blob":
         publisher = AzureBlobReportPublisher.from_environment()
     else:
-        publisher = FileReportPublisher(args.output_dir)
-
-    detector = None
-    runtime_data_dir = args.data_dir or Path(".")
-    if args.claims_json:
-        claims = load_claims_from_json(args.claims_json)
-        tenant_claims = filter_claims_for_tenant(claims, tenant_id=args.tenant_id)
-
-        def detector(_data_dir: Path, _top_n: int) -> dict[str, object]:
-            return build_report_from_ingested_claims(tenant_claims)
+        retention_versions = int(os.environ.get("REPORT_RETENTION_VERSIONS", "10"))
+        publisher = FileReportPublisher(args.output_dir, retention_versions=max(1, retention_versions))
 
     producer = DetectionReportProducer(
-        data_dir=runtime_data_dir,
+        data_dir=args.data_dir,
         publisher=publisher,
         top_n=args.top_n,
-        detector=detector,
         tenant_id=args.tenant_id,
     )
     result = producer.run(trigger=args.trigger)

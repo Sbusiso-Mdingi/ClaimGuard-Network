@@ -360,7 +360,6 @@ def _exact_banking_links(bundle: DataBundle) -> list[dict[str, object]]:
         links.append(
             {
                 "link_type": "exact_banking_match",
-                "synthetic_banking_detail": banking_detail,
                 "providers": [
                     {
                         "provider_id": provider.provider_id,
@@ -466,12 +465,13 @@ def _connected_components(edges: list[tuple[str, str]]) -> list[list[str]]:
     return list(buckets.values())
 
 
-def evaluate_against_ground_truth(bundle: DataBundle, provider_findings: dict[str, Finding], member_findings: dict[str, Finding], exact_links: list[dict[str, object]], fuzzy_links: list[dict[str, object]]) -> dict[str, object]:
-    truth_path = bundle.data_dir / "ground_truth" / "planted_fraud.json"
-    if not truth_path.exists():
-        return {"available": False, "message": "ground truth not found"}
-
-    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+def evaluate_against_ground_truth(bundle: DataBundle, provider_findings: dict[str, Finding], member_findings: dict[str, Finding], exact_links: list[dict[str, object]], fuzzy_links: list[dict[str, object]], ground_truth: dict[str, object] | None = None) -> dict[str, object]:
+    truth = ground_truth
+    if truth is None:
+        truth_path = bundle.data_dir / "ground_truth" / "planted_fraud.json"
+        if not truth_path.exists():
+            return {"available": False, "message": "ground truth not found"}
+        truth = json.loads(truth_path.read_text(encoding="utf-8"))
     detected_single_scheme = 0
     total_single_scheme = len(truth.get("single_scheme_fraud", []))
     provider_positive = {entity_id for entity_id, finding in provider_findings.items() if finding.score >= 55.0}
@@ -511,8 +511,7 @@ def evaluate_against_ground_truth(bundle: DataBundle, provider_findings: dict[st
     }
 
 
-def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
-    bundle = load_data_bundle(data_dir)
+def analyze_bundle(bundle: DataBundle, top_n: int = 10, ground_truth: dict[str, object] | None = None) -> dict[str, object]:
     scheme_reports: list[dict[str, object]] = []
     all_provider_findings: dict[str, Finding] = {}
     all_member_findings: dict[str, Finding] = {}
@@ -595,7 +594,14 @@ def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
             }
         )
 
-    evaluation = evaluate_against_ground_truth(bundle, all_provider_findings, all_member_findings, exact_links, fuzzy_links)
+    evaluation = evaluate_against_ground_truth(
+        bundle,
+        all_provider_findings,
+        all_member_findings,
+        exact_links,
+        fuzzy_links,
+        ground_truth=ground_truth,
+    )
 
     raw_claims: list[dict[str, object]] = []
     for scheme in bundle.schemes.values():
@@ -626,7 +632,7 @@ def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
     )
 
     return {
-        "data_dir": str(data_dir),
+        "data_dir": str(bundle.data_dir),
         "schemes": scheme_reports,
         "network": {
             "exact_banking_links": exact_links,
@@ -637,3 +643,7 @@ def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
         "evaluation": evaluation,
         "detection": detection,
     }
+
+
+def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
+    return analyze_bundle(load_data_bundle(data_dir), top_n=top_n)

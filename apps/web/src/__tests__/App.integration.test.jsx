@@ -2,20 +2,30 @@ import React from "react";
 import { act, render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
-import { demoInvestigatorArtifacts } from "../features/investigator/demoInvestigatorData";
 
 const reportPayload = {
   available: true,
   report: {
-    schemes: [
-      {
-        scheme_id: "S1",
-        provider_findings: [{ score: 80 }],
-        member_findings: [],
-      },
+    metadata: { generatedAt: "2026-07-16T00:00:00.000Z" },
+    summary: { totalClaims: 2, highRiskClaims: 2, averageRiskScore: 82, activeFraudPatterns: 2 },
+    claims: [
+      { claimId: "C-1", schemeId: "S1", memberId: "Alex", providerId: "P-100", riskScore: 82, severity: "High", processingStatus: null, ruleHits: [{ title: "Suspicious repeat billing" }], evidenceReferences: [] },
+      { claimId: "C-2", schemeId: "S1", memberId: "Blair", providerId: "P-200", riskScore: 74, severity: "High", processingStatus: null, ruleHits: [{ title: "Rapid provider hopping" }], evidenceReferences: [] },
     ],
-    detection: {
-      relationships: [
+    history: {
+      ruleExecution: { triggeredRules: [
+        { rule_id: "R-1", title: "Suspicious repeat billing", weight: 10 },
+        { rule_id: "R-2", title: "Rapid provider hopping", weight: 5 },
+      ] },
+    },
+    graph: {
+      nodes: [
+        { entity_id: "claimant:Alex", entity_type: "claimant" },
+        { entity_id: "provider:P-100", entity_type: "provider" },
+        { entity_id: "claimant:Blair", entity_type: "claimant" },
+        { entity_id: "provider:P-200", entity_type: "provider" },
+      ],
+      edges: [
         {
           source_entity_id: "claimant:Alex",
           target_entity_id: "provider:P-100",
@@ -29,40 +39,14 @@ const reportPayload = {
           claim_id: "C-2",
         },
       ],
-      triggered_rules: [
-        {
-          rule_id: "R-1",
-          title: "Suspicious repeat billing",
-          weight: 10,
-          evidence: ["claimant:Alex", "provider:P-100"],
-        },
-        {
-          rule_id: "R-2",
-          title: "Rapid provider hopping",
-          weight: 5,
-          evidence: ["claimant:Blair"],
-        },
-      ],
-      evidence: ["claimant:Alex linked to provider:P-100"],
-      ledger_reference: {
-        available: true,
-        entry: { entryType: "ledger_event" },
-      },
+      summary: { entity_count: 4, relationship_count: 2 },
     },
   },
 };
 
 const graphPayload = {
   available: true,
-  graph: {
-    entities: [
-      { entity_id: "claimant:Alex", entity_type: "claimant" },
-      { entity_id: "provider:P-100", entity_type: "provider" },
-      { entity_id: "claimant:Blair", entity_type: "claimant" },
-      { entity_id: "provider:P-200", entity_type: "provider" },
-    ],
-    relationships: reportPayload.report.detection.relationships,
-  },
+  graph: reportPayload.report.graph,
 };
 
 const riskPayload = {
@@ -165,31 +149,12 @@ test("static snapshot mode stops polling while live mode continues", async () =>
   expect(global.fetch).toHaveBeenCalledTimes(6);
 }, 10000);
 
-test("keeps shell and navigation available when backend APIs are unavailable", async () => {
-  const user = userEvent.setup();
+test("shows unavailable state without substituting demo analytics when backend APIs fail", async () => {
   mockFetchFailure();
 
   render(<AppRoot />);
 
-  expect(await screen.findByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
+  expect(await screen.findByText(/Dashboard Unavailable/i)).toBeInTheDocument();
   expect(screen.getByText("ClaimGuard")).toBeInTheDocument();
-
-  expect(await screen.findByText(/Total claims/i)).toBeInTheDocument();
-  expect(screen.getAllByText(String(demoInvestigatorArtifacts.claims.length)).length).toBeGreaterThan(0);
-
-  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
-  expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: demoInvestigatorArtifacts.claims[0].claimId })).toBeInTheDocument();
-
-  await user.click(screen.getByRole("link", { name: /Network/i }));
-  expect(await screen.findByRole("heading", { name: /Relationship intelligence/i })).toBeInTheDocument();
-  expect(screen.getByText(/Select a node to inspect connected entities/i)).toBeInTheDocument();
-
-  await user.click(screen.getByRole("link", { name: /Risk/i }));
-  expect(await screen.findByRole("heading", { name: /Explainability summary/i })).toBeInTheDocument();
-  expect(screen.getByText(/Shared bank account links the highest-risk provider nodes across schemes/i)).toBeInTheDocument();
-
-  await user.click(screen.getByRole("link", { name: /History/i }));
-  expect(await screen.findByRole("heading", { name: /Snapshot timeline/i })).toBeInTheDocument();
-  expect(screen.getAllByText(/2026/).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/Total claims/i)).not.toBeInTheDocument();
 });

@@ -5,8 +5,10 @@ import { PageFrame, SectionCard, StatusIndicator, severityStatusTone } from "./I
 
 export function RiskPage({ risk, report }) {
   const reasons = risk?.reasons || [];
-  const rules = report?.detection?.triggered_rules || [];
-  const evidence = report?.detection?.evidence || [];
+  const rules = report?.history?.ruleExecution?.triggeredRules || [];
+  const evidence = report?.claims?.flatMap((claim) => claim.evidenceReferences || []) || [];
+  const riskAvailable = Number.isFinite(risk?.riskScore);
+  const severity = typeof risk?.severity === "string" ? risk.severity : "Unavailable";
 
   return (
     <PageFrame
@@ -14,7 +16,7 @@ export function RiskPage({ risk, report }) {
       title="Explainability summary"
       description="Risk score, severity, triggered rules, and evidence are surfaced in a compact review-friendly format."
       actions={[
-        <StatusIndicator key="severity" tone={severityStatusTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</StatusIndicator>,
+        <StatusIndicator key="severity" tone={riskAvailable ? severityStatusTone(severity) : "warning"}>{severity}</StatusIndicator>,
       ]}
     >
       <SectionCard title="Risk score" description="The score and severity indicate how aggressively this claim should be reviewed.">
@@ -22,11 +24,11 @@ export function RiskPage({ risk, report }) {
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Current score</p>
-              <p className="font-data mt-1 text-5xl font-semibold tracking-tight">{risk?.riskScore ?? 0}</p>
+              <p className="font-data mt-1 text-5xl font-semibold tracking-tight">{riskAvailable ? risk.riskScore : "Unavailable"}</p>
             </div>
-            <StatusIndicator tone={severityStatusTone(risk?.severity || "Low")}>{risk?.severity || "Low"}</StatusIndicator>
+            <StatusIndicator tone={riskAvailable ? severityStatusTone(severity) : "warning"}>{severity}</StatusIndicator>
           </div>
-          <Progress value={risk?.riskScore ?? 0} className="mt-4 h-2" />
+          {riskAvailable ? <Progress value={risk.riskScore} className="mt-4 h-2" /> : null}
         </div>
       </SectionCard>
 

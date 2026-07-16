@@ -1,4 +1,5 @@
 import { TenantReportNotFoundError } from "../application-errors.js";
+import { parseDetectionReport } from "@claimguard/shared-schema";
 
 function reportStorageFailure() {
   return {
@@ -8,6 +9,18 @@ function reportStorageFailure() {
       available: false,
       code: "REPORT_STORAGE_UNAVAILABLE",
       message: "The configured report storage could not be read yet.",
+    },
+  };
+}
+
+function reportContractFailure() {
+  return {
+    ok: false,
+    status: 422,
+    body: {
+      available: false,
+      code: "REPORT_CONTRACT_UNSUPPORTED",
+      message: "The latest report does not satisfy the supported detection contract.",
     },
   };
 }
@@ -100,9 +113,23 @@ export function createReportService({
         throw error;
       }
 
+      let report;
+      try {
+        report = parseDetectionReport(loaded.report, tenantContext.tenant_id);
+        const pointerReportId = loaded.metadata?.reportId || loaded.metadata?.version || null;
+        if (pointerReportId && /^[a-f0-9]{64}$/.test(pointerReportId) && pointerReportId !== report.metadata.reportId) {
+          return reportContractFailure();
+        }
+        if (loaded.metadata?.sourceWatermark && loaded.metadata.sourceWatermark !== report.metadata.source.watermark) {
+          return reportContractFailure();
+        }
+      } catch {
+        return reportContractFailure();
+      }
+
       return {
         ok: true,
-        report: loaded.report,
+        report,
         metadata: loaded.metadata || null,
       };
     } catch (error) {
@@ -255,23 +282,12 @@ export function createReportService({
         return loaded;
       }
 
-      const runtimeLedgerReference = await buildRuntimeLedgerReference(ledgerRepository);
-      const report = runtimeLedgerReference
-        ? {
-            ...loaded.report,
-            detection: {
-              ...(loaded.report?.detection || {}),
-              ledger_reference: runtimeLedgerReference,
-            },
-          }
-        : loaded.report;
-
       return {
         ok: true,
         status: 200,
         body: {
           available: true,
-          report,
+          report: loaded.report,
         },
       };
     },
@@ -282,32 +298,12 @@ export function createReportService({
         return loaded;
       }
 
-      const graph = loaded.report?.detection?.graph_summary
-        ? {
-            summary: loaded.report.detection.graph_summary,
-            entities: loaded.report.detection.entities || [],
-            relationships: loaded.report.detection.relationships || [],
-          }
-        : {
-            summary: {
-              entity_count: (loaded.report.network?.network_nodes || []).length,
-              relationship_count:
-                (loaded.report.network?.exact_banking_links || []).length +
-                (loaded.report.network?.behavioral_provider_links || []).length,
-            },
-            entities: loaded.report.network?.network_nodes || [],
-            relationships: [
-              ...(loaded.report.network?.exact_banking_links || []),
-              ...(loaded.report.network?.behavioral_provider_links || []),
-            ],
-          };
-
       return {
         ok: true,
         status: 200,
         body: {
           available: true,
-          graph,
+          graph: loaded.report.graph,
         },
       };
     },
@@ -318,18 +314,12 @@ export function createReportService({
         return loaded;
       }
 
-      const risk = loaded.report?.detection?.risk_score || {
-        riskScore: 0,
-        severity: "Low",
-        reasons: ["Detection risk is unavailable in the current report."],
-      };
-
       return {
         ok: true,
         status: 200,
         body: {
           available: true,
-          risk,
+          risk: loaded.report.risk,
         },
       };
     },
