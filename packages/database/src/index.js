@@ -67,6 +67,17 @@ export {
   runWithTenantContext,
 } from "./tenant-context-store.js";
 export { applyMigrations, defaultMigrationPath, defaultMigrationPaths } from "./migrate.js";
+export {
+  createSimulationStateRepository,
+  DEFAULT_SIMULATION_ID,
+  DEFAULT_SIMULATION_SCOPE_KEY,
+  SIMULATION_CHECKPOINT_VERSION,
+  SIMULATION_MODES,
+  SIMULATION_STATUSES,
+  SimulationCheckpointError,
+  SimulationConflictError,
+  SimulationLeaseLostError,
+} from "./simulation-state-repository.js";
 export { loadSyntheticPhase1Data, seedSyntheticDatabase } from "./seed.js";
 
 export const ledgerEntriesTable = mysqlTable("ledger_entries", {

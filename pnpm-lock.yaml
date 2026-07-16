@@ -48,6 +48,12 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
 
+  apps/simulator-worker:
+    dependencies:
+      '@claimguard/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+
   apps/web:
     dependencies:
       '@radix-ui/react-slot':

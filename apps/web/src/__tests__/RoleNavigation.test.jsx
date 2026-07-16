@@ -5,6 +5,10 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { RoleProvider } from "../context/RoleContext";
 import { InvestigatorLayout } from "../features/investigator/InvestigatorLayout";
 
+beforeEach(() => {
+  window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
+});
+
 function renderLayout() {
   return render(
     <RoleProvider>
@@ -12,7 +16,17 @@ function renderLayout() {
         <Routes>
           <Route
             path="/"
-            element={<InvestigatorLayout mode="static" setMode={() => {}} refreshNow={() => {}} lastRefresh={null} ledgerStatus="Not linked" />}
+            element={
+              <InvestigatorLayout
+                liveRefreshEnabled={false}
+                setLiveRefreshEnabled={() => {}}
+                simulatorState={{ status: "ready", simulator: { status: "paused", mode: "live" }, controlPending: false }}
+                sendSimulatorCommand={() => {}}
+                refreshNow={() => {}}
+                lastRefresh={null}
+                ledgerStatus="Not linked"
+              />
+            }
           >
             <Route index element={<div>dashboard content</div>} />
           </Route>
@@ -36,4 +50,13 @@ test("switching the dev role switcher to Scheme Administrator reveals admin nav 
 
   expect(await screen.findByRole("link", { name: /Scheme Administration/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Claims Explorer/i })).not.toBeInTheDocument();
+});
+
+test("only platform administrator sees simulator mutation controls", async () => {
+  const user = userEvent.setup();
+  renderLayout();
+  expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
+  await user.selectOptions(identitySelect, "platform-admin");
+  expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
 });

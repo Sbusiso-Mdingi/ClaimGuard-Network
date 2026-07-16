@@ -11,6 +11,7 @@ import { registerDetectionRoutes } from "./routes/detection-routes.js";
 import { registerInvestigationsRoutes } from "./routes/investigations-routes.js";
 import { registerLedgerRoutes } from "./routes/ledger-routes.js";
 import { registerRegistryRoutes } from "./routes/registry-routes.js";
+import { registerSimulationRoutes } from "./routes/simulation-routes.js";
 import { createClaimIngestionService } from "./services/claim-ingestion-service.js";
 import { createFraudConfirmationService } from "./services/fraud-confirmation-service.js";
 import { createFraudReversalService } from "./services/fraud-reversal-service.js";
@@ -79,6 +80,7 @@ export function createBackendApp({
   reportStorage = null,
   detectionAnalyzeProxyUrl = null,
   detectionReportPath = null,
+  simulationStateRepository = null,
 } = {}) {
   const resolvedReportStorage =
     reportStorage ||
@@ -162,6 +164,8 @@ export function createBackendApp({
   registerRegistryRoutes(app, {
     registryService: services.registryService,
   });
+
+  registerSimulationRoutes(app, { simulationStateRepository });
 
   app.all(`${backendRouterPath}/*`, (c) => {
     return fetchRequestHandler({

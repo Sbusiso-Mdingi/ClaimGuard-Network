@@ -29,4 +29,7 @@ test("applyMigrations executes all schema statements", async () => {
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS ledger_chain_heads")));
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS fraud_workflow_operations")));
   assert.ok(pool.statements.some((statement) => String(statement).includes("ADD COLUMN covered_report_id")));
+  assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS simulation_instances")));
+  assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS simulation_leases")));
+  assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS simulation_tick_history")));
 });

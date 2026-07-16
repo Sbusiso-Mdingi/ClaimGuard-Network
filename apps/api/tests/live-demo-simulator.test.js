@@ -418,9 +418,18 @@ function createMockApiClient(catalog) {
   };
 }
 
-async function createSimulatorHarness({ enabled, seed = 42, mode = null, staticMode = false, storyMode = "", catalog = null }) {
+async function createSimulatorHarness({
+  enabled,
+  seed = 42,
+  mode = null,
+  staticMode = false,
+  storyMode = "",
+  catalog = null,
+  initialCheckpoint = null,
+  existingApiClient = null,
+}) {
   const effectiveCatalog = catalog || createCatalog();
-  const apiClient = createMockApiClient(effectiveCatalog);
+  const apiClient = existingApiClient || createMockApiClient(effectiveCatalog);
   const resolvedMode = mode || (enabled ? "on" : "off");
 
   const simulator = createLiveDemoSimulator({
@@ -440,6 +449,7 @@ async function createSimulatorHarness({ enabled, seed = 42, mode = null, staticM
     timelineConfig: {
       startAt: "2026-01-01T08:00:00.000Z",
     },
+    initialCheckpoint,
   });
 
   await simulator.start();
@@ -687,4 +697,51 @@ test("static mode remains deterministic while API checks continue", async () => 
   assert.equal(snapshot.staticMode, true);
   assert.equal(snapshot.stats.apiCalls > 0, true);
   assert.equal(apiClient.state.calls.length > 0, true);
+});
+
+test("checkpoint restart resumes the next tick, ID counter, clock, and story step", async () => {
+  const first = await createSimulatorHarness({
+    enabled: true,
+    mode: "story",
+    storyMode: "identity_theft",
+    seed: 9001,
+  });
+  for (let index = 0; index < 12; index += 1) await first.simulator.runTick();
+  const checkpoint = first.simulator.getCheckpoint();
+  const priorClaimIds = new Set(first.apiClient.state.claims.map((claim) => claim.claim_id));
+
+  const restarted = await createSimulatorHarness({
+    enabled: true,
+    mode: "story",
+    storyMode: "identity_theft",
+    seed: 9001,
+    initialCheckpoint: checkpoint,
+    existingApiClient: first.apiClient,
+  });
+  const restored = restarted.simulator.getCheckpoint();
+  assert.equal(restored.tickNumber, checkpoint.tickNumber);
+  assert.equal(restored.claimSequence, checkpoint.claimSequence);
+  assert.equal(restored.simulatedTime, checkpoint.simulatedTime);
+  assert.equal(restored.storyProgress.currentStep, checkpoint.storyProgress.currentStep);
+
+  await restarted.simulator.runTick();
+  const advanced = restarted.simulator.getCheckpoint();
+  assert.equal(advanced.tickNumber, checkpoint.tickNumber + 1);
+  assert.equal(advanced.claimSequence >= checkpoint.claimSequence, true);
+  const newClaimIds = restarted.apiClient.state.claims
+    .map((claim) => claim.claim_id)
+    .filter((claimId) => !priorClaimIds.has(claimId));
+  assert.equal(newClaimIds.every((claimId) => !priorClaimIds.has(claimId)), true);
+});
+
+test("checkpoint projection excludes claim bodies and unsupported versions fail safely", async () => {
+  const { simulator } = await createSimulatorHarness({ enabled: true, seed: 88 });
+  for (let index = 0; index < 8; index += 1) await simulator.runTick();
+  const serialized = JSON.stringify(simulator.getCheckpoint());
+  assert.equal(serialized.includes('"billing_code"'), false);
+  assert.equal(serialized.includes('"amount"'), false);
+  assert.throws(
+    () => createLiveDemoSimulator({ enabled: true, initialCheckpoint: { version: 99, tickNumber: 0 } }),
+    /Unsupported simulator checkpoint version/,
+  );
 });

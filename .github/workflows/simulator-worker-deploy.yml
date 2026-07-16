@@ -1,0 +1,76 @@
+name: simulator-worker-deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_CLIENT_ID: dc32e620-8239-4f20-b5ae-ca3c91cf9146
+  AZURE_TENANT_ID: 8efc1bb9-b90f-4a48-bf6c-ba0686193b80
+  AZURE_SUBSCRIPTION_ID: 896d3c72-d979-4bdc-a37f-060988d12032
+  AZURE_RESOURCE_GROUP: ClaimGuard
+  AZURE_CONTAINERAPPS_ENVIRONMENT: claimguard-env
+  AZURE_CONTAINERAPP: claimguard-simulator-worker
+  AZURE_ACR_NAME: claimguardacr
+  AZURE_ACR_LOGIN_SERVER: claimguardacr.azurecr.io
+  MYSQL_URL: ${{ secrets.CLAIMGUARD_MYSQL_URL }}
+  SIMULATOR_API_BASE_URL: ${{ vars.SIMULATOR_API_BASE_URL }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+      - name: Validate runtime configuration
+        run: |
+          test -n "$MYSQL_URL" || { echo "CLAIMGUARD_MYSQL_URL secret is required"; exit 1; }
+          test -n "$SIMULATOR_API_BASE_URL" || { echo "SIMULATOR_API_BASE_URL variable is required"; exit 1; }
+      - name: Build immutable simulator image
+        run: |
+          az acr build \
+            --registry "$AZURE_ACR_NAME" \
+            --image "simulator-worker:${GITHUB_SHA}" \
+            --file apps/simulator-worker/Dockerfile \
+            .
+      - name: Create or update single-replica simulator worker
+        run: |
+          if ! az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONTAINERAPP" >/dev/null 2>&1; then
+            az containerapp create \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINERAPP" \
+              --environment "$AZURE_CONTAINERAPPS_ENVIRONMENT" \
+              --image "$AZURE_ACR_LOGIN_SERVER/simulator-worker:${GITHUB_SHA}" \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --revisions-mode Single \
+              --cpu 1.0 \
+              --memory 2Gi \
+              --command node \
+              --args apps/simulator-worker/src/cli.js continuous \
+              --secrets "mysql-url=$MYSQL_URL" \
+              --env-vars MYSQL_URL=secretref:mysql-url SIMULATOR_API_BASE_URL="$SIMULATOR_API_BASE_URL" SIMULATOR_LEASE_SECONDS=120 SIMULATOR_MAX_TICK_MS=60000
+          else
+            az containerapp secret set \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINERAPP" \
+              --secrets "mysql-url=$MYSQL_URL"
+            az containerapp update \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINERAPP" \
+              --image "$AZURE_ACR_LOGIN_SERVER/simulator-worker:${GITHUB_SHA}" \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --command node \
+              --args apps/simulator-worker/src/cli.js continuous \
+              --set-env-vars MYSQL_URL=secretref:mysql-url SIMULATOR_API_BASE_URL="$SIMULATOR_API_BASE_URL" SIMULATOR_LEASE_SECONDS=120 SIMULATOR_MAX_TICK_MS=60000
+          fi

@@ -1,6 +1,7 @@
-export function createTimelineScheduler({ random, staticMode = false } = {}) {
+export function createTimelineScheduler({ random, staticMode = false, maxClaimsPerTick = 3 } = {}) {
   function nextTickPlan() {
-    const claimsToCreate = random.int(0, 3);
+    const boundedClaims = Math.max(0, Math.min(3, Number.parseInt(maxClaimsPerTick, 10) || 0));
+    const claimsToCreate = random.int(0, boundedClaims);
 
     return {
       claimsToCreate,

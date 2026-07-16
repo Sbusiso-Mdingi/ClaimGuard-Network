@@ -1,0 +1,16 @@
+{
+  "name": "@claimguard/simulator-worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@claimguard/database": "workspace:*"
+  },
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp src/*.js dist/",
+    "lint": "node --check src/cli.js && node --check src/worker.js",
+    "test": "node --test tests/*.test.js",
+    "start": "node src/cli.js continuous",
+    "tick": "node src/cli.js tick",
+    "status": "node src/cli.js status"
+  }
+}

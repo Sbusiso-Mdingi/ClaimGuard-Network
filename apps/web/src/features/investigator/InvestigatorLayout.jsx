@@ -30,7 +30,16 @@ function isLiveDetectionRoute(pathname) {
   );
 }
 
-export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, ledgerStatus, dataSource }) {
+export function InvestigatorLayout({
+  liveRefreshEnabled,
+  setLiveRefreshEnabled,
+  simulatorState,
+  sendSimulatorCommand,
+  refreshNow,
+  lastRefresh,
+  ledgerStatus,
+  dataSource,
+}) {
   const { identity } = useRole();
   const location = useLocation();
   const visibleNavGroups = useMemo(
@@ -45,6 +54,8 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
   );
   const showLiveControls = isLiveDetectionRoute(location.pathname);
   const usingDemoDataset = dataSource === "demo";
+  const simulator = simulatorState?.simulator || null;
+  const canControlSimulator = identity.role === "platform_administrator";
 
   const [theme, setTheme] = useState(() => window.localStorage.getItem("claimguard-theme") || "dark");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -207,23 +218,55 @@ export function InvestigatorLayout({ mode, setMode, refreshNow, lastRefresh, led
                 <div className="inline-flex rounded-full border border-border bg-background p-1">
                   <Button
                     size="sm"
-                    variant={mode === "live" ? "default" : "ghost"}
-                    onClick={() => setMode("live")}
-                    aria-label="Enable live replay"
+                    variant={liveRefreshEnabled ? "default" : "ghost"}
+                    onClick={() => setLiveRefreshEnabled(true)}
+                    aria-label="Enable live refresh"
                     className="rounded-full px-4"
                   >
-                    Live Replay
+                    Live Refresh
                   </Button>
                   <Button
                     size="sm"
-                    variant={mode === "static" ? "default" : "ghost"}
-                    onClick={() => setMode("static")}
-                    aria-label="Enable static snapshot"
+                    variant={!liveRefreshEnabled ? "default" : "ghost"}
+                    onClick={() => setLiveRefreshEnabled(false)}
+                    aria-label="Disable live refresh"
                     className="rounded-full px-4"
                   >
-                    Static Snapshot
+                    Refresh Off
                   </Button>
                 </div>
+                <Badge
+                  variant={simulatorState?.status === "error" || simulator?.status === "failed" || simulator?.lastError ? "warning" : "outline"}
+                  className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]"
+                  title={simulatorState?.error || undefined}
+                >
+                  Simulator: {simulatorState?.status === "error" ? "Unavailable" : `${simulator?.status || "Loading"} / ${simulator?.mode || "-"}${simulator?.mode === "story" && simulator?.storyKey ? ` / ${simulator.storyKey}` : ""}`}
+                </Badge>
+                {canControlSimulator && simulator ? (
+                  <div className="inline-flex rounded-full border border-border bg-background p-1">
+                    {["stopped", "paused", "failed"].includes(simulator.status) ? (
+                      <>
+                        <Button size="sm" variant={simulator.mode === "live" ? "default" : "ghost"} className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("mode", { mode: "live" })}>Sim Live</Button>
+                        <Button size="sm" variant={simulator.mode === "static" ? "default" : "ghost"} className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("mode", { mode: "static" })}>Sim Static</Button>
+                        {simulator.storyKey ? (
+                          <Button size="sm" variant={simulator.mode === "story" ? "default" : "ghost"} className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("mode", { mode: "story", storyKey: simulator.storyKey })}>Sim Story</Button>
+                        ) : null}
+                      </>
+                    ) : null}
+                    {["stopped", "failed"].includes(simulator.status) && simulator.mode !== "off" ? (
+                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("start")}>Start</Button>
+                    ) : null}
+                    {simulator.status === "paused" ? (
+                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("resume")}>Resume</Button>
+                    ) : null}
+                    {["starting", "running"].includes(simulator.status) ? (
+                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("pause")}>Pause</Button>
+                    ) : null}
+                    {simulator.status !== "stopped" ? (
+                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("stop")}>Stop</Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Button size="sm" variant="outline" onClick={refreshNow} className="rounded-full px-4">
                   Refresh
                 </Button>

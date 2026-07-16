@@ -68,7 +68,13 @@ function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = [])
 
 export function useInvestigatorData() {
   const { authHeaders } = useRole();
-  const [mode, setMode] = useState("live");
+  const [liveRefreshEnabled, setLiveRefreshEnabled] = useState(true);
+  const [simulatorState, setSimulatorState] = useState({
+    status: "loading",
+    simulator: null,
+    error: null,
+    controlPending: false,
+  });
   const [state, setState] = useState({
     status: "loading",
     report: null,
@@ -122,17 +128,61 @@ export function useInvestigatorData() {
     }
   }, [authHeaders]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const loadSimulatorStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/simulator/status", { cache: "no-store", headers: authHeaders });
+      const payload = await response.json();
+      if (!response.ok || !payload.available || !payload.simulator) {
+        throw new Error(payload.message || `Simulator status unavailable (${response.status})`);
+      }
+      setSimulatorState((previous) => ({ ...previous, status: "ready", simulator: payload.simulator, error: null }));
+    } catch (error) {
+      setSimulatorState((previous) => ({
+        ...previous,
+        status: "error",
+        error: error instanceof Error ? error.message : "Simulator status unavailable.",
+      }));
+    }
+  }, [authHeaders]);
+
+  const sendSimulatorCommand = useCallback(async (action, payload = null) => {
+    setSimulatorState((previous) => ({ ...previous, controlPending: true, error: null }));
+    try {
+      const response = await fetch(`/api/simulator/${action}`, {
+        method: "POST",
+        headers: { ...authHeaders, "content-type": "application/json" },
+        body: payload ? JSON.stringify(payload) : undefined,
+      });
+      const result = await response.json();
+      if (!response.ok || !result.available) {
+        throw new Error(result.message || `Simulator command failed (${response.status})`);
+      }
+      setSimulatorState({ status: "ready", simulator: result.simulator, error: null, controlPending: false });
+      return true;
+    } catch (error) {
+      setSimulatorState((previous) => ({
+        ...previous,
+        status: "error",
+        error: error instanceof Error ? error.message : "Simulator command failed.",
+        controlPending: false,
+      }));
+      return false;
+    }
+  }, [authHeaders]);
 
   useEffect(() => {
-    if (mode !== "live") return undefined;
+    load();
+    loadSimulatorStatus();
+  }, [load, loadSimulatorStatus]);
+
+  useEffect(() => {
+    if (!liveRefreshEnabled) return undefined;
     const id = window.setInterval(() => {
       load();
+      loadSimulatorStatus();
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [mode, load]);
+  }, [liveRefreshEnabled, load, loadSimulatorStatus]);
 
   const metrics = useMemo(() => {
     const { report, claims } = state;
@@ -163,10 +213,17 @@ export function useInvestigatorData() {
 
   return {
     ...state,
-    mode,
+    mode: liveRefreshEnabled ? "live" : "static",
+    liveRefreshEnabled,
+    setLiveRefreshEnabled,
+    simulatorState,
+    loadSimulatorStatus,
+    sendSimulatorCommand,
     metrics,
     pollingIntervalMs: POLL_INTERVAL_MS,
-    setMode,
-    refreshNow: load,
+    setMode: (mode) => setLiveRefreshEnabled(mode === "live"),
+    refreshNow: async () => {
+      await Promise.all([load(), loadSimulatorStatus()]);
+    },
   };
 }

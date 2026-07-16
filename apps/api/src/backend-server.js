@@ -9,16 +9,12 @@ import {
   createFraudWorkflowRepository,
   createLedgerRepository,
   createSharedFraudRegistryRepository,
+  createSimulationStateRepository,
   createTenantRepository,
 } from "@claimguard/database";
 
 import { createBackendApp } from "./backend.js";
 import { createReportStorageFromEnvironment } from "./report-storage.js";
-import {
-  createLiveDemoBootstrapFromDatabase,
-  createLiveDemoSimulator,
-  parseLiveDemoConfigFromEnvironment,
-} from "./simulation/live-demo-simulator.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
@@ -33,7 +29,7 @@ let fraudWorkflowRepository = null;
 let claimIngestionService = null;
 let tenantRepository = null;
 let databasePool = null;
-let liveDemoSimulator = null;
+let simulationStateRepository = null;
 
 if (databaseUrl) {
   const database = createDatabase(databaseUrl);
@@ -44,6 +40,23 @@ if (databaseUrl) {
   claimIngestionService = createClaimIngestionRepository(database.pool);
   tenantRepository = createTenantRepository(database.pool);
   databasePool = database.pool;
+  simulationStateRepository = createSimulationStateRepository(database.pool);
+  const legacyMode = String(process.env.LIVE_DEMO_MODE || "off").toLowerCase();
+  const legacyStoryMode = String(process.env.LIVE_DEMO_STORY_MODE || "").trim();
+  const configuredMode = String(
+    process.env.SIMULATOR_DEFAULT_MODE || (legacyMode === "on" ? (legacyStoryMode ? "story" : "live") : legacyMode),
+  ).toLowerCase();
+  await simulationStateRepository.ensureDefaultInstance({
+    createdBy: "api-startup",
+    mode: ["off", "static", "live", "story"].includes(configuredMode) ? configuredMode : "off",
+    seed: Number(process.env.LIVE_DEMO_SEED || 42),
+    tickIntervalMs: Number(process.env.LIVE_DEMO_TICK_MS || 8000),
+    storyKey: legacyStoryMode || null,
+    config: {
+      maxRecentClaims: Number(process.env.LIVE_DEMO_MAX_RECENT_CLAIMS || 500),
+      fraudRate: Number(process.env.LIVE_DEMO_FRAUD_RATE || 0.04),
+    },
+  });
 }
 
 const reportStorage = await createReportStorageFromEnvironment({
@@ -61,85 +74,8 @@ const app = createBackendApp({
   tenantRepository,
   reportStorage,
   detectionAnalyzeProxyUrl,
+  simulationStateRepository,
 });
-
-const liveDemoConfig = parseLiveDemoConfigFromEnvironment(process.env);
-
-if (databasePool && liveDemoConfig.enabled) {
-  const bootstrap = createLiveDemoBootstrapFromDatabase({
-    pool: databasePool,
-    configuredTenantIds: liveDemoConfig.configuredTenantIds,
-    seed: liveDemoConfig.seed,
-    logger(level, event, details = {}) {
-      const payload = {
-        timestamp: new Date().toISOString(),
-        level,
-        service: "api",
-        event,
-        ...details,
-      };
-
-      const rendered = JSON.stringify(payload);
-      if (level === "error") {
-        console.error(rendered);
-      } else {
-        console.log(rendered);
-      }
-    },
-  });
-
-  liveDemoSimulator = createLiveDemoSimulator({
-    enabled: true,
-    mode: liveDemoConfig.mode,
-    staticMode: liveDemoConfig.staticMode,
-    seed: liveDemoConfig.seed,
-    tickIntervalMs: liveDemoConfig.tickIntervalMs,
-    maxRecentClaims: liveDemoConfig.maxRecentClaims,
-    maxActiveInvestigations: liveDemoConfig.maxActiveInvestigations,
-    storyMode: liveDemoConfig.storyMode,
-    fraudRate: liveDemoConfig.fraudRate,
-    bootstrap,
-    apiClient: {
-      async request({ path, method = "GET", headers = {}, body = null }) {
-        const response = await app.request(`http://localhost${path}`, {
-          method,
-          headers,
-          body: body ? JSON.stringify(body) : undefined,
-        });
-
-        let json = null;
-        try {
-          json = await response.json();
-        } catch {
-          json = null;
-        }
-
-        return {
-          status: response.status,
-          json,
-        };
-      },
-    },
-    logger(level, event, details = {}) {
-      const payload = {
-        timestamp: new Date().toISOString(),
-        level,
-        service: "api",
-        event,
-        ...details,
-      };
-
-      const rendered = JSON.stringify(payload);
-      if (level === "error") {
-        console.error(rendered);
-      } else {
-        console.log(rendered);
-      }
-    },
-  });
-
-  await liveDemoSimulator.start();
-}
 
 serve({
   fetch: app.fetch,
@@ -155,8 +91,7 @@ console.log(
     port,
     hasDatabase: Boolean(databasePool),
     hasTenantRepository: Boolean(tenantRepository),
-    liveDemoMode: liveDemoConfig.mode,
-    liveDemoEnabled: Boolean(liveDemoSimulator),
+    simulatorControlConfigured: Boolean(simulationStateRepository),
     reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),
   }),
 );
@@ -187,7 +122,6 @@ process.on("uncaughtException", (error) => {
 
 if (databasePool) {
   process.on("SIGINT", async () => {
-    liveDemoSimulator?.stop();
     await databasePool.end();
     process.exit(0);
   });

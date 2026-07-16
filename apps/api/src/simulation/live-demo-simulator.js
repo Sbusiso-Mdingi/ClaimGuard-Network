@@ -11,6 +11,7 @@ import { createApplicationsCommitteeAgent } from "./agents/applications-committe
 const DEFAULT_TICK_INTERVAL_MS = 8_000;
 const DEFAULT_MAX_RECENT_CLAIMS = 500;
 const DEFAULT_FRAUD_RATE = 0.04;
+export const SIMULATOR_CHECKPOINT_VERSION = 1;
 
 const PROVIDER_SPECIALTIES = [
   "GENERAL_PRACTITIONER",
@@ -530,14 +531,16 @@ export function createLiveDemoSimulator({
   bootstrap,
   logger,
   timelineConfig,
+  initialCheckpoint = null,
+  maxClaimsPerTick = 3,
 } = {}) {
   const random = new SeededRandom(seed);
   const timeline = defaultTimeline(timelineConfig);
   const storyEngine = createStoryEngine({ storyMode });
-  const scheduler = createTimelineScheduler({ random, staticMode });
+  const scheduler = createTimelineScheduler({ random, staticMode, maxClaimsPerTick });
 
-  let timer = null;
   let running = false;
+  let initialized = false;
   let tickNumber = 0;
   let claimSequence = 0;
   let tenantStates = new Map();
@@ -561,6 +564,27 @@ export function createLiveDemoSimulator({
   };
 
   const activityLog = [];
+  const storyProgress = {
+    selectedStories: [...storyEngine.activeStories],
+    currentStep: 0,
+    completedSteps: [],
+    nextEligibleSimulatedTime: timeline.current().toISOString(),
+  };
+
+  function validateCheckpoint(checkpoint) {
+    if (!checkpoint) return;
+    if (typeof checkpoint !== "object" || Array.isArray(checkpoint)) {
+      throw new Error("Simulator checkpoint must be an object.");
+    }
+    if (checkpoint.version !== SIMULATOR_CHECKPOINT_VERSION) {
+      throw new Error(`Unsupported simulator checkpoint version ${checkpoint.version}.`);
+    }
+    if (!Number.isInteger(checkpoint.tickNumber) || checkpoint.tickNumber < 0) {
+      throw new Error("Simulator checkpoint tickNumber is invalid.");
+    }
+  }
+
+  validateCheckpoint(initialCheckpoint);
 
   function log(level, event, details = {}) {
     if (typeof logger === "function") {
@@ -1250,6 +1274,11 @@ export function createLiveDemoSimulator({
       }
     }
 
+    storyProgress.currentStep = tickNumber;
+    storyProgress.completedSteps.push(tickNumber);
+    storyProgress.completedSteps = storyProgress.completedSteps.slice(-100);
+    storyProgress.nextEligibleSimulatedTime = timeline.current().toISOString();
+
     return {
       tick: tickNumber,
       claims: stats.claimsGenerated,
@@ -1260,7 +1289,7 @@ export function createLiveDemoSimulator({
   }
 
   async function initialize() {
-    if (!enabled) {
+    if (!enabled || initialized) {
       return;
     }
 
@@ -1284,6 +1313,48 @@ export function createLiveDemoSimulator({
       tenantState.agents.provider = createProviderBehaviourAgent({ random });
       tenantStates.set(tenant.tenant_id, tenantState);
     }
+
+    if (initialCheckpoint) {
+      tickNumber = Number(initialCheckpoint.tickNumber);
+      claimSequence = Number(initialCheckpoint.claimSequence || 0);
+      random.state = Number(initialCheckpoint.randomState || seed) >>> 0;
+      timeline.now = new Date(initialCheckpoint.simulatedTime || timeline.current());
+      Object.assign(stats, initialCheckpoint.stats || {});
+      Object.assign(storyProgress, initialCheckpoint.storyProgress || {});
+
+      for (const persistedTenant of initialCheckpoint.tenants || []) {
+        const tenantState = tenantStates.get(persistedTenant.tenantId);
+        if (!tenantState) continue;
+        tenantState.providerRelationshipVersion = Number(persistedTenant.providerRelationshipVersion || 0);
+        tenantState.relationshipUpdates = Number(persistedTenant.relationshipUpdates || 0);
+        tenantState.randomWeight = Number(persistedTenant.randomWeight || tenantState.randomWeight);
+        tenantState.lastSeenMemberIds = new Set(persistedTenant.lastSeenMemberIds || []);
+        tenantState.lastSeenProviderIds = new Set(persistedTenant.lastSeenProviderIds || []);
+        tenantState.sharedIdentityTokens = new Map(persistedTenant.sharedIdentityTokens || []);
+        tenantState.activeInvestigations = new Map(
+          (persistedTenant.activeInvestigations || []).map((entry) => [
+            entry.investigationId,
+            {
+              ...entry,
+              scenario: FRAUD_SCENARIOS.find((scenario) => scenario.key === entry.scenarioKey) || null,
+            },
+          ]),
+        );
+        tenantState.recentFraudCandidates = (persistedTenant.recentFraudCandidates || []).map((entry) => ({
+          claim: {
+            claim_id: entry.claimId,
+            member_id: entry.memberId,
+            provider_id: entry.providerId,
+          },
+          scenario: FRAUD_SCENARIOS.find((scenario) => scenario.key === entry.scenarioKey) || null,
+          evidenceSignals: entry.evidenceSignals || [],
+          createdAtTick: Number(entry.createdAtTick || 0),
+          escalated: Boolean(entry.escalated),
+        })).filter((entry) => entry.scenario);
+      }
+    }
+
+    initialized = true;
 
     log("info", "live_demo_catalog_loaded", {
       tenants: tenantStates.size,
@@ -1336,17 +1407,6 @@ export function createLiveDemoSimulator({
     await initialize();
     running = true;
 
-    timer = setInterval(async () => {
-      try {
-        await simulateTick();
-      } catch (error) {
-        log("error", "live_demo_tick_failed", {
-          message: error?.message || String(error),
-          tick: tickNumber,
-        });
-      }
-    }, tickIntervalMs);
-
     log("info", "live_demo_started", {
       tickIntervalMs,
       seed,
@@ -1363,10 +1423,6 @@ export function createLiveDemoSimulator({
     }
 
     running = false;
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
 
     log("info", "live_demo_stopped", {
       ticks: stats.ticks,
@@ -1403,11 +1459,70 @@ export function createLiveDemoSimulator({
     };
   }
 
+  function getCheckpoint() {
+    if (!initialized) {
+      throw new Error("Simulator must be initialized before checkpoint export.");
+    }
+    return {
+      version: SIMULATOR_CHECKPOINT_VERSION,
+      configurationVersion: 1,
+      mode,
+      seed,
+      randomState: random.state,
+      tickNumber,
+      claimSequence,
+      simulatedTime: timeline.current().toISOString(),
+      stats: { ...stats },
+      storyProgress: {
+        selectedStories: [...storyProgress.selectedStories],
+        currentStep: storyProgress.currentStep,
+        completedSteps: [...storyProgress.completedSteps],
+        nextEligibleSimulatedTime: storyProgress.nextEligibleSimulatedTime,
+      },
+      tenants: [...tenantStates.values()].map((tenant) => ({
+        tenantId: tenant.tenantId,
+        providerRelationshipVersion: tenant.providerRelationshipVersion,
+        relationshipUpdates: tenant.relationshipUpdates,
+        randomWeight: tenant.randomWeight,
+        lastSeenMemberIds: [...tenant.lastSeenMemberIds],
+        lastSeenProviderIds: [...tenant.lastSeenProviderIds],
+        sharedIdentityTokens: [...tenant.sharedIdentityTokens.entries()],
+        recentFraudCandidates: tenant.recentFraudCandidates.map((candidate) => ({
+          claimId: candidate.claim.claim_id,
+          memberId: candidate.claim.member_id,
+          providerId: candidate.claim.provider_id,
+          scenarioKey: candidate.scenario?.key || null,
+          evidenceSignals: candidate.evidenceSignals || [],
+          createdAtTick: candidate.createdAtTick,
+          escalated: Boolean(candidate.escalated),
+        })),
+        activeInvestigations: [...tenant.activeInvestigations.values()].map((investigation) => ({
+          investigationId: investigation.investigationId,
+          claimId: investigation.claimId,
+          memberId: investigation.memberId,
+          providerId: investigation.providerId,
+          status: investigation.status,
+          scenarioKey: investigation.scenario?.key || null,
+          evidenceSignals: investigation.evidenceSignals || [],
+          notes: investigation.notes,
+          evidence: investigation.evidence,
+          published: Boolean(investigation.published),
+          createdAtTick: investigation.createdAtTick,
+          nextReviewTick: investigation.nextReviewTick,
+          reviewCycles: investigation.reviewCycles,
+          targetEvidenceCount: investigation.targetEvidenceCount,
+        })),
+      })),
+      lastCompletedCorrelationId: `${mode}:${tickNumber}`,
+    };
+  }
+
   return {
     start,
     stop,
     runTick: simulateTick,
     getSnapshot,
+    getCheckpoint,
   };
 }
 

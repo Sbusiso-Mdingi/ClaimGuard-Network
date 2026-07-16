@@ -58,11 +58,26 @@ const riskPayload = {
   },
 };
 
+const simulatorPayload = {
+  available: true,
+  simulator: {
+    instanceId: "global-healthcare-demo",
+    scope: "global:healthcare-demo",
+    mode: "live",
+    status: "paused",
+    tickNumber: 12,
+    lastSuccessfulTickAt: "2026-07-16T00:00:00.000Z",
+    lastError: null,
+    lease: { active: false },
+  },
+};
+
 function mockFetch() {
   global.fetch = vi.fn((url) => {
     if (String(url).includes("/api/detection/report")) return Promise.resolve({ ok: true, json: async () => reportPayload });
     if (String(url).includes("/api/detection/graph")) return Promise.resolve({ ok: true, json: async () => graphPayload });
     if (String(url).includes("/api/detection/risk")) return Promise.resolve({ ok: true, json: async () => riskPayload });
+    if (String(url).includes("/api/simulator/status")) return Promise.resolve({ ok: true, json: async () => simulatorPayload });
     return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
   });
 }
@@ -77,6 +92,9 @@ function mockFetchFailure() {
     }
     if (String(url).includes("/api/detection/risk")) {
       return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Risk unavailable (503)" }) });
+    }
+    if (String(url).includes("/api/simulator/status")) {
+      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Simulator unavailable (503)" }) });
     }
     return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
   });
@@ -122,7 +140,7 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
 });
 
-test("static snapshot mode stops polling while live mode continues", async () => {
+test("live refresh toggle controls browser polling only and paused backend state remains visible", async () => {
   vi.useFakeTimers();
   render(<AppRoot />);
 
@@ -132,21 +150,24 @@ test("static snapshot mode stops polling while live mode continues", async () =>
   });
 
   expect(screen.getByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
-  expect(global.fetch).toHaveBeenCalledTimes(3);
+  expect(global.fetch).toHaveBeenCalledTimes(4);
+  expect(screen.getByText(/Simulator: paused \/ live/i)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Resume/i })).not.toBeInTheDocument();
 
   await act(async () => {
     vi.advanceTimersByTime(15000);
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(6);
+  expect(global.fetch).toHaveBeenCalledTimes(8);
 
-  fireEvent.click(screen.getByRole("button", { name: /Enable static snapshot/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
 
   await act(async () => {
     vi.advanceTimersByTime(30000);
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(6);
+  expect(global.fetch).toHaveBeenCalledTimes(8);
+  expect(global.fetch.mock.calls.some(([url]) => /\/api\/simulator\/(start|pause|resume|stop)/.test(String(url))), false);
 }, 10000);
 
 test("shows unavailable state without substituting demo analytics when backend APIs fail", async () => {
