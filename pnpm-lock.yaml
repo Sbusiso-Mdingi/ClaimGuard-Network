@@ -17,6 +17,9 @@ importers:
       '@azure/identity':
         specifier: ^4.5.0
         version: 4.13.1
+      '@azure/keyvault-secrets':
+        specifier: ^4.9.0
+        version: 4.11.2
       '@azure/storage-blob':
         specifier: ^12.25.0
         version: 12.33.0
