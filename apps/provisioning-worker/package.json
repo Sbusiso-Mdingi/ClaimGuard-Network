@@ -1,0 +1,17 @@
+{
+  "name": "@claimguard/provisioning-worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0",
+    "@claimguard/control-plane-database": "workspace:*",
+    "mysql2": "^3.12.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp src/*.js src/*.sql dist/",
+    "lint": "node --check src/cli.js && node --check src/worker.js",
+    "test": "node --test tests/*.test.js",
+    "start": "node src/cli.js run-once"
+  }
+}

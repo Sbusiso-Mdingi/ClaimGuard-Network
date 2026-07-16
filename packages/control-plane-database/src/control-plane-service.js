@@ -165,5 +165,119 @@ export function createControlPlaneService({ pool, repositories }) {
       }
       return repositories.provisioning.transitionOperation(operationId, [operation.status], toStatus, { error });
     },
+
+    async listOrganisations({ status = null } = {}) {
+      const organisations = await repositories.organisations.list();
+      if (!status) return organisations;
+      return organisations.filter((item) => item.status === status);
+    },
+
+    async requestProvisioningOperation({ organisationId, operationType = "onboard_private_database", requestedBy, correlationId = null }, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const organisation = await repositories.organisations.getById(organisationId, { executor });
+        if (!organisation) throw new ControlPlaneNotFoundError("Organisation was not found.", "ORGANISATION_NOT_FOUND");
+        if (!["draft", "failed", "provisioning"].includes(organisation.status)) {
+          throw new ControlPlaneConflictError("Provisioning can be requested only for draft, failed, or provisioning organisations.", "ORGANISATION_NOT_PROVISIONABLE");
+        }
+
+        const existing = await repositories.provisioning.listOperations({ organisationId, statuses: ["pending", "running"], limit: 1, executor });
+        if (existing.length > 0) {
+          return existing[0];
+        }
+
+        if (organisation.status !== "provisioning") {
+          await repositories.organisations.updateStatus(organisationId, "provisioning", { executor });
+        }
+
+        const operation = await repositories.provisioning.createOperation({
+          organisationId,
+          operationType,
+          requestedBy,
+          correlationId,
+        }, { executor });
+
+        await audit(executor, {
+          actorType: actor?.type || "system",
+          actorId: actor?.id || null,
+          organisationScopeId: organisationId,
+          action: "organisation.provisioning_requested",
+          targetType: "provisioning_operation",
+          targetId: operation.operationId,
+          afterSummary: { status: operation.status, operationType: operation.operationType },
+          correlationId: actor?.correlationId || correlationId || null,
+          outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+
+        return operation;
+      });
+    },
+
+    async getProvisioningOperationWithSteps(operationId) {
+      const operation = await repositories.provisioning.getOperation(operationId);
+      if (!operation) throw new ControlPlaneNotFoundError("Provisioning operation was not found.", "PROVISIONING_OPERATION_NOT_FOUND");
+      const steps = await repositories.provisioning.listSteps(operationId);
+      return { ...operation, steps };
+    },
+
+    async retryProvisioningOperation(operationId, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const operation = await repositories.provisioning.getOperation(operationId, { executor });
+        if (!operation) throw new ControlPlaneNotFoundError("Provisioning operation was not found.", "PROVISIONING_OPERATION_NOT_FOUND");
+        if (!["failed", "quarantined", "compensated"].includes(operation.status)) {
+          throw new ControlPlaneConflictError("Provisioning retry is not allowed from the current state.", "PROVISIONING_RETRY_NOT_ALLOWED");
+        }
+        const updated = await repositories.provisioning.transitionOperation(
+          operationId,
+          [operation.status],
+          "running",
+          { executor },
+        );
+        await audit(executor, {
+          actorType: actor?.type || "user",
+          actorId: actor?.id || null,
+          organisationScopeId: operation.organisationId,
+          action: "organisation.provisioning_retry_requested",
+          targetType: "provisioning_operation",
+          targetId: operationId,
+          beforeSummary: { status: operation.status },
+          afterSummary: { status: updated.status },
+          correlationId: actor?.correlationId || null,
+          outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+        return updated;
+      });
+    },
+
+    async cancelProvisioningOperation(operationId, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const operation = await repositories.provisioning.getOperation(operationId, { executor });
+        if (!operation) throw new ControlPlaneNotFoundError("Provisioning operation was not found.", "PROVISIONING_OPERATION_NOT_FOUND");
+        if (!["pending", "running", "failed", "compensating"].includes(operation.status)) {
+          throw new ControlPlaneConflictError("Provisioning cancel is not allowed from the current state.", "PROVISIONING_CANCEL_NOT_ALLOWED");
+        }
+        const updated = await repositories.provisioning.transitionOperation(
+          operationId,
+          [operation.status],
+          "compensating",
+          { executor },
+        );
+        await audit(executor, {
+          actorType: actor?.type || "user",
+          actorId: actor?.id || null,
+          organisationScopeId: operation.organisationId,
+          action: "organisation.provisioning_cancel_requested",
+          targetType: "provisioning_operation",
+          targetId: operationId,
+          beforeSummary: { status: operation.status },
+          afterSummary: { status: updated.status },
+          correlationId: actor?.correlationId || null,
+          outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+        return updated;
+      });
+    },
   };
 }

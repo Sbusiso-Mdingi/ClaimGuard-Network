@@ -12,6 +12,7 @@ import { createOperationalDependencyProxy } from "./operational-service-context.
 import { createSessionCsrfMiddleware } from "./session-security-middleware.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerAdminRoutes } from "./routes/admin-routes.js";
+import { registerPlatformAdminRoutes } from "./routes/platform-admin-routes.js";
 import { registerClaimsRoutes } from "./routes/claims-routes.js";
 import { registerDetectionRoutes } from "./routes/detection-routes.js";
 import { registerInvestigationsRoutes } from "./routes/investigations-routes.js";
@@ -86,6 +87,8 @@ export function createBackendApp({
   authenticationConfiguration = Object.freeze({ mode: "demo_headers" }),
   authenticationService = null,
   controlPlaneConfigurationRepository = null,
+  controlPlaneRepositories = null,
+  controlPlaneService = null,
   reportStorage = null,
   detectionAnalyzeProxyUrl = null,
   detectionReportPath = null,
@@ -212,6 +215,14 @@ export function createBackendApp({
     reportService: services.reportService,
     dataPlaneRuntime,
   });
+
+  if (controlPlaneRepositories && controlPlaneService) {
+    registerPlatformAdminRoutes(app, {
+      controlPlaneRepositories,
+      controlPlaneService,
+      deploymentClass: authenticationConfiguration.deploymentClass,
+    });
+  }
 
   registerLedgerRoutes(app, {
     ledgerRepository: dependencies.ledgerRepository,

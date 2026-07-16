@@ -19,6 +19,7 @@ import {
   createControlPlaneAuthenticationService,
   createControlPlanePool,
   createControlPlaneRepositories,
+  createControlPlaneService,
 } from "@claimguard/control-plane-database";
 
 import { createBackendApp } from "./backend.js";
@@ -46,6 +47,7 @@ let controlPlanePool = null;
 let controlPlaneRepositories = null;
 let authenticationService = null;
 let dataPlaneRuntime = null;
+let controlPlaneService = null;
 
 if (databaseUrl && authenticationConfiguration.mode === "demo_headers") {
   const database = createDatabase(databaseUrl);
@@ -80,6 +82,7 @@ if (authenticationConfiguration.mode === "session") {
   if (databaseUrl) assertDistinctDatabaseUrls(process.env.CONTROL_PLANE_MYSQL_URL, databaseUrl);
   controlPlanePool = createControlPlanePool(process.env.CONTROL_PLANE_MYSQL_URL);
   controlPlaneRepositories = createControlPlaneRepositories(controlPlanePool);
+  controlPlaneService = createControlPlaneService({ pool: controlPlanePool, repositories: controlPlaneRepositories });
   authenticationService = createControlPlaneAuthenticationService({
     authenticationRepository: controlPlaneRepositories.authentication,
     idleTimeoutMs: authenticationConfiguration.idleTimeoutMs,
@@ -141,6 +144,8 @@ const app = createBackendApp({
   authenticationConfiguration,
   authenticationService,
   controlPlaneConfigurationRepository: controlPlaneRepositories?.configuration || null,
+  controlPlaneRepositories,
+  controlPlaneService,
   dataPlaneRuntime,
 });
 

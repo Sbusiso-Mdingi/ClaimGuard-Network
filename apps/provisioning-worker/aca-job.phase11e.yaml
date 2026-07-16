@@ -1,0 +1,51 @@
+type: Microsoft.App/jobs
+location: southafricanorth
+name: claimguard-provisioning-worker
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    /subscriptions/896d3c72-d979-4bdc-a37f-060988d12032/resourceGroups/ClaimGuard/providers/Microsoft.ManagedIdentity/userAssignedIdentities/claimguard-provisioner-identity: {}
+properties:
+  environmentId: /subscriptions/896d3c72-d979-4bdc-a37f-060988d12032/resourceGroups/ClaimGuard/providers/Microsoft.App/managedEnvironments/claimguard-env-11e
+  configuration:
+    triggerType: Manual
+    replicaRetryLimit: 1
+    replicaTimeout: 1800
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+  template:
+    containers:
+      - name: provisioning-worker
+        image: claimguardacr11e.azurecr.io/claimguard/provisioning-worker:phase11e-pending
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        env:
+          - name: CONTROL_PLANE_MYSQL_URL
+            value: mysql://<user>:<password>@claimguard.mysql.database.azure.com:3306/claimguard?ssl-mode=require
+          - name: MYSQL_SERVER_ADMIN_URL
+            value: mysql://<user>:<password>@claimguard.mysql.database.azure.com:3306/mysql?ssl-mode=require
+          - name: PROVISIONING_KEYVAULT_URI
+            value: https://claimguard-kv-ufs.vault.azure.net/
+          - name: AZURE_APPROVED_SUBSCRIPTION_ID
+            value: 896d3c72-d979-4bdc-a37f-060988d12032
+          - name: AZURE_APPROVED_RESOURCE_GROUP
+            value: ClaimGuard
+          - name: AZURE_APPROVED_MYSQL_SERVER
+            value: claimguard
+          - name: AZURE_APPROVED_KEYVAULT
+            value: claimguard-kv-ufs
+          - name: AZURE_APPROVED_STORAGE_ACCOUNT
+            value: cgrpt0715sa
+          - name: AZURE_APPROVED_REGION
+            value: southafricanorth
+          - name: AZURE_APPROVED_REPORT_CONTAINER
+            value: claimguard-reports
+          - name: PRIVATE_TENANT_SCHEMA_VERSION
+            value: 11e-baseline-v1
+          - name: PROVISIONING_MAX_OPERATIONS
+            value: "1"
+    registries:
+      - server: claimguardacr11e.azurecr.io
+        identity: /subscriptions/896d3c72-d979-4bdc-a37f-060988d12032/resourceGroups/ClaimGuard/providers/Microsoft.ManagedIdentity/userAssignedIdentities/claimguard-provisioner-identity

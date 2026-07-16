@@ -24,6 +24,11 @@ import {
 import { resolveAuthenticationConfiguration } from "../src/authentication-config.js";
 import { createBackendApp } from "../src/backend.js";
 import { createControlPlaneDataPlaneRouteResolver } from "../src/data-plane-route-resolver.js";
+import {
+  createLiveDemoBootstrapFromDatabase,
+  createLiveDemoSimulator,
+} from "../src/simulation/live-demo-simulator.js";
+import { createSimulatorWorker } from "../../simulator-worker/src/worker.js";
 import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
 
 const controlUrl = process.env.PHASE11D_CONTROL_PLANE_MYSQL_URL || "";
@@ -112,6 +117,38 @@ function createAuthenticationService(repositories, configuration) {
     throttleMaxDelayMs: 2,
     throttleLockoutMs: configuration.throttle.lockoutMs,
   });
+}
+
+async function readSimulatorClaimRows(pool) {
+  const [rows] = await pool.execute(
+    "SELECT claim_id, tenant_id FROM claims WHERE claim_id LIKE 'SIM-%' ORDER BY claim_id",
+  );
+  return rows.map((row) => ({ claimId: row.claim_id, tenantId: row.tenant_id }));
+}
+
+async function readSimulatorOutboxRows(pool) {
+  const [rows] = await pool.execute(
+    "SELECT id, tenant_id, payload FROM claim_processing_outbox WHERE payload LIKE '%SIM-%' ORDER BY id",
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    tenantId: row.tenant_id,
+    payload: typeof row.payload === "string" ? row.payload : JSON.stringify(row.payload || {}),
+  }));
+}
+
+function rowsByTenant(rows) {
+  const result = new Map();
+  for (const row of rows) {
+    if (!result.has(row.tenantId)) result.set(row.tenantId, []);
+    result.get(row.tenantId).push(row);
+  }
+  return result;
+}
+
+function diffRows(beforeRows, afterRows, keyField) {
+  const beforeKeys = new Set(beforeRows.map((row) => row[keyField]));
+  return afterRows.filter((row) => !beforeKeys.has(row[keyField]));
 }
 
 test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, and worker-scope gate", { skip: !enabled }, async () => {
@@ -221,6 +258,161 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
     const platform = await login("claimguard", "platform_administrator");
     assert.equal(alpha.payload.organisation.organisationId, alphaOrganisation.organisationId);
     assert.equal(beta.payload.organisation.organisationId, betaOrganisation.organisationId);
+
+    const simulatorApiClient = {
+      async request({ path, method = "GET", headers = {}, body = null }) {
+        const response = await app.request(`http://localhost${path}`, {
+          method,
+          headers: {
+            cookie: alphaClaims.cookie,
+            origin: "http://localhost",
+            ...(method !== "GET" ? { "x-csrf-token": alphaClaims.csrf, "content-type": "application/json" } : {}),
+            ...headers,
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const json = await response.json().catch(() => null);
+        return { status: response.status, json };
+      },
+    };
+
+    const alphaSimulatorRepository = createOperationalRepositories(alphaContext, operationalPool).simulatorState;
+    const createSimulatorFactory = ({ failAfterMutation = false } = {}) => {
+      let shouldFail = failAfterMutation;
+      return async ({ instance, maxClaimsPerTick }) => {
+        const simulator = createLiveDemoSimulator({
+          enabled: true,
+          mode: instance.mode,
+          staticMode: instance.mode === "static",
+          seed: instance.seed,
+          tickIntervalMs: instance.tickIntervalMs,
+          initialCheckpoint: instance.checkpoint,
+          maxClaimsPerTick,
+          minClaimsPerTick: 1,
+          bootstrap: createLiveDemoBootstrapFromDatabase({
+            pool: operationalPool,
+            configuredTenantIds: ["tenant_alpha"],
+            seed: instance.seed,
+          }),
+          authorityMode: "session",
+          apiClient: simulatorApiClient,
+        });
+        if (!shouldFail) {
+          return simulator;
+        }
+        const originalRunTick = simulator.runTick.bind(simulator);
+        simulator.runTick = async () => {
+          const output = await originalRunTick();
+          if (shouldFail) {
+            shouldFail = false;
+            throw new Error("response lost after mutation");
+          }
+          return output;
+        };
+        return simulator;
+      };
+    };
+
+    const baselineClaims = await readSimulatorClaimRows(operationalPool);
+    const baselineOutbox = await readSimulatorOutboxRows(operationalPool);
+    const [tickBeforeRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
+    const tickBefore = Number(tickBeforeRows[0].tick_number);
+
+    const deterministicTickWorker = createSimulatorWorker({
+      repository: alphaSimulatorRepository,
+      readiness: async () => true,
+      simulatorFactory: createSimulatorFactory(),
+      config: {
+        instanceId: "tenant_alpha",
+        workerId: "phase11d-gate-worker",
+        leaseSeconds: 120,
+        pollMs: 1,
+        maximumTickDurationMs: 60_000,
+        maxClaimsPerTick: 1,
+        maxOutboxBacklog: 10_000,
+        maxActiveInvestigations: 10_000,
+      },
+      logger() {},
+      sleep: async () => {},
+    });
+    const deterministicTickResult = await deterministicTickWorker.runOneTick();
+    assert.equal(deterministicTickResult.executed, true);
+
+    const [tickAfterRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
+    const tickAfter = Number(tickAfterRows[0].tick_number);
+    assert.equal(tickAfter, tickBefore + 1);
+
+    const claimsAfterTick = await readSimulatorClaimRows(operationalPool);
+    const outboxAfterTick = await readSimulatorOutboxRows(operationalPool);
+    const newClaims = diffRows(baselineClaims, claimsAfterTick, "claimId");
+    const newOutbox = diffRows(baselineOutbox, outboxAfterTick, "id");
+    const newClaimsByTenant = rowsByTenant(newClaims);
+    const newOutboxByTenant = rowsByTenant(newOutbox);
+    assert.equal((newClaimsByTenant.get("tenant_alpha") || []).length >= 1, true);
+    assert.equal((newClaimsByTenant.get("tenant_beta") || []).length, 0);
+    assert.equal((newOutboxByTenant.get("tenant_alpha") || []).length >= 1, true);
+    assert.equal((newOutboxByTenant.get("tenant_beta") || []).length, 0);
+    for (const claim of newClaimsByTenant.get("tenant_alpha") || []) {
+      assert.equal(
+        (newOutboxByTenant.get("tenant_alpha") || []).some((row) => String(row.payload || "").includes(claim.claimId)),
+        true,
+      );
+    }
+
+    await operationalPool.execute("UPDATE simulation_instances SET status = 'running' WHERE id = 'tenant_alpha'");
+    const [retryTickBeforeRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
+    const retryTickBefore = Number(retryTickBeforeRows[0].tick_number);
+    const retryClaimsBefore = await readSimulatorClaimRows(operationalPool);
+    const retryOutboxBefore = await readSimulatorOutboxRows(operationalPool);
+    const failingWorker = createSimulatorWorker({
+      repository: alphaSimulatorRepository,
+      readiness: async () => true,
+      simulatorFactory: createSimulatorFactory({ failAfterMutation: true }),
+      config: {
+        instanceId: "tenant_alpha",
+        workerId: "phase11d-gate-worker-failing",
+        leaseSeconds: 120,
+        pollMs: 1,
+        maximumTickDurationMs: 60_000,
+        maxClaimsPerTick: 1,
+        maxOutboxBacklog: 10_000,
+        maxActiveInvestigations: 10_000,
+      },
+      logger() {},
+      sleep: async () => {},
+    });
+    await assert.rejects(() => failingWorker.runOneTick(), /response lost after mutation/);
+    await operationalPool.execute("UPDATE simulation_instances SET status = 'running' WHERE id = 'tenant_alpha'");
+
+    const retryWorker = createSimulatorWorker({
+      repository: alphaSimulatorRepository,
+      readiness: async () => true,
+      simulatorFactory: createSimulatorFactory(),
+      config: {
+        instanceId: "tenant_alpha",
+        workerId: "phase11d-gate-worker-retry",
+        leaseSeconds: 120,
+        pollMs: 1,
+        maximumTickDurationMs: 60_000,
+        maxClaimsPerTick: 1,
+        maxOutboxBacklog: 10_000,
+        maxActiveInvestigations: 10_000,
+      },
+      logger() {},
+      sleep: async () => {},
+    });
+    const retryResult = await retryWorker.runOneTick();
+    assert.equal(retryResult.executed, true);
+    const [retryTickRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
+    assert.equal(Number(retryTickRows[0].tick_number), retryTickBefore + 1);
+    const retryClaimsAfter = await readSimulatorClaimRows(operationalPool);
+    const retryOutboxAfter = await readSimulatorOutboxRows(operationalPool);
+    const retryNewClaims = diffRows(retryClaimsBefore, retryClaimsAfter, "claimId");
+    const retryNewOutbox = diffRows(retryOutboxBefore, retryOutboxAfter, "id");
+    assert.equal(retryNewClaims.filter((row) => row.tenantId === "tenant_alpha").length, 1);
+    assert.equal(retryNewClaims.filter((row) => row.tenantId === "tenant_beta").length, 0);
+    assert.equal(retryNewOutbox.filter((row) => row.tenantId === "tenant_alpha").length, 1);
+    assert.equal(retryNewOutbox.filter((row) => row.tenantId === "tenant_beta").length, 0);
 
     const alphaReport = await request(alpha, "/detection/report");
     const betaReport = await request(beta, "/detection/report");

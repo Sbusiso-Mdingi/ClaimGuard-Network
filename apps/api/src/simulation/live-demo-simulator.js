@@ -540,12 +540,13 @@ export function createLiveDemoSimulator({
   timelineConfig,
   initialCheckpoint = null,
   maxClaimsPerTick = 3,
+  minClaimsPerTick = 0,
   authorityMode = "demo_headers",
 } = {}) {
   const random = new SeededRandom(seed);
   const timeline = defaultTimeline(timelineConfig);
   const storyEngine = createStoryEngine({ storyMode });
-  const scheduler = createTimelineScheduler({ random, staticMode, maxClaimsPerTick });
+  const scheduler = createTimelineScheduler({ random, staticMode, maxClaimsPerTick, minClaimsPerTick });
 
   let running = false;
   let initialized = false;
