@@ -196,6 +196,7 @@ export function createBackendApp({
         if (!reportServices.has(pool)) reportServices.set(pool, servicesForRequest.reportService);
         return {
           ...servicesForRequest,
+          claimsReadRepository: servicesForRequest.claimReadRepository,
           reportService: reportServices.get(pool),
           ledgerRepository: repositories.ledger,
           tenantRepository: repositories.tenants,
