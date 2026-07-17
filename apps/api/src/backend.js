@@ -78,6 +78,100 @@ function createDomainServices({
   };
 }
 
+function normalizePaging({ page = 1, pageSize = 25, maxPageSize = 100 } = {}) {
+  const parsedPage = Number.parseInt(String(page ?? ""), 10);
+  const parsedPageSize = Number.parseInt(String(pageSize ?? ""), 10);
+  const safePage = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+  const requestedPageSize = Number.isInteger(parsedPageSize) && parsedPageSize > 0 ? parsedPageSize : 25;
+  const safePageSize = Math.min(requestedPageSize, maxPageSize);
+  return {
+    page: safePage,
+    pageSize: safePageSize,
+    requestedPageSize,
+    maxPageSize,
+    offset: (safePage - 1) * safePageSize,
+  };
+}
+
+function mapClaimRowForApi(row) {
+  if (!row) return null;
+  return {
+    claimId: row.claim_id,
+    schemeId: row.scheme_id,
+    memberId: row.member_id,
+    providerId: row.provider_id,
+    serviceDate: row.service_date,
+    billedAmount: Number(row.amount),
+    billingCode: row.billing_code,
+    submittedAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: "SUBMITTED",
+    riskScore: null,
+    riskLevel: null,
+    investigation: null,
+  };
+}
+
+function createApiClaimsReadRepository(pool, dataPlaneContext) {
+  const tenantId = dataPlaneContext?.operationalTenantId || null;
+  return Object.freeze({
+    async listClaims({ page = 1, pageSize = 25 } = {}) {
+      if (!tenantId) {
+        const error = new Error("Operational tenant context is required for claims read.");
+        error.code = "DATA_PLANE_TENANT_MISMATCH";
+        error.status = 403;
+        throw error;
+      }
+      const paging = normalizePaging({ page, pageSize });
+      const [countRows] = await pool.execute("SELECT COUNT(*) AS total FROM claims WHERE tenant_id = ?", [tenantId]);
+      const total = Number(countRows?.[0]?.total || 0);
+      const [rows] = await pool.execute(
+        `
+          SELECT claim_id, scheme_id, member_id, provider_id, service_date, amount, billing_code, created_at, updated_at
+          FROM claims
+          WHERE tenant_id = ?
+          ORDER BY updated_at DESC, claim_id ASC
+          LIMIT ? OFFSET ?
+        `,
+        [tenantId, paging.pageSize, paging.offset],
+      );
+      const claims = rows.map(mapClaimRowForApi);
+      return {
+        claims,
+        pagination: {
+          page: paging.page,
+          pageSize: paging.pageSize,
+          requestedPageSize: paging.requestedPageSize,
+          maxPageSize: paging.maxPageSize,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / paging.pageSize)),
+          hasNextPage: paging.offset + claims.length < total,
+        },
+      };
+    },
+    async getClaimById(claimId) {
+      if (!tenantId) {
+        const error = new Error("Operational tenant context is required for claims read.");
+        error.code = "DATA_PLANE_TENANT_MISMATCH";
+        error.status = 403;
+        throw error;
+      }
+      const normalized = String(claimId || "").trim();
+      if (!normalized) return null;
+      const [rows] = await pool.execute(
+        `
+          SELECT claim_id, scheme_id, member_id, provider_id, service_date, amount, billing_code, created_at, updated_at
+          FROM claims
+          WHERE tenant_id = ? AND claim_id = ?
+          LIMIT 1
+        `,
+        [tenantId, normalized],
+      );
+      return mapClaimRowForApi(rows?.[0] || null);
+    },
+  });
+}
+
 export function createBackendApp({
   ledgerRepository = null,
   investigationRepository = null,
@@ -183,6 +277,7 @@ export function createBackendApp({
       logger: dataPlaneRuntime.logger,
       createServiceBundle(dataPlaneContext, pool) {
         const repositories = createOperationalRepositories(dataPlaneContext, pool);
+        const claimsReadRepository = createApiClaimsReadRepository(pool, dataPlaneContext);
         const servicesForRequest = createDomainServices({
             reportStorage: resolvedReportStorage,
             ledgerRepository: repositories.ledger,
@@ -190,7 +285,7 @@ export function createBackendApp({
             sharedFraudRegistryRepository: repositories.registry,
             fraudWorkflowRepository: repositories.fraudWorkflow,
             claimIngestionRepository: repositories.claims,
-            claimReadRepository: repositories.claimsRead,
+            claimReadRepository: claimsReadRepository,
             detectionAnalyzeProxyUrl,
           });
         if (!reportServices.has(pool)) reportServices.set(pool, servicesForRequest.reportService);
