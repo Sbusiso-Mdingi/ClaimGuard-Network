@@ -70,3 +70,31 @@ test("platform organisation resolves platform_none without operational tenant", 
   assert.equal(context.operationalTenantId, null);
   assert.equal(context.databaseName, null);
 });
+
+test("private route resolves organisation-scoped operational tenant identity", async () => {
+  const resolver = fixture({
+    organisation: {
+      organisationId: "org-private",
+      canonicalSlug: "discovery-health",
+    },
+    routes: [{
+      route_id: "route-private",
+      organisation_id: "org-private",
+      route_type: "private_database",
+      logical_database_identifier: "private:org-private",
+      database_name: "claimguard_tenant_discovery_health",
+      route_generation: 1,
+      schema_version: "8",
+      provisioning_status: "active",
+      health_status: "healthy",
+      retired_at: null,
+      region: "za-north",
+    }],
+    mapping: null,
+  });
+
+  const context = await resolver.resolve({ organisationId: "org-private" });
+  assert.equal(context.routeType, "private_database");
+  assert.equal(context.operationalTenantId, "org-private");
+  assert.equal(context.operationalTenantSlug, "discovery-health");
+});

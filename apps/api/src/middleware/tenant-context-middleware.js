@@ -14,19 +14,12 @@ export function createTenantContextMiddleware({
         ? tenantRepository
         : null;
       let tenantContext;
-      if (dataPlaneContext?.routeType === "legacy_shared") {
+        if (dataPlaneContext?.operationalTenantId) {
         tenantContext = Object.freeze({
           tenant_id: dataPlaneContext.operationalTenantId,
           tenant_slug: dataPlaneContext.operationalTenantSlug,
           scheme_id: null,
           source: "verified_data_plane_context",
-        });
-      } else if (dataPlaneContext?.routeType === "private_database" && currentAuthContext?.tenant_id) {
-        tenantContext = Object.freeze({
-          tenant_id: currentAuthContext.tenant_id,
-          tenant_slug: null,
-          scheme_id: null,
-          source: "authenticated_membership_private_route",
         });
       } else {
         tenantContext = await resolveTenantContext({

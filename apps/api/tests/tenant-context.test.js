@@ -147,6 +147,8 @@ test("private routed requests pin tenant context to authenticated membership", a
     c.set("dataPlaneContext", {
       routeType: "private_database",
       organisationId: "org-private",
+      operationalTenantId: "tenant-private-routed",
+      operationalTenantSlug: "private-routed",
       routeId: "route-private",
       routeGeneration: 1,
     });
@@ -162,7 +164,8 @@ test("private routed requests pin tenant context to authenticated membership", a
   const response = await app.request("/claims");
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.tenantContext.tenant_id, "tenant-private");
-  assert.equal(body.tenantContext.source, "authenticated_membership_private_route");
-  assert.equal(body.authTenant, "tenant-private");
+  assert.equal(body.tenantContext.tenant_id, "tenant-private-routed");
+  assert.equal(body.tenantContext.tenant_slug, "private-routed");
+  assert.equal(body.tenantContext.source, "verified_data_plane_context");
+  assert.equal(body.authTenant, "tenant-private-routed");
 });

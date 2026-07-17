@@ -56,6 +56,11 @@ export function createControlPlaneDataPlaneRouteResolver({
         if (!mapping || mapping.migrationStatus !== "verified" || !mapping.verifiedAt || mapping.routeId !== route.route_id) {
           throw routeFailure("A verified legacy tenant mapping is required.", "DATA_PLANE_MAPPING_REQUIRED");
         }
+      } else if (route.route_type === "private_database") {
+        mapping = {
+          legacyTenantId: organisation.organisationId,
+          legacyTenantSlug: organisation.canonicalSlug,
+        };
       }
 
       return createDataPlaneContext({
