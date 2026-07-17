@@ -14,6 +14,8 @@ env:
   AZURE_TENANT_ID: 8efc1bb9-b90f-4a48-bf6c-ba0686193b80
   AZURE_SUBSCRIPTION_ID: 896d3c72-d979-4bdc-a37f-060988d12032
   AZURE_RESOURCE_GROUP: ClaimGuard
+  AZURE_KEYVAULT_NAME: claimguard-kv-ufs
+  MYSQL_URL_SECRET_NAME: claimguard--api--mysql-url
   AZURE_WEBAPP_WEB: claimguard-web
   AZURE_WEBAPP_API: claimguard-api
 
@@ -177,14 +179,15 @@ jobs:
           OPERATIONAL_ADMIN_MODE: legacy_shared
         run: |
           npm install mysql2 drizzle-orm
-          export MYSQL_URL=$(az webapp config appsettings list \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --query "[?name=='MYSQL_URL'].value" \
+          # Runtime database access is governed through Key Vault, not App Service values.
+          export MYSQL_URL=$(az keyvault secret show \
+            --vault-name "$AZURE_KEYVAULT_NAME" \
+            --name "$MYSQL_URL_SECRET_NAME" \
+            --query value \
             --output tsv)
 
           if [ -z "$MYSQL_URL" ]; then
-            echo "Error: MYSQL_URL not found in Azure App Service settings"
+            echo "Error: MYSQL_URL not found in Key Vault"
             exit 1
           fi
 
