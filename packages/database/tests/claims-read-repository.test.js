@@ -25,15 +25,25 @@ function createPoolStub() {
             billing_code: "CONSULT",
             created_at: "2026-07-16T00:00:00.000Z",
             updated_at: "2026-07-17T00:00:00.000Z",
-            investigation_id: "INV-3",
-            investigation_status: "OPEN",
-            investigation_priority: "HIGH",
-            investigation_updated_at: "2026-07-17T00:00:00.000Z",
           },
         ]];
       }
+      if (/FROM investigations i/i.test(sql) && /claim_id IN/i.test(sql)) {
+        return [[
+          {
+            claim_id: "C-3",
+            investigation_id: "INV-3",
+            status: "OPEN",
+            priority: "HIGH",
+            updated_at: "2026-07-17T00:00:00.000Z",
+          },
+        ]];
+      }
+      if (/FROM investigations i/i.test(sql) && /claim_id = \?/i.test(sql)) {
+        return [[]];
+      }
       if (/WHERE c\.tenant_id = \? AND c\.claim_id = \?/i.test(sql)) {
-        if (params[3] === "C-3") {
+        if (params[1] === "C-3") {
           return [[{
             claim_id: "C-3",
             scheme_id: "scheme_a",

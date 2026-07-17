@@ -45,6 +45,29 @@ function mapClaimRow(row) {
   };
 }
 
+function placeholders(count) {
+  return Array.from({ length: count }, () => "?").join(", ");
+}
+
+function attachLatestInvestigation(claimRows, investigationRows) {
+  const byClaimId = new Map();
+  for (const row of investigationRows || []) {
+    if (!row?.claim_id || byClaimId.has(row.claim_id)) continue;
+    byClaimId.set(row.claim_id, row);
+  }
+
+  return (claimRows || []).map((row) => {
+    const investigation = byClaimId.get(row.claim_id) || null;
+    return {
+      ...row,
+      investigation_id: investigation?.investigation_id || null,
+      investigation_status: investigation?.status || null,
+      investigation_priority: investigation?.priority || null,
+      investigation_updated_at: investigation?.updated_at || null,
+    };
+  });
+}
+
 export function createClaimsReadRepository(pool, {
   dataPlaneContext = null,
   allowLegacyTenantContext = false,
@@ -67,7 +90,7 @@ export function createClaimsReadRepository(pool, {
       );
       const total = Number(countRows?.[0]?.total || 0);
 
-      const [rows] = await pool.execute(
+      const [claimRows] = await pool.execute(
         `
           SELECT
             c.claim_id,
@@ -78,33 +101,39 @@ export function createClaimsReadRepository(pool, {
             c.amount,
             c.billing_code,
             c.created_at,
-            c.updated_at,
-            i.investigation_id,
-            i.status AS investigation_status,
-            i.priority AS investigation_priority,
-            i.updated_at AS investigation_updated_at
+            c.updated_at
           FROM claims c
-          LEFT JOIN (
-            SELECT i1.claim_id, i1.investigation_id, i1.status, i1.priority, i1.updated_at
-            FROM investigations i1
-            INNER JOIN (
-              SELECT claim_id, MAX(updated_at) AS latest_updated_at
-              FROM investigations
-              WHERE tenant_id = ?
-              GROUP BY claim_id
-            ) latest
-              ON latest.claim_id = i1.claim_id
-             AND latest.latest_updated_at = i1.updated_at
-            WHERE i1.tenant_id = ?
-          ) i ON i.claim_id = c.claim_id
           WHERE c.tenant_id = ?
           ORDER BY c.updated_at DESC, c.claim_id ASC
           LIMIT ? OFFSET ?
         `,
-        [tenantId, tenantId, tenantId, paging.pageSize, paging.offset],
+        [tenantId, paging.pageSize, paging.offset],
       );
 
-      const claims = rows.map(mapClaimRow);
+      let enrichedRows = claimRows;
+      const claimIds = claimRows.map((row) => row.claim_id).filter(Boolean);
+      if (claimIds.length > 0) {
+        const [investigationRows] = await pool.execute(
+          `
+            SELECT i.claim_id, i.investigation_id, i.status, i.priority, i.updated_at
+            FROM investigations i
+            INNER JOIN (
+              SELECT claim_id, MAX(updated_at) AS latest_updated_at
+              FROM investigations
+              WHERE tenant_id = ? AND claim_id IN (${placeholders(claimIds.length)})
+              GROUP BY claim_id
+            ) latest
+              ON latest.claim_id = i.claim_id
+             AND latest.latest_updated_at = i.updated_at
+            WHERE i.tenant_id = ? AND i.claim_id IN (${placeholders(claimIds.length)})
+            ORDER BY i.updated_at DESC
+          `,
+          [tenantId, ...claimIds, tenantId, ...claimIds],
+        );
+        enrichedRows = attachLatestInvestigation(claimRows, investigationRows);
+      }
+
+      const claims = enrichedRows.map(mapClaimRow);
       return {
         claims,
         pagination: {
@@ -124,7 +153,7 @@ export function createClaimsReadRepository(pool, {
       const tenantId = canonicalTenantId();
       const normalizedClaimId = claimId.trim();
 
-      const [rows] = await pool.execute(
+      const [claimRows] = await pool.execute(
         `
           SELECT
             c.claim_id,
@@ -135,32 +164,38 @@ export function createClaimsReadRepository(pool, {
             c.amount,
             c.billing_code,
             c.created_at,
-            c.updated_at,
-            i.investigation_id,
-            i.status AS investigation_status,
-            i.priority AS investigation_priority,
-            i.updated_at AS investigation_updated_at
+            c.updated_at
           FROM claims c
-          LEFT JOIN (
-            SELECT i1.claim_id, i1.investigation_id, i1.status, i1.priority, i1.updated_at
-            FROM investigations i1
-            INNER JOIN (
-              SELECT claim_id, MAX(updated_at) AS latest_updated_at
-              FROM investigations
-              WHERE tenant_id = ?
-              GROUP BY claim_id
-            ) latest
-              ON latest.claim_id = i1.claim_id
-             AND latest.latest_updated_at = i1.updated_at
-            WHERE i1.tenant_id = ?
-          ) i ON i.claim_id = c.claim_id
           WHERE c.tenant_id = ? AND c.claim_id = ?
           LIMIT 1
         `,
-        [tenantId, tenantId, tenantId, normalizedClaimId],
+        [tenantId, normalizedClaimId],
       );
 
-      return mapClaimRow(rows?.[0] || null);
+      const baseClaim = claimRows?.[0] || null;
+      if (!baseClaim) return null;
+
+      const [investigationRows] = await pool.execute(
+        `
+          SELECT i.claim_id, i.investigation_id, i.status, i.priority, i.updated_at
+          FROM investigations i
+          INNER JOIN (
+            SELECT claim_id, MAX(updated_at) AS latest_updated_at
+            FROM investigations
+            WHERE tenant_id = ? AND claim_id = ?
+            GROUP BY claim_id
+          ) latest
+            ON latest.claim_id = i.claim_id
+           AND latest.latest_updated_at = i.updated_at
+          WHERE i.tenant_id = ? AND i.claim_id = ?
+          LIMIT 1
+        `,
+        [tenantId, normalizedClaimId, tenantId, normalizedClaimId],
+      );
+
+      const merged = attachLatestInvestigation([baseClaim], investigationRows);
+
+      return mapClaimRow(merged?.[0] || null);
     },
   });
 }
