@@ -17,6 +17,9 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
   const db = createDatabaseFromPool(pool);
   const options = { dataPlaneContext: context, allowLegacyTenantContext: false };
   const scopedReads = createScopedReadRepositories(context, pool);
+  const simulationState = context.routeType === "legacy_shared"
+    ? createSimulationStateRepository(pool, options)
+    : null;
   return Object.freeze({
     dataPlaneContext: context,
     claims: createClaimIngestionRepository(pool, options),
@@ -28,7 +31,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     ledger: createLedgerRepository(db, pool, options),
     registry: createSharedFraudRegistryRepository(pool, options),
     fraudWorkflow: createFraudWorkflowRepository(pool, options),
-    simulatorState: createSimulationStateRepository(pool, options),
+    simulatorState: simulationState,
     reportSnapshots: scopedReads.reportSnapshots,
     tenants: createTenantRepository(pool, { dataPlaneContext: context, allowLegacyDefault: false }),
   });
