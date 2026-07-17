@@ -63,12 +63,19 @@ export function createControlPlaneDataPlaneRouteResolver({
         };
       }
 
+        const operationalTenantId = route.route_type === "private_database"
+          ? organisation.organisationId
+          : mapping?.legacyTenantId || null;
+        const operationalTenantSlug = route.route_type === "private_database"
+          ? organisation.canonicalSlug || null
+          : mapping?.legacyTenantSlug || null;
+
       return createDataPlaneContext({
         organisationId: organisation.organisationId,
         organisationType: organisation.organisationType,
         organisationStatus: organisation.status,
-        operationalTenantId: mapping?.legacyTenantId || null,
-        operationalTenantSlug: mapping?.legacyTenantSlug || null,
+          operationalTenantId,
+          operationalTenantSlug,
         routeId: route.route_id,
         routeType: route.route_type,
         routeGeneration: Number(route.route_generation),
