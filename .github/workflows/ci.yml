@@ -273,3 +273,53 @@ jobs:
 
           echo "Deployment verification failed after retries."
           exit 1
+
+      - name: Capture bounded App Service diagnostics on deploy failure
+        if: failure()
+        run: |
+          set +e
+          mkdir -p /tmp/claimguard-failure-diagnostics
+
+          echo "## App Service runtime summary"
+          az webapp show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --query '{state:state,host:defaultHostName,linuxFxVersion:siteConfig.linuxFxVersion}' \
+            --output json
+
+          echo "## Startup command"
+          az webapp config show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --query 'appCommandLine' \
+            --output tsv
+
+          echo "## Runtime-related app settings (presence only)"
+          az webapp config appsettings list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --query "[?name=='WEBSITE_NODE_DEFAULT_VERSION' || name=='WEBSITE_RUN_FROM_PACKAGE' || name=='SCM_DO_BUILD_DURING_DEPLOYMENT' || name=='WEBSITES_PORT'].{name:name,configured:join('', ['set'])}" \
+            --output table
+
+          echo "## Safe health probes"
+          API_HEALTH_URL="https://${AZURE_WEBAPP_API}.azurewebsites.net/health"
+          API_READY_URL="https://${AZURE_WEBAPP_API}.azurewebsites.net/ready"
+          HEALTH_STATUS="$(curl -sS -m 15 -o /tmp/claimguard-failure-diagnostics/health-body.txt -w '%{http_code}' "$API_HEALTH_URL" || true)"
+          READY_STATUS="$(curl -sS -m 15 -o /tmp/claimguard-failure-diagnostics/ready-body.txt -w '%{http_code}' "$API_READY_URL" || true)"
+          echo "health_status=${HEALTH_STATUS}"
+          echo "ready_status=${READY_STATUS}"
+          sed -n '1,120p' /tmp/claimguard-failure-diagnostics/health-body.txt
+          sed -n '1,200p' /tmp/claimguard-failure-diagnostics/ready-body.txt
+
+          echo "## Download bounded app logs"
+          az webapp log download \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --log-file /tmp/claimguard-failure-diagnostics/api-logs.zip >/dev/null
+
+          mkdir -p /tmp/claimguard-failure-diagnostics/logs
+          unzip -q -o /tmp/claimguard-failure-diagnostics/api-logs.zip -d /tmp/claimguard-failure-diagnostics/logs
+
+          echo "## Recent startup and container exceptions (redacted)"
+          grep -RInE "Error:|Exception|MODULE_NOT_FOUND|Cannot find module|Unhandled|exited with code|Killed|failed to start|ContainerTimeout|SiteStartupCancelled|node src/backend-server.js" /tmp/claimguard-failure-diagnostics/logs/LogFiles | tail -n 200 \
+            | sed -E 's#(https?://)[^ @]+@#\1REDACTED@#g; s#(password|pwd|token|secret|connectionstring|cookie|authorization)[^[:space:]]*#\1=REDACTED#Ig; s#(AccountKey=)[^;]+#\1REDACTED#Ig; s#(SharedAccessKey=)[^;]+#\1REDACTED#Ig'
