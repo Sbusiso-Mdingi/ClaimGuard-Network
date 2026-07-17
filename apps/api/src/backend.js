@@ -131,9 +131,9 @@ function createApiClaimsReadRepository(pool, dataPlaneContext) {
           FROM claims
           WHERE tenant_id = ?
           ORDER BY updated_at DESC, claim_id ASC
-          LIMIT ? OFFSET ?
+          LIMIT ${paging.pageSize} OFFSET ${paging.offset}
         `,
-        [tenantId, paging.pageSize, paging.offset],
+        [tenantId],
       );
       const claims = rows.map(mapClaimRowForApi);
       return {

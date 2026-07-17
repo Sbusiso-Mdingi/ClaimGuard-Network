@@ -104,10 +104,10 @@ export function createClaimsReadRepository(pool, {
             c.updated_at
           FROM claims c
           WHERE c.tenant_id = ?
-          ORDER BY c.updated_at DESC, c.claim_id ASC
-          LIMIT ? OFFSET ?
+            ORDER BY c.updated_at DESC, c.claim_id ASC
+            LIMIT ${paging.pageSize} OFFSET ${paging.offset}
         `,
-        [tenantId, paging.pageSize, paging.offset],
+          [tenantId],
       );
 
       let enrichedRows = claimRows;

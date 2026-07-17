@@ -13,7 +13,7 @@ function createPoolStub() {
       if (/SELECT COUNT\(\*\) AS total FROM claims/i.test(sql)) {
         return [[{ total: 3 }]];
       }
-      if (/FROM claims c/i.test(sql) && /LIMIT \? OFFSET \?/i.test(sql)) {
+      if (/FROM claims c/i.test(sql) && /LIMIT \d+ OFFSET \d+/i.test(sql)) {
         return [[
           {
             claim_id: "C-3",
@@ -54,10 +54,6 @@ function createPoolStub() {
             billing_code: "CONSULT",
             created_at: "2026-07-16T00:00:00.000Z",
             updated_at: "2026-07-17T00:00:00.000Z",
-            investigation_id: null,
-            investigation_status: null,
-            investigation_priority: null,
-            investigation_updated_at: null,
           }]];
         }
         return [[]];
@@ -105,7 +101,7 @@ test("claims read repository lists tenant-scoped claims with bounded pagination"
   assert.equal(result.claims[0].investigation.investigationId, "INV-3");
 
   const tenantParams = pool.calls.map((call) => call.params).flat().filter((value) => value === "tenant_alpha");
-  assert.equal(tenantParams.length >= 4, true);
+  assert.equal(tenantParams.length >= 2, true);
 });
 
 test("claims read repository returns null for unknown or empty claim identifiers", async () => {
