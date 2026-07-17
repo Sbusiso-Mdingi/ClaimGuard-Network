@@ -24,8 +24,8 @@ CI/CD:
 
 | Canonical name | Purpose | Owner | Environment | Sensitivity | Source of truth | Runtime consumer | Delivery method | Rotation | Last known state | Rollback | Duplicated | Removable later |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `MYSQL_URL` | API operational DB connection | Platform / API ops | prod-like | secret | live App Service setting today; intended to be governed via Doppler/Key Vault | API, migrations, worker jobs | plaintext App Service setting today | periodic, not evidenced | live and duplicated with control-plane URL | restore prior DB URL setting | yes | yes, after migration |
-| `CONTROL_PLANE_MYSQL_URL` | control-plane DB connection | Platform / control-plane ops | prod-like | secret | live App Service setting today | API control-plane/session code | plaintext App Service setting today | periodic, not evidenced | live | restore prior DB URL setting | yes | yes, after migration |
+| `MYSQL_URL` | API operational DB connection | Platform / API ops | prod-like | secret | Key Vault secret `claimguard--api--mysql-url` | API, migrations, worker jobs | App Service Key Vault reference | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
+| `CONTROL_PLANE_MYSQL_URL` | control-plane DB connection | Platform / control-plane ops | prod-like | secret | Key Vault secret `claimguard--api--control-plane-mysql-url` | API control-plane/session code | App Service Key Vault reference | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
 | tenant DB credential refs | private tenant route access | Platform | prod-like | secret | control plane / runtime secret boundary | routed data-plane code | route-managed secret reference | route-dependent | documented in code, not fully normalized live | restore previous route secret mapping | possible | maybe |
 | session signing material | opaque session secret | API platform | session/local/prod | secret | control-plane/session storage; runtime boundary pending normalization | API session middleware | secret store / session service | periodic | implemented in code, live delivery not fully inventoried | revert session version | unknown | no |
 | CSRF config | CSRF and origin checks | API platform | session/local/prod | sensitive config | App settings and session config | API session middleware | config/env | per policy | live config exists | revert origin/cookie config | yes | no |
@@ -87,3 +87,11 @@ External Doppler metadata could not be fully enumerated from this environment. T
 - Prefer Key Vault references or managed identity at runtime for Azure workloads.
 - Migrate non-critical telemetry settings before operational database secrets.
 - Keep rollback values and validation paths documented before any live cutover.
+
+## Phase 12A Reconciled Runtime Posture
+
+- API managed identity principal `fd83880b-4452-4bda-9a27-5142b49172fc` retains `Key Vault Secrets User` at vault scope for runtime reads.
+- Web app currently has no managed identity principal and no Key Vault access path.
+- Temporary operator write role used during migration was removed after successful cutover.
+- CI run `29609437005` failed in deploy at `Run database migrations`; CI secret-scope read assignment checks for principal `fe7b2935-7f00-4996-a0c6-7f3be2390dbb` returned no matching assignment and require follow-up.
+- Local secret-exposure risk was detected in workstation artifacts (Copilot chat resource files and shell history). No matching leaked string was found in tracked repository files.

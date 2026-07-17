@@ -44,3 +44,12 @@ Statuses:
 ## Phase 12 Deliverable
 
 Phase 12 is complete only when the technical production-shaped foundation exists and this qualification plan is published alongside it. The later gates remain future work.
+
+## Current Delta From Phase 12A
+
+- Evidence collected: API database and control-plane database settings now use Key Vault references in live app settings.
+- Evidence collected: temporary elevated operator vault write access used for migration was removed.
+- Evidence collected: API post-migration health and readiness returned to HTTP 200 after controlled restart.
+- Blocked: authentication smoke for target users still returns `AUTHENTICATION_FAILED` (HTTP 401) on proxy login path.
+- Blocked: CI deployment run for workflow change commit `47fd1f7` failed in migration step (`Run database migrations`, run `29609437005`).
+- Not approved: no production-readiness gate is considered approved by this Phase 12A execution.
