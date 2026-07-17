@@ -26,6 +26,19 @@ See `docs/Phase0_Implementation_Runbook.md` for complete Phase 0 setup details, 
 
 For production operations and incident checks, see `docs/operations-runbook.md`.
 
+Phase 12 production-shaped hardening artifacts:
+
+- `docs/phase-12-production-shaped-hardening.md`
+- `docs/production-shaped-architecture.md`
+- `docs/secrets-and-configuration.md`
+- `docs/environment-matrix.md`
+- `docs/access-control-matrix.md`
+- `docs/threat-model.md`
+- `docs/risk-register.md`
+- `docs/incident-response-plan.md`
+- `docs/backup-and-restore-runbook.md`
+- `docs/production-readiness-qualification-plan.md`
+
 Observability deliverables for Phase 6:
 
 - `docs/observability-dashboards.md`
