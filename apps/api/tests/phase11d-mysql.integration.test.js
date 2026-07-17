@@ -444,6 +444,23 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
       }] },
     });
     assert.equal(ingested.status, 202, JSON.stringify(await ingested.clone().json()));
+
+    const alphaClaimsListResponse = await request(alphaClaims, "/claims");
+    const alphaClaimsList = await alphaClaimsListResponse.json();
+    assert.equal(alphaClaimsListResponse.status, 200);
+    assert.equal(alphaClaimsList.available, true);
+    assert.equal(alphaClaimsList.claims.some((claim) => claim.claimId.startsWith("ALPHA-")), true);
+    assert.equal(alphaClaimsList.claims.some((claim) => claim.claimId.startsWith("BETA-")), false);
+
+    const alphaClaimDetail = await request(alphaClaims, "/claims/ALPHA-CLAIM-1");
+    assert.equal(alphaClaimDetail.status, 200);
+
+    const alphaCrossClaimDetail = await request(alphaClaims, "/claims/BETA-CLAIM-1");
+    assert.equal(alphaCrossClaimDetail.status, 404);
+
+    const betaCrossClaimDetail = await request(betaClaims, "/claims/ALPHA-CLAIM-1");
+    assert.equal(betaCrossClaimDetail.status, 404);
+
     const crossIngest = await request(alphaClaims, "/claims/ingest", {
       method: "POST",
       body: { claims: [{ claim_id: "BETA-ATTEMPT", scheme_id: "BETA01", member_id: "BETA-MEMBER-1", provider_id: "BETA-PROVIDER-1", service_date: "2026-07-02", billing_code: "X", amount: 1 }] },

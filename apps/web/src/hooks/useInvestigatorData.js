@@ -23,15 +23,29 @@ function isLedgerLinked(ledgerReference) {
   return false;
 }
 
-function extractClaimRows(report) {
-  return (report?.claims || []).map((claim) => ({
-    ...claim,
-    policyHolder: claim.memberId,
-    status: claim.processingStatus ?? "Unavailable",
-    detectionDate: report?.metadata?.generatedAt ?? null,
-    triggeredRules: (claim.ruleHits || []).map((rule) => rule.title),
-    evidence: claim.evidenceReferences || [],
-  }));
+function severityFromScore(riskScore) {
+  if (!Number.isFinite(riskScore)) return "Unknown";
+  if (riskScore >= 75) return "High";
+  if (riskScore >= 40) return "Medium";
+  return "Low";
+}
+
+function mapApiClaimToView(claim) {
+  const score = Number.isFinite(claim?.riskScore) ? claim.riskScore : null;
+  const status = claim?.investigation?.status || claim?.status || "SUBMITTED";
+  return {
+    claimId: claim?.claimId,
+    schemeId: claim?.schemeId || null,
+    memberId: claim?.memberId || null,
+    providerId: claim?.providerId || null,
+    policyHolder: claim?.memberId || "Unknown",
+    status,
+    detectionDate: claim?.updatedAt || claim?.submittedAt || null,
+    riskScore: score,
+    severity: claim?.riskLevel || severityFromScore(score),
+    triggeredRules: Array.isArray(claim?.triggeredRules) ? claim.triggeredRules : [],
+    evidence: Array.isArray(claim?.evidence) ? claim.evidence : [],
+  };
 }
 
 function createSnapshot(report, graph, risk, fetchedAt, claims) {
@@ -51,7 +65,7 @@ function createSnapshot(report, graph, risk, fetchedAt, claims) {
 }
 
 function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = []) {
-  const claims = extractClaimRows(report);
+  const claims = [];
   const snapshot = createSnapshot(report, graph, risk, fetchedAt, claims);
 
   return {
@@ -80,6 +94,9 @@ export function useInvestigatorData({ enabled = true } = {}) {
     graph: null,
     risk: null,
     claims: [],
+    claimsStatus: "loading",
+    claimsError: null,
+    claimsPagination: null,
     snapshots: [],
     lastRefresh: null,
     error: null,
@@ -90,16 +107,18 @@ export function useInvestigatorData({ enabled = true } = {}) {
     const fetchedAt = new Date().toISOString();
 
     try {
-      const [reportRes, graphRes, riskRes] = await Promise.all([
+      const [reportRes, graphRes, riskRes, claimsRes] = await Promise.all([
         apiRequest("/detection/report", { cache: "no-store" }),
         apiRequest("/detection/graph", { cache: "no-store" }),
         apiRequest("/detection/risk", { cache: "no-store" }),
+        apiRequest("/claims", { cache: "no-store" }),
       ]);
 
-      const [reportPayload, graphPayload, riskPayload] = await Promise.all([
+      const [reportPayload, graphPayload, riskPayload, claimsPayload] = await Promise.all([
         reportRes.json(),
         graphRes.json(),
         riskRes.json(),
+        claimsRes.json(),
       ]);
 
       if (!reportRes.ok || !reportPayload.available) {
@@ -112,8 +131,19 @@ export function useInvestigatorData({ enabled = true } = {}) {
         throw new Error(riskPayload.message || `Risk unavailable (${riskRes.status})`);
       }
 
+      const claimsReady = claimsRes.ok && claimsPayload?.available === true;
+      const claims = claimsReady
+        ? (claimsPayload.claims || []).map(mapApiClaimToView).filter((claim) => Boolean(claim.claimId))
+        : [];
+
       setState((prev) => ({
         ...buildReadyState(reportPayload.report, graphPayload.graph, riskPayload.risk, fetchedAt, prev.snapshots),
+        claims,
+        claimsStatus: claimsReady ? "ready" : "error",
+        claimsError: claimsReady
+          ? null
+          : claimsPayload?.message || `Claims unavailable (${claimsRes.status})`,
+        claimsPagination: claimsReady ? claimsPayload.pagination || null : null,
         dataSource: "live",
       }));
     } catch (error) {

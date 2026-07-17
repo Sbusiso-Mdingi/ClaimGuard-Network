@@ -35,6 +35,7 @@ function createDomainServices({
   sharedFraudRegistryRepository,
   fraudWorkflowRepository,
   claimIngestionRepository,
+  claimReadRepository,
   detectionAnalyzeProxyUrl,
 } = {}) {
   const reportService = createReportService({
@@ -69,6 +70,7 @@ function createDomainServices({
   return {
     reportService,
     claimIngestionService,
+    claimReadRepository,
     investigationService,
     fraudConfirmationService,
     fraudReversalService,
@@ -82,6 +84,7 @@ export function createBackendApp({
   sharedFraudRegistryRepository = null,
   fraudWorkflowRepository = null,
   claimIngestionService = null,
+  claimReadRepository = null,
   tenantRepository = null,
   authenticationProvider = null,
   authenticationConfiguration = Object.freeze({ mode: "demo_headers" }),
@@ -108,12 +111,14 @@ export function createBackendApp({
     sharedFraudRegistryRepository,
     fraudWorkflowRepository,
     claimIngestionRepository: claimIngestionService,
+    claimReadRepository,
     detectionAnalyzeProxyUrl,
   });
 
   const dependencies = dataPlaneRuntime ? {
     reportService: createOperationalDependencyProxy("reportService", services.reportService),
     claimIngestionService: createOperationalDependencyProxy("claimIngestionService", services.claimIngestionService),
+    claimsReadRepository: createOperationalDependencyProxy("claimsReadRepository", services.claimReadRepository),
     investigationService: createOperationalDependencyProxy("investigationService", services.investigationService),
     fraudConfirmationService: createOperationalDependencyProxy("fraudConfirmationService", services.fraudConfirmationService),
     fraudReversalService: createOperationalDependencyProxy("fraudReversalService", services.fraudReversalService),
@@ -122,7 +127,11 @@ export function createBackendApp({
     tenantRepository: createOperationalDependencyProxy("tenantRepository", tenantRepository),
     simulationStateRepository: createOperationalDependencyProxy("simulationStateRepository", simulationStateRepository),
   } : {
-    ...services, ledgerRepository, tenantRepository, simulationStateRepository,
+    ...services,
+    claimsReadRepository: services.claimReadRepository,
+    ledgerRepository,
+    tenantRepository,
+    simulationStateRepository,
   };
 
   const app = new Hono();
@@ -181,6 +190,7 @@ export function createBackendApp({
             sharedFraudRegistryRepository: repositories.registry,
             fraudWorkflowRepository: repositories.fraudWorkflow,
             claimIngestionRepository: repositories.claims,
+            claimReadRepository: repositories.claimsRead,
             detectionAnalyzeProxyUrl,
           });
         if (!reportServices.has(pool)) reportServices.set(pool, servicesForRequest.reportService);
@@ -236,6 +246,7 @@ export function createBackendApp({
 
   registerClaimsRoutes(app, {
     claimIngestionService: dependencies.claimIngestionService,
+    claimsReadRepository: dependencies.claimsReadRepository,
     tenantRepository: dependencies.tenantRepository,
     logger: logEvent,
   });

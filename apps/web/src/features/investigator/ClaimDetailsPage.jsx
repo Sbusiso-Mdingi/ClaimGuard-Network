@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Progress } from "../../components/ui/progress";
 import { Button } from "../../components/ui/button";
@@ -8,6 +8,33 @@ import { useRole } from "../../context/RoleContext";
 import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
 import { addTrackedInvestigation } from "../../lib/trackedInvestigations";
 import { apiRequest } from "../../lib/apiClient";
+
+function severityFromScore(riskScore) {
+  if (!Number.isFinite(riskScore)) return "Unknown";
+  if (riskScore >= 75) return "High";
+  if (riskScore >= 40) return "Medium";
+  return "Low";
+}
+
+function mapClaimPayload(claim) {
+  if (!claim) return null;
+  const score = Number.isFinite(claim?.riskScore) ? claim.riskScore : null;
+  const status = claim?.investigation?.status || claim?.status || "SUBMITTED";
+  const detectionDate = claim?.updatedAt || claim?.submittedAt || null;
+  return {
+    claimId: claim?.claimId,
+    schemeId: claim?.schemeId || null,
+    memberId: claim?.memberId || null,
+    providerId: claim?.providerId || null,
+    policyHolder: claim?.memberId || "Unknown",
+    status,
+    detectionDate,
+    riskScore: score,
+    severity: claim?.riskLevel || severityFromScore(score),
+    triggeredRules: Array.isArray(claim?.triggeredRules) ? claim.triggeredRules : [],
+    evidence: Array.isArray(claim?.evidence) ? claim.evidence : [],
+  };
+}
 
 function RiskPanel({ claim, risk, ledgerReference }) {
   const ledgerLinked =
@@ -67,15 +94,67 @@ function RiskPanel({ claim, risk, ledgerReference }) {
   );
 }
 
-export function ClaimDetailsPage({ claims, report, graph, risk }) {
+export function ClaimDetailsPage({ report, graph, risk }) {
   const params = useParams();
   const claimId = decodeURIComponent(params.claimId || "");
 
   const { identity } = useRole();
   const [escalateMessage, setEscalateMessage] = useState(null);
+  const [claimState, setClaimState] = useState({
+    status: "loading",
+    claim: null,
+    error: null,
+  });
   const canEscalate = [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR].includes(identity.role);
 
-  const claim = claims.find((row) => row.claimId === claimId);
+  const { claim } = claimState;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadClaim() {
+      setClaimState({ status: "loading", claim: null, error: null });
+      try {
+        const response = await apiRequest(`/claims/${encodeURIComponent(claimId)}`, { cache: "no-store" });
+        const payload = await response.json().catch(() => null);
+        if (cancelled) return;
+
+        if (response.status === 404) {
+          setClaimState({ status: "not-found", claim: null, error: payload?.message || "Claim not found." });
+          return;
+        }
+        if (response.status === 403) {
+          setClaimState({ status: "forbidden", claim: null, error: payload?.message || "You do not have access to this claim." });
+          return;
+        }
+        if (!response.ok || !payload?.available) {
+          setClaimState({ status: "error", claim: null, error: payload?.message || `Claim unavailable (${response.status}).` });
+          return;
+        }
+
+        setClaimState({ status: "ready", claim: mapClaimPayload(payload.claim), error: null });
+      } catch (error) {
+        if (cancelled) return;
+        setClaimState({
+          status: "error",
+          claim: null,
+          error: error instanceof Error ? error.message : "Failed to load claim details.",
+        });
+      }
+    }
+
+    if (!claimId) {
+      setClaimState({ status: "not-found", claim: null, error: "Claim not found." });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    loadClaim();
+    return () => {
+      cancelled = true;
+    };
+  }, [claimId]);
 
   const related = useMemo(() => {
     const relationships = graph?.edges || [];
@@ -114,7 +193,31 @@ export function ClaimDetailsPage({ claims, report, graph, risk }) {
     }
   }
 
-  if (!claim) {
+  if (claimState.status === "loading") {
+    return (
+      <SectionCard title="Loading claim" description="Fetching authoritative claim details.">
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </SectionCard>
+    );
+  }
+
+  if (claimState.status === "forbidden") {
+    return (
+      <SectionCard title="Access denied" description={claimState.error || "You do not have access to this claim."}>
+        <Link to="/claims" className="text-sm text-primary underline-offset-4 hover:underline">Return to Claims Explorer</Link>
+      </SectionCard>
+    );
+  }
+
+  if (claimState.status === "error") {
+    return (
+      <SectionCard title="Claim unavailable" description={claimState.error || "Claim details are unavailable."}>
+        <Link to="/claims" className="text-sm text-primary underline-offset-4 hover:underline">Return to Claims Explorer</Link>
+      </SectionCard>
+    );
+  }
+
+  if (!claim || claimState.status === "not-found") {
     return (
       <SectionCard title="Claim not found" description="The selected claim is not available in the current snapshot.">
         <Link to="/claims" className="text-sm text-primary underline-offset-4 hover:underline">Return to Claims Explorer</Link>

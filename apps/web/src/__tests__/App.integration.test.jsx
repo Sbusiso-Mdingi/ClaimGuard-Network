@@ -58,6 +58,50 @@ const riskPayload = {
   },
 };
 
+const claimsPayload = {
+  available: true,
+  claims: [
+    {
+      claimId: "C-1",
+      schemeId: "S1",
+      memberId: "Alex",
+      providerId: "P-100",
+      status: "SUBMITTED",
+      riskScore: 82,
+      riskLevel: "High",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+      triggeredRules: ["Suspicious repeat billing"],
+      evidence: [],
+    },
+    {
+      claimId: "C-2",
+      schemeId: "S1",
+      memberId: "Blair",
+      providerId: "P-200",
+      status: "UNDER_INVESTIGATION",
+      riskScore: 74,
+      riskLevel: "High",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+      triggeredRules: ["Rapid provider hopping"],
+      evidence: [],
+    },
+  ],
+  pagination: {
+    page: 1,
+    pageSize: 25,
+    requestedPageSize: 25,
+    maxPageSize: 100,
+    total: 2,
+    totalPages: 1,
+    hasNextPage: false,
+  },
+};
+
+const claimDetailPayload = {
+  available: true,
+  claim: claimsPayload.claims[0],
+};
+
 const simulatorPayload = {
   available: true,
   simulator: {
@@ -77,6 +121,8 @@ function mockFetch() {
     if (String(url).includes("/api/detection/report")) return Promise.resolve({ ok: true, json: async () => reportPayload });
     if (String(url).includes("/api/detection/graph")) return Promise.resolve({ ok: true, json: async () => graphPayload });
     if (String(url).includes("/api/detection/risk")) return Promise.resolve({ ok: true, json: async () => riskPayload });
+    if (String(url).includes("/api/claims/C-1")) return Promise.resolve({ ok: true, json: async () => claimDetailPayload });
+    if (String(url).includes("/api/claims")) return Promise.resolve({ ok: true, json: async () => claimsPayload });
     if (String(url).includes("/api/simulator/status")) return Promise.resolve({ ok: true, json: async () => simulatorPayload });
     return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
   });
@@ -92,6 +138,9 @@ function mockFetchFailure() {
     }
     if (String(url).includes("/api/detection/risk")) {
       return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Risk unavailable (503)" }) });
+    }
+    if (String(url).includes("/api/claims")) {
+      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Claims unavailable (503)" }) });
     }
     if (String(url).includes("/api/simulator/status")) {
       return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Simulator unavailable (503)" }) });
@@ -148,7 +197,7 @@ test("live refresh toggle controls browser polling only and paused backend state
   });
 
   expect(screen.getByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
-  expect(global.fetch).toHaveBeenCalledTimes(4);
+  expect(global.fetch).toHaveBeenCalledTimes(5);
   expect(screen.getByText(/Simulator: paused \/ live/i)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Resume/i })).not.toBeInTheDocument();
 
@@ -156,7 +205,7 @@ test("live refresh toggle controls browser polling only and paused backend state
     vi.advanceTimersByTime(15000);
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(8);
+  expect(global.fetch).toHaveBeenCalledTimes(10);
 
   fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
 
@@ -164,7 +213,7 @@ test("live refresh toggle controls browser polling only and paused backend state
     vi.advanceTimersByTime(30000);
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(8);
+  expect(global.fetch).toHaveBeenCalledTimes(10);
   expect(global.fetch.mock.calls.some(([url]) => /\/api\/simulator\/(start|pause|resume|stop)/.test(String(url))), false);
 }, 10000);
 

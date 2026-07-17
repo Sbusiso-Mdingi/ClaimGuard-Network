@@ -473,6 +473,94 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
   assert.equal(json.ingestion.source, "synthetic-loader");
 });
 
+test("claims list endpoint requires configured read repository", async () => {
+  const app = createBackendApp();
+  const response = await app.request("http://localhost/claims", {
+    headers: developmentAuthHeaders(),
+  });
+
+  const json = await response.json();
+  assert.equal(response.status, 503);
+  assert.equal(json.available, false);
+});
+
+test("claims list and details endpoints return authoritative claim payloads", async () => {
+  const claimsReadRepository = {
+    async listClaims({ page, pageSize }) {
+      assert.equal(page, "1");
+      assert.equal(pageSize, "10");
+      return {
+        claims: [{
+          claimId: "C-300",
+          schemeId: "scheme_a",
+          memberId: "M-300",
+          providerId: "P-300",
+          status: "SUBMITTED",
+          riskScore: null,
+          riskLevel: null,
+          submittedAt: "2026-07-16T00:00:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+          triggeredRules: [],
+          evidence: [],
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 10,
+          requestedPageSize: 10,
+          maxPageSize: 100,
+          total: 1,
+          totalPages: 1,
+          hasNextPage: false,
+        },
+      };
+    },
+    async getClaimById(claimId) {
+      if (claimId === "C-300") {
+        return {
+          claimId: "C-300",
+          schemeId: "scheme_a",
+          memberId: "M-300",
+          providerId: "P-300",
+          status: "SUBMITTED",
+          riskScore: null,
+          riskLevel: null,
+          submittedAt: "2026-07-16T00:00:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+          triggeredRules: [],
+          evidence: [],
+        };
+      }
+      return null;
+    },
+  };
+
+  const app = createBackendApp({ claimReadRepository: claimsReadRepository });
+
+  const listResponse = await app.request("http://localhost/claims?page=1&pageSize=10", {
+    headers: developmentAuthHeaders(),
+  });
+  const listJson = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.equal(listJson.available, true);
+  assert.equal(listJson.claims.length, 1);
+  assert.equal(listJson.claims[0].claimId, "C-300");
+
+  const detailResponse = await app.request("http://localhost/claims/C-300", {
+    headers: developmentAuthHeaders(),
+  });
+  const detailJson = await detailResponse.json();
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailJson.available, true);
+  assert.equal(detailJson.claim.claimId, "C-300");
+
+  const missingResponse = await app.request("http://localhost/claims/C-404", {
+    headers: developmentAuthHeaders(),
+  });
+  const missingJson = await missingResponse.json();
+  assert.equal(missingResponse.status, 404);
+  assert.equal(missingJson.available, false);
+});
+
 test("investigation confirm-fraud endpoint writes confirmed ledger entry", async () => {
   const app = createBackendApp({
     fraudWorkflowRepository: createFraudWorkflowRepositoryStub(),

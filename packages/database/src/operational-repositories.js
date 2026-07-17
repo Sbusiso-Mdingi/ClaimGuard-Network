@@ -1,4 +1,5 @@
 import { createClaimIngestionRepository } from "./claim-ingestion-repository.js";
+import { createClaimsReadRepository } from "./claims-read-repository.js";
 import { createClaimProcessingOutboxRepository } from "./claim-processing-outbox-repository.js";
 import { createDatabaseFromPool } from "./client.js";
 import { requireOperationalDataPlaneContext } from "./data-plane-context.js";
@@ -19,6 +20,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
   return Object.freeze({
     dataPlaneContext: context,
     claims: createClaimIngestionRepository(pool, options),
+    claimsRead: createClaimsReadRepository(pool, options),
     members: scopedReads.members,
     providers: scopedReads.providers,
     claimProcessingOutbox: createClaimProcessingOutboxRepository(pool, options),

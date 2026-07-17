@@ -5,9 +5,118 @@ import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
 
 export function registerClaimsRoutes(app, {
   claimIngestionService,
+  claimsReadRepository = null,
   tenantRepository = null,
   logger,
 } = {}) {
+  app.get(
+    "/claims",
+    createRequirePermissionMiddleware({
+      permission: CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN,
+    }),
+    async (c) => {
+      const tenantDecision = await authorizeTenantScopedRequest({ c, tenantRepository });
+      if (!tenantDecision.ok) return tenantDecision.response;
+
+      if (!claimsReadRepository?.listClaims) {
+        return c.json(
+          {
+            available: false,
+            message: "Claims read repository is not configured.",
+          },
+          503,
+        );
+      }
+
+      const page = c.req.query("page");
+      const pageSize = c.req.query("pageSize");
+
+      try {
+        const result = await claimsReadRepository.listClaims({ page, pageSize });
+        return c.json({
+          available: true,
+          claims: result.claims,
+          pagination: result.pagination,
+        });
+      } catch (error) {
+        logger?.("error", "claims_list_failed", {
+          requestId: c.get("requestId") || null,
+          message: error?.message || "Claims list failed.",
+        });
+        return c.json(
+          {
+            available: false,
+            message: "Claims list is currently unavailable.",
+          },
+          500,
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/claims/:claimId",
+    createRequirePermissionMiddleware({
+      permission: CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN,
+    }),
+    async (c) => {
+      const tenantDecision = await authorizeTenantScopedRequest({ c, tenantRepository });
+      if (!tenantDecision.ok) return tenantDecision.response;
+
+      if (!claimsReadRepository?.getClaimById) {
+        return c.json(
+          {
+            available: false,
+            message: "Claims read repository is not configured.",
+          },
+          503,
+        );
+      }
+
+      const claimId = c.req.param("claimId");
+      if (!claimId || !claimId.trim()) {
+        return c.json(
+          {
+            available: false,
+            message: "claimId is required.",
+          },
+          400,
+        );
+      }
+
+      try {
+        const claim = await claimsReadRepository.getClaimById(claimId);
+        if (!claim) {
+          return c.json(
+            {
+              available: false,
+              message: "Claim not found.",
+            },
+            404,
+          );
+        }
+
+        return c.json({
+          available: true,
+          claim,
+        });
+      } catch (error) {
+        logger?.("error", "claim_detail_failed", {
+          requestId: c.get("requestId") || null,
+          claimId,
+          message: error?.message || "Claim detail failed.",
+        });
+        return c.json(
+          {
+            available: false,
+            message: "Claim details are currently unavailable.",
+          },
+          500,
+        );
+      }
+    },
+  );
+
   app.post(
     "/claims/ingest",
     createRequirePermissionMiddleware({

@@ -104,7 +104,7 @@ function InvestigatorRoutes() {
           path="claims"
           element={
             <RequireRoleAccess navKey="claims">
-              {renderPageContent(<ClaimsExplorerPage claims={data.claims} />, {
+              {renderPageContent(<ClaimsExplorerPage claims={data.claims} claimsStatus={data.claimsStatus} claimsError={data.claimsError} onRetryClaims={data.refreshNow} />, {
                 loadingTitle: "Loading Claims Explorer",
                 errorTitle: "Claims Explorer Unavailable",
               })}
@@ -115,7 +115,7 @@ function InvestigatorRoutes() {
           path="claims/:claimId"
           element={
             <RequireRoleAccess navKey="claims">
-              {renderPageContent(<ClaimDetailsPage claims={data.claims} report={data.report} graph={data.graph} risk={data.risk} />, {
+              {renderPageContent(<ClaimDetailsPage report={data.report} graph={data.graph} risk={data.risk} />, {
                 loadingTitle: "Loading Claim Details",
                 errorTitle: "Claim Details Unavailable",
               })}

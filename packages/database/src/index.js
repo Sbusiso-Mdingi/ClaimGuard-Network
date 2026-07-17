@@ -28,6 +28,9 @@ export {
   createClaimIngestionRepository,
 } from "./claim-ingestion-repository.js";
 export {
+  createClaimsReadRepository,
+} from "./claims-read-repository.js";
+export {
   CLAIM_PROCESSING_AGGREGATE_TYPE,
   CLAIM_PROCESSING_JOB_TYPE,
   CLAIM_PROCESSING_STATUS,

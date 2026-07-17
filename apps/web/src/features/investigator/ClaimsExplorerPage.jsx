@@ -20,10 +20,14 @@ const SORT_FIELDS = {
     const right = Number.isFinite(b.riskScore) ? b.riskScore : -1;
     return left - right;
   },
-  detectionDate: (a, b) => new Date(a.detectionDate) - new Date(b.detectionDate),
+  detectionDate: (a, b) => {
+    const left = a?.detectionDate ? new Date(a.detectionDate).getTime() : 0;
+    const right = b?.detectionDate ? new Date(b.detectionDate).getTime() : 0;
+    return left - right;
+  },
 };
 
-export function ClaimsExplorerPage({ claims }) {
+export function ClaimsExplorerPage({ claims, claimsStatus = "ready", claimsError = null, onRetryClaims = null }) {
   const [query, setQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [sortField, setSortField] = useState("riskScore");
@@ -72,6 +76,37 @@ export function ClaimsExplorerPage({ claims }) {
   function SortIcon({ field }) {
     if (sortField !== field) return <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />;
     return sortDirection === "asc" ? <ArrowUp className="h-3.5 w-3.5 text-primary" /> : <ArrowDown className="h-3.5 w-3.5 text-primary" />;
+  }
+
+  if (claimsStatus === "loading") {
+    return (
+      <PageFrame
+        eyebrow="Claims Explorer"
+        title="Claims review table"
+        description="Loading authoritative claims from the API."
+      >
+        <SectionCard title="Claims" description="The claims list is loading.">
+          <p className="text-sm text-muted-foreground">Loading claims...</p>
+        </SectionCard>
+      </PageFrame>
+    );
+  }
+
+  if (claimsStatus === "error") {
+    return (
+      <PageFrame
+        eyebrow="Claims Explorer"
+        title="Claims review table"
+        description="Authoritative claims API is currently unavailable."
+      >
+        <SectionCard title="Claims unavailable" description={claimsError || "The claims API request failed."}>
+          <div className="flex items-center gap-3">
+            <StatusIndicator tone="danger">Unavailable</StatusIndicator>
+            <Button variant="outline" onClick={() => onRetryClaims?.()} className="h-9 rounded-full px-4">Retry</Button>
+          </div>
+        </SectionCard>
+      </PageFrame>
+    );
   }
 
   return (
@@ -168,7 +203,7 @@ export function ClaimsExplorerPage({ claims }) {
                       <StatusIndicator tone={claimStatusTone(claim.status)}>{claim.status.replace(/_/g, " ")}</StatusIndicator>
                     </td>
                     <td>{claim.policyHolder}</td>
-                    <td>{new Date(claim.detectionDate).toLocaleString()}</td>
+                    <td>{claim.detectionDate ? new Date(claim.detectionDate).toLocaleString() : "Unavailable"}</td>
                     <td className="max-w-[360px] text-xs leading-5 text-muted-foreground">{claim.triggeredRules.join(", ") || "No rules"}</td>
                   </tr>
                 ))

@@ -499,3 +499,63 @@ test("cross-tenant claim ownership conflict returns 409 and API never invokes le
   assert.deepEqual(outboxTenants, [alphaTenant.tenant_id]);
   assert.equal(producerTriggerCount, 0);
 });
+
+test("claims read routes require claims.view_own and enforce canonical tenant context", async () => {
+  const observed = [];
+  const app = createBackendApp({
+    tenantRepository: createTenantRepositoryStub(),
+    claimReadRepository: {
+      async listClaims() {
+        observed.push(getActiveTenantId());
+        return {
+          claims: [{ claimId: "ALPHA-CLAIM-1", memberId: "member-1", status: "SUBMITTED", updatedAt: "2026-07-16T00:00:00.000Z" }],
+          pagination: {
+            page: 1,
+            pageSize: 25,
+            requestedPageSize: 25,
+            maxPageSize: 100,
+            total: 1,
+            totalPages: 1,
+            hasNextPage: false,
+          },
+        };
+      },
+      async getClaimById(claimId) {
+        observed.push(getActiveTenantId());
+        if (claimId === "ALPHA-CLAIM-1") {
+          return { claimId, memberId: "member-1", status: "SUBMITTED", updatedAt: "2026-07-16T00:00:00.000Z" };
+        }
+        return null;
+      },
+    },
+  });
+
+  const unauthenticated = await app.request("http://localhost/claims");
+  const contradictory = await app.request("http://localhost/claims", {
+    headers: authHeaders({ role: "scheme_user", requestTenantId: betaTenant.tenant_id }),
+  });
+  const investigator = await app.request("http://localhost/claims", {
+    headers: authHeaders({ role: "investigator" }),
+  });
+  const platform = await app.request("http://localhost/claims", {
+    headers: authHeaders({ role: "platform_administrator" }),
+  });
+  const permitted = await app.request("http://localhost/claims", {
+    headers: authHeaders({ role: "scheme_user" }),
+  });
+  const permittedDetail = await app.request("http://localhost/claims/ALPHA-CLAIM-1", {
+    headers: authHeaders({ role: "scheme_user" }),
+  });
+  const missingDetail = await app.request("http://localhost/claims/BETA-CLAIM-1", {
+    headers: authHeaders({ role: "scheme_user" }),
+  });
+
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(contradictory.status, 403);
+  assert.equal(investigator.status, 403);
+  assert.equal(platform.status, 403);
+  assert.equal(permitted.status, 200);
+  assert.equal(permittedDetail.status, 200);
+  assert.equal(missingDetail.status, 404);
+  assert.deepEqual(observed, [alphaTenant.tenant_id, alphaTenant.tenant_id, alphaTenant.tenant_id]);
+});
