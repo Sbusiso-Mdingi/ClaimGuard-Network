@@ -131,3 +131,38 @@ test("session control routes use the already verified membership when no routed 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { tenantId: "tenant-alpha" });
 });
+
+test("private routed requests pin tenant context to authenticated membership", async () => {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      user_id: "user-private",
+      organisation_id: "org-private",
+      tenant_id: "tenant-private",
+      roles: ["claims_analyst"],
+      permissions: new Set(),
+      source: "session",
+    });
+    c.set("dataPlaneContext", {
+      routeType: "private_database",
+      organisationId: "org-private",
+      routeId: "route-private",
+      routeGeneration: 1,
+    });
+    await next();
+  });
+  const unavailableOperationalProxy = new Proxy({}, { get() { return undefined; } });
+  app.use("*", createTenantContextMiddleware({ tenantRepository: unavailableOperationalProxy }));
+  app.get("/claims", (c) => c.json({
+    tenantContext: c.get("tenantContext"),
+    authTenant: c.get("authContext")?.tenant_id,
+  }));
+
+  const response = await app.request("/claims");
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.tenantContext.tenant_id, "tenant-private");
+  assert.equal(body.tenantContext.source, "authenticated_membership_private_route");
+  assert.equal(body.authTenant, "tenant-private");
+});
