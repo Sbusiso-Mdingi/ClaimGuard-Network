@@ -27,7 +27,7 @@ properties:
   template:
     containers:
       - name: provisioning-worker
-        image: claimguardacr11e.azurecr.io/claimguard/provisioning-worker:phase11e-pending
+        image: claimguardacr11e.azurecr.io/claimguard/provisioning-worker:phase11e-20260716-sslfix-49663f5
         resources:
           cpu: 0.5
           memory: 1Gi
