@@ -5,9 +5,12 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
-  id-token: write
 
 env:
   AZURE_CLIENT_ID: dc32e620-8239-4f20-b5ae-ca3c91cf9146
@@ -22,88 +25,153 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Setup pnpm CLI
+      - name: Set up pnpm
         uses: pnpm/action-setup@v6
 
-      - name: Setup Node.js + pnpm
+      - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: 'pnpm'
-
-      - name: Restore pnpm store cache
-        uses: actions/cache@v4
-        id: pnpm-store-cache
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Install JS dependencies (root workspace)
-        run: pnpm install --frozen-lockfile
+          cache: pnpm
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - name: Install uv
-        run: python -m pip install --upgrade pip uv
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/uv.lock
+            **/pyproject.toml
 
-      - name: Install Python deps for data-generator
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint and build the complete monorepo
+        run: pnpm turbo run lint build
+
+      - name: Run JavaScript tests with coverage
+        shell: bash
         run: |
-          cd packages/data-generator
-          uv sync --all-groups
+          set -euo pipefail
+          rm -rf coverage/javascript
+          mkdir -p coverage/javascript/raw
 
-      - name: Run monorepo tasks (lint/test/build affected)
-        run: |
-          BASE_REF="${{ github.base_ref || 'main' }}"
-          pnpm turbo run lint test build --filter=...[origin/${BASE_REF}]
+          export NODE_V8_COVERAGE="$GITHUB_WORKSPACE/coverage/javascript/raw"
+          pnpm --recursive \
+            --filter './apps/**' \
+            --filter './packages/**' \
+            --filter '!@claimguard/data-generator' \
+            --if-present \
+            run test
+          unset NODE_V8_COVERAGE
 
-      - name: Build and test web app
-        working-directory: ./
-        run: |
-          pnpm --filter ./apps/web run build
-          pnpm --filter ./apps/web run test --silent -- --run
+          pnpm dlx c8@12.0.0 report \
+            --temp-directory=coverage/javascript/raw \
+            --all \
+            --src=apps \
+            --src=packages \
+            --extension=.js \
+            --extension=.jsx \
+            --extension=.cjs \
+            --extension=.mjs \
+            --exclude='**/tests/**' \
+            --exclude='**/*.test.*' \
+            --exclude='**/dist/**' \
+            --exclude='**/node_modules/**' \
+            --exclude='**/src/setupTests.js' \
+            --reporter=text-summary \
+            --reporter=lcov \
+            --reports-dir=coverage/javascript
 
-      - name: Build and test api package (if present)
+          test -s coverage/javascript/lcov.info
+
+      - name: Run all Python tests with coverage
+        shell: bash
         run: |
-          if [ -f "apps/api/package.json" ]; then
-            pnpm --filter ./apps/api run build
-            pnpm --filter ./apps/api run test || exit 1
-          else
-            echo "apps/api not present; skipping"
-          fi
+          set -euo pipefail
+          rm -rf coverage/python
+          mkdir -p coverage/python
+
+          (
+            cd packages/data-generator
+            uv run --frozen claimguard-generate \
+              --config generation_config.yaml
+          )
+
+          COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage.data-generator" \
+          uv run --project packages/data-generator --frozen pytest \
+            packages/data-generator/tests \
+            --cov \
+            --cov-config=coverage.ini \
+            --cov-report=term-missing
+
+          COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage.detection-engine" \
+          uv run --project services/detection-engine --frozen --with coverage==7.15.2 \
+            coverage run --rcfile=coverage.ini \
+            -m unittest discover \
+            -s services/detection-engine/tests \
+            -p 'test_*.py'
+
+          COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage.report-producer" \
+          uv run --project services/report-producer --frozen --with coverage==7.15.2 \
+            coverage run --rcfile=coverage.ini \
+            -m unittest discover \
+            -s services/report-producer/tests \
+            -p 'test_*.py'
+
+          COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage" \
+          uv run --project packages/data-generator --frozen \
+            coverage combine --rcfile=coverage.ini coverage/python
+          COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage" \
+          uv run --project packages/data-generator --frozen \
+            coverage xml --rcfile=coverage.ini \
+            -o coverage/python/coverage.xml
+
+          test -s coverage/python/coverage.xml
+
+      - name: Upload JavaScript coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          use_oidc: true
+          files: ./coverage/javascript/lcov.info
+          flags: javascript
+          name: javascript
+          disable_search: true
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          use_oidc: true
+          files: ./coverage/python/coverage.xml
+          flags: python
+          name: python
+          disable_search: true
+          fail_ci_if_error: true
+          verbose: true
 
       - name: Upload web build artifact for inspection
-        if: always()
+        if: ${{ always() && hashFiles('apps/web/dist/**') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: web-dist
           path: apps/web/dist
+          if-no-files-found: error
           retention-days: 14
-
-      - name: Run Python tests with coverage (data-generator)
-        run: |
-          cd packages/data-generator
-          pnpm test
-
-      - name: Upload Python coverage to Codecov
-        if: success() && env.CODECOV_TOKEN && hashFiles('packages/data-generator/coverage.xml') != ''
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./packages/data-generator/coverage.xml
-          flags: python
-          fail_ci_if_error: true
-          verbose: true
 
       - name: Package deployable web artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -119,7 +187,7 @@ jobs:
                "src/setupTests.js" \
                "vitest.config.ts"
 
-      - name: Package deployable api artifact
+      - name: Package deployable API artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           rm -rf /tmp/claimguard-api-deploy
@@ -150,18 +218,40 @@ jobs:
           path: |
             /tmp/claimguard-web-deploy.zip
             /tmp/claimguard-api-deploy.zip
+          if-no-files-found: error
           retention-days: 14
 
   deploy:
     runs-on: ubuntu-latest
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: claimguard-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Download deployable artifacts
         uses: actions/download-artifact@v4
         with:
           name: claimguard-deploy-packages
           path: /tmp/claimguard-deploy-packages
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install migration dependencies from the lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -171,27 +261,24 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
           audience: api://AzureADTokenExchange
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Run database migrations
         env:
           OPERATIONAL_ADMIN_MODE: legacy_shared
         run: |
-          npm install mysql2 drizzle-orm
+          set -euo pipefail
           # Runtime database access is governed through Key Vault, not App Service values.
-          export MYSQL_URL=$(az keyvault secret show \
+          export MYSQL_URL="$(az keyvault secret show \
             --vault-name "$AZURE_KEYVAULT_NAME" \
             --name "$MYSQL_URL_SECRET_NAME" \
             --query value \
-            --output tsv)
+            --output tsv)"
 
           if [ -z "$MYSQL_URL" ]; then
             echo "Error: MYSQL_URL not found in Key Vault"
             exit 1
           fi
 
-          node packages/database/src/migrate.js
+          pnpm --filter @claimguard/database exec node src/migrate.js
 
       - name: Enable run-from-package for web
         run: |
@@ -200,7 +287,7 @@ jobs:
             --name "$AZURE_WEBAPP_WEB" \
             --settings WEBSITE_RUN_FROM_PACKAGE=1 SCM_DO_BUILD_DURING_DEPLOYMENT=false
 
-      - name: Enable run-from-package for api
+      - name: Enable run-from-package for API
         run: |
           az webapp config appsettings set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -223,7 +310,7 @@ jobs:
             --track-status true
             --timeout 1800000
 
-      - name: Deploy api app with retry
+      - name: Deploy API app with retry
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15
@@ -325,4 +412,4 @@ jobs:
 
           echo "## Recent startup and container exceptions (redacted)"
           grep -RInE "Error:|Exception|MODULE_NOT_FOUND|Cannot find module|Unhandled|exited with code|Killed|failed to start|ContainerTimeout|SiteStartupCancelled|node src/backend-server.js" /tmp/claimguard-failure-diagnostics/logs/LogFiles | tail -n 200 \
-            | sed -E 's#(https?://)[^ @]+@#\1REDACTED@#g; s#(password|pwd|token|secret|connectionstring|cookie|authorization)[^[:space:]]*#\1=REDACTED#Ig; s#(AccountKey=)[^;]+#\1REDACTED#Ig; s#(SharedAccessKey=)[^;]+#\1REDACTED#Ig'
+            | sed -E 's#(https?://)[^ @]+@#\\1REDACTED@#g; s#(password|pwd|token|secret|connectionstring|cookie|authorization)[^[:space:]]*#\\1=REDACTED#Ig; s#(AccountKey=)[^;]+#\\1REDACTED#Ig; s#(SharedAccessKey=)[^;]+#\\1REDACTED#Ig'
