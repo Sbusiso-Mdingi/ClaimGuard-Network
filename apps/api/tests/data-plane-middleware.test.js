@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { createDataPlaneMiddleware } from "../src/middleware/data-plane-middleware.js";
 import { createBackendApp } from "../src/backend.js";
 import { createAuthenticatedAuthContext } from "../src/middleware/auth-context.js";
+import { CLAIMGUARD_PERMISSIONS } from "../src/authorization-policy.js";
 import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
 
 function context(overrides = {}) {
@@ -21,7 +22,13 @@ test("operational middleware routes only from authenticated organisation and ski
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.set("requestId", "corr");
-    c.set("authContext", { is_authenticated: true, organisation_id: "org-alpha", user_id: "user-alpha", source: "session" });
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-alpha",
+      user_id: "user-alpha",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
     await next();
   });
   app.use("*", createDataPlaneMiddleware({
@@ -44,7 +51,16 @@ test("operational middleware routes only from authenticated organisation and ski
 test("platform_none fails private routes before pool acquisition", async () => {
   let acquired = false;
   const app = new Hono();
-  app.use("*", async (c, next) => { c.set("authContext", { is_authenticated: true, organisation_id: "org-platform", user_id: "admin", source: "session" }); await next(); });
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-platform",
+      user_id: "admin",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
   app.use("*", createDataPlaneMiddleware({
     routeResolver: { async resolve() { return context({ organisationId: "org-platform", routeType: "platform_none", operationalTenantId: null }); } },
     connectionManager: { async acquire() { acquired = true; } },
@@ -60,7 +76,16 @@ test("platform_none fails private routes before pool acquisition", async () => {
 test("suspension failure retires only the authenticated organisation cache", async () => {
   const retired = [];
   const app = new Hono();
-  app.use("*", async (c, next) => { c.set("authContext", { is_authenticated: true, organisation_id: "org-alpha", user_id: "user", source: "session" }); await next(); });
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-alpha",
+      user_id: "user",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
   app.use("*", createDataPlaneMiddleware({
     routeResolver: { async resolve() { throw Object.assign(new Error("inactive"), { code: "DATA_PLANE_ORGANISATION_INACTIVE", status: 503 }); } },
     connectionManager: { async acquire() { throw new Error("must not acquire"); }, async retireOrganisation(id) { retired.push(id); } },
@@ -92,6 +117,112 @@ test("a session invalidated by organisation suspension retires that organisation
   const response = await app.request("/investigations/private");
   assert.equal(response.status, 401);
   assert.deepEqual(retired, [["org-alpha", "session_organisation_inactive"]]);
+});
+
+test("private claims routes deny platform administrators before route resolution", async () => {
+  let resolveCalls = 0;
+  let acquireCalls = 0;
+  let bundleCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-platform",
+      user_id: "admin",
+      source: "session",
+      roles: ["platform_administrator"],
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context({ organisationId: "org-platform" }); } },
+    connectionManager: { async acquire() { acquireCalls += 1; return { pool: {}, async release() {} }; } },
+    createServiceBundle() { bundleCalls += 1; return {}; },
+  }));
+  app.get("/claims", (c) => c.json({ unexpected: true }));
+  app.get("/claims/:claimId", (c) => c.json({ unexpected: c.req.param("claimId") }));
+
+  const listResponse = await app.request("/claims", { headers: { "x-claimguard-role": "claims_analyst", "x-claimguard-tenant": "tenant-spoof" } });
+  const listBody = await listResponse.json();
+  const detailResponse = await app.request("/claims/CLAIM-1", { headers: { "x-claimguard-role": "claims_analyst", "x-claimguard-tenant": "tenant-spoof" } });
+  const detailBody = await detailResponse.json();
+
+  assert.equal(listResponse.status, 403);
+  assert.equal(listBody.code, "FORBIDDEN");
+  assert.equal(detailResponse.status, 403);
+  assert.equal(detailBody.code, "FORBIDDEN");
+  assert.equal(resolveCalls, 0);
+  assert.equal(acquireCalls, 0);
+  assert.equal(bundleCalls, 0);
+});
+
+test("authorized claims analyst still reaches resolver and preserves missing-route fail-closed behavior", async () => {
+  let resolveCalls = 0;
+  let acquireCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-analyst",
+      user_id: "claims-user",
+      source: "session",
+      roles: ["claims_analyst"],
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: {
+      async resolve() {
+        resolveCalls += 1;
+        throw Object.assign(new Error("route missing"), {
+          code: "DATA_PLANE_ROUTE_MISSING",
+          status: 503,
+        });
+      },
+    },
+    connectionManager: { async acquire() { acquireCalls += 1; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/claims", (c) => c.json({ unexpected: true }));
+
+  const response = await app.request("/claims");
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.code, "DATA_PLANE_ROUTE_MISSING");
+  assert.equal(resolveCalls, 1);
+  assert.equal(acquireCalls, 0);
+});
+
+test("detection private route also denies platform administrators before route resolution", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-platform",
+      user_id: "admin",
+      source: "session",
+      roles: ["platform_administrator"],
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context({ organisationId: "org-platform" }); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/detection/report", (c) => c.json({ unexpected: true }));
+
+  const response = await app.request("/detection/report");
+  const body = await response.json();
+
+  assert.equal(response.status, 403);
+  assert.equal(body.code, "FORBIDDEN");
+  assert.equal(resolveCalls, 0);
 });
 
 test("backend operational services are constructed request-scoped from the verified routed pool", async () => {

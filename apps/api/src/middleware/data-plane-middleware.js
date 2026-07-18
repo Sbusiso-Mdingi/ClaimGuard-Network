@@ -1,4 +1,6 @@
 import { applicationErrorResponse } from "../application-errors.js";
+import { CLAIMGUARD_PERMISSIONS, hasPermission } from "../authorization-policy.js";
+import { ForbiddenError } from "../application-errors.js";
 import { runWithOperationalServices } from "../operational-service-context.js";
 
 const OPERATIONAL_PREFIXES = Object.freeze([
@@ -10,6 +12,83 @@ export function requiresOperationalDataPlane(path) {
   return OPERATIONAL_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
+function resolveOperationalPermissionRequirement(path, method) {
+  const upperMethod = String(method || "GET").toUpperCase();
+
+  if ((path === "/claims" || path.startsWith("/claims/")) && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], mode: "all" };
+  }
+  if (path === "/claims/ingest" && upperMethod === "POST") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST], mode: "all" };
+  }
+
+  if (path === "/investigations" && upperMethod === "POST") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE], mode: "all" };
+  }
+  if (path.startsWith("/investigations/") && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW], mode: "all" };
+  }
+  if (path.startsWith("/investigations/") && upperMethod === "PATCH") {
+    return {
+      permissions: [
+        CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS,
+        CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY,
+      ],
+      mode: "any",
+    };
+  }
+  if (path.endsWith("/notes") && upperMethod === "POST") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE], mode: "all" };
+  }
+  if (path.endsWith("/evidence") && upperMethod === "POST") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE], mode: "all" };
+  }
+  if (path === "/investigations/confirm-fraud" && upperMethod === "POST") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD], mode: "all" };
+  }
+
+  if (path.startsWith("/detection/") && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN], mode: "all" };
+  }
+  if (path === "/detection/analyze" && upperMethod === "POST") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.DETECTION_MANAGE_TENANT], mode: "all" };
+  }
+
+  if (path.startsWith("/ledger/") && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY], mode: "all" };
+  }
+
+  if (path === "/registry/search" && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH], mode: "all" };
+  }
+  if (path.startsWith("/registry/history/") && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY], mode: "all" };
+  }
+  if (path.startsWith("/registry/") && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW], mode: "all" };
+  }
+
+  if (path === "/simulator/status" && upperMethod === "GET") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.SIMULATOR_STATUS_VIEW], mode: "all" };
+  }
+  if (path.startsWith("/simulator/") && upperMethod === "POST") {
+    return { permissions: [CLAIMGUARD_PERMISSIONS.SIMULATOR_CONTROL], mode: "all" };
+  }
+
+  return null;
+}
+
+function isPermittedForOperationalPath(auth, path, method) {
+  const requirement = resolveOperationalPermissionRequirement(path, method);
+  if (!requirement) return true;
+
+  if (requirement.mode === "any") {
+    return requirement.permissions.some((permission) => hasPermission(auth, permission));
+  }
+
+  return requirement.permissions.every((permission) => hasPermission(auth, permission));
+}
+
 export function createDataPlaneMiddleware({ routeResolver, connectionManager, createServiceBundle, logger = null }) {
   if (!routeResolver || !connectionManager || !createServiceBundle) throw new TypeError("Data-plane middleware dependencies are required.");
   return async (c, next) => {
@@ -19,6 +98,9 @@ export function createDataPlaneMiddleware({ routeResolver, connectionManager, cr
       const organisationId = c.get("dataPlaneOrganisationToRetire") || null;
       if (organisationId) await connectionManager.retireOrganisation?.(organisationId, "session_organisation_inactive");
       return next();
+    }
+    if (!isPermittedForOperationalPath(auth, c.req.path, c.req.method)) {
+      return applicationErrorResponse(c, new ForbiddenError());
     }
     let lease = null;
     try {
