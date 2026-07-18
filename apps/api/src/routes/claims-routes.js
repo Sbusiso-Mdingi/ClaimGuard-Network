@@ -1,7 +1,7 @@
 import { ClaimOwnershipConflictError } from "@claimguard/database";
 
-import { authorizeTenantScopedRequest, createRequirePermissionMiddleware } from "../middleware/authorization-middleware.js";
-import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import { authorizeTenantScopedRequest, createRequireOperationalRouteAuthorizationMiddleware } from "../middleware/authorization-middleware.js";
+import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
 
 export function registerClaimsRoutes(app, {
   claimIngestionService,
@@ -9,11 +9,19 @@ export function registerClaimsRoutes(app, {
   tenantRepository = null,
   logger,
 } = {}) {
+  const requireClaimsListPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_LIST,
+  });
+  const requireClaimsDetailPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_DETAIL,
+  });
+  const requireClaimsIngestPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_INGEST,
+  });
+
   app.get(
     "/claims",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN,
-    }),
+    requireClaimsListPermission,
     async (c) => {
       const tenantDecision = await authorizeTenantScopedRequest({ c, tenantRepository });
       if (!tenantDecision.ok) return tenantDecision.response;
@@ -56,9 +64,7 @@ export function registerClaimsRoutes(app, {
 
   app.get(
     "/claims/:claimId",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN,
-    }),
+    requireClaimsDetailPermission,
     async (c) => {
       const tenantDecision = await authorizeTenantScopedRequest({ c, tenantRepository });
       if (!tenantDecision.ok) return tenantDecision.response;
@@ -119,9 +125,7 @@ export function registerClaimsRoutes(app, {
 
   app.post(
     "/claims/ingest",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST,
-    }),
+    requireClaimsIngestPermission,
     async (c) => {
       const payload = await c.req.json().catch(() => null);
       const claims = payload?.claims;

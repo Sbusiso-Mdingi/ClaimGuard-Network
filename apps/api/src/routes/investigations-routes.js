@@ -1,9 +1,7 @@
 import {
-  authorizePermissions,
-  createRequireAnyPermissionMiddleware,
-  createRequirePermissionMiddleware,
+  createRequireOperationalRouteAuthorizationMiddleware,
 } from "../middleware/authorization-middleware.js";
-import { CLAIMGUARD_PERMISSIONS, CLAIMGUARD_ROLES } from "../authorization-policy.js";
+import { CLAIMGUARD_ROLES, OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
 import {
   investigationErrorResponse,
   investigationRepositoryUnavailable,
@@ -49,11 +47,31 @@ export function registerInvestigationsRoutes(
     logger,
   } = {},
 ) {
+  const requireInvestigationsCreate = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CREATE,
+  });
+  const requireInvestigationsView = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_VIEW,
+  });
+  const requireInvestigationsPatch = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_PATCH,
+  });
+  const requireInvestigationsAddNote = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_ADD_NOTE,
+  });
+  const requireInvestigationsUploadEvidence = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_UPLOAD_EVIDENCE,
+  });
+  const requireInvestigationsConfirmFraud = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CONFIRM_FRAUD,
+  });
+  const requireInvestigationsReverseFraud = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_REVERSE_FRAUD,
+  });
+
   app.post(
     "/investigations",
-    createRequireAnyPermissionMiddleware({
-      permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE],
-    }),
+    requireInvestigationsCreate,
     async (c) => {
       if (!investigationService.hasMethod("createInvestigation")) {
         return investigationRepositoryUnavailable(c);
@@ -79,9 +97,7 @@ export function registerInvestigationsRoutes(
 
   app.get(
     "/investigations/:id",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW,
-    }),
+    requireInvestigationsView,
     async (c) => {
       if (!investigationService.hasMethod("getInvestigationDetails")) {
         return investigationRepositoryUnavailable(c);
@@ -106,7 +122,7 @@ export function registerInvestigationsRoutes(
     },
   );
 
-  app.patch("/investigations/:id", async (c) => {
+  app.patch("/investigations/:id", requireInvestigationsPatch, async (c) => {
     if (!investigationService.hasMethod("updateInvestigation")) {
       return investigationRepositoryUnavailable(c);
     }
@@ -125,20 +141,6 @@ export function registerInvestigationsRoutes(
       );
     }
 
-    const requiredPermissions = [
-      ...(hasStatus ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS] : []),
-      ...(hasPriority ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY] : []),
-    ];
-    const permissionDecision = authorizePermissions({
-      c,
-      permissions: requiredPermissions,
-      mode: "all",
-    });
-
-    if (!permissionDecision.ok) {
-      return permissionDecision.response;
-    }
-
     try {
       const investigation = await investigationService.updateInvestigation({
         investigationId: c.req.param("id"),
@@ -154,9 +156,7 @@ export function registerInvestigationsRoutes(
 
   app.post(
     "/investigations/:id/notes",
-    createRequireAnyPermissionMiddleware({
-      permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE],
-    }),
+    requireInvestigationsAddNote,
     async (c) => {
       if (!investigationService.hasMethod("getInvestigationById") || !investigationService.hasMethod("addNote")) {
         return investigationRepositoryUnavailable(c);
@@ -186,9 +186,7 @@ export function registerInvestigationsRoutes(
 
   app.post(
     "/investigations/:id/evidence",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE,
-    }),
+    requireInvestigationsUploadEvidence,
     async (c) => {
       if (!investigationService.hasMethod("getInvestigationById") || !investigationService.hasMethod("registerEvidence")) {
         return investigationRepositoryUnavailable(c);
@@ -219,9 +217,7 @@ export function registerInvestigationsRoutes(
 
   app.post(
     "/investigations/confirm-fraud",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD,
-    }),
+    requireInvestigationsConfirmFraud,
     async (c) => {
       if (!fraudConfirmationService.isLedgerConfigured()) {
         return c.json(
@@ -280,9 +276,7 @@ export function registerInvestigationsRoutes(
 
   app.post(
     "/investigations/reverse-fraud",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD,
-    }),
+    requireInvestigationsReverseFraud,
     async (c) => {
       if (!fraudReversalService.isLedgerConfigured()) {
         return c.json(

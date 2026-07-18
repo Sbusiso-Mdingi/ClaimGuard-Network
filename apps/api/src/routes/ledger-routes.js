@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 
-import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
 import {
-  createRequirePermissionMiddleware,
+  createRequireOperationalRouteAuthorizationMiddleware,
   createRequireTenantAccessMiddleware,
 } from "../middleware/authorization-middleware.js";
 
@@ -26,12 +26,15 @@ function createLedgerEntry({ sequenceNumber, previousHash = genesisPreviousHash,
 }
 
 export function registerLedgerRoutes(app, { ledgerRepository, tenantRepository = null }) {
-  const requireLedgerPermission = createRequirePermissionMiddleware({
-    permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
+  const requireLedgerPreviewPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.LEDGER_PREVIEW,
+  });
+  const requireLedgerLatestPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.LEDGER_LATEST,
   });
   const requireTenantAccess = createRequireTenantAccessMiddleware({ tenantRepository });
 
-  app.get("/ledger/preview", requireLedgerPermission, requireTenantAccess, (c) => {
+  app.get("/ledger/preview", requireLedgerPreviewPermission, requireTenantAccess, (c) => {
     const entry = createLedgerEntry({
       sequenceNumber: 1,
       previousHash: genesisPreviousHash,
@@ -48,7 +51,7 @@ export function registerLedgerRoutes(app, { ledgerRepository, tenantRepository =
     });
   });
 
-  app.get("/ledger/latest", requireLedgerPermission, requireTenantAccess, async (c) => {
+  app.get("/ledger/latest", requireLedgerLatestPermission, requireTenantAccess, async (c) => {
     if (!ledgerRepository) {
       return c.json(
         {

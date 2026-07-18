@@ -1,5 +1,5 @@
-import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
-import { createRequirePermissionMiddleware } from "../middleware/authorization-middleware.js";
+import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
+import { createRequireOperationalRouteAuthorizationMiddleware } from "../middleware/authorization-middleware.js";
 
 function unavailable(c) {
   return c.json({
@@ -49,8 +49,19 @@ function errorResponse(c, error) {
 }
 
 export function registerSimulationRoutes(app, { simulationStateRepository } = {}) {
-  const requireStatus = createRequirePermissionMiddleware({ permission: CLAIMGUARD_PERMISSIONS.SIMULATOR_STATUS_VIEW });
-  const requireControl = createRequirePermissionMiddleware({ permission: CLAIMGUARD_PERMISSIONS.SIMULATOR_CONTROL });
+  const requireStatus = createRequireOperationalRouteAuthorizationMiddleware({ routeId: OPERATIONAL_ROUTE_IDS.SIMULATOR_STATUS });
+  const requireStart = createRequireOperationalRouteAuthorizationMiddleware({ routeId: OPERATIONAL_ROUTE_IDS.SIMULATOR_START });
+  const requirePause = createRequireOperationalRouteAuthorizationMiddleware({ routeId: OPERATIONAL_ROUTE_IDS.SIMULATOR_PAUSE });
+  const requireResume = createRequireOperationalRouteAuthorizationMiddleware({ routeId: OPERATIONAL_ROUTE_IDS.SIMULATOR_RESUME });
+  const requireStop = createRequireOperationalRouteAuthorizationMiddleware({ routeId: OPERATIONAL_ROUTE_IDS.SIMULATOR_STOP });
+  const requireMode = createRequireOperationalRouteAuthorizationMiddleware({ routeId: OPERATIONAL_ROUTE_IDS.SIMULATOR_MODE });
+
+  const controlMiddlewareByAction = Object.freeze({
+    start: requireStart,
+    pause: requirePause,
+    resume: requireResume,
+    stop: requireStop,
+  });
 
   app.get("/simulator/status", requireStatus, async (c) => {
     if (!simulationStateRepository?.getStatus) return unavailable(c);
@@ -63,7 +74,7 @@ export function registerSimulationRoutes(app, { simulationStateRepository } = {}
   });
 
   for (const action of ["start", "pause", "resume", "stop"]) {
-    app.post(`/simulator/${action}`, requireControl, async (c) => {
+    app.post(`/simulator/${action}`, controlMiddlewareByAction[action], async (c) => {
       if (!simulationStateRepository?.command) return unavailable(c);
       try {
         await simulationStateRepository.command({
@@ -78,7 +89,7 @@ export function registerSimulationRoutes(app, { simulationStateRepository } = {}
     });
   }
 
-  app.post("/simulator/mode", requireControl, async (c) => {
+  app.post("/simulator/mode", requireMode, async (c) => {
     if (!simulationStateRepository?.command) return unavailable(c);
     const payload = await c.req.json().catch(() => null);
     try {

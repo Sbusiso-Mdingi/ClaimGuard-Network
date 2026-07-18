@@ -1,13 +1,21 @@
-import { createRequirePermissionMiddleware } from "../middleware/authorization-middleware.js";
-import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import { createRequireOperationalRouteAuthorizationMiddleware } from "../middleware/authorization-middleware.js";
+import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
 import { registryErrorResponse, sharedRegistryUnavailable } from "./http-response-helpers.js";
 
 export function registerRegistryRoutes(app, { registryService }) {
+  const requireRegistrySearchPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.REGISTRY_SEARCH,
+  });
+  const requireRegistryHistoryPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.REGISTRY_HISTORY,
+  });
+  const requireRegistryDetailPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.REGISTRY_DETAIL,
+  });
+
   app.get(
     "/registry/search",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
-    }),
+    requireRegistrySearchPermission,
     async (c) => {
       if (!registryService.hasMethod("searchRegistry")) {
         return sharedRegistryUnavailable(c);
@@ -40,9 +48,7 @@ export function registerRegistryRoutes(app, { registryService }) {
 
   app.get(
     "/registry/history/:subjectToken",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
-    }),
+    requireRegistryHistoryPermission,
     async (c) => {
       if (!registryService.hasMethod("getRegistryHistory")) {
         return sharedRegistryUnavailable(c);
@@ -70,9 +76,7 @@ export function registerRegistryRoutes(app, { registryService }) {
 
   app.get(
     "/registry/:id",
-    createRequirePermissionMiddleware({
-      permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW,
-    }),
+    requireRegistryDetailPermission,
     async (c) => {
       if (!registryService.hasMethod("getRegistryRecordById")) {
         return sharedRegistryUnavailable(c);

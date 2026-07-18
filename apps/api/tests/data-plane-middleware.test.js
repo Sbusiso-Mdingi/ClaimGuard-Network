@@ -225,6 +225,237 @@ test("detection private route also denies platform administrators before route r
   assert.equal(resolveCalls, 0);
 });
 
+test("unknown operational private route fails closed before route resolution", async () => {
+  let resolveCalls = 0;
+  let acquireCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-analyst",
+      user_id: "claims-user",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { acquireCalls += 1; return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+
+  const response = await app.request("/claims/private-policy-gap", { method: "POST" });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.code, "OPERATIONAL_ROUTE_POLICY_MISSING");
+  assert.equal(resolveCalls, 0);
+  assert.equal(acquireCalls, 0);
+});
+
+test("OPTIONS on operational path bypasses data-plane resolution", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-any",
+      user_id: "user-any",
+      source: "session",
+      permissions: new Set(),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.options("/claims", (c) => c.body(null, 204));
+
+  const response = await app.request("/claims", { method: "OPTIONS" });
+  assert.equal(response.status, 204);
+  assert.equal(resolveCalls, 0);
+});
+
+test("HEAD on mapped claims route uses canonical GET policy and resolves data-plane", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-analyst",
+      user_id: "claims-user",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/claims", (c) => c.json({ available: true }));
+
+  const response = await app.request("/claims", { method: "HEAD" });
+  assert.equal(response.status, 200);
+  assert.equal(resolveCalls, 1);
+});
+
+test("unsupported method on mapped operational prefix fails closed before resolution", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-analyst",
+      user_id: "claims-user",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+
+  const response = await app.request("/claims", { method: "PUT" });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.code, "OPERATIONAL_ROUTE_POLICY_MISSING");
+  assert.equal(resolveCalls, 0);
+});
+
+test("claims detail for authorized analyst reaches resolver", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-analyst",
+      user_id: "claims-user",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/claims/:claimId", (c) => c.json({ claimId: c.req.param("claimId") }));
+
+  const response = await app.request("/claims/C-123");
+  assert.equal(response.status, 200);
+  assert.equal(resolveCalls, 1);
+});
+
+test("denied investigations route does not resolve data-plane", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-denied",
+      user_id: "user-denied",
+      source: "session",
+      permissions: new Set(),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.post("/investigations", (c) => c.json({ available: true }));
+
+  const response = await app.request("/investigations", { method: "POST" });
+  assert.equal(response.status, 403);
+  assert.equal(resolveCalls, 0);
+});
+
+test("denied ledger route does not resolve data-plane", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-denied",
+      user_id: "user-denied",
+      source: "session",
+      permissions: new Set(),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/ledger/latest", (c) => c.json({ available: true }));
+
+  const response = await app.request("/ledger/latest");
+  assert.equal(response.status, 403);
+  assert.equal(resolveCalls, 0);
+});
+
+test("denied registry route does not resolve data-plane", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-denied",
+      user_id: "user-denied",
+      source: "session",
+      permissions: new Set(),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/registry/search", (c) => c.json({ available: true }));
+
+  const response = await app.request("/registry/search");
+  assert.equal(response.status, 403);
+  assert.equal(resolveCalls, 0);
+});
+
+test("denied simulator route does not resolve data-plane", async () => {
+  let resolveCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-denied",
+      user_id: "user-denied",
+      source: "session",
+      permissions: new Set(),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.post("/simulator/start", (c) => c.json({ available: true }));
+
+  const response = await app.request("/simulator/start", { method: "POST" });
+  assert.equal(response.status, 403);
+  assert.equal(resolveCalls, 0);
+});
+
 test("backend operational services are constructed request-scoped from the verified routed pool", async () => {
   let resolutions = 0;
   const routedContext = context();

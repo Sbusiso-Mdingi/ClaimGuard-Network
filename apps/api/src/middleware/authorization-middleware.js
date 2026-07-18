@@ -1,11 +1,18 @@
 import { createHeaderAuthenticationProvider } from "./auth-context.js";
-import { evaluateTenantAccess, hasPermission } from "../authorization-policy.js";
+import {
+  evaluateTenantAccess,
+  getOperationalRoutePolicyById,
+  hasPermission,
+  resolveOperationalRoutePermissionRequirement,
+} from "../authorization-policy.js";
 import {
   applicationErrorResponse,
   ForbiddenError,
   TenantMismatchError,
   UnauthenticatedError,
 } from "../application-errors.js";
+
+const OPERATIONAL_POLICY_PAYLOAD_CACHE_KEY = "operationalPolicyPayload";
 
 function normalizeDistinctSchemeIds(schemeIds) {
   const normalized = (schemeIds || [])
@@ -75,6 +82,71 @@ export function createRequirePermissionMiddleware({ permission } = {}) {
       return applicationErrorResponse(c, new ForbiddenError());
     }
 
+    await next();
+  };
+}
+
+async function getOperationalPolicyPayload(c) {
+  const cached = c.get(OPERATIONAL_POLICY_PAYLOAD_CACHE_KEY);
+  if (cached !== undefined) return cached;
+
+  const method = String(c.req.method || "GET").toUpperCase();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    c.set(OPERATIONAL_POLICY_PAYLOAD_CACHE_KEY, null);
+    return null;
+  }
+
+  const contentType = String(c.req.header("content-type") || "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    c.set(OPERATIONAL_POLICY_PAYLOAD_CACHE_KEY, null);
+    return null;
+  }
+
+  let payload = null;
+  try {
+    payload = await c.req.raw.clone().json();
+  } catch {
+    payload = null;
+  }
+  c.set(OPERATIONAL_POLICY_PAYLOAD_CACHE_KEY, payload);
+  return payload;
+}
+
+function isPermissionRequirementSatisfied(authContext, requirement) {
+  if (!requirement.permissions.length) return true;
+  if (requirement.mode === "any") {
+    return requirement.permissions.some((permission) => hasPermission(authContext, permission));
+  }
+  return requirement.permissions.every((permission) => hasPermission(authContext, permission));
+}
+
+export async function authorizeOperationalRouteRequest({ c, routePolicy } = {}) {
+  const authContext = c.get("authContext") || null;
+  if (!authContext?.is_authenticated) {
+    return {
+      ok: false,
+      response: applicationErrorResponse(c, new UnauthenticatedError()),
+    };
+  }
+
+  const payload = await getOperationalPolicyPayload(c);
+  const requirement = resolveOperationalRoutePermissionRequirement({ routePolicy, payload });
+  if (isPermissionRequirementSatisfied(authContext, requirement)) {
+    return { ok: true, requirement };
+  }
+
+  return {
+    ok: false,
+    response: applicationErrorResponse(c, new ForbiddenError()),
+  };
+}
+
+export function createRequireOperationalRouteAuthorizationMiddleware({ routeId } = {}) {
+  const routePolicy = getOperationalRoutePolicyById(routeId);
+  if (!routePolicy) throw new TypeError(`Unknown operational route policy id: ${routeId || "(empty)"}`);
+  return async (c, next) => {
+    const decision = await authorizeOperationalRouteRequest({ c, routePolicy });
+    if (!decision.ok) return decision.response;
     await next();
   };
 }

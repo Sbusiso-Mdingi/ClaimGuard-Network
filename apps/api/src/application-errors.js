@@ -32,6 +32,12 @@ export class TenantReportNotFoundError extends ApplicationError {
   }
 }
 
+export class OperationalRoutePolicyError extends ApplicationError {
+  constructor(message = "Operational route policy mapping is missing for this request.") {
+    super(message, { code: "OPERATIONAL_ROUTE_POLICY_MISSING", status: 503 });
+  }
+}
+
 export function applicationErrorResponse(c, error) {
   return c.json(
     {

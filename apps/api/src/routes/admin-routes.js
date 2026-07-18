@@ -1,6 +1,12 @@
 import { createBackendHealth, createBackendInfo } from "@claimguard/shared-schema";
+import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
+import { createRequireOperationalRouteAuthorizationMiddleware } from "../middleware/authorization-middleware.js";
 
 export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = null }) {
+  const requireInternalDataPlaneHealth = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH,
+  });
+
   app.get("/live", (c) => {
     return c.json({
       status: "ok",
@@ -31,7 +37,7 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
 
   app.get("/health", (c) => c.json(createBackendHealth()));
   app.get("/meta", (c) => c.json(createBackendInfo()));
-  app.get("/internal/data-plane/health", (c) => {
+  app.get("/internal/data-plane/health", requireInternalDataPlaneHealth, (c) => {
     const context = c.get("dataPlaneContext") || null;
     if (!context) return c.json({ available: false, code: "DATA_PLANE_CONTEXT_REQUIRED", message: "Verified data-plane context is required." }, 503);
     const pool = dataPlaneRuntime?.connectionManager?.metrics().pools.find((entry) =>
