@@ -538,7 +538,7 @@ const operationalRoutePolicyEntries = [
     pathPattern: "/internal/data-plane/health",
     permissions: [CLAIMGUARD_PERMISSIONS.PLATFORM_HEALTH_VIEW],
     permissionMode: "all",
-    requiresOperationalDataPlane: true,
+    requiresOperationalDataPlane: false,
   },
 ];
 

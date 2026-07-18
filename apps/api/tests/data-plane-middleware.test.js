@@ -254,6 +254,53 @@ test("unknown operational private route fails closed before route resolution", a
   assert.equal(acquireCalls, 0);
 });
 
+test("unknown paths under every private operational prefix fail closed without resolver, pool, or service construction", async () => {
+  let resolveCalls = 0;
+  let acquireCalls = 0;
+  let bundleCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-analyst",
+      user_id: "claims-user",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { acquireCalls += 1; return { pool: {}, async release() {} }; } },
+    createServiceBundle() { bundleCalls += 1; return {}; },
+  }));
+  app.get("/public/info", (c) => c.json({ available: true }));
+
+  const unknownPaths = [
+    "/claims/private-policy-gap",
+    "/investigations/private-policy-gap",
+    "/detection/private-policy-gap",
+    "/ledger/private-policy-gap",
+    "/registry/private-policy-gap",
+    "/simulator/private-policy-gap",
+  ];
+
+  for (const path of unknownPaths) {
+    const response = await app.request(path, { method: "POST" });
+    const body = await response.json();
+    assert.equal(response.status, 503, path);
+    assert.equal(body.code, "OPERATIONAL_ROUTE_POLICY_MISSING", path);
+  }
+
+  const publicResponse = await app.request("/public/info");
+  assert.equal(publicResponse.status, 200);
+  assert.deepEqual(await publicResponse.json(), { available: true });
+
+  assert.equal(resolveCalls, 0);
+  assert.equal(acquireCalls, 0);
+  assert.equal(bundleCalls, 0);
+});
+
 test("OPTIONS on operational path bypasses data-plane resolution", async () => {
   let resolveCalls = 0;
   const app = new Hono();
@@ -302,6 +349,34 @@ test("HEAD on mapped claims route uses canonical GET policy and resolves data-pl
   const response = await app.request("/claims", { method: "HEAD" });
   assert.equal(response.status, 200);
   assert.equal(resolveCalls, 1);
+});
+
+test("internal data-plane health route can bypass private data-plane resolution", async () => {
+  let resolveCalls = 0;
+  let acquireCalls = 0;
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      organisation_id: "org-platform",
+      user_id: "platform-admin",
+      source: "session",
+      permissions: new Set([CLAIMGUARD_PERMISSIONS.PLATFORM_HEALTH_VIEW]),
+    });
+    await next();
+  });
+  app.use("*", createDataPlaneMiddleware({
+    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
+    connectionManager: { async acquire() { acquireCalls += 1; return { pool: {}, async release() {} }; } },
+    createServiceBundle() { return {}; },
+  }));
+  app.get("/internal/data-plane/health", (c) => c.json({ available: true }));
+
+  const response = await app.request("/internal/data-plane/health");
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { available: true });
+  assert.equal(resolveCalls, 0);
+  assert.equal(acquireCalls, 0);
 });
 
 test("unsupported method on mapped operational prefix fails closed before resolution", async () => {

@@ -4,6 +4,7 @@ import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub
 import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
 
 import { createBackendApp } from "../src/backend.js";
+import { createAuthenticatedAuthContext } from "../src/middleware/auth-context.js";
 
 function developmentAuthHeaders({
   user = "scheme-user",
@@ -94,6 +95,72 @@ test("ready endpoint returns 200 degraded when report storage is unreachable", a
   assert.equal(json.ready, true);
   assert.equal(json.status, "degraded");
   assert.equal(json.checks.reportStorageReachable, false);
+});
+
+test("internal data-plane health is a platform diagnostic and does not require private route resolution", async () => {
+  let resolveCalls = 0;
+  const app = createBackendApp({
+    authenticationProvider: {
+      async resolveAuthContext() {
+        return createAuthenticatedAuthContext({
+          userId: "platform-admin",
+          organisationId: "org-platform",
+          tenantId: null,
+          roles: ["platform_administrator"],
+          permissions: ["platform_health.view"],
+          organisation: { organisationId: "org-platform", organisationType: "platform" },
+          source: "session",
+        });
+      },
+    },
+    dataPlaneRuntime: {
+      routeResolver: {
+        async resolve() {
+          resolveCalls += 1;
+          throw new Error("internal data-plane health should not invoke route resolver");
+        },
+      },
+      connectionManager: {
+        async acquire() {
+          throw new Error("internal data-plane health should not acquire a private pool");
+        },
+        metrics() {
+          return {
+            pools: [
+              {
+                activeRequests: 0,
+                retiring: false,
+                lastSuccessfulConnectionAt: "2026-07-18T00:00:00.000Z",
+                lastFailureCategory: null,
+              },
+            ],
+          };
+        },
+      },
+      async checkReadiness() {
+        return {
+          ready: true,
+          checks: {
+            controlPlaneReachable: true,
+            legacySharedBaselineReachable: true,
+            schemaCompatible: true,
+          },
+        };
+      },
+      logger() {},
+    },
+  });
+
+  const response = await app.request("http://localhost/internal/data-plane/health", {
+    headers: { accept: "application/json" },
+  });
+  const json = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(json.available, true);
+  assert.equal(json.route.type, "platform_diagnostic");
+  assert.equal(json.readiness.ready, true);
+  assert.equal(resolveCalls, 0);
 });
 
 test("api sets x-request-id response header", async () => {

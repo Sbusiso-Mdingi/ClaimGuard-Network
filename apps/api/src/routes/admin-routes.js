@@ -7,6 +7,30 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     routeId: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH,
   });
 
+  function summarizePools(metrics = { pools: [] }) {
+    const pools = Array.isArray(metrics?.pools) ? metrics.pools : [];
+    const retiringPools = pools.filter((entry) => Boolean(entry?.retiring)).length;
+    const activeRequestTotal = pools.reduce((sum, entry) => sum + Number(entry?.activeRequests || 0), 0);
+    const lastSuccessfulConnectionAt = pools
+      .map((entry) => entry?.lastSuccessfulConnectionAt || null)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null;
+    const lastFailureCategories = [...new Set(
+      pools
+        .map((entry) => entry?.lastFailureCategory || null)
+        .filter(Boolean),
+    )];
+
+    return {
+      totalPools: pools.length,
+      retiringPools,
+      activeRequestTotal,
+      lastSuccessfulConnectionAt,
+      lastFailureCategories,
+    };
+  }
+
   app.get("/live", (c) => {
     return c.json({
       status: "ok",
@@ -37,15 +61,32 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
 
   app.get("/health", (c) => c.json(createBackendHealth()));
   app.get("/meta", (c) => c.json(createBackendInfo()));
-  app.get("/internal/data-plane/health", requireInternalDataPlaneHealth, (c) => {
+  app.get("/internal/data-plane/health", requireInternalDataPlaneHealth, async (c) => {
     const context = c.get("dataPlaneContext") || null;
-    if (!context) return c.json({ available: false, code: "DATA_PLANE_CONTEXT_REQUIRED", message: "Verified data-plane context is required." }, 503);
-    const pool = dataPlaneRuntime?.connectionManager?.metrics().pools.find((entry) =>
+    const readiness = dataPlaneRuntime?.checkReadiness
+      ? await dataPlaneRuntime.checkReadiness()
+      : { ready: true, checks: {} };
+    const metrics = dataPlaneRuntime?.connectionManager?.metrics?.() || { pools: [] };
+
+    if (!context) {
+      return c.json({
+        available: true,
+        route: {
+          type: "platform_diagnostic",
+          schemaCompatible: Boolean(readiness?.checks?.schemaCompatible ?? true),
+        },
+        readiness,
+        pool: summarizePools(metrics),
+      });
+    }
+
+    const pool = metrics.pools.find((entry) =>
       entry.organisationId === context.organisationId && entry.routeId === context.routeId && entry.routeGeneration === context.routeGeneration,
     ) || null;
     return c.json({
       available: true,
       route: { type: context.routeType, schemaCompatible: true },
+      readiness,
       pool: pool ? {
         activeRequests: pool.activeRequests,
         retiring: pool.retiring,
