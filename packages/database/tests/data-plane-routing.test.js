@@ -43,7 +43,7 @@ test("DataPlaneContext is immutable, secret-free, and keyed by immutable route i
   assert.equal(Object.isFrozen(value), true);
   assert.equal(value.organisationId, "org-alpha");
   assert.equal(value.operationalTenantId, "tenant-alpha");
-  assert.equal(Object.hasOwn(value, "secretReference"), false);
+  assert.equal(value.secretReference, null);
   assert.equal(Object.hasOwn(value, "connectionString"), false);
   assert.equal(dataPlanePoolKey(value), "org-alpha:route-alpha:1");
   assert.throws(() => createDataPlaneContext({ ...value, organisationId: "", operationalTenantSlug: "alpha" }), /organisationId/);
