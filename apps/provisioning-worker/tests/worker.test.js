@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-import { REQUIRED_STEPS } from "../src/worker.js";
+import { REQUIRED_STEPS, REQUIRED_UPGRADE_STEPS } from "../src/worker.js";
 
 test("required provisioning steps include phase 11E activation gate sequence", () => {
   assert.deepEqual(REQUIRED_STEPS, [
@@ -19,9 +19,25 @@ test("required provisioning steps include phase 11E activation gate sequence", (
     "create_report_partition",
     "register_worker_routing",
     "register_private_route",
+    "grant_report_worker_secret_access",
+    "record_schema_compatibility",
+    "mark_report_worker_ready",
     "create_initial_scheme_admin",
     "run_activation_checks",
     "ready_for_activation",
+  ]);
+});
+
+test("private database upgrade has a resumable schema and route-promotion sequence", () => {
+  assert.deepEqual(REQUIRED_UPGRADE_STEPS, [
+    "validate_upgrade_request",
+    "apply_tenant_schema",
+    "write_data_plane_metadata",
+    "verify_database_isolation",
+    "grant_report_worker_secret_access",
+    "register_schema_10_route",
+    "record_schema_compatibility",
+    "mark_report_worker_ready",
   ]);
 });
 
@@ -47,4 +63,5 @@ test("Container Apps Job is manual, single-replica, identity-based, and contains
   assert.match(manifest, /keyVaultUrl:/);
   assert.doesNotMatch(manifest, /mysql:\/\//);
   assert.doesNotMatch(manifest, /<user>|<password>|phase11e-pending/);
+  assert.match(manifest, /AZURE_REPORT_WORKER_PRINCIPAL_ID/);
 });

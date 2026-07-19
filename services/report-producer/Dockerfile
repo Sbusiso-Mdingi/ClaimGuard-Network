@@ -14,4 +14,4 @@ WORKDIR /app/services/report-producer
 RUN uv pip install --system .
 
 ENTRYPOINT ["claimguard-produce-report"]
-CMD ["worker", "--once"]
+CMD ["worker", "once"]

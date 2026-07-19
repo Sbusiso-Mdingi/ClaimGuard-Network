@@ -56,5 +56,7 @@ properties:
             value: claimguard-reports
           - name: PRIVATE_TENANT_SCHEMA_VERSION
             value: "10"
+          - name: AZURE_REPORT_WORKER_PRINCIPAL_ID
+            value: 7d7b986b-2984-4aba-925c-9a009ee56c67
           - name: PROVISIONING_MAX_OPERATIONS
             value: "1"

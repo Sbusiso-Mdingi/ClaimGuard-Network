@@ -10,7 +10,7 @@ import {
   verifyPassword,
 } from "../src/index.js";
 
-function fixture({ passwordHash = "current-hash", organisationStatus = "active", membershipStatus = "active", userStatus = "active", credentialStatus = "active", mapping = true, membershipValidUntil = null, idleTimeoutMs, absoluteTimeoutMs } = {}) {
+function fixture({ passwordHash = "current-hash", organisationStatus = "active", membershipStatus = "active", userStatus = "active", credentialStatus = "active", mapping = true, membershipValidUntil = null, idleTimeoutMs, absoluteTimeoutMs, integrationCredentialsRepository = null } = {}) {
   let currentTime = new Date("2026-07-16T08:00:00Z");
   let randomCounter = 0;
   const sessions = new Map();
@@ -58,6 +58,7 @@ function fixture({ passwordHash = "current-hash", organisationStatus = "active",
   };
   const service = createControlPlaneAuthenticationService({
     authenticationRepository: repository, passwordHasher, now: () => new Date(currentTime),
+    integrationCredentialsRepository,
     randomBytes: () => Buffer.alloc(32, (randomCounter += 1)), throttleBaseDelayMs: 1,
     ...(idleTimeoutMs ? { idleTimeoutMs } : {}), ...(absoluteTimeoutMs ? { absoluteTimeoutMs } : {}),
   });
@@ -65,6 +66,30 @@ function fixture({ passwordHash = "current-hash", organisationStatus = "active",
 }
 
 const metadata = { sourceNetworkHash: sha256("127.0.0.1"), userAgentHash: sha256("test"), correlationId: "corr" };
+
+test("integration credentials are resolved by hash and raw bearer material is never passed to storage", async () => {
+  const calls = [];
+  const token = "cg_live_" + "a".repeat(43);
+  const integrationCredentialsRepository = {
+    async resolveActiveByTokenHash(hash) {
+      calls.push(["resolve", hash]);
+      return hash === sha256(token) ? {
+        integrationCredentialId: "integration-1",
+        organisationId: "org-1",
+        serviceActorId: "alpha-feed-01",
+        roleKey: "claims_analyst",
+        tenantId: "tenant-alpha",
+      } : null;
+    },
+    async recordUse(id, correlationId) { calls.push(["use", id, correlationId]); },
+  };
+  const { service } = fixture({ integrationCredentialsRepository });
+  const resolved = await service.resolveIntegrationCredential(token, metadata);
+  assert.equal(resolved.organisationId, "org-1");
+  assert.equal(resolved.tenantId, "tenant-alpha");
+  assert.equal(calls[0][1], sha256(token));
+  assert.equal(calls.some((entry) => entry.includes(token)), false);
+});
 
 test("Argon2id hashes verify correctly, use unique salts, and support rehash detection", async () => {
   const first = await hashPassword("correct horse battery staple");

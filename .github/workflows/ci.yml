@@ -18,6 +18,7 @@ env:
   AZURE_SUBSCRIPTION_ID: 896d3c72-d979-4bdc-a37f-060988d12032
   AZURE_RESOURCE_GROUP: ClaimGuard
   AZURE_KEYVAULT_NAME: claimguard-kv-ufs
+  CONTROL_PLANE_MYSQL_URL_SECRET_NAME: claimguard--api--control-plane-mysql-url
   MYSQL_URL_SECRET_NAME: claimguard--api--mysql-url
   AZURE_WEBAPP_WEB: claimguard-web
   AZURE_WEBAPP_API: claimguard-api
@@ -253,23 +254,33 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
           audience: api://AzureADTokenExchange
 
-      - name: Run database migrations
+      - name: Run control-plane and operational database migrations
         env:
           OPERATIONAL_ADMIN_MODE: legacy_shared
         run: |
           set -euo pipefail
           # Runtime database access is governed through Key Vault, not App Service values.
+          export CONTROL_PLANE_MYSQL_URL="$(az keyvault secret show \
+            --vault-name "$AZURE_KEYVAULT_NAME" \
+            --name "$CONTROL_PLANE_MYSQL_URL_SECRET_NAME" \
+            --query value \
+            --output tsv)"
           export MYSQL_URL="$(az keyvault secret show \
             --vault-name "$AZURE_KEYVAULT_NAME" \
             --name "$MYSQL_URL_SECRET_NAME" \
             --query value \
             --output tsv)"
 
+          if [ -z "$CONTROL_PLANE_MYSQL_URL" ]; then
+            echo "Error: CONTROL_PLANE_MYSQL_URL not found in Key Vault"
+            exit 1
+          fi
           if [ -z "$MYSQL_URL" ]; then
             echo "Error: MYSQL_URL not found in Key Vault"
             exit 1
           fi
 
+          pnpm --filter @claimguard/control-plane-database migrate
           pnpm --filter @claimguard/database exec node src/migrate.js
 
       - name: Enable run-from-package for web

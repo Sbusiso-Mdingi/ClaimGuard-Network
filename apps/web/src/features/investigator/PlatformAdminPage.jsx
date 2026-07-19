@@ -25,7 +25,11 @@ export function PlatformAdminPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [organisation, setOrganisation] = useState(null);
+  const [organisations, setOrganisations] = useState([]);
   const [operation, setOperation] = useState(null);
+  const [integration, setIntegration] = useState(null);
+  const [oneTimeToken, setOneTimeToken] = useState("");
+  const [integrationForm, setIntegrationForm] = useState({ displayName: "Claims server", serviceActorId: "", expiresInDays: "90" });
   const [health, setHealth] = useState(null);
   const [form, setForm] = useState({
     displayName: "",
@@ -48,7 +52,36 @@ export function PlatformAdminPage() {
 
   async function refreshOrganisations() {
     const payload = await apiJson("/admin/platform/organisations", { cache: "no-store" });
-    return payload.organisations || [];
+    const items = payload.organisations || [];
+    setOrganisations(items);
+    return items;
+  }
+
+  async function loadOrganisation(organisationId) {
+    setLoading(true);
+    setError("");
+    setOneTimeToken("");
+    try {
+      const payload = await apiJson(`/admin/platform/organisations/${encodeURIComponent(organisationId)}`, { cache: "no-store" });
+      setOrganisation({ organisation: payload.organisation, provisioningReview: null });
+      const latest = payload.operations?.[0] || null;
+      if (latest?.operationId) await refreshOperation(latest.operationId);
+      else setOperation(null);
+      if (payload.organisation?.status === "active") {
+        const integrationPayload = await apiJson(`/admin/platform/organisations/${encodeURIComponent(organisationId)}/integration`, { cache: "no-store" });
+        setIntegration(integrationPayload);
+      } else {
+        setIntegration(null);
+      }
+      setIntegrationForm((previous) => ({
+        ...previous,
+        serviceActorId: `${payload.organisation.canonicalSlug}-claims-server`,
+      }));
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : "Medical aid could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function refreshOperation(operationId) {
@@ -77,6 +110,7 @@ export function PlatformAdminPage() {
         }),
       });
       setOrganisation(payload);
+      await refreshOrganisations();
       setMessage("Draft organisation created. No infrastructure has been provisioned yet.");
     } catch (requestError) {
       const summary = requestError instanceof ApiError ? `${requestError.message} (${requestError.code || requestError.status})` : "Draft creation failed.";
@@ -127,11 +161,67 @@ export function PlatformAdminPage() {
     try {
       const payload = await apiJson(`/admin/platform/organisations/${encodeURIComponent(organisation.organisation.organisationId)}/activate`, { method: "POST" });
       setMessage(payload.message || "Activation request submitted.");
-      const organisations = await refreshOrganisations();
-      const current = organisations.find((item) => item.organisationId === organisation.organisation.organisationId);
-      if (current) setOrganisation((previous) => ({ ...previous, organisation: current }));
+      await refreshOrganisations();
+      await loadOrganisation(organisation.organisation.organisationId);
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "Activation request failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleUpgrade() {
+    const organisationId = organisation?.organisation?.organisationId;
+    if (!organisationId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const payload = await apiJson(`/admin/platform/organisations/${encodeURIComponent(organisationId)}/upgrade`, { method: "POST" });
+      setOperation(payload.operation || null);
+      setMessage("Schema upgrade queued. ClaimGuard will keep the current route until verification succeeds.");
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : "Upgrade request failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateIntegrationCredential() {
+    const organisationId = organisation?.organisation?.organisationId;
+    if (!organisationId) return;
+    setLoading(true);
+    setError("");
+    setOneTimeToken("");
+    try {
+      const payload = await apiJson(`/admin/platform/organisations/${encodeURIComponent(organisationId)}/integration-credentials`, {
+        method: "POST",
+        body: JSON.stringify(integrationForm),
+      });
+      setOneTimeToken(payload.bearerToken || "");
+      setIntegration((previous) => ({
+        ...(previous || {}),
+        guide: payload.guide,
+        credentials: [payload.credential, ...(previous?.credentials || [])],
+      }));
+      setMessage("Claims-server credential created. Copy the token now; ClaimGuard will not show it again.");
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : "Credential creation failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRevokeCredential(credentialId) {
+    const organisationId = organisation?.organisation?.organisationId;
+    if (!organisationId) return;
+    setLoading(true);
+    setError("");
+    try {
+      await apiJson(`/admin/platform/organisations/${encodeURIComponent(organisationId)}/integration-credentials/${encodeURIComponent(credentialId)}/revoke`, { method: "POST" });
+      await loadOrganisation(organisationId);
+      setMessage("Claims-server credential revoked.");
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : "Credential revocation failed.");
     } finally {
       setLoading(false);
     }
@@ -166,9 +256,15 @@ export function PlatformAdminPage() {
     };
   }, []);
 
+  useEffect(() => {
+    refreshOrganisations().catch(() => setError("Medical-aid inventory could not be loaded."));
+  }, []);
+
   const canProvision = Boolean(organisation?.organisation?.organisationId);
   const canRetry = Boolean(operation?.operationId && ["failed", "quarantined", "compensated"].includes(operation.status));
   const canActivate = Boolean(organisation?.organisation?.status === "ready_for_activation");
+  const canUpgrade = Boolean(["active", "suspended", "ready_for_activation"].includes(organisation?.organisation?.status));
+  const isActive = organisation?.organisation?.status === "active";
 
   return (
     <PageFrame
@@ -176,6 +272,25 @@ export function PlatformAdminPage() {
       title="Medical scheme onboarding"
       description="Platform administrators create DRAFT organisations and request asynchronous provisioning. Browser clients never call Azure Resource Manager directly."
     >
+      <SectionCard title="Medical aids" description="Select an existing medical aid or create a new one. ClaimGuard remains a separate platform organisation and is never given a claims database.">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {organisations.map((item) => (
+            <button
+              key={item.organisationId}
+              type="button"
+              className="rounded-xl border border-border px-4 py-3 text-left hover:bg-muted/40 disabled:opacity-50"
+              disabled={loading}
+              onClick={() => loadOrganisation(item.organisationId)}
+            >
+              <p className="font-semibold">{item.displayName}</p>
+              <p className="text-sm text-muted-foreground">{item.canonicalSlug}</p>
+              <p className="mt-2 text-xs uppercase tracking-[0.14em]">{item.status}</p>
+            </button>
+          ))}
+          {organisations.length === 0 ? <p className="text-sm text-muted-foreground">No medical aids have been registered yet.</p> : null}
+        </div>
+      </SectionCard>
+
       <SectionCard title="Step 1-3: Organisation and Initial Admin" description="Create a DRAFT organisation without provisioning infrastructure.">
         <form className="grid gap-4" onSubmit={handleCreateDraft}>
           <div className="grid gap-4 md:grid-cols-2">
@@ -202,11 +317,55 @@ export function PlatformAdminPage() {
             <button type="submit" className="rounded-xl bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={loading}>Create Draft</button>
             <button type="button" className="rounded-xl border border-border px-4 py-2 disabled:opacity-50" disabled={!canProvision || loading} onClick={handleProvision}>Request Provisioning</button>
             <button type="button" className="rounded-xl border border-border px-4 py-2 disabled:opacity-50" disabled={!canRetry || loading} onClick={handleRetry}>Retry Failed Operation</button>
+            <button type="button" className="rounded-xl border border-border px-4 py-2 disabled:opacity-50" disabled={!canUpgrade || loading} onClick={handleUpgrade}>Upgrade Data Plane</button>
             <button type="button" className="rounded-xl border border-border px-4 py-2 disabled:opacity-50" disabled={!canActivate || loading} onClick={handleActivate}>Activate (Explicit)</button>
           </div>
           {message ? <p className="text-sm text-emerald-600">{message}</p> : null}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
         </form>
+      </SectionCard>
+
+      <SectionCard title="Connect the medical aid's claims server" description="Create a separate, revocable credential for each sending server. Tokens are shown once and stored by ClaimGuard only as hashes.">
+        {!isActive ? <p className="text-sm text-muted-foreground">Activate the medical aid before issuing a claims-server credential.</p> : (
+          <div className="grid gap-5">
+            <div className="grid gap-4 md:grid-cols-3">
+              <WizardField label="Connection name">
+                <input className="rounded-xl border border-border bg-background px-3 py-2" value={integrationForm.displayName} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, displayName: event.target.value }))} />
+              </WizardField>
+              <WizardField label="Stable server ID">
+                <input className="rounded-xl border border-border bg-background px-3 py-2" value={integrationForm.serviceActorId} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, serviceActorId: event.target.value.toLowerCase() }))} />
+              </WizardField>
+              <WizardField label="Expires in days">
+                <input type="number" min="1" max="365" className="rounded-xl border border-border bg-background px-3 py-2" value={integrationForm.expiresInDays} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, expiresInDays: event.target.value }))} />
+              </WizardField>
+            </div>
+            <button type="button" className="w-fit rounded-xl bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={loading || !integrationForm.serviceActorId} onClick={handleCreateIntegrationCredential}>Create Claims-Server Credential</button>
+            {oneTimeToken ? (
+              <div className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-4">
+                <p className="font-semibold">Copy this token now — it will not be shown again</p>
+                <code className="mt-2 block break-all rounded-lg bg-background p-3 text-sm">{oneTimeToken}</code>
+              </div>
+            ) : null}
+            <div className="grid gap-3 md:grid-cols-2">
+              <ReadOnlyRow label="Claims endpoint" value={integration?.guide?.endpoint} />
+              <ReadOnlyRow label="Successful response" value={integration?.guide?.successStatus ? `HTTP ${integration.guide.successStatus}` : null} />
+            </div>
+            <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
+              {(integration?.guide?.steps || []).map((step) => <li key={step}>{step}</li>)}
+            </ol>
+            <div className="space-y-2">
+              {(integration?.credentials || []).map((credential) => (
+                <div key={credential.integrationCredentialId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 px-4 py-3 text-sm">
+                  <div>
+                    <p className="font-semibold">{credential.displayName}</p>
+                    <p className="text-muted-foreground">{credential.serviceActorId} · {credential.tokenPrefix}… · {credential.status}</p>
+                  </div>
+                  {credential.status === "active" ? <button type="button" className="rounded-lg border border-border px-3 py-1.5" disabled={loading} onClick={() => handleRevokeCredential(credential.integrationCredentialId)}>Revoke</button> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard title="Step 4: Provisioning Review" description="Server-derived, trusted deployment choices only.">

@@ -16,6 +16,8 @@ pnpm build
 ClaimGuard does not generate runtime claims. Medical-aid systems and approved test producers submit tenant-scoped batches to `POST /claims/ingest`. The API commits reference records and claims atomically, writes an outbox job in the same transaction, and the report worker reloads the authoritative tenant snapshot before detection.
 
 See `docs/claim-ingestion.md` for the request contract, machine-to-machine authentication, limits, and the future desktop-producer handoff.
+
+Platform administrators can create, provision, upgrade, and explicitly activate medical aids from the web interface. After activation, the same page issues a per-server credential once and displays the bounded claim-sync instructions; routine onboarding does not require Azure Portal access.
 The Windows host baseline is documented in `docs/desktop-producer-windows.md`.
 
 ## Runbook
@@ -58,7 +60,7 @@ CONTROL_PLANE_MYSQL_URL='mysql://...' \
 MYSQL_URL='mysql://...' \
 REPORT_WORKER_ORGANISATION_ID='organisation-id' \
 INTERNAL_SERVICE_ORGANISATION_IDS='organisation-id' \
-uv run claimguard-produce-report worker --once --backend file --output-dir reports
+uv run claimguard-produce-report worker once --backend file --output-dir reports
 ```
 
 For Azure mode, use backend `azure_blob` with storage configuration and managed identity.

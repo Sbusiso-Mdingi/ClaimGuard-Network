@@ -39,6 +39,7 @@ export {
   verifyPassword,
 } from "./password.js";
 export { createControlPlaneRepositories } from "./repositories.js";
+export { createIntegrationCredentialsRepository } from "./integration-credentials-repository.js";
 export { withControlPlaneTransaction } from "./transaction.js";
 export {
   assertNoPlaintextPassword,

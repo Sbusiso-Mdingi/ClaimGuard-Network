@@ -119,8 +119,24 @@ export function createSessionAuthenticationProvider({ authenticationService, con
         const expected = configuration.internalServiceToken || "";
         const suppliedBuffer = Buffer.from(supplied);
         const expectedBuffer = Buffer.from(expected);
-        const valid = suppliedBuffer.length === expectedBuffer.length && suppliedBuffer.length > 0 && crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
-        if (!valid) {
+        const validLegacyToken = suppliedBuffer.length === expectedBuffer.length
+          && suppliedBuffer.length > 0
+          && crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
+        if (!validLegacyToken) {
+          const integration = await authenticationService.resolveIntegrationCredential?.(supplied, metadata);
+          if (integration) {
+            return {
+              authContext: createAuthenticatedAuthContext({
+                userId: integration.serviceActorId,
+                roles: [integration.roleKey],
+                tenantId: integration.tenantId,
+                organisationId: integration.organisationId,
+                source: "internal_service",
+              }),
+              resolvedSession: null,
+              metadata,
+            };
+          }
           const error = new ForbiddenError("Internal service authentication failed.");
           error.code = "INTERNAL_SERVICE_AUTHENTICATION_FAILED";
           throw error;

@@ -41,7 +41,7 @@ The platform organisation needs one active `platform_none` route and no legacy m
 
 ## Workers
 
-Each report-worker instance requires exactly one `REPORT_WORKER_ORGANISATION_ID`. At startup it resolves that organisation, route generation, and legacy mapping, verifies the shared database marker, and constrains outbox leasing and transitions to the resulting tenant. Run separate worker instances for separate organisations; job payload tenant values cannot expand an instance’s scope or reuse another organisation’s routed connection.
+The original Phase 11D worker mode requires exactly one `REPORT_WORKER_ORGANISATION_ID`. The production scheduled job now discovers active, worker-ready organisations and creates one independently verified worker scope for each route. Job payload tenant values still cannot expand a resolved scope or reuse another organisation's routed connection.
 
 Internal API service authentication additionally requires `INTERNAL_SERVICE_ORGANISATION_IDS`; caller-supplied organisation scope must be in that server configuration.
 

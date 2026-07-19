@@ -26,12 +26,12 @@ CI/CD:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `MYSQL_URL` | API operational DB connection | Platform / API ops | prod-like | secret | Key Vault secret `claimguard--api--mysql-url` | API, migrations, report worker | App Service Key Vault reference or job secret | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
 | `CONTROL_PLANE_MYSQL_URL` | control-plane DB connection | Platform / control-plane ops | prod-like | secret | Key Vault secret `claimguard--api--control-plane-mysql-url` | API control-plane/session code and report-worker route verification | App Service Key Vault reference or job secret | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
-| tenant DB credential refs | private tenant route access | Platform | prod-like | secret | control plane / runtime secret boundary | routed data-plane code | route-managed secret reference | route-dependent | documented in code, not fully normalized live | restore previous route secret mapping | possible | maybe |
+| tenant DB credential refs | private tenant route access | Platform | prod-like | secret | Azure Key Vault references stored in the control-plane route | API and report worker for the assigned organisation | route-managed secret reference resolved by managed identity | route-dependent | four secret references per private route | restore previous route secret mapping | no | no |
 | session signing material | opaque session secret | API platform | session/local/prod | secret | control-plane/session storage; runtime boundary pending normalization | API session middleware | secret store / session service | periodic | implemented in code, live delivery not fully inventoried | revert session version | unknown | no |
 | CSRF config | CSRF and origin checks | API platform | session/local/prod | sensitive config | App settings and session config | API session middleware | config/env | per policy | live config exists | revert origin/cookie config | yes | no |
 | internal worker tokens | service-to-service auth | Platform ops | internal | secret | service config | API and workers | env / secret reference | periodic | used by session-mode worker paths in code | revert token secret | unknown | yes |
 | report storage config | storage backend, container, pointer | Platform / reporting | prod-like | sensitive config | env + storage account | API, producer, workers | env / secret reference | change-driven | live config exists | revert storage pointer/config | yes | yes |
-| `REPORT_STORAGE_CONNECTION_STRING` | report producer storage access | reporting ops | GitHub Actions / job runtime | secret | GitHub secret today | producer workflow | GitHub secret | periodic | workflow references it | revert to previous secret | yes | yes |
+| `REPORT_STORAGE_CONNECTION_STRING` | optional local report-storage access | reporting ops | local development only | secret | local approved secret provider | local producer | environment | periodic | Azure deployment uses managed identity instead | no | yes |
 | `SENTRY_DSN_API` | API error telemetry | observability | prod-like | secret-ish | live App Service setting / future Doppler | API | env | rarely | live | revert DSN | yes | yes |
 | `SENTRY_DSN_WEB` | web error telemetry | observability | prod-like | secret-ish | live App Service setting / future Doppler | web | env | rarely | live | revert DSN | yes | yes |
 | `NEW_RELIC_LICENSE_KEY` | APM auth | observability | prod-like | secret | live App Service setting / future Doppler | API | env | periodically | live | revert key | yes | yes |
@@ -73,8 +73,10 @@ CI/CD:
 ### GitHub Actions references
 
 - OIDC values are present in workflow env blocks.
-- `CLAIMGUARD_CONTROL_PLANE_MYSQL_URL`, `CLAIMGUARD_MYSQL_URL`, and `REPORT_STORAGE_CONNECTION_STRING` are referenced by the producer workflow.
-- `REPORT_WORKER_ORGANISATION_ID` and `INTERNAL_SERVICE_ORGANISATION_IDS` constrain each worker deployment to an explicit organisation scope.
+- The producer workflow references database secrets through Azure Key Vault and uses managed identity for report storage; database or storage credentials are not copied into GitHub secrets.
+- The report worker discovers only active medical-scheme routes that are schema-compatible and marked ready in the control plane.
+- Its managed identity receives read access to exactly the four Key Vault secrets for each provisioned private route; it has no vault-wide secret-read role.
+- New claim producers receive a per-organisation bearer credential from the platform-admin onboarding page. ClaimGuard stores only the credential hash and shows the raw token once.
 - Codecov uploads use GitHub OIDC rather than a repository token.
 
 ## Doppler Inventory Status

@@ -66,6 +66,7 @@ if (authenticationConfiguration.mode === "session") {
   controlPlaneService = createControlPlaneService({ pool: controlPlanePool, repositories: controlPlaneRepositories });
   authenticationService = createControlPlaneAuthenticationService({
     authenticationRepository: controlPlaneRepositories.authentication,
+    integrationCredentialsRepository: controlPlaneRepositories.integrationCredentials,
     idleTimeoutMs: authenticationConfiguration.idleTimeoutMs,
     absoluteTimeoutMs: authenticationConfiguration.absoluteTimeoutMs,
     throttleWindowMs: authenticationConfiguration.throttle.windowMs,

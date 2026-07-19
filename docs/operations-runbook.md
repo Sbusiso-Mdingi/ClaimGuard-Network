@@ -72,11 +72,13 @@ Deployment is marked failed if probes do not recover within retries.
 
 ### Failed Producer Run
 
-1. Filter producer logs for `event=producer_attempt_failed` and `event=producer_run_failed`.
-2. Correlate with the latest `event=producer_attempt_started` and trigger value.
-3. Check `run_duration_ms` and `attempt_duration_ms` to identify timeout vs immediate failure.
-4. Validate report storage configuration (`REPORT_STORAGE_*` values) and blob access.
-5. Confirm whether a later retry succeeded (`event=producer_attempt_succeeded`).
+The deployed report producer is a native Azure Container Apps scheduled job named `claimguard-report-producer`. GitHub Actions builds, configures, and smoke-verifies the job; Azure runs the queue drain every five minutes.
+
+1. Inspect the latest Container Apps job execution and filter logs for `event=producer_run_failed`, `event=outbox_job_retry_scheduled`, and `event=outbox_job_dead_lettered`.
+2. Confirm that `event=data_plane_scope_verified` precedes outbox leasing; if it does not, inspect organisation, route, schema, and Key Vault configuration.
+3. Validate report storage configuration (`REPORT_STORAGE_*` values), the worker identity's blob role, and blob accessibility.
+4. Confirm whether a later execution emitted `event=producer_run_completed` and `event=outbox_drain_completed`.
+5. Escalate dead-lettered jobs for operator review rather than replaying them blindly.
 
 ### Missing Report
 

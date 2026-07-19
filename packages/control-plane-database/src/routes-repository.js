@@ -73,5 +73,65 @@ export function createDataPlaneRoutesRepository(defaultExecutor) {
       );
       return rows || [];
     },
+
+    async getInternalActiveForOrganisation(organisationId, { executor } = {}) {
+      const rows = await this.listInternalActiveForOrganisation(organisationId, { executor });
+      if (rows.length > 1) {
+        throw new ControlPlaneConflictError(
+          "Organisation has more than one active data-plane route.",
+          "DATA_PLANE_ACTIVE_ROUTE_CONFLICT",
+        );
+      }
+      return rows[0] || null;
+    },
+
+    async getInternalLatestReadyForOrganisation(organisationId, { executor } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT * FROM data_plane_routes
+         WHERE organisation_id = ? AND active_route_slot IS NULL
+           AND retired_at IS NULL AND provisioning_status = 'ready'
+         ORDER BY route_generation DESC LIMIT 2`,
+        [organisationId],
+      );
+      if ((rows || []).length > 1 && rows[0].route_generation === rows[1].route_generation) {
+        throw new ControlPlaneConflictError(
+          "Organisation has ambiguous ready data-plane routes.",
+          "DATA_PLANE_READY_ROUTE_CONFLICT",
+        );
+      }
+      return rows?.[0] || null;
+    },
+
+    async activate(routeId, organisationId, { executor } = {}) {
+      const db = executorOr(defaultExecutor, executor);
+      const [rows] = await db.execute(
+        `SELECT * FROM data_plane_routes
+         WHERE route_id = ? AND organisation_id = ? AND retired_at IS NULL
+         LIMIT 1 FOR UPDATE`,
+        [routeId, organisationId],
+      );
+      const route = rows?.[0];
+      if (!route || route.provisioning_status !== "ready" || route.health_status !== "healthy") {
+        throw new ControlPlaneConflictError(
+          "Only a healthy, ready data-plane route can be activated.",
+          "DATA_PLANE_ROUTE_NOT_READY",
+        );
+      }
+      await db.execute(
+        `UPDATE data_plane_routes
+         SET active_route_slot = NULL, provisioning_status = 'retired',
+             retired_at = COALESCE(retired_at, UTC_TIMESTAMP(3))
+         WHERE organisation_id = ? AND active_route_slot = organisation_id AND route_id <> ?`,
+        [organisationId, routeId],
+      );
+      await db.execute(
+        `UPDATE data_plane_routes
+         SET active_route_slot = organisation_id, provisioning_status = 'active',
+             active_at = COALESCE(active_at, UTC_TIMESTAMP(3))
+         WHERE route_id = ? AND organisation_id = ? AND retired_at IS NULL`,
+        [routeId, organisationId],
+      );
+      return this.getSafeById(routeId, { executor: db });
+    },
   };
 }

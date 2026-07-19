@@ -85,6 +85,32 @@ function approvedAzurePolicy({ organisationId, canonicalSlug, deploymentClass })
   };
 }
 
+function integrationGuide(c, organisation) {
+  const configuredBaseUrl = String(process.env.PUBLIC_API_BASE_URL || "").trim().replace(/\/$/, "");
+  const apiBaseUrl = configuredBaseUrl || new URL(c.req.url).origin;
+  return {
+    organisationId: organisation.organisationId,
+    organisationName: organisation.displayName,
+    endpoint: `${apiBaseUrl}/claims/ingest`,
+    method: "POST",
+    authentication: "Bearer token",
+    requiredHeaders: ["Authorization: Bearer <token>", "Content-Type: application/json", "x-request-id: <unique-id>"],
+    successStatus: 202,
+    retryPolicy: {
+      retry: ["connection failure", "HTTP 500-599"],
+      quarantine: [400, 409, 413, 415, 422],
+      preserveBatchOnRetry: true,
+    },
+    steps: [
+      "Create a claims-server credential after activation and copy its token once into the medical aid's secret store.",
+      "Map stable scheme, member, provider, and claim identifiers to the ClaimGuard ingestion contract.",
+      "Send bounded JSON batches over HTTPS and include a unique request ID for tracing.",
+      "Treat only HTTP 202 as committed; retry transient failures with exponential backoff and quarantine rejected batches.",
+      "Rotate or revoke the claims-server credential from ClaimGuard without changing Azure resources.",
+    ],
+  };
+}
+
 export function registerPlatformAdminRoutes(app, {
   controlPlaneRepositories,
   controlPlaneService,
@@ -134,7 +160,8 @@ export function registerPlatformAdminRoutes(app, {
         const membership = await controlPlaneService.createMembership({
           userId: user.userId,
           organisationId: organisation.organisationId,
-          status: "invited",
+          status: "active",
+          validFrom: new Date(),
           invitedBy: actor.id,
         }, actor);
         await controlPlaneService.assignMembershipRole({
@@ -226,6 +253,26 @@ export function registerPlatformAdminRoutes(app, {
     }, 202);
   });
 
+  app.post("/admin/platform/organisations/:organisationId/upgrade", requirePlatformAdmin, async (c) => {
+    const actor = actorFromContext(c);
+    const organisationId = c.req.param("organisationId");
+    try {
+      const operation = await controlPlaneService.requestProvisioningOperation({
+        organisationId,
+        operationType: "upgrade_private_database",
+        requestedBy: actor.id || "platform-admin",
+        correlationId: actor.correlationId,
+      }, actor);
+      return c.json({
+        available: true,
+        operation: safeProvisioningProjection({ ...operation, steps: [] }),
+      }, 202);
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 409;
+      return c.json({ available: false, code: error?.code || "UPGRADE_REQUEST_FAILED", message: error?.message || "Upgrade could not be requested." }, status);
+    }
+  });
+
   app.get("/admin/platform/provisioning/:operationId", requirePlatformAdmin, async (c) => {
     const operationId = c.req.param("operationId");
     try {
@@ -269,18 +316,80 @@ export function registerPlatformAdminRoutes(app, {
       return c.json({ available: false, code: "ORGANISATION_NOT_FOUND", message: "Organisation was not found." }, 404);
     }
 
-    // Phase 11E keeps private routes inactive; activation here only confirms control-plane readiness.
-    if (organisation.status !== "ready_for_activation") {
-      return c.json({ available: false, code: "ORGANISATION_NOT_READY", message: "Organisation is not ready for activation." }, 409);
+    try {
+      const activated = await controlPlaneService.activateOrganisation(organisationId, actor);
+      return c.json({
+        available: true,
+        activated: true,
+        deferred: false,
+        message: "Medical aid activated. Its verified private route is now authoritative.",
+        ...activated,
+        integrationGuide: integrationGuide(c, activated.organisation),
+      });
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 409;
+      return c.json({ available: false, code: error?.code || "ORGANISATION_ACTIVATION_FAILED", message: error?.message || "Organisation could not be activated." }, status);
     }
+  });
 
+  app.get("/admin/platform/organisations/:organisationId/integration", requirePlatformAdmin, async (c) => {
+    const organisationId = c.req.param("organisationId");
+    const organisation = await controlPlaneRepositories.organisations.getById(organisationId);
+    if (!organisation || organisation.organisationType !== "medical_scheme") {
+      return c.json({ available: false, code: "ORGANISATION_NOT_FOUND", message: "Medical-scheme organisation was not found." }, 404);
+    }
+    const credentials = await controlPlaneRepositories.integrationCredentials.listForOrganisation(organisationId);
     return c.json({
       available: true,
-      activated: false,
-      deferred: true,
-      message: "Activation is explicitly deferred in Phase 11E because route cutover is out of scope.",
       organisation,
-    }, 202);
+      credentials,
+      guide: integrationGuide(c, organisation),
+    });
+  });
+
+  app.post("/admin/platform/organisations/:organisationId/integration-credentials", requirePlatformAdmin, async (c) => {
+    const actor = actorFromContext(c);
+    const organisationId = c.req.param("organisationId");
+    const payload = await c.req.json().catch(() => ({}));
+    const displayName = String(payload.displayName || "Claims server").trim();
+    const serviceActorId = String(payload.serviceActorId || "").trim().toLowerCase();
+    const expiresInDays = Math.max(1, Math.min(365, Number.parseInt(payload.expiresInDays || "90", 10) || 90));
+    if (!/^[a-z0-9][a-z0-9._:-]{2,127}$/.test(serviceActorId)) {
+      return c.json({ available: false, code: "INVALID_SERVICE_ACTOR", message: "serviceActorId must be a stable lowercase identifier." }, 400);
+    }
+    try {
+      const result = await controlPlaneService.createIntegrationCredential({
+        organisationId,
+        displayName,
+        serviceActorId,
+        expiresAt: new Date(Date.now() + expiresInDays * 86_400_000),
+      }, actor);
+      c.header("Cache-Control", "no-store");
+      return c.json({
+        available: true,
+        credential: result.credential,
+        bearerToken: result.bearerToken,
+        shownOnce: true,
+        guide: integrationGuide(c, await controlPlaneRepositories.organisations.getById(organisationId)),
+      }, 201);
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 409;
+      return c.json({ available: false, code: error?.code || "INTEGRATION_CREDENTIAL_CREATE_FAILED", message: error?.message || "Integration credential could not be created." }, status);
+    }
+  });
+
+  app.post("/admin/platform/organisations/:organisationId/integration-credentials/:credentialId/revoke", requirePlatformAdmin, async (c) => {
+    const actor = actorFromContext(c);
+    try {
+      const credential = await controlPlaneService.revokeIntegrationCredential({
+        organisationId: c.req.param("organisationId"),
+        integrationCredentialId: c.req.param("credentialId"),
+      }, actor);
+      return c.json({ available: true, credential });
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 404;
+      return c.json({ available: false, code: error?.code || "INTEGRATION_CREDENTIAL_REVOKE_FAILED", message: error?.message || "Integration credential could not be revoked." }, status);
+    }
   });
 
   app.post("/admin/platform/organisations/:organisationId/suspend", requirePlatformAdmin, async (c) => {
