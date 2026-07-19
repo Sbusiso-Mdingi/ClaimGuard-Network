@@ -44,6 +44,7 @@ def _positive_number(value: object, default: int) -> int:
 class WorkerConfig:
     worker_id: str
     batch_size: int = 10
+    maximum_batches_per_run: int = 100
     lease_seconds: int = 300
     maximum_attempts: int = 5
     initial_retry_delay_seconds: int = 30
@@ -57,6 +58,9 @@ class WorkerConfig:
         return cls(
             worker_id=os.environ.get("REPORT_WORKER_ID", default_worker_id),
             batch_size=_positive_number(os.environ.get("REPORT_WORKER_BATCH_SIZE"), 10),
+            maximum_batches_per_run=_positive_number(
+                os.environ.get("REPORT_WORKER_MAX_BATCHES_PER_RUN"), 100
+            ),
             lease_seconds=_positive_number(os.environ.get("REPORT_WORKER_LEASE_SECONDS"), 300),
             maximum_attempts=_positive_number(os.environ.get("REPORT_WORKER_MAX_ATTEMPTS"), 5),
             initial_retry_delay_seconds=_positive_number(
@@ -142,6 +146,30 @@ class ReportProducerWorker:
             processed = self.run_once()
             if processed == 0:
                 time.sleep(self.config.poll_seconds)
+
+    def run_until_empty(self) -> int:
+        total_jobs = 0
+        for batch_number in range(1, self.config.maximum_batches_per_run + 1):
+            processed = self.run_once()
+            total_jobs += processed
+            if processed == 0:
+                self.logger.emit(
+                    "info",
+                    "outbox_drain_completed",
+                    batch_count=batch_number - 1,
+                    job_count=total_jobs,
+                    worker_id=self.config.worker_id,
+                )
+                return total_jobs
+
+        self.logger.emit(
+            "warning",
+            "outbox_drain_limit_reached",
+            batch_count=self.config.maximum_batches_per_run,
+            job_count=total_jobs,
+            worker_id=self.config.worker_id,
+        )
+        return total_jobs
 
     def _process_tenant_jobs(self, jobs: list[OutboxJob]) -> None:
         job = jobs[0]
@@ -242,29 +270,37 @@ class ReportProducerWorker:
 
 
 def create_worker_from_environment(*, backend: str | None = None, output_dir: Path | None = None) -> ReportProducerWorker:
-    database_url = os.environ.get("MYSQL_URL", "")
     organisation_ids = [os.environ.get("REPORT_WORKER_ORGANISATION_ID", "").strip()]
     organisation_ids = [value for value in organisation_ids if value]
     allowed_organisation_ids = frozenset(
         value.strip() for value in os.environ.get("INTERNAL_SERVICE_ORGANISATION_IDS", "").split(",") if value.strip()
     )
-    scope = resolve_worker_data_plane_scope(
-        control_plane_url=os.environ.get("CONTROL_PLANE_MYSQL_URL", ""),
-        operational_url=database_url,
-        organisation_ids=organisation_ids,
-        allowed_organisation_ids=allowed_organisation_ids,
-        environment_key=os.environ.get("DATA_PLANE_ENVIRONMENT", "legacy"),
+    supported_schema_versions = frozenset(
+        value.strip()
+        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "10").split(",")
+        if value.strip()
     )
 
-    def validate_scope() -> None:
-        current = resolve_worker_data_plane_scope(
+    def resolve_scope():
+        return resolve_worker_data_plane_scope(
             control_plane_url=os.environ.get("CONTROL_PLANE_MYSQL_URL", ""),
-            operational_url=database_url,
+            operational_url=os.environ.get("MYSQL_URL", ""),
             organisation_ids=organisation_ids,
             allowed_organisation_ids=allowed_organisation_ids,
             environment_key=os.environ.get("DATA_PLANE_ENVIRONMENT", "legacy"),
+            private_environment_key=os.environ.get("DATA_PLANE_PRIVATE_ENVIRONMENT", "production"),
+            supported_schema_versions=supported_schema_versions,
         )
-        if current.route_keys != scope.route_keys or current.tenant_ids != scope.tenant_ids:
+
+    scope = resolve_scope()
+
+    def validate_scope() -> None:
+        current = resolve_scope()
+        if (
+            current.route_keys != scope.route_keys
+            or current.tenant_ids != scope.tenant_ids
+            or current.connection_fingerprint != scope.connection_fingerprint
+        ):
             raise RuntimeError("The report-worker data-plane route generation changed; restart on the fresh route.")
     print(json.dumps({
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -273,9 +309,10 @@ def create_worker_from_environment(*, backend: str | None = None, output_dir: Pa
         "event": "data_plane_scope_verified",
         "organisation_id": scope.organisation_ids[0],
         "route_key": scope.route_keys[0],
+        "route_type": scope.route_type,
         "schema_version": scope.schema_version,
     }, sort_keys=True))
-    repository = PyMySqlOutboxRepository.from_url(database_url, allowed_tenant_ids=scope.tenant_ids)
+    repository = PyMySqlOutboxRepository.from_url(scope.operational_url, allowed_tenant_ids=scope.tenant_ids)
     snapshot_repository = PyMySqlTenantSnapshotRepository(repository.connection_factory, scope.tenant_ids)
     resolved_backend = (backend or os.environ.get("REPORT_STORAGE_BACKEND", "file")).lower()
     if resolved_backend == "azure_blob":

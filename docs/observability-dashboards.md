@@ -5,7 +5,7 @@ This document defines production dashboards for the current ClaimGuard runtime u
 ## Data Sources
 
 - API structured logs (events from `apps/api/src/backend.js` and `apps/api/src/backend-server.js`)
-- Producer structured logs (events from `services/report-producer/src/claimguard_report_producer/runtime.py`)
+- Producer structured logs (events from `services/report-producer/src/claimguard_report_producer/worker.py` and `cli.py`)
 - API health endpoint probes (CI deploy verification)
 - GitHub Actions workflow runs (`ci.yml`, `producer-deploy.yml`)
 
@@ -70,30 +70,31 @@ Widgets:
 
 ## Dashboard 3: Producer Runtime Health
 
-Purpose: Validate producer completion, failures, and report generation durations.
+Purpose: Validate queue draining, report publication, retries, and worker failures.
 
 Widgets:
 
-1. Producer run starts
-- Source: `event=producer_attempt_started`
-- Group by: `trigger`
+1. Outbox batches leased
+- Source: `event=outbox_batch_leased`
+- Metric: `job_count`
+- Group by: `worker_id`
 
-2. Producer run completions
-- Source: `event=producer_run_completed`
-- Metrics: count of events
-- Group by: `trigger`
+2. Producer drain completions
+- Source: `event=outbox_drain_completed OR event=producer_run_completed`
+- Metrics: `job_count`, `batch_count`, count of runs
 
-3. Producer run failures
-- Source: `event=producer_run_failed OR event=producer_attempt_failed`
-- Group by: `trigger`, `message`
+3. Producer run failures and dead letters
+- Source: `event=producer_run_failed OR event=outbox_job_dead_lettered`
+- Group by: `error_type`, `tenant_id`, `job_type`
 
-4. Report generation duration
-- Source: `event=producer_run_completed`
-- Metric: `run_duration_ms`
+4. Retry activity
+- Source: `event=outbox_job_retry_scheduled`
+- Metric: `retry_delay_seconds`
+- Group by: `error_type`, `tenant_id`
 
 5. Report publication confirmations
-- Source: `event=producer_attempt_succeeded`
-- Fields: `version`, `report_path`, `latest_pointer_path`
+- Source: `event=outbox_job_completed`
+- Fields: `covered_report_id`, `covered_watermark`, `tenant_id`, `correlation_id`
 
 ## Dashboard 4: Deployment and Release Health
 

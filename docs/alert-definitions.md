@@ -14,16 +14,16 @@ No Azure resources are provisioned by this document; it is an operations definit
 
 ## Alert 2: Producer Failure
 
-- Condition: any `producer_run_failed` event
-- Signal source: Producer structured logs
+- Condition: any `producer_run_failed` event, failed Container Apps job execution, or `outbox_job_dead_lettered` event
+- Signal source: Producer structured logs and Azure Container Apps job execution status
 - Severity: High
 - Notify: Data operations + platform on-call
 - Runbook: `docs/operations-runbook.md` (failed producer run)
 
 ## Alert 3: No Report Generated in Expected Interval
 
-- Condition: no `producer_run_completed` event within expected reporting interval
-- Signal source: Producer structured logs
+- Condition: pending/retry outbox depth is non-zero while no `outbox_job_completed` event occurs within the agreed processing interval
+- Signal source: Producer structured logs and outbox status telemetry
 - Severity: High
 - Notify: Data operations + on-call
 - Runbook: `docs/operations-runbook.md` (missing report)

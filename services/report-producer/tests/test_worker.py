@@ -46,11 +46,13 @@ def canonical_report(tenant_id: str) -> dict[str, object]:
 class FakeRepository:
     def __init__(self, jobs) -> None:
         self.jobs = list(jobs)
+        self.lease_calls = 0
         self.completed = []
         self.retried = []
         self.dead = []
 
     def lease_next_available_jobs(self, **_kwargs):
+        self.lease_calls += 1
         result, self.jobs = self.jobs, []
         return result
 
@@ -215,3 +217,39 @@ class WorkerTests(TestCase):
         )
         self.assertEqual(worker.run_once(), 0)
         self.assertEqual(snapshots.tenant_ids, [])
+
+    @patch("claimguard_report_producer.worker.build_report_from_tenant_snapshot")
+    def test_scheduled_drain_runs_until_the_outbox_is_empty(self, build_report) -> None:
+        build_report.side_effect = lambda snapshot, **_kwargs: canonical_report(snapshot.tenant_id)
+        repository = FakeRepository([job("job-1"), job("job-2")])
+        worker = ReportProducerWorker(
+            repository=repository,
+            publisher=FakePublisher(),
+            snapshot_repository=FakeSnapshots(),
+            config=config(),
+            logger=FakeLogger(),
+        )
+
+        self.assertEqual(worker.run_until_empty(), 2)
+        self.assertEqual(repository.lease_calls, 2)
+        self.assertEqual(len(repository.completed), 1)
+
+    def test_scheduled_drain_is_bounded(self) -> None:
+        class NeverEmptyRepository(FakeRepository):
+            def lease_next_available_jobs(self, **_kwargs):
+                self.lease_calls += 1
+                return [job(f"job-{self.lease_calls}")]
+
+        repository = NeverEmptyRepository([])
+        worker = ReportProducerWorker(
+            repository=repository,
+            publisher=FakePublisher(),
+            snapshot_repository=FakeSnapshots(),
+            config=replace(config(), maximum_batches_per_run=2),
+            logger=FakeLogger(),
+        )
+
+        with patch("claimguard_report_producer.worker.build_report_from_tenant_snapshot") as build_report:
+            build_report.side_effect = lambda snapshot, **_kwargs: canonical_report(snapshot.tenant_id)
+            self.assertEqual(worker.run_until_empty(), 2)
+        self.assertEqual(repository.lease_calls, 2)

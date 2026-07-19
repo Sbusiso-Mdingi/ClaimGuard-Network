@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
+import time
 
 from .worker import create_worker_from_environment
 
 def build_worker_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the ClaimGuard durable report-producer worker")
+    parser.add_argument(
+        "execution_mode",
+        nargs="?",
+        choices=["once", "drain", "continuous"],
+        help="Execution mode. Positional form is preferred for container runtimes.",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true", help="Lease one bounded batch and exit (default)")
+    mode.add_argument("--drain", action="store_true", help="Process bounded batches until the outbox is empty")
     mode.add_argument("--continuous", action="store_true", help="Poll continuously for local development")
     parser.add_argument(
         "--backend",
@@ -27,13 +36,21 @@ def build_worker_parser() -> argparse.ArgumentParser:
 
 
 def run_worker_command(argv: list[str]) -> int:
-    args = build_worker_parser().parse_args(argv)
+    parser = build_worker_parser()
+    args = parser.parse_args(argv)
+    flag_mode = "continuous" if args.continuous else "drain" if args.drain else "once" if args.once else None
+    if args.execution_mode and flag_mode:
+        parser.error("Choose either a positional execution mode or a mode flag, not both.")
+    execution_mode = args.execution_mode or flag_mode or "once"
     worker = create_worker_from_environment(backend=args.backend, output_dir=args.output_dir)
-    if args.continuous:
+    if execution_mode == "continuous":
         try:
             worker.run_continuously()
         except KeyboardInterrupt:
             return 0
+        return 0
+    if execution_mode == "drain":
+        worker.run_until_empty()
         return 0
 
     worker.run_once()
@@ -45,4 +62,21 @@ def main(argv: list[str] | None = None) -> int:
     if resolved_argv[:1] != ["worker"]:
         parser = argparse.ArgumentParser(description="Run the ClaimGuard durable report-producer worker")
         parser.error("The report producer only accepts the durable 'worker' command.")
-    return run_worker_command(resolved_argv[1:])
+    try:
+        result = run_worker_command(resolved_argv[1:])
+        print(json.dumps({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": "info",
+            "service": "report-producer-worker",
+            "event": "producer_run_completed",
+        }, sort_keys=True))
+        return result
+    except Exception as error:  # noqa: BLE001
+        print(json.dumps({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": "error",
+            "service": "report-producer-worker",
+            "event": "producer_run_failed",
+            "error_type": type(error).__name__,
+        }, sort_keys=True), file=sys.stderr)
+        return 1

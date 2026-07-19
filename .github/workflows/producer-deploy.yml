@@ -2,12 +2,20 @@ name: report-producer-deploy
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/5 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/producer-deploy.yml"
+      - "services/detection-engine/**"
+      - "services/report-producer/**"
 
 permissions:
   contents: read
   id-token: write
+
+concurrency:
+  group: claimguard-report-producer
+  cancel-in-progress: false
 
 env:
   AZURE_CLIENT_ID: dc32e620-8239-4f20-b5ae-ca3c91cf9146
@@ -16,23 +24,26 @@ env:
   AZURE_RESOURCE_GROUP: ClaimGuard
   AZURE_CONTAINERAPPS_ENVIRONMENT: claimguard-env-11e
   AZURE_CONTAINERAPPS_JOB: claimguard-report-producer
+  AZURE_REPORT_WORKER_IDENTITY: claimguard-report-worker-identity
   AZURE_ACR_NAME: claimguardacr11e
   AZURE_ACR_LOGIN_SERVER: claimguardacr11e.azurecr.io
-  REPORT_STORAGE_CONTAINER: ${{ vars.REPORT_STORAGE_CONTAINER }}
-  CONTROL_PLANE_MYSQL_URL: ${{ secrets.CLAIMGUARD_CONTROL_PLANE_MYSQL_URL }}
-  MYSQL_URL: ${{ secrets.CLAIMGUARD_MYSQL_URL }}
-  AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.REPORT_STORAGE_CONNECTION_STRING }}
+  AZURE_KEYVAULT_URI: https://claimguard-kv-ufs.vault.azure.net
+  CONTROL_PLANE_MYSQL_SECRET_NAME: claimguard--api--control-plane-mysql-url
+  OPERATIONAL_MYSQL_SECRET_NAME: claimguard--api--mysql-url
+  REPORT_STORAGE_ACCOUNT_URL: https://cgrpt0715sa.blob.core.windows.net
+  REPORT_STORAGE_CONTAINER: claimguard-reports
   REPORT_WORKER_ORGANISATION_ID: ${{ vars.REPORT_WORKER_ORGANISATION_ID }}
   INTERNAL_SERVICE_ORGANISATION_IDS: ${{ vars.INTERNAL_SERVICE_ORGANISATION_IDS }}
   DATA_PLANE_ENVIRONMENT: legacy
+  DATA_PLANE_PRIVATE_ENVIRONMENT: production
+  DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS: "10"
 
 jobs:
-  build-and-deploy:
-    if: github.event_name == 'workflow_dispatch'
+  build-deploy-and-verify:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -42,7 +53,30 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
           audience: api://AzureADTokenExchange
 
-      - name: Build and push producer image
+      - name: Validate worker scope and resolve managed identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$REPORT_WORKER_ORGANISATION_ID" || { echo "REPORT_WORKER_ORGANISATION_ID variable is required"; exit 1; }
+          test -n "$INTERNAL_SERVICE_ORGANISATION_IDS" || { echo "INTERNAL_SERVICE_ORGANISATION_IDS variable is required"; exit 1; }
+
+          WORKER_IDENTITY_ID="$(az identity show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_REPORT_WORKER_IDENTITY" \
+            --query id \
+            --output tsv)"
+          WORKER_IDENTITY_CLIENT_ID="$(az identity show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_REPORT_WORKER_IDENTITY" \
+            --query clientId \
+            --output tsv)"
+
+          test -n "$WORKER_IDENTITY_ID" || { echo "Report-worker managed identity is missing"; exit 1; }
+          test -n "$WORKER_IDENTITY_CLIENT_ID" || { echo "Report-worker managed identity client ID is missing"; exit 1; }
+          echo "WORKER_IDENTITY_ID=$WORKER_IDENTITY_ID" >> "$GITHUB_ENV"
+          echo "WORKER_IDENTITY_CLIENT_ID=$WORKER_IDENTITY_CLIENT_ID" >> "$GITHUB_ENV"
+
+      - name: Build and push immutable worker image
         run: |
           az acr build \
             --registry "$AZURE_ACR_NAME" \
@@ -50,103 +84,164 @@ jobs:
             --file services/report-producer/Dockerfile \
             .
 
-      - name: Validate worker configuration inputs
+      - name: Create scheduled worker when absent
+        id: create
+        shell: bash
         run: |
-          test -n "$CONTROL_PLANE_MYSQL_URL" || { echo "CLAIMGUARD_CONTROL_PLANE_MYSQL_URL secret is required"; exit 1; }
-          test -n "$MYSQL_URL" || { echo "CLAIMGUARD_MYSQL_URL secret is required"; exit 1; }
-          test -n "$AZURE_STORAGE_CONNECTION_STRING" || { echo "REPORT_STORAGE_CONNECTION_STRING secret is required"; exit 1; }
-          test -n "$REPORT_STORAGE_CONTAINER" || { echo "REPORT_STORAGE_CONTAINER variable is required"; exit 1; }
-          test -n "$REPORT_WORKER_ORGANISATION_ID" || { echo "REPORT_WORKER_ORGANISATION_ID variable is required"; exit 1; }
-          test -n "$INTERNAL_SERVICE_ORGANISATION_IDS" || { echo "INTERNAL_SERVICE_ORGANISATION_IDS variable is required"; exit 1; }
-
-      - name: Ensure container app job exists
-        run: |
-          if ! az containerapp job show \
+          set -euo pipefail
+          if az containerapp job show \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINERAPPS_JOB" >/dev/null 2>&1; then
-            az containerapp job create \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --name "$AZURE_CONTAINERAPPS_JOB" \
-              --environment "$AZURE_CONTAINERAPPS_ENVIRONMENT" \
-              --trigger-type Manual \
-              --replica-timeout 1800 \
-              --replica-retry-limit 0 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${GITHUB_SHA}" \
-              --cpu 1.0 \
-              --memory 2Gi \
-              --command claimguard-produce-report \
-              --args worker --once \
-              --secrets "control-plane-mysql-url=$CONTROL_PLANE_MYSQL_URL" "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING" \
-              --env-vars \
-                CONTROL_PLANE_MYSQL_URL=secretref:control-plane-mysql-url \
-                MYSQL_URL=secretref:mysql-url \
-                AZURE_STORAGE_CONNECTION_STRING=secretref:storage-connection \
-                REPORT_STORAGE_BACKEND=azure_blob \
-                REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
-                REPORT_WORKER_ORGANISATION_ID="$REPORT_WORKER_ORGANISATION_ID" \
-                INTERNAL_SERVICE_ORGANISATION_IDS="$INTERNAL_SERVICE_ORGANISATION_IDS" \
-                DATA_PLANE_ENVIRONMENT="$DATA_PLANE_ENVIRONMENT" \
-                REPORT_WORKER_BATCH_SIZE=10 \
-                REPORT_WORKER_LEASE_SECONDS=300 \
-                REPORT_WORKER_MAX_ATTEMPTS=5 \
-                REPORT_WORKER_RETRY_INITIAL_SECONDS=30 \
-                REPORT_WORKER_RETRY_MAX_SECONDS=900
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Update container app job runtime
+          az containerapp job create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --environment "$AZURE_CONTAINERAPPS_ENVIRONMENT" \
+            --trigger-type Schedule \
+            --cron-expression "*/5 * * * *" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${GITHUB_SHA}" \
+            --container-name report-producer \
+            --cpu 1.0 \
+            --memory 2Gi \
+            --command claimguard-produce-report \
+            --args worker drain \
+            --mi-user-assigned "$WORKER_IDENTITY_ID" \
+            --registry-server "$AZURE_ACR_LOGIN_SERVER" \
+            --registry-identity "$WORKER_IDENTITY_ID" \
+            --secrets \
+              "control-plane-url=keyvaultref:${AZURE_KEYVAULT_URI}/secrets/${CONTROL_PLANE_MYSQL_SECRET_NAME},identityref:${WORKER_IDENTITY_ID}" \
+              "operational-url=keyvaultref:${AZURE_KEYVAULT_URI}/secrets/${OPERATIONAL_MYSQL_SECRET_NAME},identityref:${WORKER_IDENTITY_ID}" \
+            --env-vars \
+              CONTROL_PLANE_MYSQL_URL=secretref:control-plane-url \
+              MYSQL_URL=secretref:operational-url \
+              AZURE_CLIENT_ID="$WORKER_IDENTITY_CLIENT_ID" \
+              REPORT_STORAGE_BACKEND=azure_blob \
+              REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
+              REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+              REPORT_WORKER_ORGANISATION_ID="$REPORT_WORKER_ORGANISATION_ID" \
+              INTERNAL_SERVICE_ORGANISATION_IDS="$INTERNAL_SERVICE_ORGANISATION_IDS" \
+              DATA_PLANE_ENVIRONMENT="$DATA_PLANE_ENVIRONMENT" \
+              DATA_PLANE_PRIVATE_ENVIRONMENT="$DATA_PLANE_PRIVATE_ENVIRONMENT" \
+              DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS="$DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS" \
+              REPORT_WORKER_BATCH_SIZE=10 \
+              REPORT_WORKER_MAX_BATCHES_PER_RUN=100 \
+              REPORT_WORKER_LEASE_SECONDS=300 \
+              REPORT_WORKER_MAX_ATTEMPTS=5 \
+              REPORT_WORKER_RETRY_INITIAL_SECONDS=30 \
+              REPORT_WORKER_RETRY_MAX_SECONDS=900
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Update existing scheduled worker
+        if: steps.create.outputs.created == 'false'
+        shell: bash
         run: |
+          set -euo pipefail
+          TRIGGER_TYPE="$(az containerapp job show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --query properties.configuration.triggerType \
+            --output tsv)"
+          test "$TRIGGER_TYPE" = "Schedule" || { echo "Existing report-worker job must use the Schedule trigger"; exit 1; }
+
+          az containerapp job identity assign \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --user-assigned "$WORKER_IDENTITY_ID"
+
+          az containerapp job registry set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --server "$AZURE_ACR_LOGIN_SERVER" \
+            --identity "$WORKER_IDENTITY_ID"
+
           az containerapp job secret set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINERAPPS_JOB" \
-            --secrets "control-plane-mysql-url=$CONTROL_PLANE_MYSQL_URL" "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING"
+            --secrets \
+              "control-plane-url=keyvaultref:${AZURE_KEYVAULT_URI}/secrets/${CONTROL_PLANE_MYSQL_SECRET_NAME},identityref:${WORKER_IDENTITY_ID}" \
+              "operational-url=keyvaultref:${AZURE_KEYVAULT_URI}/secrets/${OPERATIONAL_MYSQL_SECRET_NAME},identityref:${WORKER_IDENTITY_ID}"
 
           az containerapp job update \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINERAPPS_JOB" \
             --image "$AZURE_ACR_LOGIN_SERVER/report-producer:${GITHUB_SHA}" \
+            --cron-expression "*/5 * * * *" \
             --replica-timeout 1800 \
             --replica-retry-limit 0 \
             --parallelism 1 \
             --replica-completion-count 1 \
+            --container-name report-producer \
+            --cpu 1.0 \
+            --memory 2Gi \
             --command claimguard-produce-report \
-            --args worker --once \
-            --set-env-vars \
-              CONTROL_PLANE_MYSQL_URL=secretref:control-plane-mysql-url \
-              MYSQL_URL=secretref:mysql-url \
-              AZURE_STORAGE_CONNECTION_STRING=secretref:storage-connection \
+            --args worker drain \
+            --replace-env-vars \
+              CONTROL_PLANE_MYSQL_URL=secretref:control-plane-url \
+              MYSQL_URL=secretref:operational-url \
+              AZURE_CLIENT_ID="$WORKER_IDENTITY_CLIENT_ID" \
               REPORT_STORAGE_BACKEND=azure_blob \
+              REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
               REPORT_WORKER_ORGANISATION_ID="$REPORT_WORKER_ORGANISATION_ID" \
               INTERNAL_SERVICE_ORGANISATION_IDS="$INTERNAL_SERVICE_ORGANISATION_IDS" \
               DATA_PLANE_ENVIRONMENT="$DATA_PLANE_ENVIRONMENT" \
+              DATA_PLANE_PRIVATE_ENVIRONMENT="$DATA_PLANE_PRIVATE_ENVIRONMENT" \
+              DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS="$DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS" \
               REPORT_WORKER_BATCH_SIZE=10 \
+              REPORT_WORKER_MAX_BATCHES_PER_RUN=100 \
               REPORT_WORKER_LEASE_SECONDS=300 \
               REPORT_WORKER_MAX_ATTEMPTS=5 \
               REPORT_WORKER_RETRY_INITIAL_SECONDS=30 \
               REPORT_WORKER_RETRY_MAX_SECONDS=900
 
-      - name: Start producer job execution
+      - name: Start and verify a worker execution
+        shell: bash
         run: |
-          az containerapp job start \
+          set -euo pipefail
+          EXECUTION_NAME="$(az containerapp job start \
             --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_CONTAINERAPPS_JOB"
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --query name \
+            --output tsv)"
+          test -n "$EXECUTION_NAME" || { echo "Worker execution did not start"; exit 1; }
 
-  scheduled-drain:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Azure login with OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          audience: api://AzureADTokenExchange
+          for attempt in $(seq 1 60); do
+            STATUS="$(az containerapp job execution show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINERAPPS_JOB" \
+              --job-execution-name "$EXECUTION_NAME" \
+              --query properties.status \
+              --output tsv)"
+            echo "Worker execution $EXECUTION_NAME status=$STATUS attempt=$attempt"
+            if [ "$STATUS" = "Succeeded" ]; then
+              exit 0
+            fi
+            if [ "$STATUS" = "Failed" ]; then
+              az containerapp job logs show \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --name "$AZURE_CONTAINERAPPS_JOB" \
+                --execution "$EXECUTION_NAME" \
+                --container report-producer \
+                --tail 200 \
+                --format text || true
+              exit 1
+            fi
+            sleep 10
+          done
 
-      - name: Start scheduled outbox drain
-        run: |
-          az containerapp job start \
+          echo "Worker execution did not complete within ten minutes"
+          az containerapp job logs show \
             --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_CONTAINERAPPS_JOB"
+            --name "$AZURE_CONTAINERAPPS_JOB" \
+            --execution "$EXECUTION_NAME" \
+            --container report-producer \
+            --tail 200 \
+            --format text || true
+          exit 1

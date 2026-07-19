@@ -58,7 +58,7 @@ CONTROL_PLANE_MYSQL_URL='mysql://...' \
 MYSQL_URL='mysql://...' \
 REPORT_WORKER_ORGANISATION_ID='organisation-id' \
 INTERNAL_SERVICE_ORGANISATION_IDS='organisation-id' \
-uv run claimguard-produce-report worker --once --backend file --output-dir reports
+uv run claimguard-produce-report worker once --backend file --output-dir reports
 ```
 
 For Azure mode, use backend `azure_blob` with storage configuration and managed identity.

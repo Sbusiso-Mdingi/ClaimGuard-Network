@@ -8,7 +8,9 @@ from claimguard_report_producer.outbox import OutboxJob, PyMySqlOutboxRepository
 
 class DataPlaneScopedOutboxTests(unittest.TestCase):
     @staticmethod
-    def _pymysql_module(*, migration_version: int):
+    def _pymysql_module(
+        *, migration_version: int, route_type: str = "legacy_shared", schema_version: str = "10"
+    ):
         class Cursor:
             def __init__(self, kind):
                 self.kind = kind
@@ -26,25 +28,42 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
             def fetchone(self):
                 if self.kind == "operational":
                     return {
-                        "database_mode": "legacy_shared",
-                        "logical_database_identifier": "legacy-operational-shared",
-                        "schema_version": "10",
-                        "environment_key": "legacy",
+                        "database_mode": route_type,
+                        "logical_database_identifier": (
+                            "legacy-operational-shared" if route_type == "legacy_shared" else "private:org-alpha"
+                        ),
+                        "schema_version": schema_version,
+                        "environment_key": "legacy" if route_type == "legacy_shared" else "production",
                         "migration_version": migration_version,
                     }
                 if "FROM organisations" in self.query:
-                    return {"organisation_id": "org-alpha", "status": "active", "activation_state": "activated"}
+                    return {
+                        "organisation_id": "org-alpha",
+                        "canonical_slug": "alpha",
+                        "status": "active",
+                        "activation_state": "activated",
+                    }
                 return None
 
             def fetchall(self):
                 if "FROM data_plane_routes" in self.query:
                     return [{
                         "route_id": "route-alpha",
-                        "route_type": "legacy_shared",
+                        "route_type": route_type,
                         "route_generation": 3,
-                        "logical_database_identifier": "legacy-operational-shared",
-                        "database_name": "operational",
-                        "schema_version": "10",
+                        "logical_database_identifier": (
+                            "legacy-operational-shared" if route_type == "legacy_shared" else "private:org-alpha"
+                        ),
+                        "database_name": "operational" if route_type == "legacy_shared" else "tenant_alpha",
+                        "secret_reference": (
+                            "" if route_type == "legacy_shared" else ",".join([
+                                "https://vault.test/secrets/username",
+                                "https://vault.test/secrets/password",
+                                "https://vault.test/secrets/host",
+                                "https://vault.test/secrets/database",
+                            ])
+                        ),
+                        "schema_version": schema_version,
                         "provisioning_status": "active",
                         "health_status": "healthy",
                         "retired_at": None,
@@ -121,6 +140,64 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
                     operational_url="mysql://user:secret@operational/operational",
                     organisation_ids=["org-alpha"],
                     allowed_organisation_ids=frozenset({"org-alpha"}),
+                )
+
+    def test_private_route_resolves_key_vault_credentials_and_uses_organisation_tenant(self):
+        values = {
+            "username": "tenant@runtime",
+            "password": "p:a/ss",
+            "host": "claimguard.mysql.database.azure.com",
+            "database": "tenant_alpha",
+        }
+
+        class SecretClient:
+            def get_secret(self, name, *, version=None):
+                self.assert_version(version)
+                return SimpleNamespace(value=values[name])
+
+            @staticmethod
+            def assert_version(version):
+                if version is not None:
+                    raise AssertionError("Unexpected secret version")
+
+        with patch.dict(
+            "sys.modules",
+            {"pymysql": self._pymysql_module(migration_version=10, route_type="private_database")},
+        ):
+            scope = resolve_worker_data_plane_scope(
+                control_plane_url="mysql://user:secret@control/controls",
+                operational_url="",
+                organisation_ids=["org-alpha"],
+                allowed_organisation_ids=frozenset({"org-alpha"}),
+                credential=object(),
+                secret_client_factory=lambda **_kwargs: SecretClient(),
+            )
+
+        self.assertEqual(scope.route_type, "private_database")
+        self.assertEqual(scope.tenant_ids, frozenset({"org-alpha"}))
+        self.assertEqual(scope.schema_version, "10")
+        self.assertIn("tenant%40runtime:p%3Aa%2Fss@claimguard.mysql.database.azure.com", scope.operational_url)
+        self.assertNotIn("p:a/ss", repr(scope))
+
+    def test_private_route_rejects_an_unsupported_schema_before_resolving_secrets(self):
+        with patch.dict(
+            "sys.modules",
+            {
+                "pymysql": self._pymysql_module(
+                    migration_version=10,
+                    route_type="private_database",
+                    schema_version="8",
+                )
+            },
+        ):
+            with self.assertRaisesRegex(DataPlaneRouteError, "not active and compatible"):
+                resolve_worker_data_plane_scope(
+                    control_plane_url="mysql://user:secret@control/controls",
+                    operational_url="",
+                    organisation_ids=["org-alpha"],
+                    allowed_organisation_ids=frozenset({"org-alpha"}),
+                    credential=object(),
+                    secret_client_factory=lambda **_kwargs: self.fail("secrets must not be resolved"),
                 )
 
 
