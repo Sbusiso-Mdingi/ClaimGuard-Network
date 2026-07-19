@@ -7,7 +7,6 @@ import { createFraudWorkflowRepository } from "./fraud-workflow-repository.js";
 import { createInvestigationRepository } from "./investigation-repository.js";
 import { createLedgerRepository } from "./ledger-repository.js";
 import { createSharedFraudRegistryRepository } from "./shared-fraud-registry-repository.js";
-import { createSimulationStateRepository } from "./simulation-state-repository.js";
 import { createScopedReadRepositories } from "./scoped-read-repositories.js";
 import { createTenantRepository } from "./tenant-repository.js";
 
@@ -17,9 +16,6 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
   const db = createDatabaseFromPool(pool);
   const options = { dataPlaneContext: context, allowLegacyTenantContext: false };
   const scopedReads = createScopedReadRepositories(context, pool);
-  const simulationState = context.routeType === "legacy_shared"
-    ? createSimulationStateRepository(pool, options)
-    : null;
   return Object.freeze({
     dataPlaneContext: context,
     claims: createClaimIngestionRepository(pool, options),
@@ -31,7 +27,6 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     ledger: createLedgerRepository(db, pool, options),
     registry: createSharedFraudRegistryRepository(pool, options),
     fraudWorkflow: createFraudWorkflowRepository(pool, options),
-    simulatorState: simulationState,
     reportSnapshots: scopedReads.reportSnapshots,
     tenants: createTenantRepository(pool, { dataPlaneContext: context, allowLegacyDefault: false }),
   });

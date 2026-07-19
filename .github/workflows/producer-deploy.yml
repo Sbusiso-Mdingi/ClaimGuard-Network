@@ -14,13 +14,17 @@ env:
   AZURE_TENANT_ID: 8efc1bb9-b90f-4a48-bf6c-ba0686193b80
   AZURE_SUBSCRIPTION_ID: 896d3c72-d979-4bdc-a37f-060988d12032
   AZURE_RESOURCE_GROUP: ClaimGuard
-  AZURE_CONTAINERAPPS_ENVIRONMENT: claimguard-env
+  AZURE_CONTAINERAPPS_ENVIRONMENT: claimguard-env-11e
   AZURE_CONTAINERAPPS_JOB: claimguard-report-producer
-  AZURE_ACR_NAME: claimguardacr
-  AZURE_ACR_LOGIN_SERVER: claimguardacr.azurecr.io
+  AZURE_ACR_NAME: claimguardacr11e
+  AZURE_ACR_LOGIN_SERVER: claimguardacr11e.azurecr.io
   REPORT_STORAGE_CONTAINER: ${{ vars.REPORT_STORAGE_CONTAINER }}
+  CONTROL_PLANE_MYSQL_URL: ${{ secrets.CLAIMGUARD_CONTROL_PLANE_MYSQL_URL }}
   MYSQL_URL: ${{ secrets.CLAIMGUARD_MYSQL_URL }}
   AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.REPORT_STORAGE_CONNECTION_STRING }}
+  REPORT_WORKER_ORGANISATION_ID: ${{ vars.REPORT_WORKER_ORGANISATION_ID }}
+  INTERNAL_SERVICE_ORGANISATION_IDS: ${{ vars.INTERNAL_SERVICE_ORGANISATION_IDS }}
+  DATA_PLANE_ENVIRONMENT: legacy
 
 jobs:
   build-and-deploy:
@@ -48,9 +52,12 @@ jobs:
 
       - name: Validate worker configuration inputs
         run: |
+          test -n "$CONTROL_PLANE_MYSQL_URL" || { echo "CLAIMGUARD_CONTROL_PLANE_MYSQL_URL secret is required"; exit 1; }
           test -n "$MYSQL_URL" || { echo "CLAIMGUARD_MYSQL_URL secret is required"; exit 1; }
           test -n "$AZURE_STORAGE_CONNECTION_STRING" || { echo "REPORT_STORAGE_CONNECTION_STRING secret is required"; exit 1; }
           test -n "$REPORT_STORAGE_CONTAINER" || { echo "REPORT_STORAGE_CONTAINER variable is required"; exit 1; }
+          test -n "$REPORT_WORKER_ORGANISATION_ID" || { echo "REPORT_WORKER_ORGANISATION_ID variable is required"; exit 1; }
+          test -n "$INTERNAL_SERVICE_ORGANISATION_IDS" || { echo "INTERNAL_SERVICE_ORGANISATION_IDS variable is required"; exit 1; }
 
       - name: Ensure container app job exists
         run: |
@@ -71,12 +78,16 @@ jobs:
               --memory 2Gi \
               --command claimguard-produce-report \
               --args worker --once \
-              --secrets "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING" \
+              --secrets "control-plane-mysql-url=$CONTROL_PLANE_MYSQL_URL" "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING" \
               --env-vars \
+                CONTROL_PLANE_MYSQL_URL=secretref:control-plane-mysql-url \
                 MYSQL_URL=secretref:mysql-url \
                 AZURE_STORAGE_CONNECTION_STRING=secretref:storage-connection \
                 REPORT_STORAGE_BACKEND=azure_blob \
                 REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+                REPORT_WORKER_ORGANISATION_ID="$REPORT_WORKER_ORGANISATION_ID" \
+                INTERNAL_SERVICE_ORGANISATION_IDS="$INTERNAL_SERVICE_ORGANISATION_IDS" \
+                DATA_PLANE_ENVIRONMENT="$DATA_PLANE_ENVIRONMENT" \
                 REPORT_WORKER_BATCH_SIZE=10 \
                 REPORT_WORKER_LEASE_SECONDS=300 \
                 REPORT_WORKER_MAX_ATTEMPTS=5 \
@@ -89,7 +100,7 @@ jobs:
           az containerapp job secret set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINERAPPS_JOB" \
-            --secrets "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING"
+            --secrets "control-plane-mysql-url=$CONTROL_PLANE_MYSQL_URL" "mysql-url=$MYSQL_URL" "storage-connection=$AZURE_STORAGE_CONNECTION_STRING"
 
           az containerapp job update \
             --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -102,10 +113,14 @@ jobs:
             --command claimguard-produce-report \
             --args worker --once \
             --set-env-vars \
+              CONTROL_PLANE_MYSQL_URL=secretref:control-plane-mysql-url \
               MYSQL_URL=secretref:mysql-url \
               AZURE_STORAGE_CONNECTION_STRING=secretref:storage-connection \
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+              REPORT_WORKER_ORGANISATION_ID="$REPORT_WORKER_ORGANISATION_ID" \
+              INTERNAL_SERVICE_ORGANISATION_IDS="$INTERNAL_SERVICE_ORGANISATION_IDS" \
+              DATA_PLANE_ENVIRONMENT="$DATA_PLANE_ENVIRONMENT" \
               REPORT_WORKER_BATCH_SIZE=10 \
               REPORT_WORKER_LEASE_SECONDS=300 \
               REPORT_WORKER_MAX_ATTEMPTS=5 \

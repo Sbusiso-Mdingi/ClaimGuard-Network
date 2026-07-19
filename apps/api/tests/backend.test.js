@@ -364,94 +364,6 @@ test("unsupported detection report contract returns a typed unavailable response
   assert.equal(json.code, "REPORT_CONTRACT_UNSUPPORTED");
 });
 
-test("detection analyze endpoint is deprecated when no producer proxy is configured", async () => {
-  const app = createBackendApp();
-  const payload = {
-    claims: [
-      {
-        claim_id: "C1",
-        member_id: "M1",
-        provider_id: "P1",
-        phone: "555-1000",
-        email: "shared@example.com",
-        address: "ADDR-1",
-        bank_account: "BANK-1",
-        device_id: "DEVICE-1",
-        ip_address: "10.0.0.1",
-      },
-      {
-        claim_id: "C2",
-        member_id: "M2",
-        provider_id: "P2",
-        phone: "555-1000",
-        email: "shared@example.com",
-        address: "ADDR-1",
-        bank_account: "BANK-1",
-        device_id: "DEVICE-1",
-        ip_address: "10.0.0.2",
-      },
-    ],
-  };
-
-  const response = await app.request("http://localhost/detection/analyze", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...developmentAuthHeaders({ role: "scheme_administrator" }),
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const json = await response.json();
-
-  assert.equal(response.status, 410);
-  assert.equal(json.available, false);
-  assert.equal(json.deprecated, true);
-});
-
-test("detection analyze endpoint proxies to producer when configured", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
-    return new Response(
-      JSON.stringify({
-        available: true,
-        detection: {
-          risk_score: {
-            riskScore: 54,
-            severity: "Medium",
-            reasons: ["proxied"],
-          },
-        },
-      }),
-      {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      },
-    );
-  };
-
-  try {
-    const app = createBackendApp({ detectionAnalyzeProxyUrl: "http://producer.local/detection/analyze" });
-    const response = await app.request("http://localhost/detection/analyze", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...developmentAuthHeaders({ role: "scheme_administrator" }),
-      },
-      body: JSON.stringify({ claims: [{ claim_id: "C1" }] }),
-    });
-    const json = await response.json();
-
-    assert.equal(response.status, 200);
-    assert.equal(json.available, true);
-    assert.equal(json.detection.risk_score.riskScore, 54);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
 test("detection report endpoint is unavailable without configured report storage data", async () => {
   const app = createBackendApp({
     reportStorage: {
@@ -478,7 +390,10 @@ test("claims ingestion endpoint requires configured ingestion service", async ()
       "content-type": "application/json",
       ...developmentAuthHeaders(),
     },
-    body: JSON.stringify({ claims: [{ claim_id: "C1" }] }),
+    body: JSON.stringify({ claims: [{
+      claim_id: "C1", scheme_id: "scheme_a", member_id: "M1", provider_id: "P1",
+      service_date: "2026-07-16", billing_code: "CONSULT", amount: 100,
+    }] }),
   });
 
   const json = await response.json();
@@ -486,10 +401,43 @@ test("claims ingestion endpoint requires configured ingestion service", async ()
   assert.equal(json.available, false);
 });
 
+test("claims ingestion enforces JSON media type and a streaming-safe body limit", async () => {
+  const previousLimit = process.env.CLAIM_INGESTION_MAX_BODY_BYTES;
+  process.env.CLAIM_INGESTION_MAX_BODY_BYTES = "65536";
+  const app = createBackendApp({
+    claimIngestionService: {
+      async ingestClaims() {
+        throw new Error("invalid requests must not reach ingestion");
+      },
+    },
+  });
+  if (previousLimit === undefined) delete process.env.CLAIM_INGESTION_MAX_BODY_BYTES;
+  else process.env.CLAIM_INGESTION_MAX_BODY_BYTES = previousLimit;
+
+  const unsupported = await app.request("http://localhost/claims/ingest", {
+    method: "POST",
+    headers: developmentAuthHeaders(),
+    body: "not-json",
+  });
+  assert.equal(unsupported.status, 415);
+  assert.equal((await unsupported.json()).code, "UNSUPPORTED_INGESTION_MEDIA_TYPE");
+
+  const oversized = await app.request("http://localhost/claims/ingest", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...developmentAuthHeaders() },
+    body: JSON.stringify({ padding: "x".repeat(70_000) }),
+  });
+  assert.equal(oversized.status, 413);
+  assert.equal((await oversized.json()).code, "INGESTION_BODY_TOO_LARGE");
+});
+
 test("claims ingestion endpoint accepts claims via ingestion service", async () => {
   const app = createBackendApp({
     claimIngestionService: {
-      async ingestClaims({ claims, source }) {
+      async ingestClaims({ claims, schemes, members, providers, source }) {
+        assert.equal(schemes.length, 1);
+        assert.equal(members.length, 1);
+        assert.equal(providers.length, 1);
         return {
           received: claims.length,
           inserted: claims.length,
@@ -514,7 +462,19 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
       ...developmentAuthHeaders(),
     },
     body: JSON.stringify({
-      source: "synthetic-loader",
+      source: "medical-aid-desktop",
+      schemes: [{ scheme_id: "scheme_a", scheme_name: "Alpha Medical Aid" }],
+      members: [{
+        member_id: "M-10", scheme_id: "scheme_a", first_name: "A", last_name: "Member",
+        date_of_birth: "1985-01-01", gender: "unspecified", identity_number: "external-token-10",
+        banking_detail: "bank-token-10", home_region: "Gauteng", home_lat: -26.2041,
+        home_lon: 28.0473, join_date: "2020-01-01",
+      }],
+      providers: [{
+        provider_id: "P-20", scheme_id: "scheme_a", practice_number: "PR-20", specialty: "GP",
+        practice_name: "Practice 20", banking_detail: "bank-token-20", practice_region: "Gauteng",
+        practice_lat: -26.2041, practice_lon: 28.0473,
+      }],
       claims: [
         {
           claim_id: "C-200",
@@ -537,7 +497,7 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
   assert.equal(json.processing.asynchronous, true);
   assert.equal(json.processing.jobId, "job-200");
   assert.equal(json.ingestion.received, 1);
-  assert.equal(json.ingestion.source, "synthetic-loader");
+  assert.equal(json.ingestion.source, "medical-aid-desktop");
 });
 
 test("claims list endpoint requires configured read repository", async () => {
@@ -725,10 +685,9 @@ test("confirmation route uses authenticated actor and returns 200 for an idempot
   assert.equal(Object.hasOwn(workflow.confirmations[0], "registryMetadata"), false);
 });
 
-test("claims ingestion never runs the legacy producer trigger and remains committed when it would fail", async () => {
+test("claims ingestion commits an asynchronous outbox-backed processing request", async () => {
   const state = {
     ingestedClaims: [],
-    triggerCount: 0,
   };
 
   const claimIngestionService = {
@@ -754,13 +713,6 @@ test("claims ingestion never runs the legacy producer trigger and remains commit
     },
   };
 
-  const producerRuntimeTrigger = {
-    async triggerAfterIngestion() {
-      state.triggerCount += 1;
-      throw new Error("legacy producer failure must be unreachable");
-    },
-  };
-
   const reportStorage = {
     async getLatestReport() {
       return null;
@@ -769,7 +721,6 @@ test("claims ingestion never runs the legacy producer trigger and remains commit
 
   const app = createBackendApp({
     claimIngestionService,
-    producerRuntimeTrigger,
     reportStorage,
   });
 
@@ -801,7 +752,6 @@ test("claims ingestion never runs the legacy producer trigger and remains commit
   assert.equal(ingestJson.committed, true);
   assert.equal(ingestJson.processing.status, "queued");
   assert.equal(ingestJson.processing.jobId, "job-500");
-  assert.equal(state.triggerCount, 0);
 
   const reportResponse = await app.request("http://localhost/detection/report", {
     headers: developmentAuthHeaders(),

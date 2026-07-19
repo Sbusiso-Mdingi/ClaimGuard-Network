@@ -75,15 +75,6 @@ importers:
         specifier: ^3.12.0
         version: 3.22.6(@types/node@26.1.1)
 
-  apps/simulator-worker:
-    dependencies:
-      '@claimguard/control-plane-database':
-        specifier: workspace:*
-        version: link:../../packages/control-plane-database
-      '@claimguard/database':
-        specifier: workspace:*
-        version: link:../../packages/database
-
   apps/web:
     dependencies:
       '@radix-ui/react-slot':
@@ -158,8 +149,6 @@ importers:
       mysql2:
         specifier: ^3.12.0
         version: 3.22.6(@types/node@26.1.1)
-
-  packages/data-generator: {}
 
   packages/database:
     dependencies:

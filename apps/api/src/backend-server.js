@@ -9,7 +9,6 @@ import {
   createFraudWorkflowRepository,
   createLedgerRepository,
   createSharedFraudRegistryRepository,
-  createSimulationStateRepository,
   createTenantRepository,
   createLegacySharedAdapter,
   createTenantConnectionManager,
@@ -33,7 +32,6 @@ const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
 const moduleDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
-const detectionAnalyzeProxyUrl = process.env.DETECTION_ANALYZE_PROXY_URL || null;
 const authenticationConfiguration = resolveAuthenticationConfiguration();
 
 let ledgerRepository = null;
@@ -43,7 +41,6 @@ let fraudWorkflowRepository = null;
 let claimIngestionService = null;
 let tenantRepository = null;
 let databasePool = null;
-let simulationStateRepository = null;
 let controlPlanePool = null;
 let controlPlaneRepositories = null;
 let authenticationService = null;
@@ -59,23 +56,6 @@ if (databaseUrl && authenticationConfiguration.mode === "demo_headers") {
   claimIngestionService = createClaimIngestionRepository(database.pool, { allowLegacyTenantContext: true });
   tenantRepository = createTenantRepository(database.pool, { allowLegacyDefault: true });
   databasePool = database.pool;
-  simulationStateRepository = createSimulationStateRepository(database.pool);
-  const legacyMode = String(process.env.LIVE_DEMO_MODE || "off").toLowerCase();
-  const legacyStoryMode = String(process.env.LIVE_DEMO_STORY_MODE || "").trim();
-  const configuredMode = String(
-    process.env.SIMULATOR_DEFAULT_MODE || (legacyMode === "on" ? (legacyStoryMode ? "story" : "live") : legacyMode),
-  ).toLowerCase();
-  await simulationStateRepository.ensureDefaultInstance({
-    createdBy: "api-startup",
-    mode: ["off", "static", "live", "story"].includes(configuredMode) ? configuredMode : "off",
-    seed: Number(process.env.LIVE_DEMO_SEED || 42),
-    tickIntervalMs: Number(process.env.LIVE_DEMO_TICK_MS || 8000),
-    storyKey: legacyStoryMode || null,
-    config: {
-      maxRecentClaims: Number(process.env.LIVE_DEMO_MAX_RECENT_CLAIMS || 500),
-      fraudRate: Number(process.env.LIVE_DEMO_FRAUD_RATE || 0.04),
-    },
-  });
 }
 
 if (authenticationConfiguration.mode === "session") {
@@ -98,7 +78,7 @@ if (authenticationConfiguration.mode === "session") {
   const legacySharedAdapter = createLegacySharedAdapter({
     databaseUrl,
     expectedEnvironment: process.env.DATA_PLANE_ENVIRONMENT || "legacy",
-    supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "8").split(",").map((value) => value.trim()).filter(Boolean),
+    supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "10").split(",").map((value) => value.trim()).filter(Boolean),
     connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
   });
   const connectionManager = createTenantConnectionManager({
@@ -106,7 +86,7 @@ if (authenticationConfiguration.mode === "session") {
       legacy_shared: legacySharedAdapter,
       private_database: createPrivateDatabaseAdapter({
         expectedEnvironment: process.env.DATA_PLANE_PRIVATE_ENVIRONMENT || "production",
-        supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "8").split(",").map((value) => value.trim()).filter(Boolean),
+        supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "10").split(",").map((value) => value.trim()).filter(Boolean),
         connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
       }),
     },
@@ -147,8 +127,6 @@ const app = createBackendApp({
   claimIngestionService,
   tenantRepository,
   reportStorage,
-  detectionAnalyzeProxyUrl,
-  simulationStateRepository,
   authenticationConfiguration,
   authenticationService,
   controlPlaneConfigurationRepository: controlPlaneRepositories?.configuration || null,
@@ -171,7 +149,6 @@ console.log(
     port,
     hasDatabase: Boolean(databasePool),
     hasTenantRepository: Boolean(tenantRepository),
-    simulatorControlConfigured: Boolean(simulationStateRepository),
     reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),
     authenticationMode: authenticationConfiguration.mode,
     explicitDataPlaneRouting: Boolean(dataPlaneRuntime),

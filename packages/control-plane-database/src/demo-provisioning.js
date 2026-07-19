@@ -49,7 +49,7 @@ async function ensureRoute({ repositories, service, organisation, routeType, dat
     logicalDatabaseIdentifier: routeType === "platform_none" ? "platform-control-plane" : "legacy-operational-shared",
     databaseName: routeType === "platform_none" ? null : databaseName,
     secretReference: routeType === "platform_none" ? null : "secret://runtime/MYSQL_URL",
-    schemaVersion: routeType === "platform_none" ? null : "8",
+    schemaVersion: routeType === "platform_none" ? null : "10",
     provisioningStatus: "active",
     healthStatus: "unknown",
     activate: true,

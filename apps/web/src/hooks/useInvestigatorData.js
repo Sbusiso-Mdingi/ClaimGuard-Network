@@ -82,12 +82,6 @@ function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = [])
 
 export function useInvestigatorData({ enabled = true } = {}) {
   const [liveRefreshEnabled, setLiveRefreshEnabled] = useState(true);
-  const [simulatorState, setSimulatorState] = useState({
-    status: "loading",
-    simulator: null,
-    error: null,
-    controlPending: false,
-  });
   const [state, setState] = useState({
     status: "loading",
     report: null,
@@ -157,66 +151,21 @@ export function useInvestigatorData({ enabled = true } = {}) {
     }
   }, []);
 
-  const loadSimulatorStatus = useCallback(async () => {
-    try {
-      const response = await apiRequest("/simulator/status", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok || !payload.available || !payload.simulator) {
-        throw new Error(payload.message || `Simulator status unavailable (${response.status})`);
-      }
-      setSimulatorState((previous) => ({ ...previous, status: "ready", simulator: payload.simulator, error: null }));
-    } catch (error) {
-      setSimulatorState((previous) => ({
-        ...previous,
-        status: "error",
-        error: error instanceof Error ? error.message : "Simulator status unavailable.",
-      }));
-    }
-  }, []);
-
-  const sendSimulatorCommand = useCallback(async (action, payload = null) => {
-    setSimulatorState((previous) => ({ ...previous, controlPending: true, error: null }));
-    try {
-      const response = await apiRequest(`/simulator/${action}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: payload ? JSON.stringify(payload) : undefined,
-      });
-      const result = await response.json();
-      if (!response.ok || !result.available) {
-        throw new Error(result.message || `Simulator command failed (${response.status})`);
-      }
-      setSimulatorState({ status: "ready", simulator: result.simulator, error: null, controlPending: false });
-      return true;
-    } catch (error) {
-      setSimulatorState((previous) => ({
-        ...previous,
-        status: "error",
-        error: error instanceof Error ? error.message : "Simulator command failed.",
-        controlPending: false,
-      }));
-      return false;
-    }
-  }, []);
-
   useEffect(() => {
     if (!enabled) {
       setState((previous) => ({ ...previous, status: "ready", error: null }));
-      setSimulatorState((previous) => ({ ...previous, status: "ready", error: null }));
       return;
     }
     load();
-    loadSimulatorStatus();
-  }, [enabled, load, loadSimulatorStatus]);
+  }, [enabled, load]);
 
   useEffect(() => {
     if (!enabled || !liveRefreshEnabled) return undefined;
     const id = window.setInterval(() => {
       load();
-      loadSimulatorStatus();
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [enabled, liveRefreshEnabled, load, loadSimulatorStatus]);
+  }, [enabled, liveRefreshEnabled, load]);
 
   const metrics = useMemo(() => {
     const { report, claims } = state;
@@ -250,14 +199,9 @@ export function useInvestigatorData({ enabled = true } = {}) {
     mode: liveRefreshEnabled ? "live" : "static",
     liveRefreshEnabled,
     setLiveRefreshEnabled,
-    simulatorState,
-    loadSimulatorStatus,
-    sendSimulatorCommand,
     metrics,
     pollingIntervalMs: POLL_INTERVAL_MS,
     setMode: (mode) => setLiveRefreshEnabled(mode === "live"),
-    refreshNow: async () => {
-      await Promise.all([load(), loadSimulatorStatus()]);
-    },
+    refreshNow: load,
   };
 }

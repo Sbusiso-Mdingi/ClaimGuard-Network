@@ -77,8 +77,6 @@ function InvestigatorRoutes() {
           <InvestigatorLayout
             liveRefreshEnabled={data.liveRefreshEnabled}
             setLiveRefreshEnabled={data.setLiveRefreshEnabled}
-            simulatorState={data.simulatorState}
-            sendSimulatorCommand={data.sendSimulatorCommand}
             refreshNow={data.refreshNow}
             lastRefresh={data.lastRefresh}
             ledgerStatus={data.metrics.ledgerStatus}

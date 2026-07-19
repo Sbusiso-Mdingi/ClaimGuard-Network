@@ -1,4 +1,10 @@
-import { ClaimOwnershipConflictError } from "@claimguard/database";
+import {
+  ClaimOwnershipConflictError,
+  ClaimReferenceValidationError,
+  ReferenceOwnershipConflictError,
+} from "@claimguard/database";
+import { createClaimIngestionBatchSchema } from "@claimguard/shared-schema";
+import { bodyLimit } from "hono/body-limit";
 
 import { authorizeTenantScopedRequest, createRequireOperationalRouteAuthorizationMiddleware } from "../middleware/authorization-middleware.js";
 import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
@@ -9,6 +15,10 @@ export function registerClaimsRoutes(app, {
   tenantRepository = null,
   logger,
 } = {}) {
+  const maxBatchSize = Math.min(5_000, Math.max(1, Number.parseInt(process.env.CLAIM_INGESTION_MAX_BATCH_SIZE || "500", 10) || 500));
+  const maxReferenceRecords = Math.min(20_000, Math.max(maxBatchSize, Number.parseInt(process.env.CLAIM_INGESTION_MAX_REFERENCE_RECORDS || "2000", 10) || 2_000));
+  const maxBodyBytes = Math.min(20_000_000, Math.max(65_536, Number.parseInt(process.env.CLAIM_INGESTION_MAX_BODY_BYTES || "2000000", 10) || 2_000_000));
+  const ingestionBatchSchema = createClaimIngestionBatchSchema({ maxBatchSize, maxReferenceRecords });
   const requireClaimsListPermission = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_LIST,
   });
@@ -18,6 +28,25 @@ export function registerClaimsRoutes(app, {
   const requireClaimsIngestPermission = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_INGEST,
   });
+  const enforceIngestionBodyLimit = bodyLimit({
+    maxSize: maxBodyBytes,
+    onError: (c) => c.json({
+      available: false,
+      code: "INGESTION_BODY_TOO_LARGE",
+      message: `Request body exceeds the ${maxBodyBytes}-byte ingestion limit.`,
+    }, 413),
+  });
+  const requireJsonIngestion = async (c, next) => {
+    const contentType = String(c.req.header("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+    if (contentType !== "application/json") {
+      return c.json({
+        available: false,
+        code: "UNSUPPORTED_INGESTION_MEDIA_TYPE",
+        message: "Claim ingestion requires Content-Type: application/json.",
+      }, 415);
+    }
+    return next();
+  };
 
   app.get(
     "/claims",
@@ -126,19 +155,23 @@ export function registerClaimsRoutes(app, {
   app.post(
     "/claims/ingest",
     requireClaimsIngestPermission,
+    requireJsonIngestion,
+    enforceIngestionBodyLimit,
     async (c) => {
       const payload = await c.req.json().catch(() => null);
-      const claims = payload?.claims;
-
-      if (!Array.isArray(claims) || claims.length === 0) {
+      const parsed = ingestionBatchSchema.safeParse(payload);
+      if (!parsed.success) {
         return c.json(
           {
             available: false,
-            message: "Request body must include a non-empty claims array.",
+            code: "INVALID_INGESTION_BATCH",
+            message: "Request body does not satisfy the claim-ingestion contract.",
+            issues: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
           },
           400,
         );
       }
+      const { claims, schemes, members, providers } = parsed.data;
 
       if (!claimIngestionService?.isConfigured?.()) {
         return c.json(
@@ -150,9 +183,12 @@ export function registerClaimsRoutes(app, {
         );
       }
 
-      const schemeIds = claims
-        .map((claim) => (typeof claim?.scheme_id === "string" ? claim.scheme_id.trim() : null))
-        .filter(Boolean);
+      const suppliedSchemeIds = new Set(schemes.map((scheme) => scheme.scheme_id));
+      const schemeIds = [...new Set([
+        ...claims.map((claim) => claim.scheme_id),
+        ...members.map((member) => member.scheme_id),
+        ...providers.map((provider) => provider.scheme_id),
+      ].filter((schemeId) => !suppliedSchemeIds.has(schemeId)))];
 
       const tenantDecision = await authorizeTenantScopedRequest({
         c,
@@ -165,9 +201,15 @@ export function registerClaimsRoutes(app, {
       }
 
       try {
-        const source = payload?.source || "api";
+        const authContext = c.get("authContext") || null;
+        const source = authContext?.source === "internal_service"
+          ? `service:${authContext.user_id}`
+          : parsed.data.source;
         const summary = await claimIngestionService.ingest({
           claims,
+          schemes,
+          members,
+          providers,
           source,
           tenantContext: c.get("tenantContext") || null,
           requestId: c.get("requestId") || null,
@@ -185,17 +227,26 @@ export function registerClaimsRoutes(app, {
           message: error?.message || "Claim ingestion failed.",
         });
 
-        const isOwnershipConflict = error instanceof ClaimOwnershipConflictError || error?.code === "CLAIM_OWNERSHIP_CONFLICT";
+        const isClaimOwnershipConflict = error instanceof ClaimOwnershipConflictError || error?.code === "CLAIM_OWNERSHIP_CONFLICT";
+        const isReferenceOwnershipConflict = error instanceof ReferenceOwnershipConflictError || error?.code === "REFERENCE_OWNERSHIP_CONFLICT";
+        const isClaimReferenceInvalid = error instanceof ClaimReferenceValidationError || error?.code === "CLAIM_REFERENCE_INVALID";
+        const isOwnershipConflict = isClaimOwnershipConflict || isReferenceOwnershipConflict;
 
         return c.json(
           {
             available: false,
-            ...(isOwnershipConflict ? { code: "CLAIM_OWNERSHIP_CONFLICT" } : {}),
-            message: isOwnershipConflict
+            ...(isClaimOwnershipConflict ? { code: "CLAIM_OWNERSHIP_CONFLICT" } : {}),
+            ...(isReferenceOwnershipConflict ? { code: "REFERENCE_OWNERSHIP_CONFLICT" } : {}),
+            ...(isClaimReferenceInvalid ? { code: "CLAIM_REFERENCE_INVALID" } : {}),
+            message: isClaimOwnershipConflict
               ? "Claim identifier is already owned by another tenant."
+              : isReferenceOwnershipConflict
+                ? "A reference-data identifier is already owned by another tenant."
+              : isClaimReferenceInvalid
+                ? "A claim reference is missing, belongs to another tenant, or belongs to a different scheme."
               : error?.message || "Claim ingestion failed.",
           },
-          isOwnershipConflict ? 409 : 400,
+          isOwnershipConflict ? 409 : isClaimReferenceInvalid ? 422 : 400,
         );
       }
     },

@@ -4,13 +4,13 @@ ClaimGuard requires explicit environment separation so that demo and production 
 
 ## Environment Definitions
 
-| Environment | Purpose | Reset policy | Data classification | Scenario Lab allowance | Deployment approval |
+| Environment | Purpose | Reset policy | Data classification | Claim source | Deployment approval |
 | --- | --- | --- | --- | --- | --- |
-| Local development | developer inner loop | disposable | synthetic only | allowed only in future isolated lab code paths | none |
-| Automated test | CI validation | disposable | synthetic/test | not allowed | pipeline gates only |
-| Demo | pilot demonstration | controlled reset only | synthetic/demo-only | not allowed | operator-controlled |
-| Staging | release qualification | controlled reset only | synthetic or scrubbed | not allowed | approved promotion |
-| Production | customer-facing live operation | no demo reset | real customer data only | reject Scenario Lab identities | formal approval only |
+| Local development | developer inner loop | disposable | non-sensitive fixtures only | authenticated local test producer | none |
+| Automated test | CI validation | disposable | bounded test fixtures | test harness through the same contract | pipeline gates only |
+| Demo | pilot demonstration | controlled reset only | approved non-production data | external demo producer | operator-controlled |
+| Staging | release qualification | controlled reset only | scrubbed or approved staging data | staging integration | approved promotion |
+| Production | customer-facing live operation | no reset | real customer data only | approved medical-aid integration | formal approval only |
 
 ## Current Azure Environment Snapshot
 
@@ -37,7 +37,6 @@ ClaimGuard requires explicit environment separation so that demo and production 
 ## Functional Separation Rules
 
 - Production must never accept demo reset operations.
-- Production must reject future Scenario Lab identities.
 - Demo and production must not share databases, secrets, identities, or report partitions.
 - Future contracted organisations must begin with clean private databases.
 - Demo must be explicitly labeled as demo even if technically hardened.
@@ -51,7 +50,7 @@ ClaimGuard requires explicit environment separation so that demo and production 
 | Subscription | local/dev subscription | CI subscription | demo subscription | staging subscription | production subscription |
 | Hostnames | localhost | ephemeral | demo hostnames | staging hostnames | production hostnames |
 | Control-plane DB | local/test DB | ephemeral DB | demo control-plane DB | staging control-plane DB | prod control-plane DB |
-| Tenant DBs | local/test DBs | ephemeral DBs | demo synthetic DBs | staged private DBs | clean private DBs |
+| Tenant DBs | local/test DBs | ephemeral DBs | isolated demo DBs | staged private DBs | clean private DBs |
 | Key Vault | local secret store | ephemeral | demo KV | staging KV | prod KV |
 | Doppler config | dev | test | demo | staging | production |
 | Identities | local creds | CI identity | demo UAMIs | staging UAMIs | prod UAMIs |

@@ -12,7 +12,6 @@
 | Access review not yet completed | privilege creep | medium | present | review Azure RBAC, GitHub protections, workflow permissions | access-review record |
 | Backup restore not yet exercised | restore failure under incident | medium | present | non-destructive restore exercise | restore evidence |
 | DR not yet exercised | prolonged outage | medium | present | staged DR drill | DR evidence |
-| Scenario Lab separation not yet implemented | accidental mixing of synthetic and live flows | low-medium | future | keep out of Phase 12 scope | architecture approval |
 
 ## Residual Risks
 

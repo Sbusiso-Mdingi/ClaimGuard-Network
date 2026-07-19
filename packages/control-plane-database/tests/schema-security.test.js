@@ -24,8 +24,8 @@ test("control-plane schema contains required foundations and excludes operationa
   assert.doesNotMatch(sql, /connection_string\s/);
 });
 
-test("operational migrations 0001-0008 do not contain control-plane identity tables", async () => {
-  for (let number = 1; number <= 8; number += 1) {
+test("operational migrations do not contain control-plane identity tables", async () => {
+  for (let number = 1; number <= 10; number += 1) {
     const padded = String(number).padStart(4, "0");
     const migration = (await import("node:fs/promises")).readdir;
     const files = await migration(new URL("../../database/migrations/", import.meta.url));

@@ -13,7 +13,7 @@ function context(overrides = {}) {
     organisationId: "org-alpha", routeId: "route-alpha", routeType: "legacy_shared", routeGeneration: 1,
     operationalTenantId: "tenant-alpha", operationalTenantSlug: "alpha", ...overrides,
     organisationType: "medical_scheme", organisationStatus: "active", logicalDatabaseIdentifier: "legacy-operational-shared",
-    databaseName: "operational", schemaVersion: "8", deploymentClass: "demo",
+    databaseName: "operational", schemaVersion: "10", deploymentClass: "demo",
   });
 }
 
@@ -282,7 +282,6 @@ test("unknown paths under every private operational prefix fail closed without r
     "/detection/private-policy-gap",
     "/ledger/private-policy-gap",
     "/registry/private-policy-gap",
-    "/simulator/private-policy-gap",
   ];
 
   for (const path of unknownPaths) {
@@ -502,31 +501,6 @@ test("denied registry route does not resolve data-plane", async () => {
   app.get("/registry/search", (c) => c.json({ available: true }));
 
   const response = await app.request("/registry/search");
-  assert.equal(response.status, 403);
-  assert.equal(resolveCalls, 0);
-});
-
-test("denied simulator route does not resolve data-plane", async () => {
-  let resolveCalls = 0;
-  const app = new Hono();
-  app.use("*", async (c, next) => {
-    c.set("authContext", {
-      is_authenticated: true,
-      organisation_id: "org-denied",
-      user_id: "user-denied",
-      source: "session",
-      permissions: new Set(),
-    });
-    await next();
-  });
-  app.use("*", createDataPlaneMiddleware({
-    routeResolver: { async resolve() { resolveCalls += 1; return context(); } },
-    connectionManager: { async acquire() { return { pool: {}, async release() {} }; } },
-    createServiceBundle() { return {}; },
-  }));
-  app.post("/simulator/start", (c) => c.json({ available: true }));
-
-  const response = await app.request("/simulator/start", { method: "POST" });
   assert.equal(response.status, 403);
   assert.equal(resolveCalls, 0);
 });

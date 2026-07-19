@@ -125,7 +125,6 @@ test("operational routes rely on canonical route ids rather than local permissio
     "../src/routes/detection-routes.js",
     "../src/routes/ledger-routes.js",
     "../src/routes/registry-routes.js",
-    "../src/routes/simulation-routes.js",
     "../src/routes/admin-routes.js",
   ];
 

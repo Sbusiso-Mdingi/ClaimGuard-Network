@@ -12,14 +12,14 @@ Completed:
   - File adapter for development fallback
   - Azure Blob adapter for production mode
 - Detection computation removed from API runtime path.
-- Compatibility route for `POST /detection/analyze` retained as proxy/deprecated behavior.
-- Producer runtime introduced under `services/report-producer`.
+- The ad hoc `POST /detection/analyze` compatibility route has been removed.
+- Durable outbox worker introduced under `services/report-producer`.
 - Report publisher abstraction implemented with file and Azure Blob variants.
 - Producer tests and API storage tests added.
 
 Remaining architecture tasks:
 
-- Add first-class claim ingestion boundary.
+- Replace the initial shared bearer secret with workload identity or per-producer credentials.
 - Separate confirmed-fraud ledger writes from detection automation.
 - Add producer deployment automation in GitHub Actions.
 - Finalize Azure infra templates for Container Apps Job and Blob RBAC.
@@ -50,10 +50,10 @@ Remaining architecture tasks:
 - Assign managed identity and Blob data-plane RBAC.
 - Configure Key Vault references.
 
-4. Claim ingestion boundary
-- Add ingestion service interface and initial synthetic adapter.
-- Persist claims to secure claim store (MySQL first, queue/event integration optional).
-- Trigger producer from scheduler/queue instead of manual run path.
+4. Claim ingestion boundary (completed)
+- Validate bounded external reference and claim batches.
+- Persist reference data, claims, and outbox work atomically.
+- Run detection only from an authoritative tenant snapshot.
 
 5. Ledger lifecycle correction
 - Move ledger writes out of automated detection path.
@@ -67,7 +67,7 @@ Remaining architecture tasks:
 ## Risk Controls
 
 - Keep file storage adapter available for local fallback.
-- Keep compatibility route for analyze calls during migration window.
+- Reject ad hoc analysis payloads outside the authenticated ingestion boundary.
 - Version report artifacts and latest pointer updates atomically.
 - Roll out producer deployment independently from API/web deployments.
 

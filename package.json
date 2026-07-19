@@ -6,7 +6,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "report:detection": "pnpm --dir services/detection-engine report",
+    "report:worker": "pnpm --dir services/report-producer exec claimguard-produce-report worker --once",
     "report:producer:test": "pnpm --dir services/report-producer test"
   },
   "devDependencies": {

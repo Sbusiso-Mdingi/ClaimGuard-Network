@@ -43,7 +43,7 @@ DEPLOYMENT_CLASS=demo pnpm --filter @claimguard/control-plane-database provision
 
 The provisioner prints generated passwords once. Put only approved ephemeral demo values in the deployment secret `DEMO_CREDENTIALS_JSON`. Demo display additionally requires both `DEPLOYMENT_CLASS=demo` and `DEMO_CREDENTIALS_VISIBLE=true`; visibility is off by default and refused in production.
 
-If the simulator worker calls the API in session mode, configure the same random `INTERNAL_SERVICE_TOKEN` of at least 32 characters on both services. The worker uses separate service authentication and never uses the browser identity headers.
+External claim producers use the separate internal-service bearer mechanism documented in `claim-ingestion.md`; they never use browser identity headers.
 
 ## Rollback
 

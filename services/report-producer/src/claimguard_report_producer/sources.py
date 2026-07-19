@@ -1,25 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sys
 
 from .snapshot import TenantSnapshot
-
-
-def load_claims_from_json(claims_json_path: Path) -> list[dict[str, object]]:
-    payload = json.loads(claims_json_path.read_text(encoding="utf-8"))
-    if isinstance(payload, dict) and isinstance(payload.get("claims"), list):
-        return payload["claims"]
-    if isinstance(payload, list):
-        return payload
-    raise ValueError("Claims source JSON must be an array or an object containing a claims array.")
-
-
-def build_report_from_ingested_claims(claims: list[dict[str, object]]) -> dict[str, object]:
-    raise ValueError(
-        "Claim-only runtime detection is unsupported; authoritative members, providers, and schemes are required."
-    )
 
 
 def _detection_imports():
@@ -64,29 +48,3 @@ def build_report_from_tenant_snapshot(
         ),
         top_n=top_n,
     )
-
-
-def filter_claims_for_tenant(
-    claims: list[dict[str, object]],
-    *,
-    tenant_id: str,
-) -> list[dict[str, object]]:
-    if not tenant_id:
-        raise ValueError("tenant_id is required to filter claims.")
-
-    has_explicit_tenant = any(claim.get("tenant_id") for claim in claims)
-
-    if not has_explicit_tenant:
-        return [
-            {
-                **claim,
-                "tenant_id": tenant_id,
-            }
-            for claim in claims
-        ]
-
-    return [
-        claim
-        for claim in claims
-        if str(claim.get("tenant_id") or "") == tenant_id
-    ]

@@ -425,10 +425,9 @@ test("ledger routes require authorization and propagate the canonical tenant", a
   assert.deepEqual(observedLedgerTenants, [alphaTenant.tenant_id]);
 });
 
-test("cross-tenant claim ownership conflict returns 409 and API never invokes legacy production", async () => {
+test("cross-tenant claim ownership conflict returns 409 and queues only the owned tenant", async () => {
   const claims = new Map();
   const outboxTenants = [];
-  let producerTriggerCount = 0;
   const app = createBackendApp({
     tenantRepository: createTenantRepositoryStub(),
     claimIngestionService: {
@@ -455,11 +454,6 @@ test("cross-tenant claim ownership conflict returns 409 and API never invokes le
             reused: false,
           },
         };
-      },
-    },
-    producerRuntimeTrigger: {
-      async triggerAfterIngestion() {
-        producerTriggerCount += 1;
       },
     },
   });
@@ -497,7 +491,6 @@ test("cross-tenant claim ownership conflict returns 409 and API never invokes le
   assert.equal(betaBody.code, "CLAIM_OWNERSHIP_CONFLICT");
   assert.deepEqual(claims.get("C1"), { tenantId: alphaTenant.tenant_id, amount: 100 });
   assert.deepEqual(outboxTenants, [alphaTenant.tenant_id]);
-  assert.equal(producerTriggerCount, 0);
 });
 
 test("claims read routes require claims.view_own and enforce canonical tenant context", async () => {

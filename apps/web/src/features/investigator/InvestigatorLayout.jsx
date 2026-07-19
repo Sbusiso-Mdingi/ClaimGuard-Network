@@ -3,7 +3,6 @@ import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import Activity from "lucide-react/dist/esm/icons/activity.mjs";
 import Menu from "lucide-react/dist/esm/icons/menu.mjs";
 import Moon from "lucide-react/dist/esm/icons/moon.mjs";
-import Sparkles from "lucide-react/dist/esm/icons/sparkles.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
@@ -33,8 +32,6 @@ function isLiveDetectionRoute(pathname) {
 export function InvestigatorLayout({
   liveRefreshEnabled,
   setLiveRefreshEnabled,
-  simulatorState,
-  sendSimulatorCommand,
   refreshNow,
   lastRefresh,
   ledgerStatus,
@@ -53,9 +50,6 @@ export function InvestigatorLayout({
     [identity.role],
   );
   const showLiveControls = isLiveDetectionRoute(location.pathname);
-  const usingDemoDataset = dataSource === "demo";
-  const simulator = simulatorState?.simulator || null;
-  const canControlSimulator = identity.role === "platform_administrator";
 
   const [theme, setTheme] = useState(() => window.localStorage.getItem("claimguard-theme") || "dark");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -210,12 +204,6 @@ export function InvestigatorLayout({
                 <Activity className="h-3.5 w-3.5" />
                 {mode === "session" ? "Session Authenticated" : "Demo Header Mode"}
               </Badge>
-              {usingDemoDataset ? (
-                <Badge variant="warning" className="gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Demo Dataset
-                </Badge>
-              ) : null}
             </div>
             {showLiveControls ? (
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -242,38 +230,6 @@ export function InvestigatorLayout({
                     Refresh Off
                   </Button>
                 </div>
-                <Badge
-                  variant={simulatorState?.status === "error" || simulator?.status === "failed" || simulator?.lastError ? "warning" : "outline"}
-                  className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]"
-                  title={simulatorState?.error || undefined}
-                >
-                  Simulator: {simulatorState?.status === "error" ? "Unavailable" : `${simulator?.status || "Loading"} / ${simulator?.mode || "-"}${simulator?.mode === "story" && simulator?.storyKey ? ` / ${simulator.storyKey}` : ""}`}
-                </Badge>
-                {canControlSimulator && simulator ? (
-                  <div className="inline-flex rounded-full border border-border bg-background p-1">
-                    {["stopped", "paused", "failed"].includes(simulator.status) ? (
-                      <>
-                        <Button size="sm" variant={simulator.mode === "live" ? "default" : "ghost"} className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("mode", { mode: "live" })}>Sim Live</Button>
-                        <Button size="sm" variant={simulator.mode === "static" ? "default" : "ghost"} className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("mode", { mode: "static" })}>Sim Static</Button>
-                        {simulator.storyKey ? (
-                          <Button size="sm" variant={simulator.mode === "story" ? "default" : "ghost"} className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("mode", { mode: "story", storyKey: simulator.storyKey })}>Sim Story</Button>
-                        ) : null}
-                      </>
-                    ) : null}
-                    {["stopped", "failed"].includes(simulator.status) && simulator.mode !== "off" ? (
-                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("start")}>Start</Button>
-                    ) : null}
-                    {simulator.status === "paused" ? (
-                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("resume")}>Resume</Button>
-                    ) : null}
-                    {["starting", "running"].includes(simulator.status) ? (
-                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("pause")}>Pause</Button>
-                    ) : null}
-                    {simulator.status !== "stopped" ? (
-                      <Button size="sm" variant="ghost" className="rounded-full px-3" disabled={simulatorState.controlPending} onClick={() => sendSimulatorCommand("stop")}>Stop</Button>
-                    ) : null}
-                  </div>
-                ) : null}
                 <Button size="sm" variant="outline" onClick={refreshNow} className="rounded-full px-4">
                   Refresh
                 </Button>

@@ -1,31 +1,27 @@
-**CI Validation Guide**
+# CI validation guide
 
 - **Purpose:** Validate builds/tests for the monorepo and deploy API/web artifacts on pushes to `main`.
 - **Workflow file:** [.github/workflows/ci.yml](.github/workflows/ci.yml)
 - **Producer deploy workflow:** [.github/workflows/producer-deploy.yml](.github/workflows/producer-deploy.yml)
 
 What the CI does:
+
 - Checks out the repository and installs JavaScript dependencies using `pnpm` at the workspace root.
-- Caches the pnpm store to speed subsequent runs.
-- Installs Python dependencies for the `packages/data-generator` using `uv sync`.
-- Runs `pnpm turbo run lint test build --filter=...[origin/${BASE_REF}]` to run lint/test/build for affected packages relative to the PR base.
-- Explicitly builds and tests the web app:
-  - `pnpm --filter ./apps/web run build`
-  - `pnpm --filter ./apps/web run test -- --run`
-- Explicitly builds and tests the API package (if `apps/api/package.json` exists):
-  - `pnpm --filter ./apps/api run build`
-  - `pnpm --filter ./apps/api run test`
-- Uploads `apps/web/dist` as an artifact for inspection (no deploy)
-- Runs Python tests and uploads coverage to Codecov (if `CODECOV_TOKEN` present).
+- Uses lockfile-backed Node.js 24, pnpm, Python 3.12, and `uv` toolchains with dependency caching.
+- Runs the complete monorepo lint and build graph.
+- Runs JavaScript tests under V8 coverage and Python tests under `coverage.py` for the edge SDK, detection engine, and report worker.
+- Uploads separate JavaScript and Python coverage artifacts to Codecov using GitHub OIDC.
+- Uploads `apps/web/dist` as an inspection artifact.
 - On `push` to `main`, packages deployable zip artifacts for `apps/web` and `apps/api`, then deploys both via Azure Web App ZipDeploy.
 - Retains CI artifacts (`web-dist`, deploy zips) for 14 days to support incident forensics and fast rollback packaging.
+- Runs operational database migrations from the repository lockfile before deployment.
 - Verifies post-deploy runtime health with endpoint probes:
   - API `GET /health`
   - API `GET /ready`
   - web root `GET /` (accepts 200/301/302)
   - web index fallback `GET /index.html` (expects 200 if root is non-200)
 
-Local validation (recommended before opening PR):
+Local validation (recommended before opening a PR):
 
 1. Install workspace deps:
 
@@ -33,23 +29,12 @@ Local validation (recommended before opening PR):
 pnpm install
 ```
 
-2. Build the web app:
+2. Run the same workspace gates used by CI:
 
 ```bash
-pnpm --filter ./apps/web run build
-```
-
-3. Run the web tests:
-
-```bash
-pnpm --filter ./apps/web run test -- --run
-```
-
-4. Build and test the API (if relevant):
-
-```bash
-pnpm --filter ./apps/api run build
-pnpm --filter ./apps/api run test
+pnpm lint
+pnpm test
+pnpm build
 ```
 
 Quality gates:
@@ -59,6 +44,7 @@ Quality gates:
 - The deploy job fails if health verification probes fail after retries.
 
 Notes & Troubleshooting:
+
 - This workflow uses `pnpm` at the workspace root to avoid duplicated installs for each package.
-- If you prefer `npm` locally, you can still run the scripts in the `apps/web` folder using `npm run build`/`npm test` — but CI uses `pnpm`.
-- Producer runtime deployment is intentionally separated into a manual workflow to avoid coupling API/web deploy cadence with batch producer releases.
+- The report-worker deployment is intentionally separate so its container and durable outbox drain can be released independently.
+- The producer workflow requires the control-plane and operational database secrets plus one explicitly allow-listed organisation scope.

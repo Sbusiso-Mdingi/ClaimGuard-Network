@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import json
 import math
-import hashlib
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from itertools import combinations
-from pathlib import Path
 
-from .loader import ClaimRecord, DataBundle, MemberRecord, ProviderRecord, SchemeData, load_data_bundle
+from .loader import ClaimRecord, DataBundle, MemberRecord, ProviderRecord, SchemeData
 from .pipeline import run_detection_pipeline
 from .reference_data import CODE_LOOKUP, SPECIALTIES
 
@@ -350,7 +348,7 @@ def _exact_banking_links(bundle: DataBundle) -> list[dict[str, object]]:
     by_banking_detail: dict[str, list[ProviderRecord]] = defaultdict(list)
     for scheme in bundle.schemes.values():
         for provider in scheme.providers.values():
-            by_banking_detail[provider.synthetic_banking_detail].append(provider)
+            by_banking_detail[provider.banking_detail].append(provider)
 
     links: list[dict[str, object]] = []
     for banking_detail, providers in by_banking_detail.items():
@@ -396,7 +394,7 @@ def _provider_signature(provider: ProviderRecord, claims: list[ClaimRecord]) -> 
         "amount_cv": amount_cv,
         "claims_per_day": claims_per_day,
         "practice_region": provider.practice_region,
-        "banking_detail": provider.synthetic_banking_detail,
+        "banking_detail": provider.banking_detail,
     }
 
 
@@ -613,12 +611,8 @@ def analyze_bundle(bundle: DataBundle, top_n: int = 10, ground_truth: dict[str, 
                     "claim_id": claim.claim_id,
                     "member_id": claim.member_id,
                     "provider_id": claim.provider_id,
-                    "phone": f"{claim.member_id}-phone",
-                    "email": f"{claim.member_id.lower()}@claimguard.synthetic",
-                    "address": member.home_region if member else "unknown-region",
-                    "bank_account": provider.synthetic_banking_detail if provider else "unknown-bank",
-                    "device_id": f"device-{claim.member_id}",
-                    "ip_address": f"10.{int(hashlib.sha256(claim.provider_id.encode('utf-8')).hexdigest()[:2], 16)}.{int(hashlib.sha256(claim.member_id.encode('utf-8')).hexdigest()[:2], 16)}.{int(hashlib.sha256(claim.claim_id.encode('utf-8')).hexdigest()[:2], 16)}",
+                    "address": member.home_region if member else None,
+                    "bank_account": provider.banking_detail if provider else None,
                 }
             )
 
@@ -643,7 +637,3 @@ def analyze_bundle(bundle: DataBundle, top_n: int = 10, ground_truth: dict[str, 
         "evaluation": evaluation,
         "detection": detection,
     }
-
-
-def build_report(data_dir: Path, top_n: int = 10) -> dict[str, object]:
-    return analyze_bundle(load_data_bundle(data_dir), top_n=top_n)

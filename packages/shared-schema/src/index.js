@@ -39,10 +39,112 @@ export function createBackendInfo(name = "ClaimGuard API") {
 
 const finiteNumber = z.number().finite();
 const nullableFiniteNumber = finiteNumber.nullable();
+const identifier = (maximum) => z.string().trim().min(1).max(maximum);
+const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected an ISO calendar date (YYYY-MM-DD).").refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "Expected a valid calendar date.");
+
+export const claimIngestionSourceSchema = z.string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, "Source must be a stable machine identifier.");
+
+export const claimIngestionSchemeSchema = z.object({
+  scheme_id: identifier(64),
+  scheme_name: z.string().trim().min(1).max(255),
+}).strict();
+
+export const claimIngestionMemberSchema = z.object({
+  member_id: identifier(128),
+  scheme_id: identifier(64),
+  first_name: z.string().trim().min(1).max(128),
+  last_name: z.string().trim().min(1).max(128),
+  date_of_birth: dateOnly,
+  gender: z.string().trim().min(1).max(32),
+  identity_number: z.string().trim().min(1).max(128),
+  banking_detail: z.string().trim().min(1).max(255),
+  home_region: z.string().trim().min(1).max(128),
+  home_lat: z.number().finite().min(-90).max(90),
+  home_lon: z.number().finite().min(-180).max(180),
+  join_date: dateOnly,
+}).strict();
+
+export const claimIngestionProviderSchema = z.object({
+  provider_id: identifier(128),
+  scheme_id: identifier(64),
+  practice_number: z.string().trim().min(1).max(64),
+  specialty: z.string().trim().min(1).max(128),
+  practice_name: z.string().trim().min(1).max(255),
+  banking_detail: z.string().trim().min(1).max(255),
+  practice_region: z.string().trim().min(1).max(128),
+  practice_lat: z.number().finite().min(-90).max(90),
+  practice_lon: z.number().finite().min(-180).max(180),
+}).strict();
+
+export const claimIngestionClaimSchema = z.object({
+  claim_id: identifier(128),
+  scheme_id: identifier(64),
+  member_id: identifier(128),
+  provider_id: identifier(128),
+  service_date: dateOnly,
+  billing_code: z.string().trim().min(1).max(64),
+  amount: z.number().finite().nonnegative().max(9_999_999_999.99),
+}).strict();
+
+export function createClaimIngestionBatchSchema({ maxBatchSize = 500, maxReferenceRecords = 2_000 } = {}) {
+  return z.object({
+    source: claimIngestionSourceSchema.default("api"),
+    schemes: z.array(claimIngestionSchemeSchema).max(maxReferenceRecords).default([]),
+    members: z.array(claimIngestionMemberSchema).max(maxReferenceRecords).default([]),
+    providers: z.array(claimIngestionProviderSchema).max(maxReferenceRecords).default([]),
+    claims: z.array(claimIngestionClaimSchema).min(1).max(maxBatchSize),
+  }).strict().superRefine((batch, context) => {
+    const collections = [
+      ["schemes", "scheme_id"],
+      ["members", "member_id"],
+      ["providers", "provider_id"],
+      ["claims", "claim_id"],
+    ];
+    for (const [collectionName, idField] of collections) {
+      const seen = new Set();
+      batch[collectionName].forEach((record, index) => {
+        if (seen.has(record[idField])) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [collectionName, index, idField],
+            message: `${idField} must be unique within an ingestion batch.`,
+          });
+        }
+        seen.add(record[idField]);
+      });
+    }
+
+    const members = new Map(batch.members.map((member) => [member.member_id, member]));
+    const providers = new Map(batch.providers.map((provider) => [provider.provider_id, provider]));
+    batch.claims.forEach((claim, index) => {
+      const member = members.get(claim.member_id);
+      const provider = providers.get(claim.provider_id);
+      if (member && member.scheme_id !== claim.scheme_id) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: ["claims", index, "member_id"], message: "Embedded member and claim must belong to the same scheme." });
+      }
+      if (provider && provider.scheme_id !== claim.scheme_id) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: ["claims", index, "provider_id"], message: "Embedded provider and claim must belong to the same scheme." });
+      }
+    });
+  });
+}
+
+export function parseClaimIngestionBatch(payload, options) {
+  return createClaimIngestionBatchSchema(options).parse(payload);
+}
 const forbiddenReportFieldNames = new Set([
   "firstname",
   "lastname",
   "dateofbirth",
+  "identitynumber",
+  "bankingdetail",
   "syntheticidnumber",
   "syntheticbankingdetail",
   "bankaccount",

@@ -15,7 +15,6 @@ flags:
   python:
     paths:
       - packages/claimguard-sdk/
-      - packages/data-generator/
       - services/detection-engine/
       - services/report-producer/
     carryforward: false

@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: claimguard-report-producer
-Version: 0.1.0
-Summary: ClaimGuard report producer runtime and publishers
-Requires-Python: >=3.11
-Requires-Dist: azure-identity>=1.19.0
-Requires-Dist: azure-storage-blob>=12.24.0
-Requires-Dist: claimguard-detection-engine>=0.1.0
-Requires-Dist: PyMySQL>=1.1.1

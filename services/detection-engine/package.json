@@ -4,7 +4,6 @@
   "scripts": {
     "build": "uv run python -m compileall src tests",
     "lint": "uv run python -m compileall src tests",
-    "report": "mkdir -p reports && uv run claimguard-detect --data-dir ../../packages/data-generator/data --top-n 10 --output reports/latest-report.json",
     "test": "uv run python -m unittest discover -s tests -p 'test_*.py'"
   }
 }

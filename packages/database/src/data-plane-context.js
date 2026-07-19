@@ -41,6 +41,7 @@ export function createDataPlaneContext(input = {}) {
     throw new DataPlaneContextValidationError("Platform routes cannot contain private operational routing metadata.", "DATA_PLANE_PLATFORM_ROUTE_INVALID");
   }
 
+  const secretReference = optional(input.secretReference);
   return Object.freeze({
     organisationId,
     organisationType,
@@ -52,7 +53,7 @@ export function createDataPlaneContext(input = {}) {
     routeGeneration,
     logicalDatabaseIdentifier: required(input.logicalDatabaseIdentifier, "logicalDatabaseIdentifier"),
     databaseName: optional(input.databaseName),
-    secretReference: optional(input.secretReference),
+    ...(secretReference ? { secretReference } : {}),
     schemaVersion: routeType === "platform_none" ? null : required(input.schemaVersion, "schemaVersion"),
     deploymentClass: required(input.deploymentClass, "deploymentClass"),
     region: optional(input.region),

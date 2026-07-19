@@ -34,7 +34,7 @@ Demo provisioning reads current tenants without modifying them, creates verified
 
 Session mode authenticates local passwords and server-side sessions through this package. `demo_headers` is an isolated rollback/development mode and is refused in production. The modes cannot be combined. Authentication itself bridges an authenticated medical-scheme organisation only through a verified `legacy_tenant_mappings` record; operational request admission then separately resolves authoritative `data_plane_routes` metadata.
 
-Phase 11D runtime additionally resolves exactly one active `data_plane_routes` record for the authenticated immutable organisation ID before operational access. Demo provisioning creates active `legacy_shared` routes at schema version 8 and links verified mappings; the platform organisation receives `platform_none`. Database credentials remain outside route projections and control-plane responses.
+Phase 11D runtime additionally resolves exactly one active `data_plane_routes` record for the authenticated immutable organisation ID before operational access. Non-production provisioning creates active `legacy_shared` routes at schema version 10 and links verified mappings; the platform organisation receives `platform_none`. Database credentials remain outside route projections and control-plane responses.
 
 ## Prohibited data
 

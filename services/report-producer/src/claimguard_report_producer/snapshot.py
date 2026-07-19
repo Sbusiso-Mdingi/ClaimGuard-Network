@@ -79,7 +79,7 @@ class PyMySqlTenantSnapshotRepository:
                 cursor.execute(
                     """
                     SELECT member_id, scheme_id, first_name, last_name, date_of_birth, gender,
-                      synthetic_id_number, synthetic_banking_detail, home_region, home_lat,
+                      identity_number, banking_detail, home_region, home_lat,
                       home_lon, join_date
                     FROM members
                     WHERE tenant_id = %s
@@ -92,7 +92,7 @@ class PyMySqlTenantSnapshotRepository:
                 cursor.execute(
                     """
                     SELECT provider_id, scheme_id, practice_number, specialty, practice_name,
-                      synthetic_banking_detail, practice_region, practice_lat, practice_lon
+                      banking_detail, practice_region, practice_lat, practice_lon
                     FROM providers
                     WHERE tenant_id = %s
                     ORDER BY provider_id

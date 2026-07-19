@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "claimguard-report-producer"
 version = "0.1.0"
-description = "ClaimGuard report producer runtime and publishers"
+description = "Durable ClaimGuard report worker and publishers"
 requires-python = ">=3.11"
 dependencies = [
   "azure-identity>=1.19.0",

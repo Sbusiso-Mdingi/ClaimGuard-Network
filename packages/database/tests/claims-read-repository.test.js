@@ -75,7 +75,7 @@ function context() {
     operationalTenantSlug: "alpha",
     logicalDatabaseIdentifier: "legacy-operational-shared",
     databaseName: "operational",
-    schemaVersion: "8",
+    schemaVersion: "10",
     deploymentClass: "demo",
     region: "westeurope",
   };

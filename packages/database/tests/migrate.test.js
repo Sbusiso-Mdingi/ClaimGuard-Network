@@ -35,10 +35,10 @@ test("applyMigrations executes, records, checksum-validates, and skips all schem
   const status = await getOperationalMigrationStatus(pool);
 
   assert.equal(first.appliedStatements > 0, true);
-  assert.equal(first.applied.length, 9);
+  assert.equal(first.applied.length, 10);
   assert.equal(second.appliedStatements, 0);
   assert.equal(second.applied.length, 0);
-  assert.equal(second.skipped.length, 9);
+  assert.equal(second.skipped.length, 10);
   assert.equal(status.pending.length, 0);
   assert.equal(pool.statements.slice(statementCountAfterFirst).some((statement) => String(statement).includes("ALTER TABLE claims ADD COLUMN")), false);
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS ledger_entries")));
@@ -53,6 +53,8 @@ test("applyMigrations executes, records, checksum-validates, and skips all schem
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS simulation_instances")));
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS simulation_leases")));
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS simulation_tick_history")));
+  assert.ok(pool.statements.some((statement) => String(statement).includes("DROP TABLE IF EXISTS simulation_instances")));
+  assert.ok(pool.statements.some((statement) => String(statement).includes("CHANGE COLUMN synthetic_id_number identity_number")));
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS data_plane_metadata")));
   assert.ok(pool.statements.some((statement) => String(statement).includes("chk_data_plane_metadata_singleton")));
 });

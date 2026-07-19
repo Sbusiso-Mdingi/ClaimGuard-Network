@@ -54,7 +54,7 @@ test("successful login uses cookies, stores CSRF only in memory, and sends no au
       authenticated = true;
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...safeSession, csrfToken: "csrf-memory-only" }) });
     }
-    if (value.includes("/api/detection/") || value.endsWith("/api/simulator/status")) {
+    if (value.includes("/api/detection/")) {
       return Promise.resolve({ ok: false, status: 403, json: async () => ({ available: false, message: "Forbidden" }) });
     }
     return Promise.resolve({ ok: false, status: 404, json: async () => ({ message: "Not found." }) });
@@ -113,7 +113,7 @@ test("demo accounts panel appears only when the gated endpoint supplies ephemera
 test("canonical API client attaches session CSRF to mutations and distinguishes 403", async () => {
   setCsrfToken("csrf-token");
   global.fetch = vi.fn(() => Promise.resolve({ ok: false, status: 403, json: async () => ({ code: "FORBIDDEN" }) }));
-  const response = await apiRequest("/simulator/pause", { method: "POST" });
+  const response = await apiRequest("/claims/ingest", { method: "POST" });
   expect(response.status).toBe(403);
   const options = global.fetch.mock.calls[0][1];
   expect(options.headers.get("x-csrf-token")).toBe("csrf-token");

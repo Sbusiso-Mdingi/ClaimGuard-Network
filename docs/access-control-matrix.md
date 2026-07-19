@@ -27,7 +27,7 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 - CSRF middleware is present in code.
 - Tenant routing and data-plane scoping are present in code.
 - Authorization roles and permissions are evaluated in code.
-- Header-based demo mode remains in code for non-production rollback only.
+- Header-based authentication remains available only for isolated local rollback; production startup rejects it.
 
 ## Required Constraints
 

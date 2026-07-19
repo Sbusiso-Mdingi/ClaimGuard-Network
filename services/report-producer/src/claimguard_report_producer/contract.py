@@ -9,6 +9,8 @@ FORBIDDEN_REPORT_FIELDS = {
     "firstname",
     "lastname",
     "dateofbirth",
+    "identitynumber",
+    "bankingdetail",
     "syntheticidnumber",
     "syntheticbankingdetail",
     "bankaccount",

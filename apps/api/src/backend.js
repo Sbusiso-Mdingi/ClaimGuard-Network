@@ -18,7 +18,6 @@ import { registerDetectionRoutes } from "./routes/detection-routes.js";
 import { registerInvestigationsRoutes } from "./routes/investigations-routes.js";
 import { registerLedgerRoutes } from "./routes/ledger-routes.js";
 import { registerRegistryRoutes } from "./routes/registry-routes.js";
-import { registerSimulationRoutes } from "./routes/simulation-routes.js";
 import { createClaimIngestionService } from "./services/claim-ingestion-service.js";
 import { createFraudConfirmationService } from "./services/fraud-confirmation-service.js";
 import { createFraudReversalService } from "./services/fraud-reversal-service.js";
@@ -36,12 +35,10 @@ function createDomainServices({
   fraudWorkflowRepository,
   claimIngestionRepository,
   claimReadRepository,
-  detectionAnalyzeProxyUrl,
 } = {}) {
   const reportService = createReportService({
     reportStorage,
     ledgerRepository,
-    detectionAnalyzeProxyUrl,
   });
 
   const claimIngestionService = createClaimIngestionService({
@@ -187,9 +184,7 @@ export function createBackendApp({
   controlPlaneRepositories = null,
   controlPlaneService = null,
   reportStorage = null,
-  detectionAnalyzeProxyUrl = null,
   detectionReportPath = null,
-  simulationStateRepository = null,
   dataPlaneRuntime = null,
 } = {}) {
   const resolvedReportStorage =
@@ -206,7 +201,6 @@ export function createBackendApp({
     fraudWorkflowRepository,
     claimIngestionRepository: claimIngestionService,
     claimReadRepository,
-    detectionAnalyzeProxyUrl,
   });
 
   const dependencies = dataPlaneRuntime ? {
@@ -219,13 +213,11 @@ export function createBackendApp({
     registryService: createOperationalDependencyProxy("registryService", services.registryService),
     ledgerRepository: createOperationalDependencyProxy("ledgerRepository", ledgerRepository),
     tenantRepository: createOperationalDependencyProxy("tenantRepository", tenantRepository),
-    simulationStateRepository: createOperationalDependencyProxy("simulationStateRepository", simulationStateRepository),
   } : {
     ...services,
     claimsReadRepository: services.claimReadRepository,
     ledgerRepository,
     tenantRepository,
-    simulationStateRepository,
   };
 
   const app = new Hono();
@@ -286,7 +278,6 @@ export function createBackendApp({
             fraudWorkflowRepository: repositories.fraudWorkflow,
             claimIngestionRepository: repositories.claims,
             claimReadRepository: claimsReadRepository,
-            detectionAnalyzeProxyUrl,
           });
         if (!reportServices.has(pool)) reportServices.set(pool, servicesForRequest.reportService);
         return {
@@ -295,7 +286,6 @@ export function createBackendApp({
           reportService: reportServices.get(pool),
           ledgerRepository: repositories.ledger,
           tenantRepository: repositories.tenants,
-          simulationStateRepository: repositories.simulatorState,
           operationalRepositories: repositories,
         };
       },
@@ -358,8 +348,6 @@ export function createBackendApp({
   registerRegistryRoutes(app, {
     registryService: dependencies.registryService,
   });
-
-  registerSimulationRoutes(app, { simulationStateRepository: dependencies.simulationStateRepository });
 
   app.all(`${backendRouterPath}/*`, (c) => {
     return fetchRequestHandler({
