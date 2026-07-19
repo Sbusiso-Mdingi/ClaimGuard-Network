@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS organisation_integration_credentials (
+  integration_credential_id CHAR(36) PRIMARY KEY,
+  organisation_id CHAR(36) NOT NULL,
+  display_name VARCHAR(128) NOT NULL,
+  service_actor_id VARCHAR(128) NOT NULL,
+  token_prefix VARCHAR(24) NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  role_key VARCHAR(64) NOT NULL DEFAULT 'claims_analyst',
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_by VARCHAR(255) NULL,
+  expires_at TIMESTAMP(3) NULL,
+  last_used_at TIMESTAMP(3) NULL,
+  last_used_correlation_id VARCHAR(128) NULL,
+  revoked_at TIMESTAMP(3) NULL,
+  revoked_by VARCHAR(255) NULL,
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_integration_credential_token_hash (token_hash),
+  UNIQUE KEY uq_integration_credential_actor (organisation_id, service_actor_id),
+  INDEX idx_integration_credential_org_status (organisation_id, status),
+  CONSTRAINT fk_integration_credential_organisation
+    FOREIGN KEY (organisation_id) REFERENCES organisations (organisation_id) ON DELETE RESTRICT,
+  CONSTRAINT chk_integration_credential_role CHECK (role_key = 'claims_analyst'),
+  CONSTRAINT chk_integration_credential_status CHECK (status IN ('active', 'revoked', 'expired')),
+  CONSTRAINT chk_integration_credential_hash CHECK (token_hash REGEXP '^[a-f0-9]{64}$')
+);

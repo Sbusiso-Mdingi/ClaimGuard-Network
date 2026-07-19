@@ -209,6 +209,31 @@ test("internal service authentication uses its dedicated bearer mechanism and re
   assert.equal((await rejected.json()).code, "IDENTITY_HEADER_REJECTED");
 });
 
+test("per-medical-aid integration token derives server, tenant, role, and organisation authority", async () => {
+  const service = authService();
+  service.resolveIntegrationCredential = async (token) => token === "cg_live_valid_integration_token_value_123456"
+    ? {
+      integrationCredentialId: "integration-1",
+      serviceActorId: "discovery-feed-01",
+      roleKey: "claims_analyst",
+      tenantId: "tenant-alpha",
+      organisationId: "org-1",
+    }
+    : null;
+  const { app } = sessionApp({ service });
+
+  const accepted = await app.request("http://localhost/health", {
+    headers: { authorization: "Bearer cg_live_valid_integration_token_value_123456" },
+  });
+  assert.equal(accepted.status, 200);
+
+  const rejected = await app.request("http://localhost/health", {
+    headers: { authorization: "Bearer cg_live_unknown_integration_token_123456789" },
+  });
+  assert.equal(rejected.status, 403);
+  assert.equal((await rejected.json()).code, "INTERNAL_SERVICE_AUTHENTICATION_FAILED");
+});
+
 test("platform organisation session has no operational tenant and receives no private-route bypass", async () => {
   const { app } = sessionApp({ platform: true });
   const response = await app.request("http://localhost/detection/report", { headers: { cookie: `__Host-cg_session=${"s".repeat(43)}` } });

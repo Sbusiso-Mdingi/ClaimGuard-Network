@@ -32,8 +32,6 @@ env:
   OPERATIONAL_MYSQL_SECRET_NAME: claimguard--api--mysql-url
   REPORT_STORAGE_ACCOUNT_URL: https://cgrpt0715sa.blob.core.windows.net
   REPORT_STORAGE_CONTAINER: claimguard-reports
-  REPORT_WORKER_ORGANISATION_ID: ${{ vars.REPORT_WORKER_ORGANISATION_ID }}
-  INTERNAL_SERVICE_ORGANISATION_IDS: ${{ vars.INTERNAL_SERVICE_ORGANISATION_IDS }}
   DATA_PLANE_ENVIRONMENT: legacy
   DATA_PLANE_PRIVATE_ENVIRONMENT: production
   DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS: "10"
@@ -57,9 +55,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$REPORT_WORKER_ORGANISATION_ID" || { echo "REPORT_WORKER_ORGANISATION_ID variable is required"; exit 1; }
-          test -n "$INTERNAL_SERVICE_ORGANISATION_IDS" || { echo "INTERNAL_SERVICE_ORGANISATION_IDS variable is required"; exit 1; }
-
           WORKER_IDENTITY_ID="$(az identity show \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_REPORT_WORKER_IDENTITY" \
@@ -111,7 +106,7 @@ jobs:
             --cpu 1.0 \
             --memory 2Gi \
             --command claimguard-produce-report \
-            --args worker drain \
+            --args worker drain-all \
             --mi-user-assigned "$WORKER_IDENTITY_ID" \
             --registry-server "$AZURE_ACR_LOGIN_SERVER" \
             --registry-identity "$WORKER_IDENTITY_ID" \
@@ -125,8 +120,6 @@ jobs:
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
-              REPORT_WORKER_ORGANISATION_ID="$REPORT_WORKER_ORGANISATION_ID" \
-              INTERNAL_SERVICE_ORGANISATION_IDS="$INTERNAL_SERVICE_ORGANISATION_IDS" \
               DATA_PLANE_ENVIRONMENT="$DATA_PLANE_ENVIRONMENT" \
               DATA_PLANE_PRIVATE_ENVIRONMENT="$DATA_PLANE_PRIVATE_ENVIRONMENT" \
               DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS="$DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS" \
@@ -181,7 +174,7 @@ jobs:
             --cpu 1.0 \
             --memory 2Gi \
             --command claimguard-produce-report \
-            --args worker drain \
+            --args worker drain-all \
             --replace-env-vars \
               CONTROL_PLANE_MYSQL_URL=secretref:control-plane-url \
               MYSQL_URL=secretref:operational-url \
@@ -189,8 +182,6 @@ jobs:
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
-              REPORT_WORKER_ORGANISATION_ID="$REPORT_WORKER_ORGANISATION_ID" \
-              INTERNAL_SERVICE_ORGANISATION_IDS="$INTERNAL_SERVICE_ORGANISATION_IDS" \
               DATA_PLANE_ENVIRONMENT="$DATA_PLANE_ENVIRONMENT" \
               DATA_PLANE_PRIVATE_ENVIRONMENT="$DATA_PLANE_PRIVATE_ENVIRONMENT" \
               DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS="$DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS" \

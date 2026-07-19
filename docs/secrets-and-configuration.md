@@ -74,8 +74,9 @@ CI/CD:
 
 - OIDC values are present in workflow env blocks.
 - The producer workflow references database secrets through Azure Key Vault and uses managed identity for report storage; database or storage credentials are not copied into GitHub secrets.
-- `REPORT_WORKER_ORGANISATION_ID` and `INTERNAL_SERVICE_ORGANISATION_IDS` constrain each worker deployment to an explicit organisation scope.
-- Private-route workers additionally need read access to exactly the four Key Vault secrets referenced by their selected route.
+- The report worker discovers only active medical-scheme routes that are schema-compatible and marked ready in the control plane.
+- Its managed identity receives read access to exactly the four Key Vault secrets for each provisioned private route; it has no vault-wide secret-read role.
+- New claim producers receive a per-organisation bearer credential from the platform-admin onboarding page. ClaimGuard stores only the credential hash and shows the raw token once.
 - Codecov uploads use GitHub OIDC rather than a repository token.
 
 ## Doppler Inventory Status

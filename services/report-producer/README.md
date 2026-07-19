@@ -27,7 +27,9 @@ The worker leases claim-ingestion outbox jobs and always analyzes a fresh tenant
 
 Both paths verify the database's singleton data-plane metadata and fail closed on an inactive organisation, unsupported schema, changed route generation, changed credentials, or mismatched logical database identity.
 
-Scheduled deployments use `worker drain`: each execution processes bounded batches until the queue is empty, then exits. `REPORT_WORKER_MAX_BATCHES_PER_RUN` defaults to `100` so an unexpectedly busy queue cannot make one execution run forever.
+Single-route runs can use `worker drain`: each execution processes bounded batches until the queue is empty, then exits. `REPORT_WORKER_MAX_BATCHES_PER_RUN` defaults to `100` so an unexpectedly busy queue cannot make one execution run forever.
+
+The production scheduled job uses `worker drain-all`. It discovers medical aids only when the organisation is active, the route is active and schema-compatible, and the control plane marks report-worker routing ready. Each discovered route is still resolved and validated independently before any outbox lease is taken.
 
 ## Azure-ready mode
 
@@ -52,7 +54,7 @@ This workflow:
 - verifies a worker execution before considering deployment successful
 - resolves `CONTROL_PLANE_MYSQL_URL` and `MYSQL_URL` through Key Vault references
 - uses a dedicated managed identity for ACR pull, Key Vault read, and report-blob write access
-- supplies an explicit single-organisation scope
+- discovers the control plane's active, worker-ready medical-aid routes and drains them independently
 - supports only canonical schema version `10` by default
 
 Required Azure bootstrap:
@@ -60,14 +62,9 @@ Required Azure bootstrap:
 - user-assigned identity: `claimguard-report-worker-identity`
 - `AcrPull` on `claimguardacr11e`
 - `Key Vault Secrets User` on the API control-plane and operational database secrets
-- for a `private_database` worker, `Key Vault Secrets User` on exactly that route's four referenced secrets
+- for each `private_database` route, `Key Vault Secrets User` on exactly that route's four referenced secrets
 - `Storage Blob Data Contributor` on only the `claimguard-reports` container in `cgrpt0715sa`
 
-`infra/main.bicepparam` intentionally leaves `reportWorkerPrivateSecretNames` empty until an organisation is selected and its route has been verified at schema version `10`. Do not grant vault-wide access to make private routing work.
-
-Required non-secret GitHub variables:
-
-- `REPORT_WORKER_ORGANISATION_ID`
-- `INTERNAL_SERVICE_ORGANISATION_IDS`
+The provisioning controller assigns the exact four per-tenant secret roles when onboarding or upgrading a medical aid. Its `Key Vault Data Access Administrator` role is constrained by Azure's built-in ABAC condition to Key Vault data roles; the report worker itself never receives vault-wide secret access.
 
 Database and storage credentials must not be copied into GitHub secrets.

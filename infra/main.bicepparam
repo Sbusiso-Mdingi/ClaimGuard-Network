@@ -10,3 +10,4 @@ param reportWorkerPrivateSecretNames = []
 param reportStorageAccountName = 'cgrpt0715sa'
 param reportStorageContainerName = 'claimguard-reports'
 param githubActionsPrincipalId = 'fe7b2935-7f00-4996-a0c6-7f3be2390dbb'
+param provisionerIdentityName = 'claimguard-provisioner-identity'

@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .contract import ReportContractError, validate_detection_report
-from .data_plane import resolve_worker_data_plane_scope
+from .data_plane import discover_active_worker_organisation_ids, resolve_worker_data_plane_scope
 from .outbox import OutboxJob, PyMySqlOutboxRepository
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
 from .snapshot import PyMySqlTenantSnapshotRepository
@@ -269,8 +269,13 @@ class ReportProducerWorker:
         # Payload contents are trigger metadata only. Detection always reloads the tenant snapshot.
 
 
-def create_worker_from_environment(*, backend: str | None = None, output_dir: Path | None = None) -> ReportProducerWorker:
-    organisation_ids = [os.environ.get("REPORT_WORKER_ORGANISATION_ID", "").strip()]
+def create_worker_from_environment(
+    *,
+    backend: str | None = None,
+    output_dir: Path | None = None,
+    organisation_id: str | None = None,
+) -> ReportProducerWorker:
+    organisation_ids = [(organisation_id or os.environ.get("REPORT_WORKER_ORGANISATION_ID", "")).strip()]
     organisation_ids = [value for value in organisation_ids if value]
     allowed_organisation_ids = frozenset(
         value.strip() for value in os.environ.get("INTERNAL_SERVICE_ORGANISATION_IDS", "").split(",") if value.strip()
@@ -332,3 +337,43 @@ def create_worker_from_environment(*, backend: str | None = None, output_dir: Pa
         config=WorkerConfig.from_environment(),
         scope_validator=validate_scope,
     )
+
+
+def create_discovered_workers_from_environment(
+    *,
+    backend: str | None = None,
+    output_dir: Path | None = None,
+) -> list[ReportProducerWorker]:
+    supported_schema_versions = frozenset(
+        value.strip()
+        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "10").split(",")
+        if value.strip()
+    )
+    organisation_ids = discover_active_worker_organisation_ids(
+        control_plane_url=os.environ.get("CONTROL_PLANE_MYSQL_URL", ""),
+        supported_schema_versions=supported_schema_versions,
+    )
+    if not organisation_ids:
+        print(json.dumps({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "level": "info",
+            "service": "report-producer-worker",
+            "event": "no_active_worker_organisations",
+        }, sort_keys=True))
+        return []
+    previous_allowlist = os.environ.get("INTERNAL_SERVICE_ORGANISATION_IDS")
+    os.environ["INTERNAL_SERVICE_ORGANISATION_IDS"] = ",".join(organisation_ids)
+    try:
+        return [
+            create_worker_from_environment(
+                backend=backend,
+                output_dir=output_dir,
+                organisation_id=current_id,
+            )
+            for current_id in organisation_ids
+        ]
+    finally:
+        if previous_allowlist is None:
+            os.environ.pop("INTERNAL_SERVICE_ORGANISATION_IDS", None)
+        else:
+            os.environ["INTERNAL_SERVICE_ORGANISATION_IDS"] = previous_allowlist

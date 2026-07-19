@@ -27,6 +27,16 @@ class WorkerCliTests(TestCase):
 
         worker.run_once.assert_called_once_with()
 
+    @patch("claimguard_report_producer.cli.create_discovered_workers_from_environment")
+    def test_drain_all_processes_every_discovered_medical_aid(self, create_workers) -> None:
+        workers = [Mock(), Mock(), Mock()]
+        create_workers.return_value = workers
+
+        self.assertEqual(run_worker_command(["drain-all"]), 0)
+
+        for worker in workers:
+            worker.run_until_empty.assert_called_once_with()
+
     @patch("claimguard_report_producer.cli.run_worker_command")
     def test_runtime_failure_is_reported_without_sensitive_error_text(self, run_worker) -> None:
         run_worker.side_effect = RuntimeError("mysql://user:password@example.invalid/private")

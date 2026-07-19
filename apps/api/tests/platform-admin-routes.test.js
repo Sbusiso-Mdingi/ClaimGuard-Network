@@ -23,6 +23,7 @@ function createControlPlaneHarness() {
   const organisations = new Map();
   const operations = new Map();
   const stepsByOperation = new Map();
+  const integrationCredentials = new Map();
   let opCounter = 0;
 
   const repositories = {
@@ -52,6 +53,11 @@ function createControlPlaneHarness() {
           userId: `user-${canonicalContact}`,
           displayName,
         };
+      },
+    },
+    integrationCredentials: {
+      async listForOrganisation(organisationId) {
+        return [...integrationCredentials.values()].filter((entry) => entry.organisationId === organisationId);
       },
     },
   };
@@ -152,9 +158,40 @@ function createControlPlaneHarness() {
       organisations.set(organisationId, updated);
       return updated;
     },
+    async activateOrganisation(organisationId) {
+      const organisation = organisations.get(organisationId);
+      if (!organisation || organisation.status !== "ready_for_activation") {
+        const error = new Error("Organisation is not ready for activation.");
+        error.status = 409;
+        error.code = "ORGANISATION_NOT_READY";
+        throw error;
+      }
+      const updated = { ...organisation, status: "active", activationState: "activated" };
+      organisations.set(organisationId, updated);
+      return { organisation: updated, route: { routeId: `route-${organisationId}`, schemaVersion: "10" } };
+    },
+    async createIntegrationCredential({ organisationId, displayName, serviceActorId }) {
+      const credential = {
+        integrationCredentialId: `integration-${serviceActorId}`,
+        organisationId,
+        displayName,
+        serviceActorId,
+        tokenPrefix: "cg_live_test",
+        roleKey: "claims_analyst",
+        status: "active",
+      };
+      integrationCredentials.set(credential.integrationCredentialId, credential);
+      return { credential, bearerToken: "cg_live_once_only_token" };
+    },
+    async revokeIntegrationCredential({ integrationCredentialId }) {
+      const credential = integrationCredentials.get(integrationCredentialId);
+      const updated = { ...credential, status: "revoked" };
+      integrationCredentials.set(integrationCredentialId, updated);
+      return updated;
+    },
   };
 
-  return { repositories, service, organisations, operations };
+  return { repositories, service, organisations, operations, integrationCredentials };
 }
 
 function createApp() {
@@ -235,7 +272,7 @@ test("provisioning request returns 202 and operation status can be polled", asyn
   assert.equal(pollJson.operation.operationId, provisionJson.operation.operationId);
 });
 
-test("activation remains explicit and deferred in phase 11E", async () => {
+test("activation is explicit and returns the medical-aid integration guide", async () => {
   const { app, harness } = createApp();
   harness.organisations.set("org-momentum", {
     organisationId: "org-momentum",
@@ -251,7 +288,40 @@ test("activation remains explicit and deferred in phase 11E", async () => {
     headers: platformHeaders(),
   });
   const json = await response.json();
-  assert.equal(response.status, 202);
-  assert.equal(json.activated, false);
-  assert.equal(json.deferred, true);
+  assert.equal(response.status, 200);
+  assert.equal(json.activated, true);
+  assert.equal(json.deferred, false);
+  assert.equal(json.organisation.status, "active");
+  assert.match(json.integrationGuide.endpoint, /\/claims\/ingest$/);
+});
+
+test("active medical aid receives a one-time, revocable claims-server credential", async () => {
+  const { app, harness } = createApp();
+  harness.organisations.set("org-discovery", {
+    organisationId: "org-discovery",
+    displayName: "Discovery Health",
+    canonicalSlug: "discovery-health",
+    organisationType: "medical_scheme",
+    deploymentClass: "demo",
+    status: "active",
+    activationState: "activated",
+  });
+
+  const created = await app.request("http://localhost/admin/platform/organisations/org-discovery/integration-credentials", {
+    method: "POST",
+    headers: { ...platformHeaders(), "content-type": "application/json" },
+    body: JSON.stringify({ displayName: "Desktop feed", serviceActorId: "discovery-feed-01", expiresInDays: 90 }),
+  });
+  const createdJson = await created.json();
+  assert.equal(created.status, 201);
+  assert.equal(created.headers.get("cache-control"), "no-store");
+  assert.equal(createdJson.shownOnce, true);
+  assert.equal(createdJson.bearerToken, "cg_live_once_only_token");
+
+  const revoked = await app.request(
+    `http://localhost/admin/platform/organisations/org-discovery/integration-credentials/${createdJson.credential.integrationCredentialId}/revoke`,
+    { method: "POST", headers: platformHeaders() },
+  );
+  assert.equal(revoked.status, 200);
+  assert.equal((await revoked.json()).credential.status, "revoked");
 });

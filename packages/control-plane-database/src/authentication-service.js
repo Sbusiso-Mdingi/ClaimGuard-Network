@@ -91,6 +91,7 @@ function actorProjection({ organisation, user, membership, credential, authoriza
 
 export function createControlPlaneAuthenticationService({
   authenticationRepository,
+  integrationCredentialsRepository = null,
   now = () => new Date(),
   randomBytes = crypto.randomBytes,
   passwordHasher = { hash: hashPassword, verify: verifyPassword, needsRehash: passwordHashNeedsRehash },
@@ -216,6 +217,25 @@ export function createControlPlaneAuthenticationService({
   }
 
   return {
+    async resolveIntegrationCredential(bearerSecret, metadata = {}) {
+      if (!integrationCredentialsRepository || typeof bearerSecret !== "string" || bearerSecret.length < 43) {
+        return null;
+      }
+      const credential = await integrationCredentialsRepository.resolveActiveByTokenHash(sha256(bearerSecret));
+      if (!credential) return null;
+      await integrationCredentialsRepository.recordUse(
+        credential.integrationCredentialId,
+        safeSourceMetadata(metadata).correlationId,
+      );
+      return Object.freeze({
+        integrationCredentialId: credential.integrationCredentialId,
+        serviceActorId: credential.serviceActorId,
+        roleKey: credential.roleKey,
+        tenantId: credential.tenantId,
+        organisationId: credential.organisationId,
+      });
+    },
+
     async resolveOrganisationCandidate(slug) {
       try {
         const organisation = await authenticationRepository.resolveOrganisation(normalizeOrganisationSlug(slug));

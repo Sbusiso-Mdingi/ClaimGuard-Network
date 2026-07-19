@@ -30,6 +30,9 @@ param reportStorageContainerName string
 @description('Object ID of the GitHub Actions OIDC service principal.')
 param githubActionsPrincipalId string
 
+@description('Name of the existing provisioning-worker user-assigned managed identity.')
+param provisionerIdentityName string = 'claimguard-provisioner-identity'
+
 var acrPullRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
@@ -42,6 +45,10 @@ var storageBlobDataContributorRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 )
+var keyVaultDataAccessAdministratorRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '8b54135c-b56d-4d72-a534-26097cfdc8d8'
+)
 
 resource reportWorkerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: workerIdentityName
@@ -51,6 +58,10 @@ resource reportWorkerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@
     managedBy: 'bicep'
     workload: 'claims-processing'
   }
+}
+
+resource provisionerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: provisionerIdentityName
 }
 
 resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
@@ -153,6 +164,17 @@ resource githubActionsControlPlaneSecretRead 'Microsoft.Authorization/roleAssign
     principalId: githubActionsPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+  }
+}
+
+resource provisionerKeyVaultDataAccessAdministration 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, provisionerIdentity.id, keyVaultDataAccessAdministratorRoleDefinitionId)
+  scope: keyVault
+  properties: {
+    description: 'Allow the provisioning controller to delegate only approved Key Vault data-plane roles for new tenant secrets.'
+    principalId: provisionerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: keyVaultDataAccessAdministratorRoleDefinitionId
   }
 }
 

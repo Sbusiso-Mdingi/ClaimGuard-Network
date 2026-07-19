@@ -2,7 +2,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from claimguard_report_producer.data_plane import DataPlaneRouteError, resolve_worker_data_plane_scope
+from claimguard_report_producer.data_plane import (
+    DataPlaneRouteError,
+    discover_active_worker_organisation_ids,
+    resolve_worker_data_plane_scope,
+)
 from claimguard_report_producer.outbox import OutboxJob, PyMySqlOutboxRepository
 
 
@@ -101,6 +105,51 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
                 organisation_ids=["org-beta"],
                 allowed_organisation_ids=frozenset({"org-alpha"}),
             )
+
+    def test_worker_discovery_returns_only_control_plane_approved_routes(self):
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, query, params):
+                self.query = query
+                self.params = params
+
+            def fetchall(self):
+                self.assertIn("worker_routing_status", self.query)
+                self.assertEqual(self.params, ["10"])
+                return [
+                    {"organisation_id": "org-bonitas"},
+                    {"organisation_id": "org-discovery"},
+                ]
+
+            def assertIn(self, member, container):
+                if member not in container:
+                    raise AssertionError(f"{member!r} not found")
+
+            def assertEqual(self, actual, expected):
+                if actual != expected:
+                    raise AssertionError(f"{actual!r} != {expected!r}")
+
+        class Connection:
+            def cursor(self):
+                return Cursor()
+
+            def close(self):
+                return None
+
+        module = SimpleNamespace(
+            connect=lambda **_options: Connection(),
+            cursors=SimpleNamespace(DictCursor=object),
+        )
+        with patch.dict("sys.modules", {"pymysql": module}):
+            organisation_ids = discover_active_worker_organisation_ids(
+                control_plane_url="mysql://user:secret@control/controls",
+            )
+        self.assertEqual(organisation_ids, ("org-bonitas", "org-discovery"))
 
     def test_job_tenant_cannot_expand_verified_worker_scope(self):
         repository = PyMySqlOutboxRepository(

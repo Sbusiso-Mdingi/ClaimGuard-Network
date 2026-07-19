@@ -11,6 +11,12 @@ Deploy the existing production report-processing worker as a scheduled Azure Con
 
 This is a narrow update to existing ClaimGuard infrastructure. The API, web application, databases, registry, Key Vault, storage account, Container Apps environment, and observability workspace remain unchanged.
 
+### 2026-07-19 onboarding and tenant-promotion extension
+
+Promote the three existing medical-aid private databases from schema 8 to schema 10, retain ClaimGuard as an active route-less platform organisation, and complete the web-admin onboarding path. Platform administrators can create, provision, upgrade, activate, issue one-time per-server ingestion credentials, review sync instructions, and revoke credentials without using Azure Portal.
+
+The provisioning controller receives the built-in `Key Vault Data Access Administrator` role on the existing vault. Azure constrains that role with ABAC to approved Key Vault data roles. The controller uses it only to assign `Key Vault Secrets User` to the fixed report-worker principal on each tenant route's four exact secrets; the report worker receives no vault-wide secret-read role.
+
 ## 2. Requirements and Azure context
 
 | Attribute | Value |
@@ -122,14 +128,15 @@ Azure Quota Management provider registration was enabled to perform the subscrip
 
 ### Deployment
 
-- [ ] Complete the pre-deployment subscription, location, conflict, and RBAC checks.
+- [x] Complete the pre-deployment subscription, location, conflict, and RBAC checks.
 - [x] Deploy the identity and five baseline role assignments.
 - [x] Verify live role assignments at exact scopes.
 - [x] Temporarily grant the signed-in user read access to the one control-plane secret, query eligible organisation metadata without printing credentials, and immediately revoke that temporary assignment.
-- [ ] Set the two GitHub organisation-scope variables.
-- [ ] Commit, push, and open a pull request.
+- [ ] Deploy the constrained provisioning-controller role.
+- [ ] Commit, push, and update the existing pull request.
+- [ ] Upgrade Bonitas, Discovery Health, and Momentum Health to schema 10 and activate their generation-2 routes.
 - [ ] Merge after CI passes.
-- [ ] Re-enable and run the report-producer deployment workflow from `main`.
+- [ ] Deploy the API, web interface, and auto-discovering report-producer workflow from `main`.
 - [ ] Verify the job schedule, managed identity, secrets, storage scope, and a successful execution.
 - [ ] Update status to `Deployed`.
 
@@ -151,6 +158,8 @@ Azure Quota Management provider registration was enabled to perform the subscrip
 | Post-diagnosis application verification | `pnpm turbo run lint build test` | Pass: 27 of 27 tasks | 2026-07-19 16:14 SAST |
 | Post-diagnosis ARM validation | Bicep compile, parameter compile, `az deployment group validate`, and what-if | Pass: template valid and no unapproved live changes with private-secret list empty | 2026-07-19 16:10 SAST |
 | Post-diagnosis worker image | `docker build --tag claimguard-report-producer:validation ...` | Pass with `azure-keyvault-secrets==4.11.0` | 2026-07-19 16:16 SAST |
+| Tenant-activation extension | Bicep compile, parameter compile, ARM validation, and what-if | Pass: one new constrained Key Vault role; dynamic managed-identity references only; no deletes or resource replacements | 2026-07-19 16:59 SAST |
+| Final application verification | `pnpm turbo run lint build test --output-logs=errors-only --summarize` | Pass: 27 of 27 tasks | 2026-07-19 16:58 SAST |
 
 ### Static role assignment verification
 
@@ -163,7 +172,7 @@ Azure Quota Management provider registration was enabled to perform the subscrip
 
 **Validated by:** Azure validation workflow
 
-**Validation timestamp:** 2026-07-19 16:17 SAST
+**Validation timestamp:** 2026-07-19 16:59 SAST
 
 ## 10A. Live deployment and routing discovery
 

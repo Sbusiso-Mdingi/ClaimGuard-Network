@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { ControlPlaneConflictError, ControlPlaneNotFoundError, ControlPlaneValidationError } from "./errors.js";
 import { withControlPlaneTransaction } from "./transaction.js";
 
@@ -77,6 +79,112 @@ export function createControlPlaneService({ pool, repositories }) {
           correlationId: actor?.correlationId || null, outcome: "success", source: actor?.source || "control-plane-service",
         });
         return updated;
+      });
+    },
+
+    async activateOrganisation(organisationId, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const organisation = await repositories.organisations.getById(organisationId, { executor });
+        if (!organisation) throw new ControlPlaneNotFoundError("Organisation was not found.", "ORGANISATION_NOT_FOUND");
+        if (organisation.organisationType !== "medical_scheme" || organisation.status !== "ready_for_activation") {
+          throw new ControlPlaneConflictError(
+            "Only a ready medical-scheme organisation can be activated.",
+            "ORGANISATION_NOT_READY",
+          );
+        }
+        const route = await repositories.routes.getInternalLatestReadyForOrganisation(organisationId, { executor });
+        if (!route || route.route_type !== "private_database" || String(route.schema_version) !== "10") {
+          throw new ControlPlaneConflictError("A schema-10 private route is required.", "PRIVATE_ROUTE_NOT_READY");
+        }
+        const [gateRows] = await executor.execute(
+          `SELECT
+             (SELECT COUNT(*) FROM organisation_schema_status
+               WHERE organisation_id = ? AND route_id = ? AND expected_schema_version = '10'
+                 AND observed_schema_version = '10' AND compatibility_status = 'compatible') AS schema_ready,
+             (SELECT COUNT(*) FROM worker_routing_status
+               WHERE organisation_id = ? AND worker_type = 'report-worker' AND status = 'ready') AS worker_ready,
+             (SELECT COUNT(*) FROM report_storage_partitions
+               WHERE organisation_id = ? AND provisioning_status = 'ready' AND retired_at IS NULL) AS storage_ready,
+             (SELECT COUNT(*) FROM organisation_memberships m
+               JOIN membership_roles mr ON mr.membership_id = m.membership_id AND mr.revoked_at IS NULL
+               JOIN roles r ON r.role_id = mr.role_id
+               WHERE m.organisation_id = ? AND m.status = 'active' AND r.role_key = 'scheme_administrator') AS admin_ready`,
+          [organisationId, route.route_id, organisationId, organisationId, organisationId],
+        );
+        const gates = gateRows?.[0] || {};
+        if (![gates.schema_ready, gates.worker_ready, gates.storage_ready, gates.admin_ready].every((value) => Number(value) > 0)) {
+          throw new ControlPlaneConflictError(
+            "Schema, report worker, storage, and initial administrator checks must pass before activation.",
+            "ACTIVATION_GATES_FAILED",
+          );
+        }
+        const activatedRoute = await repositories.routes.activate(route.route_id, organisationId, { executor });
+        const activatedOrganisation = await repositories.organisations.updateStatus(organisationId, "active", { executor });
+        await audit(executor, {
+          actorType: actor?.type || "user", actorId: actor?.id || null,
+          organisationScopeId: organisationId, action: "organisation.activate",
+          targetType: "organisation", targetId: organisationId,
+          beforeSummary: { status: organisation.status, routeId: route.route_id },
+          afterSummary: { status: activatedOrganisation.status, routeId: activatedRoute.routeId },
+          correlationId: actor?.correlationId || null, outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+        return { organisation: activatedOrganisation, route: activatedRoute };
+      });
+    },
+
+    async createIntegrationCredential({ organisationId, displayName, serviceActorId, expiresAt = null }, actor) {
+      const rawToken = `cg_live_${crypto.randomBytes(32).toString("base64url")}`;
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+      const tokenPrefix = rawToken.slice(0, 16);
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const organisation = await repositories.organisations.getById(organisationId, { executor });
+        if (!organisation || organisation.organisationType !== "medical_scheme") {
+          throw new ControlPlaneNotFoundError("Medical-scheme organisation was not found.", "ORGANISATION_NOT_FOUND");
+        }
+        if (organisation.status !== "active" || organisation.activationState !== "activated") {
+          throw new ControlPlaneConflictError(
+            "Integration credentials can be created only after organisation activation.",
+            "ORGANISATION_NOT_ACTIVE",
+          );
+        }
+        const credential = await repositories.integrationCredentials.create({
+          organisationId,
+          displayName,
+          serviceActorId,
+          tokenPrefix,
+          tokenHash,
+          expiresAt,
+          createdBy: actor?.id || null,
+        }, { executor });
+        await audit(executor, {
+          actorType: actor?.type || "user", actorId: actor?.id || null,
+          organisationScopeId: organisationId, action: "integration_credential.create",
+          targetType: "integration_credential", targetId: credential.integrationCredentialId,
+          afterSummary: { displayName: credential.displayName, serviceActorId: credential.serviceActorId, roleKey: credential.roleKey },
+          correlationId: actor?.correlationId || null, outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+        return { credential, bearerToken: rawToken };
+      });
+    },
+
+    async revokeIntegrationCredential({ organisationId, integrationCredentialId }, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const credential = await repositories.integrationCredentials.revoke({
+          organisationId,
+          integrationCredentialId,
+          revokedBy: actor?.id || null,
+        }, { executor });
+        await audit(executor, {
+          actorType: actor?.type || "user", actorId: actor?.id || null,
+          organisationScopeId: organisationId, action: "integration_credential.revoke",
+          targetType: "integration_credential", targetId: integrationCredentialId,
+          afterSummary: { status: credential.status, serviceActorId: credential.serviceActorId },
+          correlationId: actor?.correlationId || null, outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+        return credential;
       });
     },
 
@@ -176,7 +284,11 @@ export function createControlPlaneService({ pool, repositories }) {
       return withControlPlaneTransaction(pool, async (executor) => {
         const organisation = await repositories.organisations.getById(organisationId, { executor });
         if (!organisation) throw new ControlPlaneNotFoundError("Organisation was not found.", "ORGANISATION_NOT_FOUND");
-        if (!["draft", "failed", "provisioning"].includes(organisation.status)) {
+        const isUpgrade = operationType === "upgrade_private_database";
+        const allowedStatuses = isUpgrade
+          ? ["active", "suspended", "ready_for_activation"]
+          : ["draft", "failed", "provisioning"];
+        if (!allowedStatuses.includes(organisation.status)) {
           throw new ControlPlaneConflictError("Provisioning can be requested only for draft, failed, or provisioning organisations.", "ORGANISATION_NOT_PROVISIONABLE");
         }
 
@@ -185,7 +297,7 @@ export function createControlPlaneService({ pool, repositories }) {
           return existing[0];
         }
 
-        if (organisation.status !== "provisioning") {
+        if (!isUpgrade && organisation.status !== "provisioning") {
           await repositories.organisations.updateStatus(organisationId, "provisioning", { executor });
         }
 

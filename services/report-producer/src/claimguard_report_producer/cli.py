@@ -6,19 +6,20 @@ from pathlib import Path
 import sys
 import time
 
-from .worker import create_worker_from_environment
+from .worker import create_discovered_workers_from_environment, create_worker_from_environment
 
 def build_worker_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the ClaimGuard durable report-producer worker")
     parser.add_argument(
         "execution_mode",
         nargs="?",
-        choices=["once", "drain", "continuous"],
+        choices=["once", "drain", "drain-all", "continuous"],
         help="Execution mode. Positional form is preferred for container runtimes.",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true", help="Lease one bounded batch and exit (default)")
     mode.add_argument("--drain", action="store_true", help="Process bounded batches until the outbox is empty")
+    mode.add_argument("--drain-all", action="store_true", help="Drain every active compatible medical-aid route")
     mode.add_argument("--continuous", action="store_true", help="Poll continuously for local development")
     parser.add_argument(
         "--backend",
@@ -38,10 +39,16 @@ def build_worker_parser() -> argparse.ArgumentParser:
 def run_worker_command(argv: list[str]) -> int:
     parser = build_worker_parser()
     args = parser.parse_args(argv)
-    flag_mode = "continuous" if args.continuous else "drain" if args.drain else "once" if args.once else None
+    flag_mode = "continuous" if args.continuous else "drain-all" if args.drain_all else "drain" if args.drain else "once" if args.once else None
     if args.execution_mode and flag_mode:
         parser.error("Choose either a positional execution mode or a mode flag, not both.")
     execution_mode = args.execution_mode or flag_mode or "once"
+    if execution_mode == "drain-all":
+        workers = create_discovered_workers_from_environment(backend=args.backend, output_dir=args.output_dir)
+        for worker in workers:
+            worker.run_until_empty()
+        return 0
+
     worker = create_worker_from_environment(backend=args.backend, output_dir=args.output_dir)
     if execution_mode == "continuous":
         try:

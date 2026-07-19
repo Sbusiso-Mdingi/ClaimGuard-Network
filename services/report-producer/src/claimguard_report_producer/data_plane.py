@@ -100,6 +100,48 @@ class WorkerDataPlaneScope:
     connection_fingerprint: str = field(repr=False)
 
 
+def discover_active_worker_organisation_ids(
+    *,
+    control_plane_url: str,
+    supported_schema_versions: frozenset[str] = frozenset({"10"}),
+) -> tuple[str, ...]:
+    if not supported_schema_versions:
+        raise DataPlaneRouteError("At least one supported data-plane schema version is required.")
+    import pymysql
+
+    control = pymysql.connect(cursorclass=pymysql.cursors.DictCursor, **_connect_options(control_plane_url))
+    try:
+        with control.cursor() as cursor:
+            placeholders = ",".join(["%s"] * len(supported_schema_versions))
+            cursor.execute(
+                f"""SELECT o.organisation_id
+                    FROM organisations o
+                    JOIN data_plane_routes r
+                      ON r.organisation_id = o.organisation_id
+                     AND r.active_route_slot = o.organisation_id
+                    JOIN worker_routing_status w
+                      ON w.organisation_id = o.organisation_id
+                     AND w.worker_type = 'report-worker'
+                    WHERE o.organisation_type = 'medical_scheme'
+                      AND o.status = 'active' AND o.activation_state = 'activated'
+                      AND r.route_type IN ('legacy_shared', 'private_database')
+                      AND r.provisioning_status = 'active'
+                      AND r.health_status NOT IN ('suspended', 'unreachable')
+                      AND r.retired_at IS NULL
+                      AND r.schema_version IN ({placeholders})
+                      AND w.status = 'ready'
+                    ORDER BY o.organisation_id""",
+                sorted(supported_schema_versions),
+            )
+            rows = cursor.fetchall()
+    finally:
+        control.close()
+    organisation_ids = tuple(str(row["organisation_id"]) for row in rows)
+    if len(set(organisation_ids)) != len(organisation_ids):
+        raise DataPlaneRouteError("Active report-worker organisation discovery returned duplicate routes.")
+    return organisation_ids
+
+
 def resolve_worker_data_plane_scope(
     *,
     control_plane_url: str,

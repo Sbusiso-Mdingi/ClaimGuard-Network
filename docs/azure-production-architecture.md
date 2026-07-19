@@ -210,8 +210,8 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 | `REPORT_STORAGE_LATEST_POINTER` | `latest.json` |
 | `CONTROL_PLANE_MYSQL_URL` | redacted |
 | `MYSQL_URL` | redacted |
-| `REPORT_WORKER_ORGANISATION_ID` | one allow-listed organisation ID per worker |
-| `INTERNAL_SERVICE_ORGANISATION_IDS` | worker organisation allow-list |
+| Active route + `worker_routing_status` | authoritative report-worker organisation discovery |
+| Per-route Key Vault role assignments | exact four-secret access for each private tenant route |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | redacted |
 
 ## Production Configuration Summary

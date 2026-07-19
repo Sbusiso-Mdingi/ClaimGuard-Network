@@ -14,23 +14,20 @@ ClaimGuard receives claims from external medical-aid systems. No runtime compone
 
 ## Machine authentication
 
-Production uses session authentication for people and a separate bearer credential for ingestion producers. Configure the API with:
+Production uses session authentication for people and a separate bearer credential for each ingestion producer. A ClaimGuard platform administrator creates the credential from **Medical scheme onboarding → Connect the medical aid's claims server** after the organisation is active.
 
-- `INTERNAL_SERVICE_TOKEN`: at least 32 random characters, stored in the approved secret manager.
-- `INTERNAL_SERVICE_ORGANISATION_IDS`: comma-separated organisation IDs the credential may access.
-- `INTERNAL_SERVICE_ALLOWED_ROLES=claims_analyst`: the least-privilege default.
+- The raw token is returned once and ClaimGuard stores only its SHA-256 hash.
+- Each credential is bound to one active medical aid, one stable service actor, and the least-privilege `claims_analyst` role.
+- Credentials expire, can be revoked independently, and do not require an Azure configuration change.
+- `INTERNAL_SERVICE_TOKEN` remains a temporary compatibility path for an existing producer and should not be issued to new medical aids.
 
 The producer sends:
 
 - `Authorization: Bearer <secret>`
-- `x-cg-service-actor: <stable-producer-id>`
-- `x-cg-service-role: claims_analyst`
-- `x-cg-service-tenant: <tenant-id>`
-- `x-cg-service-organisation: <organisation-id>`
 - `Content-Type: application/json`
 - a unique `x-request-id` for trace correlation
 
-The server derives the recorded ingestion source from the authenticated service actor. Browser identity headers are rejected in session mode.
+The server derives the service actor, role, organisation, tenant, and recorded ingestion source from the credential. A medical-aid server cannot expand its scope with request headers. Browser identity headers are rejected in session mode.
 
 ## Batch contract
 
@@ -105,6 +102,6 @@ Treat `202` as the only successful ingestion response. Retry transient `5xx` and
 - `CLAIM_INGESTION_MAX_REFERENCE_RECORDS` defaults to `2000` per reference collection and is capped at `20000`.
 - `CLAIM_INGESTION_MAX_BODY_BYTES` defaults to `2000000` bytes and is capped at `20000000`.
 
-The desktop producer should buffer transient failures, use exponential backoff with jitter, keep the same batch contents for a retry, and retain the returned job and correlation IDs. Credential rotation and Azure Entra workload identity are the next hardening step before real medical-aid connectivity.
+The desktop producer should buffer transient failures, use exponential backoff with jitter, keep the same batch contents for a retry, and retain the returned job and correlation IDs. For a future real medical-aid connection, rotate the onboarding credential and consider Azure Entra workload identity when both organisations can establish federation. The bearer credential is suitable for the current MVP when it is stored in the sender's secret store, rotated on schedule, and sent only over HTTPS.
 
 See `desktop-producer-windows.md` for the Windows host baseline and the distinction between a producer-only machine and a full development workstation.

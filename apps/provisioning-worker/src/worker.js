@@ -23,9 +23,23 @@ const REQUIRED_STEPS = Object.freeze([
   "create_report_partition",
   "register_worker_routing",
   "register_private_route",
+  "grant_report_worker_secret_access",
+  "record_schema_compatibility",
+  "mark_report_worker_ready",
   "create_initial_scheme_admin",
   "run_activation_checks",
   "ready_for_activation",
+]);
+
+const REQUIRED_UPGRADE_STEPS = Object.freeze([
+  "validate_upgrade_request",
+  "apply_tenant_schema",
+  "write_data_plane_metadata",
+  "verify_database_isolation",
+  "grant_report_worker_secret_access",
+  "register_schema_10_route",
+  "record_schema_compatibility",
+  "mark_report_worker_ready",
 ]);
 
 function log(level, event, details = {}) {
@@ -53,6 +67,50 @@ function organisationSafeDatabaseName(canonicalSlug) {
 
 function organisationSecretPrefix(organisationId) {
   return `claimguard--tenant--${String(organisationId || "").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase()}`;
+}
+
+function deterministicGuid(value) {
+  const bytes = Buffer.from(crypto.createHash("sha256").update(value).digest().subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function grantReportWorkerSecretAccess(policy, secretNames) {
+  const principalId = requireEnv("AZURE_REPORT_WORKER_PRINCIPAL_ID");
+  const roleDefinitionId = `/subscriptions/${policy.subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6`;
+  const { DefaultAzureCredential } = await import("@azure/identity");
+  const credential = new DefaultAzureCredential();
+  const accessToken = await credential.getToken("https://management.azure.com/.default");
+  if (!accessToken?.token) throw new Error("Azure Resource Manager token acquisition failed.");
+
+  for (const secretName of secretNames) {
+    const scope = `/subscriptions/${policy.subscriptionId}/resourceGroups/${policy.resourceGroup}`
+      + `/providers/Microsoft.KeyVault/vaults/${policy.keyVaultName}/secrets/${secretName}`;
+    const assignmentId = deterministicGuid(`${scope}:${principalId}:${roleDefinitionId}`);
+    const response = await fetch(
+      `https://management.azure.com${scope}/providers/Microsoft.Authorization/roleAssignments/${assignmentId}?api-version=2022-04-01`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${accessToken.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          properties: {
+            principalId,
+            principalType: "ServicePrincipal",
+            roleDefinitionId,
+            description: "Allow the ClaimGuard report worker to resolve this tenant route secret.",
+          },
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Report-worker secret role assignment failed with HTTP ${response.status}.`);
+    }
+  }
 }
 
 function parseAzurePolicy(organisation) {
@@ -304,6 +362,9 @@ async function runProvisioningOperation({
   if (!organisation) {
     throw new Error("Organisation not found for operation.");
   }
+  if (operation.operationType !== "onboard_private_database") {
+    throw new Error("Unsupported onboarding operation type.");
+  }
 
   const policy = parseAzurePolicy(organisation);
   const secretPrefix = organisationSecretPrefix(organisation.organisationId);
@@ -443,6 +504,50 @@ async function runProvisioningOperation({
     }, { type: "system", id: "provisioning-worker", source: "provisioning-worker" });
   });
 
+  await runStep("grant_report_worker_secret_access", async () => {
+    await grantReportWorkerSecretAccess(policy, [
+      runtimeUsernameSecretName,
+      runtimePasswordSecretName,
+      runtimeHostSecretName,
+      runtimeDatabaseSecretName,
+    ]);
+  });
+
+  await runStep("record_schema_compatibility", async () => {
+    const [rows] = await controlPool.execute(
+      `SELECT route_id FROM data_plane_routes
+       WHERE organisation_id = ? AND route_type = 'private_database' AND retired_at IS NULL
+       ORDER BY route_generation DESC LIMIT 1`,
+      [organisation.organisationId],
+    );
+    const routeId = rows?.[0]?.route_id;
+    if (!routeId) throw new Error("Private route was not registered.");
+    await controlPool.execute(
+      `UPDATE data_plane_routes SET provisioning_status = 'ready', health_status = 'healthy'
+       WHERE route_id = ? AND active_route_slot IS NULL`,
+      [routeId],
+    );
+    await controlPool.execute(
+      `INSERT INTO organisation_schema_status
+        (organisation_id, route_id, expected_schema_version, observed_schema_version,
+         compatibility_status, last_checked_at, safe_error_summary)
+       VALUES (?, ?, '10', '10', 'compatible', UTC_TIMESTAMP(3), NULL)
+       ON DUPLICATE KEY UPDATE route_id = VALUES(route_id), expected_schema_version = '10',
+         observed_schema_version = '10', compatibility_status = 'compatible',
+         last_checked_at = UTC_TIMESTAMP(3), safe_error_summary = NULL`,
+      [organisation.organisationId, routeId],
+    );
+  });
+
+  await runStep("mark_report_worker_ready", async () => {
+    await controlPool.execute(
+      `UPDATE worker_routing_status SET status = 'ready', routing_generation = routing_generation + 1,
+         safe_error_summary = NULL
+       WHERE organisation_id = ? AND worker_type = 'report-worker'`,
+      [organisation.organisationId],
+    );
+  });
+
   await runStep("create_initial_scheme_admin", async () => {
     const exists = await ensureInitialSchemeAdministrator(controlPool, organisation.organisationId);
     if (!exists) {
@@ -503,6 +608,165 @@ async function runProvisioningOperation({
   await repositories.provisioning.transitionOperation(operation.operationId, ["running"], "completed", { leaseToken: operation.leaseToken });
 }
 
+async function runUpgradeOperation({
+  controlPool,
+  repositories,
+  service,
+  operation,
+  adminPool,
+  secretStore,
+}) {
+  const organisation = await repositories.organisations.getById(operation.organisationId);
+  if (!organisation) throw new Error("Organisation not found for upgrade operation.");
+  if (operation.operationType !== "upgrade_private_database") throw new Error("Unsupported upgrade operation type.");
+
+  const policy = parseAzurePolicy(organisation);
+  const secretPrefix = organisationSecretPrefix(organisation.organisationId);
+  const secretNames = [
+    `${secretPrefix}--mysql-username`,
+    `${secretPrefix}--mysql-password`,
+    `${secretPrefix}--mysql-host`,
+    `${secretPrefix}--mysql-database`,
+  ];
+  const tenantCredential = await resolveTenantCredential(secretStore, organisation.organisationId, secretNames[0], secretNames[1]);
+  if (!tenantCredential.persisted) throw new Error("Existing private database credentials were not found in Key Vault.");
+  const runStep = (stepKey, runner, options = {}) => stepRunner(
+    repositories,
+    operation.operationId,
+    stepKey,
+    runner,
+    { ...options, leaseToken: operation.leaseToken },
+  );
+  let sourceRoute;
+  let upgradedRoute;
+
+  await runStep("validate_upgrade_request", async () => {
+    if (organisation.organisationType !== "medical_scheme"
+      || !["active", "suspended", "ready_for_activation"].includes(organisation.status)) {
+      throw new Error("Only an existing medical-scheme private route can be upgraded.");
+    }
+    const [rows] = await controlPool.execute(
+      `SELECT * FROM data_plane_routes
+       WHERE organisation_id = ? AND route_type = 'private_database'
+         AND retired_at IS NULL
+       ORDER BY (active_route_slot = organisation_id) DESC, route_generation DESC LIMIT 2`,
+      [organisation.organisationId],
+    );
+    sourceRoute = rows?.[0];
+    if (!sourceRoute || sourceRoute.database_name !== policy.databaseName
+      || sourceRoute.logical_database_identifier !== policy.logicalDatabaseIdentifier) {
+      throw new Error("The existing private route does not match the approved database identity.");
+    }
+    const expectedReferences = secretNames.map((name) => `https://${policy.keyVaultName}.vault.azure.net/secrets/${name}`);
+    const actualReferences = String(sourceRoute.secret_reference || "").split(",").map((value) => value.trim());
+    if (expectedReferences.some((reference, index) => actualReferences[index] !== reference)) {
+      throw new Error("The existing private route secret references do not match the approved tenant secrets.");
+    }
+  });
+  if (!sourceRoute) {
+    const [rows] = await controlPool.execute(
+      `SELECT * FROM data_plane_routes
+       WHERE organisation_id = ? AND route_type = 'private_database'
+       ORDER BY (active_route_slot = organisation_id) DESC, route_generation DESC LIMIT 1`,
+      [organisation.organisationId],
+    );
+    sourceRoute = rows?.[0];
+  }
+  if (!sourceRoute) throw new Error("Private route disappeared after upgrade validation.");
+
+  await runStep("apply_tenant_schema", async () => {
+    await ensurePrivateSchema(adminPool, policy.databaseName, organisation, policy);
+  }, { resourceReference: `schema:${policy.databaseName}:${policy.schemaVersion}` });
+
+  await runStep("write_data_plane_metadata", async () => {
+    const [rows] = await adminPool.execute(
+      `SELECT database_mode, logical_database_identifier, schema_version, environment_key, migration_version
+       FROM \`${policy.databaseName}\`.data_plane_metadata WHERE metadata_key = 'primary'`,
+    );
+    const metadata = rows?.[0];
+    if (!metadata || metadata.database_mode !== "private_database"
+      || metadata.logical_database_identifier !== policy.logicalDatabaseIdentifier
+      || String(metadata.schema_version) !== "10" || metadata.environment_key !== policy.environmentKey
+      || Number(metadata.migration_version) !== 10) {
+      throw new Error("Upgraded private data-plane metadata verification failed.");
+    }
+  });
+
+  await runStep("verify_database_isolation", async () => {
+    await verifyIsolation(adminPool, {
+      tenantUsername: tenantCredential.username,
+      tenantPassword: tenantCredential.password,
+      databaseName: policy.databaseName,
+      adminDatabaseUrl: requireEnv("MYSQL_SERVER_ADMIN_URL"),
+    });
+  });
+
+  await runStep("grant_report_worker_secret_access", async () => {
+    await grantReportWorkerSecretAccess(policy, secretNames);
+  });
+
+  await runStep("register_schema_10_route", async () => {
+    const [existingRows] = await controlPool.execute(
+      `SELECT route_id FROM data_plane_routes
+       WHERE organisation_id = ? AND schema_version = '10' AND retired_at IS NULL
+       ORDER BY route_generation DESC LIMIT 1`,
+      [organisation.organisationId],
+    );
+    if (existingRows?.[0]?.route_id) {
+      upgradedRoute = await repositories.routes.getSafeById(existingRows[0].route_id);
+      return;
+    }
+    upgradedRoute = await service.registerRoute({
+      organisationId: organisation.organisationId,
+      routeType: "private_database",
+      logicalDatabaseIdentifier: policy.logicalDatabaseIdentifier,
+      azureResourceIdentifier: sourceRoute.azure_resource_identifier,
+      databaseName: policy.databaseName,
+      secretReference: sourceRoute.secret_reference,
+      region: policy.region,
+      schemaVersion: "10",
+      provisioningStatus: organisation.status === "active" ? "active" : "ready",
+      healthStatus: "healthy",
+      activate: organisation.status === "active",
+    }, { type: "system", id: "provisioning-worker", source: "provisioning-worker" });
+  });
+
+  await runStep("record_schema_compatibility", async () => {
+    if (!upgradedRoute?.routeId) {
+      const [rows] = await controlPool.execute(
+        `SELECT route_id FROM data_plane_routes
+         WHERE organisation_id = ? AND schema_version = '10' AND retired_at IS NULL
+         ORDER BY route_generation DESC LIMIT 1`,
+        [organisation.organisationId],
+      );
+      upgradedRoute = rows?.[0] ? { routeId: rows[0].route_id } : null;
+    }
+    if (!upgradedRoute?.routeId) throw new Error("Schema-10 route was not registered.");
+    await controlPool.execute(
+      `INSERT INTO organisation_schema_status
+        (organisation_id, route_id, expected_schema_version, observed_schema_version,
+         compatibility_status, last_checked_at, safe_error_summary)
+       VALUES (?, ?, '10', '10', 'compatible', UTC_TIMESTAMP(3), NULL)
+       ON DUPLICATE KEY UPDATE route_id = VALUES(route_id), expected_schema_version = '10',
+         observed_schema_version = '10', compatibility_status = 'compatible',
+         last_checked_at = UTC_TIMESTAMP(3), safe_error_summary = NULL`,
+      [organisation.organisationId, upgradedRoute.routeId],
+    );
+  });
+
+  await runStep("mark_report_worker_ready", async () => {
+    await controlPool.execute(
+      `INSERT INTO worker_routing_status (organisation_id, worker_type, status, routing_generation)
+       VALUES (?, 'report-worker', 'ready', 1)
+       ON DUPLICATE KEY UPDATE status = 'ready', routing_generation = routing_generation + 1,
+         safe_error_summary = NULL`,
+      [organisation.organisationId],
+    );
+  });
+
+  await repositories.provisioning.transitionOperation(operation.operationId, ["running"], "completed", { leaseToken: operation.leaseToken });
+}
+
 export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
   const controlPlaneUrl = requireEnv("CONTROL_PLANE_MYSQL_URL");
   const controlPool = createControlPlanePool(controlPlaneUrl);
@@ -526,14 +790,10 @@ export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
         organisationId: operation.organisationId,
       });
       try {
-        await runProvisioningOperation({
-          controlPool,
-          repositories,
-          service,
-          operation,
-          adminPool,
-          secretStore,
-        });
+        const runner = operation.operationType === "upgrade_private_database"
+          ? runUpgradeOperation
+          : runProvisioningOperation;
+        await runner({ controlPool, repositories, service, operation, adminPool, secretStore });
         log("info", "provisioning_operation_completed", { operationId: operation.operationId, organisationId: operation.organisationId });
       } catch (error) {
         await withControlPlaneTransaction(controlPool, async (executor) => {
@@ -563,4 +823,4 @@ export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
   }
 }
 
-export { REQUIRED_STEPS };
+export { REQUIRED_STEPS, REQUIRED_UPGRADE_STEPS };
