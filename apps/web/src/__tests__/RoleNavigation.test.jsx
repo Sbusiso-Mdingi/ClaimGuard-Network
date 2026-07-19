@@ -20,8 +20,6 @@ function renderLayout() {
               <InvestigatorLayout
                 liveRefreshEnabled={false}
                 setLiveRefreshEnabled={() => {}}
-                simulatorState={{ status: "ready", simulator: { status: "paused", mode: "live" }, controlPending: false }}
-                sendSimulatorCommand={() => {}}
                 refreshNow={() => {}}
                 lastRefresh={null}
                 ledgerStatus="Not linked"
@@ -50,13 +48,4 @@ test("switching the dev role switcher to Scheme Administrator reveals admin nav 
 
   expect(await screen.findByRole("link", { name: /Scheme Administration/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Claims Explorer/i })).not.toBeInTheDocument();
-});
-
-test("only platform administrator sees simulator mutation controls", async () => {
-  const user = userEvent.setup();
-  renderLayout();
-  expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
-  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
-  await user.selectOptions(identitySelect, "platform-admin");
-  expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
 });

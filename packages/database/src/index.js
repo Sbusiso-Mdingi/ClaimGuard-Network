@@ -25,7 +25,9 @@ export {
 export { createOperationalRepositories } from "./operational-repositories.js";
 export {
   ClaimOwnershipConflictError,
+  ClaimReferenceValidationError,
   createClaimIngestionRepository,
+  ReferenceOwnershipConflictError,
 } from "./claim-ingestion-repository.js";
 export {
   createClaimsReadRepository,
@@ -92,19 +94,6 @@ export {
   OperationalMigrationChecksumMismatchError,
   OperationalMigrationExecutionError,
 } from "./migrate.js";
-export {
-  createSimulationStateRepository,
-  DEFAULT_SIMULATION_ID,
-  DEFAULT_SIMULATION_SCOPE_KEY,
-  SIMULATION_CHECKPOINT_VERSION,
-  SIMULATION_MODES,
-  SIMULATION_STATUSES,
-  SimulationCheckpointError,
-  SimulationConflictError,
-  SimulationLeaseLostError,
-} from "./simulation-state-repository.js";
-export { loadSyntheticPhase1Data, seedSyntheticDatabase } from "./seed.js";
-
 export const ledgerEntriesTable = mysqlTable("ledger_entries", {
   id: int("id").autoincrement().primaryKey(),
   sequenceNumber: int("sequence_number").notNull(),

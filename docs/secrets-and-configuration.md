@@ -24,8 +24,8 @@ CI/CD:
 
 | Canonical name | Purpose | Owner | Environment | Sensitivity | Source of truth | Runtime consumer | Delivery method | Rotation | Last known state | Rollback | Duplicated | Removable later |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `MYSQL_URL` | API operational DB connection | Platform / API ops | prod-like | secret | Key Vault secret `claimguard--api--mysql-url` | API, migrations, worker jobs | App Service Key Vault reference | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
-| `CONTROL_PLANE_MYSQL_URL` | control-plane DB connection | Platform / control-plane ops | prod-like | secret | Key Vault secret `claimguard--api--control-plane-mysql-url` | API control-plane/session code | App Service Key Vault reference | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
+| `MYSQL_URL` | API operational DB connection | Platform / API ops | prod-like | secret | Key Vault secret `claimguard--api--mysql-url` | API, migrations, report worker | App Service Key Vault reference or job secret | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
+| `CONTROL_PLANE_MYSQL_URL` | control-plane DB connection | Platform / control-plane ops | prod-like | secret | Key Vault secret `claimguard--api--control-plane-mysql-url` | API control-plane/session code and report-worker route verification | App Service Key Vault reference or job secret | periodic, not evidenced | migrated to Key Vault reference in Phase 12A | restore prior App Service setting value if rollback required | yes | no |
 | tenant DB credential refs | private tenant route access | Platform | prod-like | secret | control plane / runtime secret boundary | routed data-plane code | route-managed secret reference | route-dependent | documented in code, not fully normalized live | restore previous route secret mapping | possible | maybe |
 | session signing material | opaque session secret | API platform | session/local/prod | secret | control-plane/session storage; runtime boundary pending normalization | API session middleware | secret store / session service | periodic | implemented in code, live delivery not fully inventoried | revert session version | unknown | no |
 | CSRF config | CSRF and origin checks | API platform | session/local/prod | sensitive config | App settings and session config | API session middleware | config/env | per policy | live config exists | revert origin/cookie config | yes | no |
@@ -37,7 +37,6 @@ CI/CD:
 | `NEW_RELIC_LICENSE_KEY` | APM auth | observability | prod-like | secret | live App Service setting / future Doppler | API | env | periodically | live | revert key | yes | yes |
 | `NEW_RELIC_APP_NAME` | APM name | observability | prod-like | config | live App Service setting / future Doppler | API | env | rarely | live | revert name | yes | yes |
 | Application Insights connection | Azure telemetry | observability | prod-like | secret-ish | code/workflow config pending | API/web/worker | env/config | change-driven | referenced in docs/code, not fully inventoried live | revert connection string | unknown | yes |
-| `CODECOV_TOKEN` | test coverage upload | CI | CI | secret | GitHub secret | CI workflow | GitHub secret | periodic | referenced in CI | revert token | yes | yes |
 | `AZURE_CLIENT_ID` / tenant / subscription | OIDC deployment identity | CI | CI | identity metadata | workflow env | GitHub Actions | workflow env | change-driven | live values present in workflows | revert workflow env | yes | no |
 
 ## Current Live Settings by Name Only
@@ -74,8 +73,9 @@ CI/CD:
 ### GitHub Actions references
 
 - OIDC values are present in workflow env blocks.
-- `CLAIMGUARD_MYSQL_URL` and `REPORT_STORAGE_CONNECTION_STRING` are referenced by the producer workflow.
-- `CODECOV_TOKEN` is referenced by the main CI workflow.
+- `CLAIMGUARD_CONTROL_PLANE_MYSQL_URL`, `CLAIMGUARD_MYSQL_URL`, and `REPORT_STORAGE_CONNECTION_STRING` are referenced by the producer workflow.
+- `REPORT_WORKER_ORGANISATION_ID` and `INTERNAL_SERVICE_ORGANISATION_IDS` constrain each worker deployment to an explicit organisation scope.
+- Codecov uploads use GitHub OIDC rather than a repository token.
 
 ## Doppler Inventory Status
 

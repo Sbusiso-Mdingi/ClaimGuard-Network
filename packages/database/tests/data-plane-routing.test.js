@@ -17,7 +17,7 @@ function context(overrides = {}) {
     organisationId: "org-alpha", organisationType: "medical_scheme", organisationStatus: "active",
     operationalTenantId: "tenant-alpha", operationalTenantSlug: "alpha", routeId: "route-alpha",
     routeType: "legacy_shared", routeGeneration: 1, logicalDatabaseIdentifier: "legacy-operational-shared",
-    databaseName: "operational", schemaVersion: "8", deploymentClass: "demo", correlationId: "corr",
+    databaseName: "operational", schemaVersion: "10", deploymentClass: "demo", correlationId: "corr",
     ...overrides,
   });
 }
@@ -28,7 +28,7 @@ function fakePool(id, metadata = {}) {
     async execute(sql) {
       if (sql.includes("data_plane_metadata")) return [[{
         database_mode: "legacy_shared", logical_database_identifier: "legacy-operational-shared",
-        schema_version: "8", environment_key: "legacy", migration_version: 8, ...metadata,
+        schema_version: "10", environment_key: "legacy", migration_version: 10, ...metadata,
       }], []];
       return [[], []];
     },
@@ -43,7 +43,7 @@ test("DataPlaneContext is immutable, secret-free, and keyed by immutable route i
   assert.equal(Object.isFrozen(value), true);
   assert.equal(value.organisationId, "org-alpha");
   assert.equal(value.operationalTenantId, "tenant-alpha");
-  assert.equal(value.secretReference, null);
+  assert.equal(Object.hasOwn(value, "secretReference"), false);
   assert.equal(Object.hasOwn(value, "connectionString"), false);
   assert.equal(dataPlanePoolKey(value), "org-alpha:route-alpha:1");
   assert.throws(() => createDataPlaneContext({ ...value, organisationId: "", operationalTenantSlug: "alpha" }), /organisationId/);
@@ -64,7 +64,7 @@ test("manager isolates organisations on one physical adapter, deduplicates same-
   const pools = [];
   const adapter = {
     async create() { const pool = fakePool(`pool-${++creations}`); pools.push(pool); return pool; },
-    async verify() { return { schemaVersion: "8" }; },
+    async verify() { return { schemaVersion: "10" }; },
     async close(pool) { await pool.end(); },
   };
   const manager = createTenantConnectionManager({ adapters: { legacy_shared: adapter }, maxPools: 4 });
@@ -104,7 +104,7 @@ test("a late old-generation creation cannot publish after a newer generation is 
       pools.push(pool);
       return pool;
     },
-    async verify() { return { schemaVersion: "8" }; },
+    async verify() { return { schemaVersion: "10" }; },
     async close(pool) { await pool.end(); },
   };
   const manager = createTenantConnectionManager({ adapters: { legacy_shared: adapter } });
@@ -122,7 +122,7 @@ test("pool limit, idle eviction, and tenant-specific creation failure fail close
   let clock = 0;
   const adapter = {
     async create(ctx) { if (ctx.organisationId === "org-alpha") throw Object.assign(new Error("alpha unavailable"), { code: "ALPHA_DOWN" }); return fakePool(ctx.organisationId); },
-    async verify() { return { schemaVersion: "8" }; },
+    async verify() { return { schemaVersion: "10" }; },
     async close(pool) { await pool.end(); },
   };
   const manager = createTenantConnectionManager({ adapters: { legacy_shared: adapter }, maxPools: 1, idleTimeoutMs: 10, now: () => clock });
@@ -141,7 +141,7 @@ test("pool creation and active-request drain timeouts apply backpressure", async
   const slowManager = createTenantConnectionManager({
     adapters: { legacy_shared: {
       async create() { return new Promise((resolve) => setTimeout(() => resolve(fakePool("late")), 20)); },
-      async verify() { return { schemaVersion: "8" }; }, async close(pool) { await pool.end(); },
+      async verify() { return { schemaVersion: "10" }; }, async close(pool) { await pool.end(); },
     } },
     creationTimeoutMs: 2,
   });
@@ -149,7 +149,7 @@ test("pool creation and active-request drain timeouts apply backpressure", async
 
   const manager = createTenantConnectionManager({
     adapters: { legacy_shared: {
-      async create() { return fakePool("active"); }, async verify() { return { schemaVersion: "8" }; }, async close(pool) { await pool.end(); },
+      async create() { return fakePool("active"); }, async verify() { return { schemaVersion: "10" }; }, async close(pool) { await pool.end(); },
     } },
     drainTimeoutMs: 2,
   });
@@ -167,7 +167,7 @@ test("legacy_shared adapter verifies metadata before publication and closes mism
   });
   const pool = await adapter.create(context());
   const verified = await adapter.verify(pool, context());
-  assert.equal(verified.schemaVersion, "8");
+  assert.equal(verified.schemaVersion, "10");
 
   const badAdapter = createLegacySharedAdapter({
     databaseUrl: "mysql://user:pass@localhost/operational",

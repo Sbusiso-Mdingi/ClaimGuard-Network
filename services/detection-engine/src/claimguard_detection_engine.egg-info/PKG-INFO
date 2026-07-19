@@ -1,5 +1,0 @@
-Metadata-Version: 2.4
-Name: claimguard-detection-engine
-Version: 0.1.0
-Summary: Phase 4 detection engine for ClaimGuard synthetic claims data
-Requires-Python: >=3.11

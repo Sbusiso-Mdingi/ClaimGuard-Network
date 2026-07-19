@@ -8,11 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from .contract import ReportContractError
+from .contract import ReportContractError, validate_detection_report
 from .data_plane import resolve_worker_data_plane_scope
 from .outbox import OutboxJob, PyMySqlOutboxRepository
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
-from .runtime import DetectionReportProducer
 from .snapshot import PyMySqlTenantSnapshotRepository
 from .sources import build_report_from_tenant_snapshot
 
@@ -158,23 +157,16 @@ class ReportProducerWorker:
                 correlation_id=correlation_id,
                 top_n=self.config.top_n,
             )
-
-            def detector(_data_dir: Path, _top_n: int) -> dict[str, object]:
-                return report
-
-            producer = DetectionReportProducer(
-                data_dir=Path("."),
-                publisher=self.publisher,
-                top_n=self.config.top_n,
-                max_retries=0,
-                detector=detector,
+            validate_detection_report(report, expected_tenant_id=job.tenant_id)
+            published = self.publisher.publish(
+                report,
+                run_id=f"outbox-tenant-{job.tenant_id}",
                 tenant_id=job.tenant_id,
             )
-            result = producer.run(trigger=f"outbox-tenant-{job.tenant_id}")
             if not self.repository.mark_completed_many(
                 jobs=jobs,
                 worker_id=self.config.worker_id,
-                report_id=result.published.version,
+                report_id=published.version,
                 watermark=snapshot.watermark,
             ):
                 raise RuntimeError("An active job lease was lost before coalesced completion could be recorded.")
@@ -183,7 +175,7 @@ class ReportProducerWorker:
                     "info",
                     "outbox_job_completed",
                     candidate,
-                    covered_report_id=result.published.version,
+                    covered_report_id=published.version,
                     covered_watermark=snapshot.watermark,
                 )
         except (TerminalJobError, ReportContractError) as error:

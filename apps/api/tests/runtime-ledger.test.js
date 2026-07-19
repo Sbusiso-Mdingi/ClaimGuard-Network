@@ -34,7 +34,7 @@ test("latest ledger endpoint returns the repository entry when mysql is availabl
       entryType: "DATA_SEEDED",
       previousHash: "0".repeat(64),
       entryHash: "a".repeat(64),
-      payload: { source: "phase1-synthetic" },
+      payload: { source: "test-fixture" },
     }),
   });
 

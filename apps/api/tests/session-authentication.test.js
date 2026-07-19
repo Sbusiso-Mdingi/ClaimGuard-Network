@@ -78,6 +78,7 @@ function sessionApp(options = {}) {
 test("authentication configuration defaults to session and rejects production header or demo exposure modes", () => {
   const session = resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control" });
   assert.equal(session.mode, "session");
+  assert.deepEqual(session.internalServiceAllowedRoles, ["claims_analyst"]);
   assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "hybrid" }), /session or demo_headers/);
   assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "demo_headers", DEPLOYMENT_CLASS: "production" }), /refuses/);
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production" }), /AUTH_ALLOWED_ORIGINS/);
@@ -182,24 +183,24 @@ test("internal service authentication uses its dedicated bearer mechanism and re
   const { app } = sessionApp({ configuration: { internalServiceToken: token, internalServiceOrganisationIds: ["org-1"] } });
   const accepted = await app.request("http://localhost/health", { headers: {
     authorization: `Bearer ${token}`,
-    "x-cg-service-actor": "simulator-worker",
-    "x-cg-service-role": "platform_administrator",
+    "x-cg-service-actor": "medical-aid-desktop",
+    "x-cg-service-role": "claims_analyst",
     "x-cg-service-tenant": "tenant-alpha",
     "x-cg-service-organisation": "org-1",
   } });
   assert.equal(accepted.status, 200);
   const outsideScope = await app.request("http://localhost/health", { headers: {
     authorization: `Bearer ${token}`,
-    "x-cg-service-actor": "simulator-worker",
-    "x-cg-service-role": "platform_administrator",
+    "x-cg-service-actor": "medical-aid-desktop",
+    "x-cg-service-role": "claims_analyst",
     "x-cg-service-tenant": "tenant-beta",
     "x-cg-service-organisation": "org-beta",
   } });
   assert.equal(outsideScope.status, 403);
   const rejected = await app.request("http://localhost/health", { headers: {
     authorization: `Bearer ${token}`,
-    "x-cg-service-actor": "simulator-worker",
-    "x-cg-service-role": "platform_administrator",
+    "x-cg-service-actor": "medical-aid-desktop",
+    "x-cg-service-role": "claims_analyst",
     "x-cg-service-tenant": "tenant-alpha",
     "x-cg-service-organisation": "org-1",
     "x-claimguard-role": "investigator",

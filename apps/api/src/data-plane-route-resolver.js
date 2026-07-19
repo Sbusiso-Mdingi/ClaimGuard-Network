@@ -13,7 +13,7 @@ const routeFailure = (message, code) => new DataPlaneRouteError(message, code);
 
 export function createControlPlaneDataPlaneRouteResolver({
   repositories,
-  supportedSchemaVersions = ["8"],
+  supportedSchemaVersions = ["10"],
 } = {}) {
   if (!repositories?.organisations || !repositories?.routes || !repositories?.legacyMappings) {
     throw new TypeError("The data-plane route resolver requires control-plane repositories.");

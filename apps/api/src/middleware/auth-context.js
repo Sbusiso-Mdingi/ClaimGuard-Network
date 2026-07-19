@@ -84,9 +84,6 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "scheme_health.view": ["tenant_status.view"],
   "organisation.manage": ["tenants.manage"],
   "platform_health.view": ["platform_health.view"],
-  "simulator.status": ["simulator.status_view"],
-  "simulator.control_own": ["simulator.control"],
-  "simulator.control_platform": ["simulator.control"],
 });
 
 export function operationalPermissions(controlPermissions) {
@@ -134,7 +131,9 @@ export function createSessionAuthenticationProvider({ authenticationService, con
         const organisationId = normalizeHeaderValue(request.headers.get("x-cg-service-organisation"));
         const roles = parseRoles(roleHeader || "");
         const allowedOrganisations = configuration.internalServiceOrganisationIds || [];
-        if (!userId || !tenantId || !organisationId || roles.length === 0 || !allowedOrganisations.includes(organisationId)) {
+        const allowedRoles = new Set(parseRoles((configuration.internalServiceAllowedRoles || ["claims_analyst"]).join(",")));
+        const rolesAllowed = roles.length > 0 && roles.every((role) => allowedRoles.has(role));
+        if (!userId || !tenantId || !organisationId || !rolesAllowed || !allowedOrganisations.includes(organisationId)) {
           const error = new ForbiddenError("Internal service identity is incomplete.");
           error.code = "INTERNAL_SERVICE_IDENTITY_INVALID";
           throw error;

@@ -62,10 +62,10 @@ function parseAzurePolicy(organisation) {
   const region = requireEnv("AZURE_APPROVED_REGION");
   const storageAccount = requireEnv("AZURE_APPROVED_STORAGE_ACCOUNT");
   const reportContainer = requireEnv("AZURE_APPROVED_REPORT_CONTAINER");
-  const schemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION?.trim() || "8";
+  const schemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION?.trim() || "10";
   const environmentKey = process.env.AZURE_APPROVED_ENVIRONMENT_KEY?.trim() || "production";
   const subscriptionId = requireEnv("AZURE_APPROVED_SUBSCRIPTION_ID");
-  if (schemaVersion !== "8") throw new Error("PRIVATE_TENANT_SCHEMA_VERSION must be 8 for the canonical operational schema.");
+  if (schemaVersion !== "10") throw new Error("PRIVATE_TENANT_SCHEMA_VERSION must be 10 for the canonical operational schema.");
   return {
     resourceGroup,
     mysqlServerName,
@@ -164,7 +164,7 @@ async function ensurePrivateSchema(adminPool, databaseName, organisation, policy
     await connection.query(
       `UPDATE data_plane_metadata
        SET database_mode = 'private_database', logical_database_identifier = ?,
-         schema_version = ?, environment_key = ?, migration_version = 8
+         schema_version = ?, environment_key = ?, migration_version = 10
        WHERE metadata_key = 'primary'`,
       [policy.logicalDatabaseIdentifier, policy.schemaVersion, policy.environmentKey],
     );
@@ -378,7 +378,7 @@ async function runProvisioningOperation({
       || metadata.logical_database_identifier !== policy.logicalDatabaseIdentifier
       || String(metadata.schema_version) !== policy.schemaVersion
       || metadata.environment_key !== policy.environmentKey
-      || Number(metadata.migration_version) !== 8) {
+      || Number(metadata.migration_version) !== 10) {
       throw new Error("Private data-plane metadata verification failed.");
     }
   });
@@ -413,10 +413,9 @@ async function runProvisioningOperation({
         (organisation_id, worker_type, status, routing_generation)
        VALUES
         (?, 'report-worker', 'pending', 1),
-        (?, 'simulator-worker', 'pending', 1),
         (?, 'provisioning-worker', 'ready', 1)
        ON DUPLICATE KEY UPDATE status = VALUES(status), routing_generation = routing_generation + 1`,
-      [organisation.organisationId, organisation.organisationId, organisation.organisationId],
+      [organisation.organisationId, organisation.organisationId],
     );
   });
 
@@ -457,7 +456,7 @@ async function runProvisioningOperation({
         const [rows] = await adminPool.execute(
           `SELECT COUNT(*) AS count FROM \`${policy.databaseName}\`.data_plane_metadata
            WHERE metadata_key = 'primary' AND database_mode = 'private_database'
-             AND logical_database_identifier = ? AND schema_version = ? AND migration_version = 8`,
+             AND logical_database_identifier = ? AND schema_version = ? AND migration_version = 10`,
           [policy.logicalDatabaseIdentifier, policy.schemaVersion],
         );
         return Number(rows?.[0]?.count || 0) === 1;

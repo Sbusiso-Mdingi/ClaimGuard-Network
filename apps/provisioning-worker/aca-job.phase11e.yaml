@@ -55,6 +55,6 @@ properties:
           - name: AZURE_APPROVED_REPORT_CONTAINER
             value: claimguard-reports
           - name: PRIVATE_TENANT_SCHEMA_VERSION
-            value: "8"
+            value: "10"
           - name: PROVISIONING_MAX_OPERATIONS
             value: "1"

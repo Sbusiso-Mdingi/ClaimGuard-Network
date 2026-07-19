@@ -13,17 +13,25 @@ class NormalizedClaim:
     claim_id: str
     claimant_id: str
     provider_id: str
-    phone: str
-    email: str
-    address: str
-    bank_account: str
-    device_id: str
-    ip_address: str
+    phone: str | None
+    email: str | None
+    address: str | None
+    bank_account: str | None
+    device_id: str | None
+    ip_address: str | None
 
 
 def _stable_token(prefix: str, value: str) -> str:
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
     return f"{prefix}:{digest}"
+
+
+def _optional_text(*values: object) -> str | None:
+    for value in values:
+        rendered = str(value or "").strip()
+        if rendered:
+            return rendered
+    return None
 
 
 def normalize_claim_data(raw_claims: list[dict[str, object]]) -> list[NormalizedClaim]:
@@ -34,19 +42,12 @@ def normalize_claim_data(raw_claims: list[dict[str, object]]) -> list[Normalized
         claimant_id = str(raw.get("claimant_id") or raw.get("claimantId") or raw.get("member_id") or raw.get("memberId") or "unknown_claimant")
         provider_id = str(raw.get("provider_id") or raw.get("providerId") or "unknown_provider")
 
-        phone = str(raw.get("phone") or raw.get("phone_number") or _stable_token("phone", claimant_id))
-        email = str(raw.get("email") or _stable_token("email", claimant_id))
-        address = str(raw.get("address") or raw.get("home_region") or _stable_token("address", claimant_id))
-
-        bank_account = str(
-            raw.get("bank_account")
-            or raw.get("bankAccount")
-            or raw.get("synthetic_banking_detail")
-            or _stable_token("bank", f"{claimant_id}:{provider_id}")
-        )
-
-        device_id = str(raw.get("device_id") or raw.get("deviceId") or _stable_token("device", f"{claimant_id}:{claim_id}"))
-        ip_address = str(raw.get("ip_address") or raw.get("ipAddress") or _stable_token("ip", f"{provider_id}:{claim_id}"))
+        phone = _optional_text(raw.get("phone"), raw.get("phone_number"))
+        email = _optional_text(raw.get("email"))
+        address = _optional_text(raw.get("address"), raw.get("home_region"))
+        bank_account = _optional_text(raw.get("bank_account"), raw.get("bankAccount"), raw.get("banking_detail"))
+        device_id = _optional_text(raw.get("device_id"), raw.get("deviceId"))
+        ip_address = _optional_text(raw.get("ip_address"), raw.get("ipAddress"))
 
         normalized.append(
             NormalizedClaim(
@@ -82,34 +83,29 @@ def build_internal_graph(normalized_claims: list[NormalizedClaim]) -> GraphDocum
     for claim in normalized_claims:
         claimant_entity_id = f"claimant:{claim.claimant_id}"
         provider_entity_id = f"provider:{claim.provider_id}"
-        phone_entity_id = _stable_token("phone", claim.phone)
-        email_entity_id = _stable_token("email", claim.email)
-        address_entity_id = _stable_token("address", claim.address)
-        bank_entity_id = _stable_token("bank_account", claim.bank_account)
-        device_entity_id = _stable_token("device", claim.device_id)
-        ip_entity_id = _stable_token("ip", claim.ip_address)
-
         for entity in (
             _entity("claimant", claimant_entity_id, claim.claimant_id),
             _entity("provider", provider_entity_id, claim.provider_id),
-            _entity("phone", phone_entity_id),
-            _entity("email", email_entity_id),
-            _entity("address", address_entity_id),
-            _entity("bank_account", bank_entity_id),
-            _entity("device", device_entity_id),
-            _entity("ip", ip_entity_id),
         ):
             entities[entity["entity_id"]] = entity
 
-        for artifact_entity_id in (
-            phone_entity_id,
-            email_entity_id,
-            address_entity_id,
-            bank_entity_id,
-            device_entity_id,
-            ip_entity_id,
-            provider_entity_id,
-        ):
+        artifacts = [
+            ("phone", claim.phone),
+            ("email", claim.email),
+            ("address", claim.address),
+            ("bank_account", claim.bank_account),
+            ("device", claim.device_id),
+            ("ip", claim.ip_address),
+        ]
+        artifact_entity_ids = [provider_entity_id]
+        for entity_type, value in artifacts:
+            if value is None:
+                continue
+            entity_id = _stable_token(entity_type, value)
+            entities[entity_id] = _entity(entity_type, entity_id)
+            artifact_entity_ids.append(entity_id)
+
+        for artifact_entity_id in artifact_entity_ids:
             relationships.append(
                 {
                     "relationship_type": "observed_with",

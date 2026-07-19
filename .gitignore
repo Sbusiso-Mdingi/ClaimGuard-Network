@@ -4,6 +4,7 @@
 # Python
 **/__pycache__/
 **/*.pyc
+**/*.egg-info/
 .venv/
 
 # Node
@@ -28,9 +29,8 @@ build/
 .azure-deploy/zi*
 webapp_logs.zip
 
-# Generated data outputs
-packages/data-generator/data/
-services/detection-engine/reports/
+# Generated report outputs
+services/report-producer/reports/
 
 # Env files
 .env

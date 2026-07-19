@@ -5,7 +5,6 @@ import {
   applyMigrations,
   createLegacySharedAdapter,
   createMysqlConnection,
-  createOperationalRepositories,
   createTenantConnectionManager,
   dataPlanePoolKey,
   getOperationalMigrationStatus,
@@ -24,11 +23,6 @@ import {
 import { resolveAuthenticationConfiguration } from "../src/authentication-config.js";
 import { createBackendApp } from "../src/backend.js";
 import { createControlPlaneDataPlaneRouteResolver } from "../src/data-plane-route-resolver.js";
-import {
-  createLiveDemoBootstrapFromDatabase,
-  createLiveDemoSimulator,
-} from "../src/simulation/live-demo-simulator.js";
-import { createSimulatorWorker } from "../../simulator-worker/src/worker.js";
 import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
 
 const controlUrl = process.env.PHASE11D_CONTROL_PLANE_MYSQL_URL || "";
@@ -57,14 +51,14 @@ async function seedOperationalFixtures(pool) {
   );
   await pool.execute(
     `INSERT INTO members
-      (member_id, scheme_id, first_name, last_name, date_of_birth, gender, synthetic_id_number,
-       synthetic_banking_detail, home_region, home_lat, home_lon, join_date, tenant_id) VALUES
+      (member_id, scheme_id, first_name, last_name, date_of_birth, gender, identity_number,
+       banking_detail, home_region, home_lat, home_lon, join_date, tenant_id) VALUES
       ('ALPHA-MEMBER-1', 'ALPHA01', 'Alpha', 'Member', '1980-01-01', 'F', 'ALPHA-ID', 'ALPHA-BANK', 'Alpha Region', -26.1, 28.0, '2020-01-01', 'tenant_alpha'),
       ('BETA-MEMBER-1', 'BETA01', 'Beta', 'Member', '1981-01-01', 'M', 'BETA-ID', 'BETA-BANK', 'Beta Region', -33.9, 18.4, '2020-01-01', 'tenant_beta')`,
   );
   await pool.execute(
     `INSERT INTO providers
-      (provider_id, scheme_id, practice_number, specialty, practice_name, synthetic_banking_detail,
+      (provider_id, scheme_id, practice_number, specialty, practice_name, banking_detail,
        practice_region, practice_lat, practice_lon, tenant_id) VALUES
       ('ALPHA-PROVIDER-1', 'ALPHA01', 'ALPHA-PRACTICE', 'GP', 'Alpha Practice', 'ALPHA-PBANK', 'Alpha Region', -26.1, 28.0, 'tenant_alpha'),
       ('BETA-PROVIDER-1', 'BETA01', 'BETA-PRACTICE', 'GP', 'Beta Practice', 'BETA-PBANK', 'Beta Region', -33.9, 18.4, 'tenant_beta')`,
@@ -87,12 +81,6 @@ async function seedOperationalFixtures(pool) {
       (id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, status, available_at) VALUES
       ('ALPHA-OUTBOX-1', 'tenant_alpha', 'report_production', 'claim_batch', 'ALPHA-BATCH', 'ALPHA-CORR', REPEAT('a', 64), '{"claims":[{"claim_id":"ALPHA-CLAIM-1"}]}', 'pending', UTC_TIMESTAMP(3)),
       ('BETA-OUTBOX-1', 'tenant_beta', 'report_production', 'claim_batch', 'BETA-BATCH', 'BETA-CORR', REPEAT('b', 64), '{"claims":[{"claim_id":"BETA-CLAIM-1"}]}', 'pending', UTC_TIMESTAMP(3))`,
-  );
-  await pool.execute(
-    `INSERT INTO simulation_instances
-      (id, scope_key, scope_type, tenant_id, mode, status, seed, tick_interval_ms, checkpoint_version, config, created_by) VALUES
-      ('tenant_alpha', 'tenant:tenant_alpha', 'tenant', 'tenant_alpha', 'static', 'starting', 42, 1000, 1, '{}', 'gate'),
-      ('tenant_beta', 'tenant:tenant_beta', 'tenant', 'tenant_beta', 'static', 'starting', 43, 1000, 1, '{}', 'gate')`,
   );
   await pool.execute(
     `INSERT INTO ledger_entries
@@ -119,38 +107,6 @@ function createAuthenticationService(repositories, configuration) {
   });
 }
 
-async function readSimulatorClaimRows(pool) {
-  const [rows] = await pool.execute(
-    "SELECT claim_id, tenant_id FROM claims WHERE claim_id LIKE 'SIM-%' ORDER BY claim_id",
-  );
-  return rows.map((row) => ({ claimId: row.claim_id, tenantId: row.tenant_id }));
-}
-
-async function readSimulatorOutboxRows(pool) {
-  const [rows] = await pool.execute(
-    "SELECT id, tenant_id, payload FROM claim_processing_outbox WHERE payload LIKE '%SIM-%' ORDER BY id",
-  );
-  return rows.map((row) => ({
-    id: row.id,
-    tenantId: row.tenant_id,
-    payload: typeof row.payload === "string" ? row.payload : JSON.stringify(row.payload || {}),
-  }));
-}
-
-function rowsByTenant(rows) {
-  const result = new Map();
-  for (const row of rows) {
-    if (!result.has(row.tenantId)) result.set(row.tenantId, []);
-    result.get(row.tenantId).push(row);
-  }
-  return result;
-}
-
-function diffRows(beforeRows, afterRows, keyField) {
-  const beforeKeys = new Set(beforeRows.map((row) => row[keyField]));
-  return afterRows.filter((row) => !beforeKeys.has(row[keyField]));
-}
-
 test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, and worker-scope gate", { skip: !enabled }, async () => {
   assert.match(new URL(controlUrl).pathname, /cg11d|phase11d/i);
   assert.match(new URL(operationalUrl).pathname, /cg11d|phase11d/i);
@@ -163,7 +119,7 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
     const controlSecond = await applyControlPlaneMigrations(controlPool, { applicationVersion: "phase11d-gate" });
     const operationalFirst = await applyMigrations(operationalPool, undefined, { applicationVersion: "phase11d-gate" });
     const operationalSecond = await applyMigrations(operationalPool, undefined, { applicationVersion: "phase11d-gate" });
-    assert.equal(controlFirst.applied.length, 5);
+    assert.equal(controlFirst.applied.length, 7);
     assert.equal(controlSecond.applied.length, 0);
     assert.equal(operationalFirst.applied.some(({ id }) => id === "0008_data_plane_metadata"), true);
     assert.equal(operationalSecond.applied.length, 0);
@@ -259,161 +215,6 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
     assert.equal(alpha.payload.organisation.organisationId, alphaOrganisation.organisationId);
     assert.equal(beta.payload.organisation.organisationId, betaOrganisation.organisationId);
 
-    const simulatorApiClient = {
-      async request({ path, method = "GET", headers = {}, body = null }) {
-        const response = await app.request(`http://localhost${path}`, {
-          method,
-          headers: {
-            cookie: alphaClaims.cookie,
-            origin: "http://localhost",
-            ...(method !== "GET" ? { "x-csrf-token": alphaClaims.csrf, "content-type": "application/json" } : {}),
-            ...headers,
-          },
-          body: body ? JSON.stringify(body) : undefined,
-        });
-        const json = await response.json().catch(() => null);
-        return { status: response.status, json };
-      },
-    };
-
-    const alphaSimulatorRepository = createOperationalRepositories(alphaContext, operationalPool).simulatorState;
-    const createSimulatorFactory = ({ failAfterMutation = false } = {}) => {
-      let shouldFail = failAfterMutation;
-      return async ({ instance, maxClaimsPerTick }) => {
-        const simulator = createLiveDemoSimulator({
-          enabled: true,
-          mode: instance.mode,
-          staticMode: instance.mode === "static",
-          seed: instance.seed,
-          tickIntervalMs: instance.tickIntervalMs,
-          initialCheckpoint: instance.checkpoint,
-          maxClaimsPerTick,
-          minClaimsPerTick: 1,
-          bootstrap: createLiveDemoBootstrapFromDatabase({
-            pool: operationalPool,
-            configuredTenantIds: ["tenant_alpha"],
-            seed: instance.seed,
-          }),
-          authorityMode: "session",
-          apiClient: simulatorApiClient,
-        });
-        if (!shouldFail) {
-          return simulator;
-        }
-        const originalRunTick = simulator.runTick.bind(simulator);
-        simulator.runTick = async () => {
-          const output = await originalRunTick();
-          if (shouldFail) {
-            shouldFail = false;
-            throw new Error("response lost after mutation");
-          }
-          return output;
-        };
-        return simulator;
-      };
-    };
-
-    const baselineClaims = await readSimulatorClaimRows(operationalPool);
-    const baselineOutbox = await readSimulatorOutboxRows(operationalPool);
-    const [tickBeforeRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
-    const tickBefore = Number(tickBeforeRows[0].tick_number);
-
-    const deterministicTickWorker = createSimulatorWorker({
-      repository: alphaSimulatorRepository,
-      readiness: async () => true,
-      simulatorFactory: createSimulatorFactory(),
-      config: {
-        instanceId: "tenant_alpha",
-        workerId: "phase11d-gate-worker",
-        leaseSeconds: 120,
-        pollMs: 1,
-        maximumTickDurationMs: 60_000,
-        maxClaimsPerTick: 1,
-        maxOutboxBacklog: 10_000,
-        maxActiveInvestigations: 10_000,
-      },
-      logger() {},
-      sleep: async () => {},
-    });
-    const deterministicTickResult = await deterministicTickWorker.runOneTick();
-    assert.equal(deterministicTickResult.executed, true);
-
-    const [tickAfterRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
-    const tickAfter = Number(tickAfterRows[0].tick_number);
-    assert.equal(tickAfter, tickBefore + 1);
-
-    const claimsAfterTick = await readSimulatorClaimRows(operationalPool);
-    const outboxAfterTick = await readSimulatorOutboxRows(operationalPool);
-    const newClaims = diffRows(baselineClaims, claimsAfterTick, "claimId");
-    const newOutbox = diffRows(baselineOutbox, outboxAfterTick, "id");
-    const newClaimsByTenant = rowsByTenant(newClaims);
-    const newOutboxByTenant = rowsByTenant(newOutbox);
-    assert.equal((newClaimsByTenant.get("tenant_alpha") || []).length >= 1, true);
-    assert.equal((newClaimsByTenant.get("tenant_beta") || []).length, 0);
-    assert.equal((newOutboxByTenant.get("tenant_alpha") || []).length >= 1, true);
-    assert.equal((newOutboxByTenant.get("tenant_beta") || []).length, 0);
-    for (const claim of newClaimsByTenant.get("tenant_alpha") || []) {
-      assert.equal(
-        (newOutboxByTenant.get("tenant_alpha") || []).some((row) => String(row.payload || "").includes(claim.claimId)),
-        true,
-      );
-    }
-
-    await operationalPool.execute("UPDATE simulation_instances SET status = 'running' WHERE id = 'tenant_alpha'");
-    const [retryTickBeforeRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
-    const retryTickBefore = Number(retryTickBeforeRows[0].tick_number);
-    const retryClaimsBefore = await readSimulatorClaimRows(operationalPool);
-    const retryOutboxBefore = await readSimulatorOutboxRows(operationalPool);
-    const failingWorker = createSimulatorWorker({
-      repository: alphaSimulatorRepository,
-      readiness: async () => true,
-      simulatorFactory: createSimulatorFactory({ failAfterMutation: true }),
-      config: {
-        instanceId: "tenant_alpha",
-        workerId: "phase11d-gate-worker-failing",
-        leaseSeconds: 120,
-        pollMs: 1,
-        maximumTickDurationMs: 60_000,
-        maxClaimsPerTick: 1,
-        maxOutboxBacklog: 10_000,
-        maxActiveInvestigations: 10_000,
-      },
-      logger() {},
-      sleep: async () => {},
-    });
-    await assert.rejects(() => failingWorker.runOneTick(), /response lost after mutation/);
-    await operationalPool.execute("UPDATE simulation_instances SET status = 'running' WHERE id = 'tenant_alpha'");
-
-    const retryWorker = createSimulatorWorker({
-      repository: alphaSimulatorRepository,
-      readiness: async () => true,
-      simulatorFactory: createSimulatorFactory(),
-      config: {
-        instanceId: "tenant_alpha",
-        workerId: "phase11d-gate-worker-retry",
-        leaseSeconds: 120,
-        pollMs: 1,
-        maximumTickDurationMs: 60_000,
-        maxClaimsPerTick: 1,
-        maxOutboxBacklog: 10_000,
-        maxActiveInvestigations: 10_000,
-      },
-      logger() {},
-      sleep: async () => {},
-    });
-    const retryResult = await retryWorker.runOneTick();
-    assert.equal(retryResult.executed, true);
-    const [retryTickRows] = await operationalPool.execute("SELECT tick_number FROM simulation_instances WHERE id = 'tenant_alpha' LIMIT 1");
-    assert.equal(Number(retryTickRows[0].tick_number), retryTickBefore + 1);
-    const retryClaimsAfter = await readSimulatorClaimRows(operationalPool);
-    const retryOutboxAfter = await readSimulatorOutboxRows(operationalPool);
-    const retryNewClaims = diffRows(retryClaimsBefore, retryClaimsAfter, "claimId");
-    const retryNewOutbox = diffRows(retryOutboxBefore, retryOutboxAfter, "id");
-    assert.equal(retryNewClaims.filter((row) => row.tenantId === "tenant_alpha").length, 1);
-    assert.equal(retryNewClaims.filter((row) => row.tenantId === "tenant_beta").length, 0);
-    assert.equal(retryNewOutbox.filter((row) => row.tenantId === "tenant_alpha").length, 1);
-    assert.equal(retryNewOutbox.filter((row) => row.tenantId === "tenant_beta").length, 0);
-
     const alphaReport = await request(alpha, "/detection/report");
     const betaReport = await request(beta, "/detection/report");
     assert.equal((await alphaReport.json()).report.metadata.tenant.tenantId, "tenant_alpha");
@@ -440,7 +241,6 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
       body: { claims: [{
         claim_id: "ALPHA-CLAIM-NEW", scheme_id: "ALPHA01", member_id: "ALPHA-MEMBER-1",
         provider_id: "ALPHA-PROVIDER-1", service_date: "2026-07-02", billing_code: "GP03", amount: 303,
-        tenant_id: "tenant_beta",
       }] },
     });
     assert.equal(ingested.status, 202, JSON.stringify(await ingested.clone().json()));
@@ -514,21 +314,17 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
       await assert.rejects(() => isolatedManager.acquire(betaContext), (error) => error.code === code);
       assert.equal(isolatedManager.metrics().cachedPools, 0);
       await operationalPool.execute(
-        "UPDATE data_plane_metadata SET database_mode='legacy_shared', logical_database_identifier='legacy-operational-shared', schema_version='8', environment_key='legacy', migration_version=8 WHERE metadata_key='primary'",
+        "UPDATE data_plane_metadata SET database_mode='legacy_shared', logical_database_identifier='legacy-operational-shared', schema_version='10', environment_key='legacy', migration_version=10 WHERE metadata_key='primary'",
       );
     }
     const missingManager = createTenantConnectionManager({ adapters: { legacy_shared: createLegacySharedAdapter({ databaseUrl: operationalUrl }) } });
     await operationalPool.execute("DELETE FROM data_plane_metadata WHERE metadata_key='primary'");
     await assert.rejects(() => missingManager.acquire(betaContext), (error) => error.code === "DATA_PLANE_METADATA_MISSING");
-    await operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('primary','legacy_shared','legacy-operational-shared','8','legacy',8)");
+    await operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('primary','legacy_shared','legacy-operational-shared','10','legacy',10)");
     await assert.rejects(
-      () => operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('secondary','legacy_shared','legacy-operational-shared','8','legacy',8)"),
+      () => operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('secondary','legacy_shared','legacy-operational-shared','10','legacy',10)"),
       (error) => error.code === "ER_CHECK_CONSTRAINT_VIOLATED",
     );
-
-    const betaSimulator = createOperationalRepositories(betaContext, betaHeld.pool).simulatorState;
-    assert.equal(await betaSimulator.getStatus("tenant_alpha"), null);
-    assert.equal(await betaSimulator.acquireLease({ instanceId: "tenant_alpha", workerId: "beta-worker" }), null);
 
     await controlService.transitionOrganisation(alphaOrganisation.organisationId, "suspended", { suspensionReason: "phase11d-gate" });
     assert.equal((await request(alpha, "/detection/report")).status, 401);

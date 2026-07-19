@@ -29,7 +29,8 @@ test("private databases use canonical operational migrations and private metadat
   const worker = await readFile(new URL("../src/worker.js", import.meta.url), "utf8");
   assert.match(worker, /applyMigrations\(connection/);
   assert.match(worker, /database_mode = 'private_database'/);
-  assert.match(worker, /migration_version = 8/);
+  assert.match(worker, /migration_version = 10/);
+  assert.doesNotMatch(worker, /simulator-worker/);
   assert.match(worker, /cross-database access/);
   assert.match(worker, /GRANT SELECT, INSERT, UPDATE, DELETE ON/);
   assert.doesNotMatch(worker, /GRANT .*CREATE.*ALTER.* ON/i);

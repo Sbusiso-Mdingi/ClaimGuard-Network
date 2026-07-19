@@ -1,6 +1,6 @@
 """ClaimGuard detection engine package."""
 
-from .detector import analyze_directory, analyze_scheme_directory
+from .orchestration import DetectionSnapshot, run_detection_orchestration
 from .pipeline import run_detection_pipeline
 
-__all__ = ["analyze_directory", "analyze_scheme_directory", "run_detection_pipeline"]
+__all__ = ["DetectionSnapshot", "run_detection_orchestration", "run_detection_pipeline"]

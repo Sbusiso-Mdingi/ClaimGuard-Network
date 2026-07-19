@@ -15,10 +15,10 @@ test("real MySQL operational migrations, checksums, metadata singleton, and cons
     const first = await applyMigrations(pool, undefined, { applicationVersion: "integration-test" });
     const second = await applyMigrations(pool, undefined, { applicationVersion: "integration-test" });
     const status = await getOperationalMigrationStatus(pool);
-    assert.equal(first.applied.length + first.skipped.length, 9);
+    assert.equal(first.applied.length + first.skipped.length, 10);
     assert.equal(second.applied.length, 0);
     assert.equal(second.appliedStatements, 0);
-    assert.equal(status.applied.length, 9);
+    assert.equal(status.applied.length, 10);
     assert.equal(status.pending.length, 0);
 
     const [columns] = await pool.execute(
@@ -46,7 +46,7 @@ test("real MySQL operational migrations, checksums, metadata singleton, and cons
       () => pool.execute(
         `INSERT INTO data_plane_metadata
           (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version)
-         VALUES ('secondary','legacy_shared','legacy-operational-shared','8','legacy',8)`,
+         VALUES ('secondary','legacy_shared','legacy-operational-shared','10','legacy',10)`,
       ),
       (error) => error.code === "ER_CHECK_CONSTRAINT_VIOLATED",
     );
@@ -54,7 +54,7 @@ test("real MySQL operational migrations, checksums, metadata singleton, and cons
       () => pool.execute(
         `INSERT INTO data_plane_metadata
           (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version)
-         VALUES ('primary','legacy_shared','legacy-operational-shared','8','legacy',8)`,
+         VALUES ('primary','legacy_shared','legacy-operational-shared','10','legacy',10)`,
       ),
       (error) => error.code === "ER_DUP_ENTRY",
     );
@@ -70,7 +70,7 @@ test("real MySQL operational migrations, checksums, metadata singleton, and cons
     const [metadata] = await pool.execute("SELECT * FROM data_plane_metadata");
     assert.equal(metadata.length, 1);
     assert.equal(metadata[0].metadata_key, "primary");
-    assert.equal(metadata[0].migration_version, 8);
+    assert.equal(metadata[0].migration_version, 10);
   } finally {
     await pool.end();
   }

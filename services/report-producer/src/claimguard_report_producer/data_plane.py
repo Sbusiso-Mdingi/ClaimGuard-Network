@@ -74,7 +74,7 @@ def resolve_worker_data_plane_scope(
                     or route["provisioning_status"] != "active"
                     or route["health_status"] in {"suspended", "unreachable"}
                     or route["retired_at"] is not None
-                    or str(route["schema_version"] or "") != "8"
+                    or str(route["schema_version"] or "") != "10"
                     or route["logical_database_identifier"] != "legacy-operational-shared"
                 ):
                     raise DataPlaneRouteError("The report-worker route is not an active compatible legacy_shared route.")
@@ -108,12 +108,12 @@ def resolve_worker_data_plane_scope(
                 not metadata
                 or metadata["database_mode"] != "legacy_shared"
                 or metadata["logical_database_identifier"] != "legacy-operational-shared"
-                or str(metadata["schema_version"]) != "8"
+                or str(metadata["schema_version"]) != "10"
                 or metadata["environment_key"] != environment_key
-                or int(metadata["migration_version"]) != 8
+                or int(metadata["migration_version"]) != 10
             ):
                 raise DataPlaneRouteError("Report-worker data-plane metadata verification failed.")
     finally:
         operational.close()
 
-    return WorkerDataPlaneScope(tuple(organisation_ids), frozenset(tenant_ids), tuple(route_keys), "8")
+    return WorkerDataPlaneScope(tuple(organisation_ids), frozenset(tenant_ids), tuple(route_keys), "10")

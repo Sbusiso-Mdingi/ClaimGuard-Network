@@ -67,7 +67,7 @@ function approvedAzurePolicy({ organisationId, canonicalSlug, deploymentClass })
   const region = process.env.AZURE_APPROVED_REGION || "southafricanorth";
   const reportContainer = process.env.AZURE_APPROVED_REPORT_CONTAINER || "claimguard-reports";
   const reportPartitionStrategy = process.env.REPORT_PARTITION_STRATEGY || "prefix";
-  const privateSchemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "8";
+  const privateSchemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "10";
   const safeSlug = String(canonicalSlug || "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase().slice(0, 40) || "tenant";
   return {
     subscriptionId,

@@ -88,7 +88,7 @@ def _rule_hits_for_claim(
 
 
 def run_detection_orchestration(snapshot: DetectionSnapshot, *, top_n: int = 10) -> dict[str, object]:
-    """The sole business orchestration used by CSV and tenant-snapshot adapters."""
+    """Run detection over one authoritative tenant snapshot."""
 
     if not snapshot.tenant_id.strip():
         raise ValueError("A canonical tenant ID is required for detection orchestration.")

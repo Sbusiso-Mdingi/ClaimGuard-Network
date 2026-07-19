@@ -1,6 +1,6 @@
 # ClaimGuard Report Producer
 
-Producer runtime for publishing detection reports into storage.
+Durable worker for publishing detection reports from authoritative tenant snapshots.
 
 ## Responsibilities
 
@@ -9,12 +9,18 @@ Producer runtime for publishing detection reports into storage.
 - Report publishing (versioned artifacts + latest pointer + metadata)
 - Retry handling and telemetry hooks
 
-## Quick start
+## Durable worker
 
 ```bash
 uv sync
-uv run claimguard-produce-report --data-dir ../../packages/data-generator/data --backend file --output-dir reports
+CONTROL_PLANE_MYSQL_URL='mysql://...' \
+MYSQL_URL='mysql://...' \
+REPORT_WORKER_ORGANISATION_ID='organisation-id' \
+INTERNAL_SERVICE_ORGANISATION_IDS='organisation-id' \
+uv run claimguard-produce-report worker --once --backend file --output-dir reports
 ```
+
+The worker leases claim-ingestion outbox jobs and always analyzes a fresh tenant-scoped database snapshot. It has no filesystem or generated-claims ingestion mode.
 
 ## Azure-ready mode
 
@@ -37,3 +43,9 @@ This workflow:
 - builds and pushes producer image to Azure Container Registry
 - creates or updates an Azure Container Apps Job
 - starts a producer execution
+- supplies `CONTROL_PLANE_MYSQL_URL`, `MYSQL_URL`, and an explicit single-organisation scope
+
+Required GitHub configuration:
+
+- secrets: `CLAIMGUARD_CONTROL_PLANE_MYSQL_URL`, `CLAIMGUARD_MYSQL_URL`, `REPORT_STORAGE_CONNECTION_STRING`
+- variables: `REPORT_STORAGE_CONTAINER`, `REPORT_WORKER_ORGANISATION_ID`, `INTERNAL_SERVICE_ORGANISATION_IDS`

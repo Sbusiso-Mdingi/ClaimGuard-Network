@@ -33,9 +33,6 @@ export function PlatformAdminPage() {
     deploymentClass: "demo",
     adminDisplayName: "",
     adminEmail: "",
-    loadDemoBootstrapData: true,
-    createDemoUsers: true,
-    simulatorEnabled: false,
   });
 
   const review = useMemo(() => {
@@ -76,11 +73,6 @@ export function PlatformAdminPage() {
           initialAdministrator: {
             displayName: form.adminDisplayName,
             email: form.adminEmail,
-          },
-          demoOptions: {
-            loadDemoBootstrapData: form.loadDemoBootstrapData,
-            createDemoUsers: form.createDemoUsers,
-            simulatorEnabled: form.simulatorEnabled,
           },
         }),
       });
@@ -184,7 +176,7 @@ export function PlatformAdminPage() {
       title="Medical scheme onboarding"
       description="Platform administrators create DRAFT organisations and request asynchronous provisioning. Browser clients never call Azure Resource Manager directly."
     >
-      <SectionCard title="Step 1-3: Organisation, Initial Admin, Demo Options" description="Create a DRAFT organisation without provisioning infrastructure.">
+      <SectionCard title="Step 1-3: Organisation and Initial Admin" description="Create a DRAFT organisation without provisioning infrastructure.">
         <form className="grid gap-4" onSubmit={handleCreateDraft}>
           <div className="grid gap-4 md:grid-cols-2">
             <WizardField label="Organisation Name">
@@ -205,11 +197,6 @@ export function PlatformAdminPage() {
             <WizardField label="Initial Admin Username/Email">
               <input className="rounded-xl border border-border bg-background px-3 py-2" value={form.adminEmail} onChange={(event) => setForm((prev) => ({ ...prev, adminEmail: event.target.value }))} required />
             </WizardField>
-          </div>
-          <div className="grid gap-2 md:grid-cols-3">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.loadDemoBootstrapData} onChange={(event) => setForm((prev) => ({ ...prev, loadDemoBootstrapData: event.target.checked }))} />Load demo bootstrap data</label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.createDemoUsers} onChange={(event) => setForm((prev) => ({ ...prev, createDemoUsers: event.target.checked }))} />Create demo users</label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.simulatorEnabled} onChange={(event) => setForm((prev) => ({ ...prev, simulatorEnabled: event.target.checked }))} />Enable simulator</label>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="submit" className="rounded-xl bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={loading}>Create Draft</button>

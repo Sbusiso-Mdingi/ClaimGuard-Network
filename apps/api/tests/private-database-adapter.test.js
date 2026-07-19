@@ -12,7 +12,7 @@ function baseContext(overrides = {}) {
     routeType: "private_database",
     routeGeneration: 1,
     logicalDatabaseIdentifier: "private-db-1",
-    schemaVersion: "8",
+    schemaVersion: "10",
     deploymentClass: "production",
     secretReference: "https://kv.example.vault.azure.net/secrets/user",
     ...overrides,
@@ -48,15 +48,15 @@ test("private adapter rejects incomplete secret references before pool creation"
 });
 
 test("private adapter verify enforces metadata compatibility", async () => {
-  const adapter = createPrivateDatabaseAdapter({ expectedEnvironment: "production", expectedMigrationVersion: 8 });
+  const adapter = createPrivateDatabaseAdapter({ expectedEnvironment: "production", expectedMigrationVersion: 10 });
   const pool = {
     async execute() {
       return [[{
         database_mode: "private_database",
         logical_database_identifier: "private-db-1",
-        schema_version: "8",
+        schema_version: "10",
         environment_key: "staging",
-        migration_version: 8,
+        migration_version: 10,
       }], []];
     },
   };
@@ -68,15 +68,15 @@ test("private adapter verify enforces metadata compatibility", async () => {
 });
 
 test("private adapter verify returns normalized metadata when compatible", async () => {
-  const adapter = createPrivateDatabaseAdapter({ expectedEnvironment: "production", expectedMigrationVersion: 8 });
+  const adapter = createPrivateDatabaseAdapter({ expectedEnvironment: "production", expectedMigrationVersion: 10 });
   const pool = {
     async execute() {
       return [[{
         database_mode: "private_database",
         logical_database_identifier: "private-db-1",
-        schema_version: "8",
+        schema_version: "10",
         environment_key: "production",
-        migration_version: 8,
+        migration_version: 10,
       }], []];
     },
   };
@@ -84,6 +84,6 @@ test("private adapter verify returns normalized metadata when compatible", async
   const verified = await adapter.verify(pool, baseContext());
   assert.equal(verified.routeType, "private_database");
   assert.equal(verified.logicalDatabaseIdentifier, "private-db-1");
-  assert.equal(verified.schemaVersion, "8");
-  assert.equal(verified.migrationVersion, 8);
+  assert.equal(verified.schemaVersion, "10");
+  assert.equal(verified.migrationVersion, 10);
 });

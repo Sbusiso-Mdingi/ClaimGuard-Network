@@ -74,6 +74,7 @@ export function resolveAuthenticationConfiguration(env = process.env) {
     trustProxy: booleanValue(env.TRUST_PROXY, false),
     internalServiceToken: validateInternalServiceToken(env.INTERNAL_SERVICE_TOKEN),
     internalServiceOrganisationIds: Object.freeze(String(env.INTERNAL_SERVICE_ORGANISATION_IDS || "").split(",").map((value) => value.trim()).filter(Boolean)),
+    internalServiceAllowedRoles: Object.freeze(String(env.INTERNAL_SERVICE_ALLOWED_ROLES || "claims_analyst").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)),
     demoCredentialsVisible,
     demoCredentials: parseDemoCredentials(env.DEMO_CREDENTIALS_JSON, { enabled: demoCredentialsVisible }),
     publicOrganisationUrlScheme: String(env.PUBLIC_ORGANISATION_URL_SCHEME || "https").trim().toLowerCase(),

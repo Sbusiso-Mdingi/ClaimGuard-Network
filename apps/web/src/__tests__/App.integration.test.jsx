@@ -102,20 +102,6 @@ const claimDetailPayload = {
   claim: claimsPayload.claims[0],
 };
 
-const simulatorPayload = {
-  available: true,
-  simulator: {
-    instanceId: "global-healthcare-demo",
-    scope: "global:healthcare-demo",
-    mode: "live",
-    status: "paused",
-    tickNumber: 12,
-    lastSuccessfulTickAt: "2026-07-16T00:00:00.000Z",
-    lastError: null,
-    lease: { active: false },
-  },
-};
-
 function mockFetch() {
   global.fetch = vi.fn((url) => {
     if (String(url).includes("/api/detection/report")) return Promise.resolve({ ok: true, json: async () => reportPayload });
@@ -123,7 +109,6 @@ function mockFetch() {
     if (String(url).includes("/api/detection/risk")) return Promise.resolve({ ok: true, json: async () => riskPayload });
     if (String(url).includes("/api/claims/C-1")) return Promise.resolve({ ok: true, json: async () => claimDetailPayload });
     if (String(url).includes("/api/claims")) return Promise.resolve({ ok: true, json: async () => claimsPayload });
-    if (String(url).includes("/api/simulator/status")) return Promise.resolve({ ok: true, json: async () => simulatorPayload });
     return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
   });
 }
@@ -141,9 +126,6 @@ function mockFetchFailure() {
     }
     if (String(url).includes("/api/claims")) {
       return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Claims unavailable (503)" }) });
-    }
-    if (String(url).includes("/api/simulator/status")) {
-      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Simulator unavailable (503)" }) });
     }
     return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
   });
@@ -187,7 +169,7 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
 });
 
-test("live refresh toggle controls browser polling only and paused backend state remains visible", async () => {
+test("live refresh toggle controls browser polling", async () => {
   vi.useFakeTimers();
   render(<AppRoot />);
 
@@ -197,15 +179,13 @@ test("live refresh toggle controls browser polling only and paused backend state
   });
 
   expect(screen.getByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
-  expect(global.fetch).toHaveBeenCalledTimes(5);
-  expect(screen.getByText(/Simulator: paused \/ live/i)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Resume/i })).not.toBeInTheDocument();
+  expect(global.fetch).toHaveBeenCalledTimes(4);
 
   await act(async () => {
     vi.advanceTimersByTime(15000);
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(10);
+  expect(global.fetch).toHaveBeenCalledTimes(8);
 
   fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
 
@@ -213,8 +193,7 @@ test("live refresh toggle controls browser polling only and paused backend state
     vi.advanceTimersByTime(30000);
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(10);
-  expect(global.fetch.mock.calls.some(([url]) => /\/api\/simulator\/(start|pause|resume|stop)/.test(String(url))), false);
+  expect(global.fetch).toHaveBeenCalledTimes(8);
 }, 10000);
 
 test("shows unavailable state without substituting demo analytics when backend APIs fail", async () => {

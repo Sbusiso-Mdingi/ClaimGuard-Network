@@ -62,12 +62,6 @@ jobs:
       - name: Lint and build the complete monorepo
         run: pnpm turbo run lint build
 
-      - name: Generate synthetic test fixtures
-        working-directory: packages/data-generator
-        run: |
-          uv run --frozen claimguard-generate \
-            --config generation_config.yaml
-
       - name: Run JavaScript tests with coverage
         shell: bash
         run: |
@@ -79,7 +73,6 @@ jobs:
           pnpm --recursive \
             --filter './apps/**' \
             --filter './packages/**' \
-            --filter '!@claimguard/data-generator' \
             --filter '!@claimguard/claimguard-sdk' \
             --if-present \
             run test
@@ -112,13 +105,6 @@ jobs:
           rm -rf coverage/python
           mkdir -p coverage/python
 
-          COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage.data-generator" \
-          uv run --project packages/data-generator --frozen pytest \
-            packages/data-generator/tests \
-            --cov \
-            --cov-config=coverage.ini \
-            --cov-report=term-missing
-
           COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage.claimguard-sdk" \
           uv run --project packages/claimguard-sdk --frozen --with coverage==7.15.2 \
             coverage run --rcfile=coverage.ini \
@@ -139,10 +125,10 @@ jobs:
             -p 'test_*.py'
 
           COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage" \
-          uv run --project packages/data-generator --frozen \
+          uv run --project packages/claimguard-sdk --frozen --with coverage==7.15.2 \
             coverage combine --rcfile=coverage.ini coverage/python
           COVERAGE_FILE="$GITHUB_WORKSPACE/coverage/python/.coverage" \
-          uv run --project packages/data-generator --frozen \
+          uv run --project packages/claimguard-sdk --frozen --with coverage==7.15.2 \
             coverage xml --rcfile=coverage.ini \
             -o coverage/python/coverage.xml
 

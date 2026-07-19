@@ -51,31 +51,9 @@ async function buildRuntimeLedgerReference(ledgerRepository) {
   };
 }
 
-async function proxyDetectionAnalyze(detectionAnalyzeProxyUrl, payload) {
-  const response = await fetch(detectionAnalyzeProxyUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const body = await response.json().catch(() => ({
-    available: false,
-    message: "Detection producer proxy returned a non-JSON response.",
-  }));
-
-  return {
-    status: response.status,
-    body,
-  };
-}
-
 export function createReportService({
   reportStorage,
   ledgerRepository = null,
-  detectionAnalyzeProxyUrl = null,
 } = {}) {
   const reportCacheTtlMsRaw = Number.parseInt(process.env.REPORT_CACHE_TTL_MS || "15000", 10);
   const reportCacheTtlMs = Number.isFinite(reportCacheTtlMsRaw) && reportCacheTtlMsRaw >= 0 ? reportCacheTtlMsRaw : 15000;
@@ -322,38 +300,6 @@ export function createReportService({
           risk: loaded.report.risk,
         },
       };
-    },
-
-    async analyze(payload) {
-      if (!detectionAnalyzeProxyUrl) {
-        return {
-          ok: true,
-          status: 410,
-          body: {
-            available: false,
-            deprecated: true,
-            message: "Detection analysis moved to the report producer runtime. Configure DETECTION_ANALYZE_PROXY_URL to proxy this compatibility route.",
-          },
-        };
-      }
-
-      try {
-        const proxied = await proxyDetectionAnalyze(detectionAnalyzeProxyUrl, payload);
-        return {
-          ok: true,
-          status: proxied.status,
-          body: proxied.body,
-        };
-      } catch {
-        return {
-          ok: true,
-          status: 502,
-          body: {
-            available: false,
-            message: "Detection producer proxy is unavailable.",
-          },
-        };
-      }
     },
   };
 }

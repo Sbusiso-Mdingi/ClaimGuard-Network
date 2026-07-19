@@ -1,2 +1,0 @@
-[console_scripts]
-claimguard-detect = claimguard_detection_engine.cli:main

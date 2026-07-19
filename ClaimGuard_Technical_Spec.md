@@ -3,9 +3,9 @@
 **A privacy-preserving, cross-scheme fraud intelligence platform for South African medical schemes**
 
 **Author:** Sbusiso Mdingi
-**Status:** Production-Ready Architecture (v1.1)
+**Status:** Production-shaped Architecture (v1.2)
 
-**Revision notes (v1.1):** corrected two inaccurate organizational references (§1), aligned "zero-knowledge" terminology with the more accurate "tokenized" framing already used elsewhere in this spec (§2, §4), upgraded the tokenization scheme from concatenated salted hashing to keyed HMAC with an explicit limitations note (§4), corrected "Merkle-tree" to the more precise "hash chain" (§6), and removed an unverified performance figure (§3).
+**Revision notes (v1.2):** replaced the in-repository generated-data workflow with authenticated external claim ingestion, atomic reference/claim persistence, and durable outbox-driven report production.
 
 ---
 
@@ -17,7 +17,7 @@ ClaimGuard Network's model draws on two real, verified South African precedents.
 
 ClaimGuard allows multiple schemes to contribute claims signals to a shared fraud-detection graph **without exposing raw member or provider PII to each other**. Fraud rings and repeat offenders that are invisible to any single scheme become visible at the network level.
 
-This specification covers an interview-ready build. It operates entirely on synthetic data but utilizes a production-grade infrastructure stack combining Microsoft Azure with industry-standard tooling to demonstrate rigorous DevOps, CI/CD, security, and observability practices.
+The current build accepts claims only through an authenticated, tenant-scoped ingestion boundary. External medical-aid systems or approved test producers own data creation; ClaimGuard validates and persists their reference records and claims, then queues detection through a durable transactional outbox.
 
 ---
 
@@ -128,7 +128,7 @@ Where identifiers have been deliberately altered post-tokenization (evasion), th
 The engine fuses standard actuarial methodology with graph machine learning.
 
 **Statistical Anomaly Scoring (GLM):**
-Expected claims costs and frequencies are modeled via a frequency-severity GLM. Because high-iteration statistical simulations can easily tie up a local machine for hours, the modeling scripts are containerized and executed in Azure-native producer runtimes (Azure Container Apps Jobs) so compute stays isolated from the core API.
+Expected claims costs and frequencies are modeled via a frequency-severity GLM. Compute-heavy model execution runs in Azure-native worker runtimes so it remains isolated from the API request path.
 
 **Graph ML:**
 - **Community Detection:** Louvain modularity optimization identifies dense clusters.
@@ -145,7 +145,7 @@ To emulate a high-performing engineering team, local development and deployments
 - **Quality Gates:** Codecov blocks PRs if test coverage drops below 70%. AstraSecurity scans dependencies for CVEs and statically analyzes code.
 - **Application Performance (New Relic):** Tracks p99 latency for tRPC endpoints and business metrics (e.g., "Entity Resolution Accuracy").
 - **Error Tracking (Sentry):** Captures exceptions with source-mapped stack traces.
-- **Synthetic Training Data:** Since real scheme data cannot be used, the pipeline ingests robust synthetic health insurance portfolios (mirroring typical datasets hosted on platforms like Kaggle) to seed the database and train the models.
+- **Authoritative Inputs:** Claims and their scheme, member, and provider references arrive through the authenticated ingestion contract. Production report generation reloads a tenant-scoped database snapshot rather than accepting ad hoc files.
 
 ---
 
@@ -154,7 +154,7 @@ To emulate a high-performing engineering team, local development and deployments
 | Phase | Scope | Core Tooling |
 |---|---|---|
 | 0 | Environment Setup: GitHub Actions, Codecov, Sentry, New Relic, Doppler, monorepo setup | Actions, Doppler, Sentry |
-| 1 | Data Generation: Synthetic data + seed scripts | Python, Kaggle standard datasets |
+| 1 | Claim Ingestion: external producer contract, validation, persistence, and outbox | Hono, Zod, MySQL |
 | 2 | Client SDK: Python Edge SDK for local tokenization | Python, PyPI structuring |
 | 3 | Backend Foundation: tRPC API + Hono + Drizzle ORM + Auth + Hash-Chained Ledger | tRPC, Drizzle, MySQL |
 | 4 | Detection Engine + Producer Runtime: Azure Container Apps Jobs + Blob Storage + Cosmos DB graph analytics | ACA Jobs, Blob Storage, Gremlin |

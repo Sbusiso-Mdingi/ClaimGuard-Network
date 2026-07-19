@@ -15,12 +15,15 @@ The platform architecture is now centered on a strict producer/consumer boundary
 
 ```mermaid
 flowchart TD
-  Ingestion[Claims Ingestion] --> Producer[Report Producer Runtime\nAzure Container Apps Job]
-  Producer --> Engine[Detection Engine\nservices/detection-engine]
+  External[External Medical-aid Producer] --> API[Authenticated API\napps/api]
+  API --> Database[(Operational MySQL\nclaims + transactional outbox)]
+  Database --> Producer[Durable Report Worker\nAzure Container Apps Job]
+  Producer --> Snapshot[Authoritative Tenant Snapshot]
+  Snapshot --> Engine[Detection Engine\nservices/detection-engine]
   Engine --> Publisher[Report Publisher]
   Publisher --> Blob[(Azure Blob Storage)]
-  Blob --> API[Read-only API\napps/api]
   API --> UI[Investigator UI\napps/web]
+  Blob --> API
 
   Producer -. managed identity .-> Blob
   Producer -. telemetry .-> AppInsights[(Application Insights)]
@@ -34,13 +37,13 @@ flowchart TD
 
 ### Detection Engine (`services/detection-engine`)
 
-- Ingests claims and executes fraud detection logic.
+- Analyzes authoritative tenant snapshots and executes fraud detection logic.
 - Produces report payloads as domain output.
 - Does not host API routes.
 
 ### Report Producer (`services/report-producer`)
 
-- Handles trigger execution (manual, scheduled, and future queue-driven).
+- Leases durable claim-ingestion outbox jobs and coalesces work by tenant.
 - Invokes the detection engine.
 - Publishes versioned report artifacts, metadata, and latest pointer.
 - Implements retries and runtime telemetry hooks.
@@ -52,7 +55,7 @@ flowchart TD
   - `GET /detection/report`
   - `GET /detection/graph`
   - `GET /detection/risk`
-- Keeps `POST /detection/analyze` as compatibility route only (proxy/deprecated), with no embedded detection logic.
+- Does not expose an ad hoc detection execution endpoint.
 
 ### Investigator UI (`apps/web`)
 
@@ -61,20 +64,20 @@ flowchart TD
 
 ## Execution Flow
 
-1. Producer trigger starts a report run.
-2. Producer invokes detection engine with configured input.
-3. Producer publishes report and metadata to Blob Storage.
-4. Producer updates `latest.json` pointer atomically.
-5. API reads latest pointer and report through `ReportStorage`.
-6. UI fetches read-only detection endpoints from API.
+1. An external producer submits an authenticated, bounded ingestion batch.
+2. The API commits reference data, claims, and an outbox job atomically.
+3. The report worker leases work and reloads the complete tenant snapshot.
+4. The worker invokes the detection engine and publishes report metadata to Blob Storage.
+5. The worker updates the tenant-scoped latest pointer atomically and completes the outbox job.
+6. The API reads the latest report through `ReportStorage`; the UI uses read-only detection endpoints.
 
 ## Storage Contract
 
 Blob container stores:
 
-- `latest.json` (latest pointer)
-- `reports/report-<version>.json` (immutable versioned payload)
-- `metadata/metadata-<version>.json` (run metadata)
+- `<tenant-id>/latest.json` (latest pointer)
+- `<tenant-id>/reports/report-<version>.json` (immutable versioned payload)
+- `<tenant-id>/metadata/metadata-<version>.json` (run metadata)
 
 ## Deployment Flow
 
@@ -186,7 +189,6 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 | `REPORT_STORAGE_CONTAINER` | `claimguard-reports` |
 | `REPORT_STORAGE_ACCOUNT_URL` | `https://<storage-account>.blob.core.windows.net` |
 | `REPORT_STORAGE_LATEST_POINTER` | `latest.json` |
-| `DETECTION_ANALYZE_PROXY_URL` | optional compatibility proxy to producer runtime |
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `false` |
 | `WEBSITE_HTTPLOGGING_RETENTION_DAYS` | `3` |
 
@@ -206,6 +208,10 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 | `REPORT_STORAGE_CONTAINER` | `claimguard-reports` |
 | `REPORT_STORAGE_ACCOUNT_URL` | `https://<storage-account>.blob.core.windows.net` |
 | `REPORT_STORAGE_LATEST_POINTER` | `latest.json` |
+| `CONTROL_PLANE_MYSQL_URL` | redacted |
+| `MYSQL_URL` | redacted |
+| `REPORT_WORKER_ORGANISATION_ID` | one allow-listed organisation ID per worker |
+| `INTERNAL_SERVICE_ORGANISATION_IDS` | worker organisation allow-list |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | redacted |
 
 ## Production Configuration Summary

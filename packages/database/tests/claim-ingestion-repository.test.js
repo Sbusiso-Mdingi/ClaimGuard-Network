@@ -3,11 +3,13 @@ import test from "node:test";
 
 import {
   ClaimOwnershipConflictError,
+  ClaimReferenceValidationError,
   createClaimIngestionRepository,
+  ReferenceOwnershipConflictError,
   runWithTenantContext,
 } from "../src/index.js";
 
-function createFakePool() {
+function createFakePool({ tenantId = "tenant_default" } = {}) {
   const executions = [];
   let outboxRow = null;
 
@@ -20,6 +22,15 @@ function createFakePool() {
           executions.push({ sql, params });
           if (/SELECT tenant_id FROM claims/i.test(sql)) {
             return [[]];
+          }
+          if (/SELECT tenant_id FROM schemes/i.test(sql)) {
+            return [[{ tenant_id: tenantId }]];
+          }
+          if (/SELECT tenant_id, scheme_id FROM members/i.test(sql)) {
+            return [[{ tenant_id: tenantId, scheme_id: "scheme_a" }]];
+          }
+          if (/SELECT tenant_id, scheme_id FROM providers/i.test(sql)) {
+            return [[{ tenant_id: tenantId, scheme_id: "scheme_a" }]];
           }
           if (/INSERT INTO claim_processing_outbox/i.test(sql)) {
             const [id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, max_attempts] = params;
@@ -56,7 +67,7 @@ test("claim ingestion repository inserts claims through transaction", async () =
   const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   const result = await repository.ingestClaims({
-    source: "synthetic-run",
+    source: "upstream-connector",
     claims: [
       {
         claim_id: "C-100",
@@ -73,14 +84,80 @@ test("claim ingestion repository inserts claims through transaction", async () =
   assert.equal(result.received, 1);
   assert.equal(result.inserted, 1);
   assert.equal(result.updated, 0);
-  assert.equal(result.source, "synthetic-run");
+  assert.equal(result.source, "upstream-connector");
   assert.equal(result.processing.status, "queued");
   assert.equal(result.processing.asynchronous, true);
-  assert.equal(pool.executions.length, 4);
-  assert.match(pool.executions[1].sql, /INSERT INTO claims/i);
-  assert.equal(pool.executions[1].params[7], "tenant_default");
-  assert.match(pool.executions[2].sql, /INSERT INTO claim_processing_outbox/i);
-  assert.equal(pool.executions[2].params[1], "tenant_default");
+  assert.equal(pool.executions.length, 7);
+  assert.match(pool.executions[4].sql, /INSERT INTO claims/i);
+  assert.equal(pool.executions[4].params[7], "tenant_default");
+  assert.match(pool.executions[5].sql, /INSERT INTO claim_processing_outbox/i);
+  assert.equal(pool.executions[5].params[1], "tenant_default");
+});
+
+test("reference data and claims are accepted in one authoritative batch", async () => {
+  const pool = createFakePool();
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+
+  const result = await repository.ingestClaims({
+    source: "medical-aid-desktop",
+    schemes: [{ scheme_id: "scheme_a", scheme_name: "Scheme A" }],
+    members: [{
+      member_id: "M-1", scheme_id: "scheme_a", first_name: "token:first", last_name: "token:last",
+      date_of_birth: "1985-01-01", gender: "unspecified", identity_number: "token:identity",
+      banking_detail: "token:member-bank", home_region: "Gauteng", home_lat: -26.2,
+      home_lon: 28.0, join_date: "2020-01-01",
+    }],
+    providers: [{
+      provider_id: "P-1", scheme_id: "scheme_a", practice_number: "practice-1", specialty: "GP",
+      practice_name: "Practice 1", banking_detail: "token:provider-bank", practice_region: "Gauteng",
+      practice_lat: -26.2, practice_lon: 28.0,
+    }],
+    claims: [{
+      claim_id: "C-REFERENCE", scheme_id: "scheme_a", member_id: "M-1", provider_id: "P-1",
+      service_date: "2026-07-19", billing_code: "CONSULT", amount: 450,
+    }],
+  });
+
+  assert.deepEqual(result.referenceData, {
+    schemes: { received: 1, inserted: 0, updated: 1 },
+    members: { received: 1, inserted: 1, updated: 0 },
+    providers: { received: 1, inserted: 1, updated: 0 },
+  });
+  assert.equal(result.inserted, 1);
+  assert.equal(result.processing.status, "queued");
+  assert.equal(pool.executions.some(({ sql }) => /INSERT INTO members/i.test(sql)), true);
+  assert.equal(pool.executions.some(({ sql }) => /INSERT INTO providers/i.test(sql)), true);
+});
+
+test("reference identifiers remain immutable across tenants", async () => {
+  let rolledBack = false;
+  const pool = {
+    async getConnection() {
+      return {
+        async beginTransaction() {},
+        async execute(sql) {
+          if (/SELECT tenant_id FROM schemes/i.test(sql)) return [[{ tenant_id: "tenant_beta" }]];
+          throw new Error(`Unexpected SQL: ${sql}`);
+        },
+        async commit() {},
+        async rollback() { rolledBack = true; },
+        release() {},
+      };
+    },
+  };
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+
+  await assert.rejects(
+    () => runWithTenantContext({ tenant_id: "tenant_alpha" }, () => repository.ingestClaims({
+      schemes: [{ scheme_id: "scheme_a", scheme_name: "Scheme A" }],
+      claims: [{
+        claim_id: "C-1", scheme_id: "scheme_a", member_id: "M-1", provider_id: "P-1",
+        service_date: "2026-07-19", billing_code: "CONSULT", amount: 450,
+      }],
+    })),
+    ReferenceOwnershipConflictError,
+  );
+  assert.equal(rolledBack, true);
 });
 
 test("claim ingestion repository validates required fields", async () => {
@@ -102,7 +179,7 @@ test("claim ingestion repository validates required fields", async () => {
 });
 
 test("claim ingestion repository persists tenant_id from active tenant context", async () => {
-  const pool = createFakePool();
+  const pool = createFakePool({ tenantId: "tenant_alpha" });
   const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
   await runWithTenantContext(
@@ -130,10 +207,10 @@ test("claim ingestion repository persists tenant_id from active tenant context",
     },
   );
 
-  assert.equal(pool.executions.length, 4);
-  assert.equal(pool.executions[1].params[7], "tenant_alpha");
-  assert.match(pool.executions[1].sql, /tenant_id/i);
-  assert.equal(pool.executions[2].params[1], "tenant_alpha");
+  assert.equal(pool.executions.length, 7);
+  assert.equal(pool.executions[4].params[7], "tenant_alpha");
+  assert.match(pool.executions[4].sql, /tenant_id/i);
+  assert.equal(pool.executions[5].params[1], "tenant_alpha");
 });
 
 function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = false } = {}) {
@@ -159,6 +236,15 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
           if (/SELECT tenant_id FROM claims/i.test(sql)) {
             const claim = claims.get(params[0]);
             return [claim ? [{ tenant_id: claim.tenant_id }] : []];
+          }
+          if (/SELECT tenant_id FROM schemes/i.test(sql)) {
+            return [[{ tenant_id: "tenant_alpha" }]];
+          }
+          if (/SELECT tenant_id, scheme_id FROM members/i.test(sql)) {
+            return [[{ tenant_id: "tenant_alpha", scheme_id: "scheme_a" }]];
+          }
+          if (/SELECT tenant_id, scheme_id FROM providers/i.test(sql)) {
+            return [[{ tenant_id: "tenant_alpha", scheme_id: "scheme_a" }]];
           }
           if (/INSERT INTO claims/i.test(sql)) {
             if (failClaimInsert) {
@@ -331,4 +417,22 @@ test("ownership conflict rolls back without creating an outbox job", async () =>
 
   assert.equal(pool.outbox.size, 1);
   assert.equal([...pool.outbox.values()][0].tenant_id, "tenant_alpha");
+});
+
+test("claim references cannot cross tenant or scheme boundaries", async () => {
+  const pool = createStatefulClaimPool();
+  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+
+  await assert.rejects(
+    () => runWithTenantContext({ tenant_id: "tenant_beta" }, () =>
+      repository.ingestClaims({
+        claims: [{ ...claimInput(100), claim_id: "C-CROSS-TENANT" }],
+      }),
+    ),
+    ClaimReferenceValidationError,
+  );
+
+  assert.equal(pool.claims.size, 0);
+  assert.equal(pool.outbox.size, 0);
+  assert.equal(pool.rollbackCount, 1);
 });

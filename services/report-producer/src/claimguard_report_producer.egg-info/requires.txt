@@ -1,4 +1,0 @@
-azure-identity>=1.19.0
-azure-storage-blob>=12.24.0
-claimguard-detection-engine>=0.1.0
-PyMySQL>=1.1.1

@@ -37,9 +37,9 @@ function splitSecretReferences(secretReference) {
 }
 
 export function createPrivateDatabaseAdapter({
-  supportedSchemaVersions = ["8"],
+  supportedSchemaVersions = ["10"],
   expectedEnvironment = "production",
-  expectedMigrationVersion = 8,
+  expectedMigrationVersion = 10,
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),
   credential = new DefaultAzureCredential(),
