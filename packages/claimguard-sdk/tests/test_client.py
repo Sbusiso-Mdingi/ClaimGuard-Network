@@ -1,8 +1,7 @@
-import pytest
 import json
 from unittest.mock import patch, MagicMock
 
-from claimguard_sdk.client import ClaimGuardClient, ClaimGuardClientError
+from claimguard_sdk.client import ClaimGuardClient
 
 def test_sanitize_date_of_birth():
     client = ClaimGuardClient("http://api", "key", "secret")
