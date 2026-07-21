@@ -15,7 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--purpose",
         default="PCNS",
-        choices=["PCNS", "BANK"],
+        choices=["PCNS", "BANK", "ID", "NAME"],
         help="Tokenization purpose label (default: PCNS)",
     )
     return parser
@@ -29,8 +29,10 @@ def main(argv: list[str] | None = None) -> int:
         sdk = ClaimGuardEdgeSDK(scheme_key=args.key)
         if args.purpose == "BANK":
             token = sdk.tokenize_banking_detail(args.value)
-        else:
+        elif args.purpose == "PCNS":
             token = sdk.tokenize_pcns(args.value)
+        else:
+            token = sdk.tokenize_string(args.value, purpose=args.purpose)
     except TokenizationError as exc:
         parser.error(str(exc))
         return 2

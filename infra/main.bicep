@@ -33,6 +33,9 @@ param githubActionsPrincipalId string
 @description('Name of the existing provisioning-worker user-assigned managed identity.')
 param provisionerIdentityName string = 'claimguard-provisioner-identity'
 
+@description('Name of the Cosmos DB account. Must be globally unique.')
+param cosmosDbAccountName string = 'cg-graph-${uniqueString(resourceGroup().id)}'
+
 var acrPullRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
@@ -182,3 +185,50 @@ output workerIdentityId string = reportWorkerIdentity.id
 output workerIdentityClientId string = reportWorkerIdentity.properties.clientId
 output workerIdentityPrincipalId string = reportWorkerIdentity.properties.principalId
 output privateSecretRoleCount int = length(reportWorkerPrivateSecretReads)
+
+resource cosmosDbAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
+  name: cosmosDbAccountName
+  location: location
+  kind: 'GlobalDocumentDB'
+  properties: {
+    databaseAccountOfferType: 'Standard'
+    locations: [
+      {
+        locationName: location
+        failoverPriority: 0
+        isZoneRedundant: false
+      }
+    ]
+    capabilities: [
+      {
+        name: 'EnableGremlin'
+      }
+    ]
+  }
+}
+
+resource cosmosDbDatabase 'Microsoft.DocumentDB/databaseAccounts/gremlinDatabases@2023-11-15' = {
+  parent: cosmosDbAccount
+  name: 'claimguard-graph'
+  properties: {
+    resource: {
+      id: 'claimguard-graph'
+    }
+  }
+}
+
+resource cosmosDbGraph 'Microsoft.DocumentDB/databaseAccounts/gremlinDatabases/graphs@2023-11-15' = {
+  parent: cosmosDbDatabase
+  name: 'fraud-network'
+  properties: {
+    resource: {
+      id: 'fraud-network'
+      partitionKey: {
+        paths: [
+          '/partitionKey'
+        ]
+        kind: 'Hash'
+      }
+    }
+  }
+}
