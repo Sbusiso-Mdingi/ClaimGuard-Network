@@ -44,5 +44,9 @@ class ClaimGuardEdgeSDK:
     def tokenize_banking_detail(self, banking_detail: str) -> str:
         return tokenize_value(banking_detail, self.scheme_key, purpose="BANK")
 
+    def tokenize_string(self, value: str, purpose: str) -> str:
+        """Tokenize a generic PII string (e.g., identity number, first name) for POPIA compliance."""
+        return tokenize_value(value, self.scheme_key, purpose=purpose)
+
     def rotate_key(self, new_scheme_key: str) -> "ClaimGuardEdgeSDK":
         return ClaimGuardEdgeSDK(scheme_key=new_scheme_key)
