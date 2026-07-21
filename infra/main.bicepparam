@@ -9,5 +9,5 @@ param operationalSecretName = 'claimguard--api--mysql-url'
 param reportWorkerPrivateSecretNames = []
 param reportStorageAccountName = 'cgrpt0715sa'
 param reportStorageContainerName = 'claimguard-reports'
-param githubActionsPrincipalId = 'fe7b2935-7f00-4996-a0c6-7f3be2390dbb'
+param githubActionsPrincipalId = '836d3065-119d-4dae-94b4-f29304e1938d'
 param provisionerIdentityName = 'claimguard-provisioner-identity'

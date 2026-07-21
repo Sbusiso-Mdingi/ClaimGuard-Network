@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.error
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .tokenizer import ClaimGuardEdgeSDK
 
