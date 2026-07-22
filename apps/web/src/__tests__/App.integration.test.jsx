@@ -187,7 +187,7 @@ test("live refresh toggle controls browser polling", async () => {
   });
   expect(global.fetch).toHaveBeenCalledTimes(8);
 
-  fireEvent.click(screen.getByRole("button", { name: /Paused/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
 
   await act(async () => {
     vi.advanceTimersByTime(30000);
