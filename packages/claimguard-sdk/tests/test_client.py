@@ -7,14 +7,14 @@ def test_sanitize_date_of_birth():
     client = ClaimGuardClient("http://api", "key", "secret")
     assert client._sanitize_date_of_birth("1990-05-15") == "1990-01-01"
     assert client._sanitize_date_of_birth("1985-12-31") == "1985-01-01"
-    assert client._sanitize_date_of_birth("invalid") == "inva-01-01"
+    assert client._sanitize_date_of_birth("invalid") is None
     assert client._sanitize_date_of_birth("") == ""
 
 def test_sanitize_coordinate():
     client = ClaimGuardClient("http://api", "key", "secret")
     assert client._sanitize_coordinate(12.3456) == 12.3
     assert client._sanitize_coordinate(-90.18) == -90.2
-    assert client._sanitize_coordinate("invalid") == 0.0
+    assert client._sanitize_coordinate("invalid") is None
 
 def test_submit_batch_tokenizes_pii():
     client = ClaimGuardClient("http://api", "api-key", "test-secret")
