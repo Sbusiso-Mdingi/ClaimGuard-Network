@@ -128,9 +128,11 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
       return c.json({ available: false, message: "endpointUrl is required for ml_endpoint strategy" }, 400);
     }
 
+    // customModelImageSecret is optional; it should be the name of a Key Vault secret storing the model image URL
     const strategy = await detectionStrategyRepository.setStrategy(tenantContext, {
       strategyType: payload.strategyType,
       endpointUrl: payload.endpointUrl,
+      customModelImageSecret: payload.customModelImageSecret,
     });
 
     return c.json({ available: true, strategy });

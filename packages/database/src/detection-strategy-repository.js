@@ -19,15 +19,16 @@ export function createDetectionStrategyRepository(db, pool, options = {}) {
         )
         .limit(1);
 
-      return strategy || {
-        tenantId,
-        strategyType: "deterministic_rules",
-        endpointUrl: null,
-        isActive: 1,
-      };
+        return strategy || {
+          tenantId,
+          strategyType: "deterministic_rules",
+          endpointUrl: null,
+          customModelImageSecret: null,
+          isActive: 1,
+        };
     },
 
-    async setStrategy(tenantContext, { strategyType, endpointUrl }) {
+    async setStrategy(tenantContext, { strategyType, endpointUrl, customModelImageSecret }) {
       const tenantId = getActiveTenantId(tenantContext, { allowLegacy: allowLegacyTenantContext });
       const now = new Date().toISOString();
 
@@ -42,6 +43,7 @@ export function createDetectionStrategyRepository(db, pool, options = {}) {
         tenantId,
         strategyType,
         endpointUrl: endpointUrl || null,
+        customModelImageSecret: customModelImageSecret || null,
         isActive: 1,
         createdAt: now,
         updatedAt: now,

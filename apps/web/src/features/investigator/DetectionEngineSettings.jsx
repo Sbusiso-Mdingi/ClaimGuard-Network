@@ -4,6 +4,7 @@ import "./DetectionEngineSettings.css";
 export function DetectionEngineSettings({ tenantId }) {
   const [strategyType, setStrategyType] = useState("deterministic_rules");
   const [endpointUrl, setEndpointUrl] = useState("");
+  const [customModelSecret, setCustomModelSecret] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -17,6 +18,7 @@ export function DetectionEngineSettings({ tenantId }) {
         if (data.strategy) {
           setStrategyType(data.strategy.strategyType);
           setEndpointUrl(data.strategy.endpointUrl || "");
+          setCustomModelSecret(data.strategy.customModelImageSecret || "");
         }
       } catch (err) {
         setError(err.message);
@@ -34,7 +36,11 @@ export function DetectionEngineSettings({ tenantId }) {
       const response = await fetch("/api/detection/strategy", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ strategyType, endpointUrl }),
+        body: JSON.stringify({
+          strategyType,
+          endpointUrl: endpointUrl || null,
+          customModelImageSecret: customModelSecret || null,
+        }),
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
@@ -114,6 +120,21 @@ export function DetectionEngineSettings({ tenantId }) {
             placeholder="https://your-custom-engine.com/evaluate"
             value={endpointUrl}
             onChange={(e) => setEndpointUrl(e.target.value)}
+          />
+        </div>
+      )}
+      {strategyType === "ml_endpoint" && (
+        <div className="secret-input-container" style={{ marginTop: "1rem" }}>
+          <label className="url-input-label" htmlFor="custom-model-secret">
+            Custom Model Secret Name (Key Vault)
+          </label>
+          <input
+            id="custom-model-secret"
+            className="url-input"
+            type="text"
+            placeholder="my-custom-model-secret"
+            value={customModelSecret}
+            onChange={(e) => setCustomModelSecret(e.target.value)}
           />
         </div>
       )}

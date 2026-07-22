@@ -240,11 +240,24 @@ resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' 
   name: containerAppsEnvironmentName
 }
 
-resource mlInferenceApp 'Microsoft.App/containerApps@2023-05-01' = {
-  name: 'claimguard-ml-inference'
+// Parameter for optional custom model image (Key Vault secret name)
+@description('Key Vault secret name containing the custom model container image URL')
+param customModelImageSecret string = ''
+
+// Parameter for custom container registry name (if needed)
+@description('Name of the Azure Container Registry that holds the custom model images')
+param customModelContainerRegistry string = ''
+
+// Conditional deployment of custom model container app
+resource customModelApp 'Microsoft.App/containerApps@2023-05-01' = if (customModelImageSecret != '') {
+  name: 'claimguard-custom-model'
   location: location
   identity: {
-    type: 'None'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      // Assign the report worker identity for Key Vault access
+      (${reportWorkerIdentity.id}): {}
+    }
   }
   properties: {
     managedEnvironmentId: containerAppEnvironment.id
@@ -264,20 +277,52 @@ resource mlInferenceApp 'Microsoft.App/containerApps@2023-05-01' = {
     template: {
       containers: [
         {
-          name: 'inference-api'
-          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          name: 'custom-model-api'
+          // Image will be resolved from Key Vault secret at deployment time via secret reference
+          image: ''
+          env: [
+            {
+              name: 'IMAGE_URL'
+              secretRef: 'customModelImage'
+            }
+          ]
           resources: {
-            cpu: json('0.25')
-            memory: '0.5Gi'
+            cpu: json('0.5')
+            memory: '1Gi'
           }
         }
       ]
       scale: {
         minReplicas: 0
-        maxReplicas: 1
+        maxReplicas: 2
       }
+      secrets: [
+        {
+          name: 'customModelImage'
+          valueFrom: {
+            secretRef: customModelImageSecret
+          }
+        }
+      ]
     }
   }
 }
+
+// Role assignment allowing the custom model app to read the Key Vault secret
+resource customModelAppKVRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (customModelImageSecret != '') {
+  name: guid(keyVault.id, customModelApp.identity.principalId, keyVaultSecretsUserRoleDefinitionId)
+  scope: keyVault
+  properties: {
+    description: 'Allow custom model container app to read the image URL secret'
+    principalId: customModelApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+  }
+}
+
+// NOTE: The original placeholder mlInferenceApp is removed. If you need it back, uncomment the following block.
+// resource mlInferenceApp 'Microsoft.App/containerApps@2023-05-01' = {
+//   ... (original definition) ...
+// }
 
 output mlInferenceFqdn string = mlInferenceApp.properties.configuration.ingress.fqdn

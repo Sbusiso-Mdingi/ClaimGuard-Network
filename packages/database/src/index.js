@@ -109,6 +109,7 @@ export const detectionStrategiesTable = mysqlTable("detection_strategies", {
   tenantId: varchar("tenant_id", { length: 128 }).notNull(),
   strategyType: varchar("strategy_type", { length: 64 }).notNull().default("deterministic_rules"),
   endpointUrl: varchar("endpoint_url", { length: 512 }),
+  customModelImageSecret: varchar("custom_model_image_secret", { length: 512 }).null(),
   isActive: int("is_active").notNull().default(1),
   createdAt: varchar("created_at", { length: 64 }).notNull(),
   updatedAt: varchar("updated_at", { length: 64 }).notNull(),

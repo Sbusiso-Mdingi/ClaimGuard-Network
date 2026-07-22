@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: pip
+    directory: /packages/claimguard-sdk
+    schedule: { interval: weekly }
+  - package-ecosystem: pip
+    directory: /services/detection-engine
+    schedule: { interval: weekly }
+  - package-ecosystem: pip
+    directory: /services/report-producer
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /services/report-producer
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /apps/provisioning-worker
+    schedule: { interval: weekly }
