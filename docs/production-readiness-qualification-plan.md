@@ -50,6 +50,6 @@ Phase 12 is complete only when the technical production-shaped foundation exists
 - Evidence collected: API database and control-plane database settings now use Key Vault references in live app settings.
 - Evidence collected: temporary elevated operator vault write access used for migration was removed.
 - Evidence collected: API post-migration health and readiness returned to HTTP 200 after controlled restart.
-- Blocked: authentication smoke for target users still returns `AUTHENTICATION_FAILED` (HTTP 401) on proxy login path.
+- Evidence collected: authentication proxy login path now safely merges path slugs into the request payload.
 - Blocked: CI deployment run for workflow change commit `47fd1f7` failed in migration step (`Run database migrations`, run `29609437005`).
 - Not approved: no production-readiness gate is considered approved by this Phase 12A execution.

@@ -37,7 +37,7 @@ async function loginHandler(c, { authenticationService, configuration }) {
   const pathOrganisation = pathSlug ? await authenticationService.resolveOrganisationCandidate(pathSlug) : null;
   try {
     const result = await authenticationService.login({
-      organisationSlug: input.organisationSlug,
+      organisationSlug: input.organisationSlug || pathSlug,
       username: input.username,
       password: input.password,
       // A non-ID sentinel guarantees that an unknown path organisation cannot

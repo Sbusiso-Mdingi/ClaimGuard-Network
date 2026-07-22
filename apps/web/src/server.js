@@ -41,7 +41,8 @@ const server = http.createServer(async (req, res) => {
   if (req.url?.startsWith("/api/")) {
     try {
       await proxyApiRequest(req, res, { baseUrl: apiBaseUrl, mode: authenticationMode, trustProxy });
-    } catch {
+    } catch (error) {
+      console.error("Proxy error:", error);
       res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "bad_gateway" }));
     }
