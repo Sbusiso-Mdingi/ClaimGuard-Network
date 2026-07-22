@@ -64,5 +64,20 @@ export function createConfigurationRepository(defaultExecutor) {
       );
       return { scopeKey, flagKey: input.flagKey };
     },
+
+    async getFeatureFlag(input, { executor } = {}) {
+      const scopeKey = input.organisationId || "platform";
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT typed_value, value_type, enabled FROM organisation_feature_flags
+         WHERE scope_key = ? AND flag_key = ? LIMIT 1`,
+        [scopeKey, input.flagKey],
+      );
+      if (!rows || rows.length === 0) return null;
+      const row = rows[0];
+      return {
+        value: row.value_type === "json" ? JSON.parse(row.typed_value) : row.typed_value,
+        enabled: row.enabled === 1,
+      };
+    },
   };
 }

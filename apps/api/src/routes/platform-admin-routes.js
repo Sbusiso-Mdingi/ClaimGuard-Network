@@ -189,6 +189,38 @@ export function registerPlatformAdminRoutes(app, {
     }
   });
 
+  app.get("/admin/platform/global-detection-engine", requirePlatformAdmin, async (c) => {
+    try {
+      const flag = await controlPlaneRepositories.configuration.getFeatureFlag({
+        flagKey: "global_detection_engine",
+      });
+      return c.json({
+        available: true,
+        strategy: flag?.value || { endpointUrl: "", customModelImageSecret: "" },
+      });
+    } catch (error) {
+      return c.json({ available: false, message: "Failed to load global detection engine config" }, 500);
+    }
+  });
+
+  app.put("/admin/platform/global-detection-engine", requirePlatformAdmin, async (c) => {
+    try {
+      const payload = await c.req.json();
+      await controlPlaneRepositories.configuration.setFeatureFlag({
+        flagKey: "global_detection_engine",
+        valueType: "json",
+        value: {
+          endpointUrl: payload.endpointUrl || null,
+          customModelImageSecret: payload.customModelImageSecret || null,
+        },
+        enabled: true,
+      });
+      return c.json({ available: true, message: "Global detection engine updated" });
+    } catch (error) {
+      return c.json({ available: false, message: "Failed to update global detection engine config" }, 500);
+    }
+  });
+
   app.get("/admin/platform/organisations", requirePlatformAdmin, async (c) => {
     const organisations = (await controlPlaneService.listOrganisations({})).filter((item) => item.organisationType === "medical_scheme");
     const operations = await controlPlaneRepositories.provisioning.listOperations({ limit: 200 });

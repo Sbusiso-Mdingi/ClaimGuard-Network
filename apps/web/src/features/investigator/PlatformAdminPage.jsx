@@ -20,6 +20,86 @@ function ReadOnlyRow({ label, value }) {
   );
 }
 
+export function GlobalDetectionEngineSettings() {
+  const [endpointUrl, setEndpointUrl] = useState("");
+  const [customModelSecret, setCustomModelSecret] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    async function fetchConfig() {
+      try {
+        const payload = await apiJson("/admin/platform/global-detection-engine");
+        if (payload.strategy) {
+          setEndpointUrl(payload.strategy.endpointUrl || "");
+          setCustomModelSecret(payload.strategy.customModelImageSecret || "");
+        }
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Failed to load global detection config");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchConfig();
+  }, []);
+
+  async function handleSave(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    setMessage("");
+    try {
+      await apiJson("/admin/platform/global-detection-engine", {
+        method: "PUT",
+        body: JSON.stringify({
+          endpointUrl: endpointUrl || null,
+          customModelImageSecret: customModelSecret || null,
+        }),
+      });
+      setMessage("Global detection engine configuration updated successfully.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update global detection config");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="p-4 text-sm text-muted-foreground">Loading configuration...</div>;
+  }
+
+  return (
+    <form onSubmit={handleSave} className="space-y-4">
+      {error && <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+      {message && <div className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">{message}</div>}
+      <WizardField label="Custom Model Endpoint URL">
+        <input
+          type="url"
+          required
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          placeholder="https://your-custom-engine.com/evaluate"
+          value={endpointUrl}
+          onChange={(e) => setEndpointUrl(e.target.value)}
+        />
+      </WizardField>
+      <WizardField label="Key Vault Secret Name">
+        <input
+          type="text"
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          placeholder="my-custom-model-secret"
+          value={customModelSecret}
+          onChange={(e) => setCustomModelSecret(e.target.value)}
+        />
+      </WizardField>
+      <button type="submit" disabled={saving || !endpointUrl} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
+        {saving ? "Saving..." : "Save Configuration"}
+      </button>
+    </form>
+  );
+}
+
 export function PlatformAdminPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -395,6 +475,10 @@ export function PlatformAdminPage() {
             </div>
           ))}
         </div>
+      </SectionCard>
+
+      <SectionCard title="Global ClaimGuard Engine Configuration" description="Configure the default 'ClaimGuard Detection Engine' model used by schemes that have not opted into a custom engine.">
+        <GlobalDetectionEngineSettings />
       </SectionCard>
 
       <SectionCard title="API health" description="Live read from the API's existing /health and /ready endpoints.">
