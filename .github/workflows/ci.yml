@@ -226,7 +226,7 @@ jobs:
       id-token: write
     steps:
       - name: Download deployable artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: claimguard-deploy-packages
           path: /tmp/claimguard-deploy-packages
