@@ -9,7 +9,7 @@
     "@claimguard/control-plane-database": "workspace:^",
     "@claimguard/database": "workspace:*",
     "@claimguard/shared-schema": "workspace:*",
-    "@hono/node-server": "^1.14.0",
+    "@hono/node-server": "^2.0.10",
     "@sentry/node": "^8.0.0",
     "@trpc/server": "^11.0.0",
     "drizzle-orm": "^0.38.0",
