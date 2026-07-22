@@ -77,8 +77,8 @@ export function DetectionEngineSettings({ tenantId }) {
             </svg>
           </div>
           <div className="strategy-content">
-            <h4 className="strategy-name">Deterministic Rules Engine</h4>
-            <p className="strategy-desc">Locally evaluated rule sets, heuristics, and graph analytics.</p>
+            <h4 className="strategy-name">ClaimGuard's Detection Engine</h4>
+            <p className="strategy-desc">ClaimGuard's built-in rules, heuristics, and graph analytics.</p>
           </div>
           <div className="strategy-status" />
         </div>
@@ -95,8 +95,8 @@ export function DetectionEngineSettings({ tenantId }) {
             </svg>
           </div>
           <div className="strategy-content">
-            <h4 className="strategy-name">Machine Learning Endpoint</h4>
-            <p className="strategy-desc">Remote execution using an advanced ML inference model.</p>
+            <h4 className="strategy-name">Custom Detection Engine</h4>
+            <p className="strategy-desc">Bring your own engine by connecting a custom remote endpoint.</p>
           </div>
           <div className="strategy-status" />
         </div>
@@ -105,13 +105,13 @@ export function DetectionEngineSettings({ tenantId }) {
       {strategyType === "ml_endpoint" && (
         <div className="url-input-container">
           <label className="url-input-label" htmlFor="ml-endpoint-url">
-            Inference Endpoint URL
+            Custom Engine Endpoint URL
           </label>
           <input
             id="ml-endpoint-url"
             className="url-input"
             type="url"
-            placeholder="https://claimguard-ml-inference..."
+            placeholder="https://your-custom-engine.com/evaluate"
             value={endpointUrl}
             onChange={(e) => setEndpointUrl(e.target.value)}
           />
