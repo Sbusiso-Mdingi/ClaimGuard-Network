@@ -1,82 +1,35 @@
 import React, { useMemo } from "react";
 import { Link } from "react-router-dom";
 import AlertTriangle from "lucide-react/dist/esm/icons/alert-triangle.mjs";
-import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.mjs";
-import Building2 from "lucide-react/dist/esm/icons/building-2.mjs";
 import FileText from "lucide-react/dist/esm/icons/file-text.mjs";
-import Gauge from "lucide-react/dist/esm/icons/gauge.mjs";
 import Radar from "lucide-react/dist/esm/icons/radar.mjs";
 import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
-import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
+import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.mjs";
 import { Skeleton } from "../../components/ui/skeleton";
-import { PageFrame, SectionCard, StatCard, MetricPill, StatusIndicator, RiskScoreBar, severityStatusTone } from "./InvestigatorUI";
+import { PageFrame, SectionCard, StatCard, MetricPill, StatusIndicator, riskScoreTone, claimStatusTone } from "./InvestigatorUI";
+import { NetworkGraph } from "./NetworkGraph";
 
-function metricTone(value) {
-  if (typeof value !== "number") return "default";
-  if (value >= 75) return "danger";
-  if (value >= 50) return "warning";
-  return "success";
+function formatStatus(status) {
+  if (!status) return "Unknown";
+  if (status === "UNDER_INVESTIGATION") return "Under investigation";
+  if (status === "CONFIRMED_FRAUD") return "Confirmed fraud";
+  if (status === "DISMISSED") return "Dismissed";
+  if (status === "SUBMITTED") return "Submitted";
+  // Convert snake_case to Title case for any unexpected enums
+  return status.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 }
 
-const SEVERITY_SEGMENTS = [
-  { key: "High", barClass: "bg-rose-500/80", dotClass: "bg-rose-500" },
-  { key: "Medium", barClass: "bg-amber-500/80", dotClass: "bg-amber-500" },
-  { key: "Low", barClass: "bg-emerald-500/80", dotClass: "bg-emerald-500" },
-];
-
-function SeverityBreakdown({ detections }) {
-  const counts = useMemo(() => {
-    const tally = { High: 0, Medium: 0, Low: 0 };
-    for (const item of detections) {
-      if (tally[item.severity] !== undefined) tally[item.severity] += 1;
-      else tally.Low += 1;
-    }
-    return tally;
-  }, [detections]);
-  const total = detections.length;
-
-  if (total === 0) {
-    return <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">No severity data available yet.</p>;
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex h-3 w-full overflow-hidden rounded-full bg-secondary" role="img" aria-label="Severity distribution of recent detections">
-        {SEVERITY_SEGMENTS.map(({ key, barClass }) =>
-          counts[key] > 0 ? (
-            <div key={key} className={`h-full ${barClass}`} style={{ width: `${(counts[key] / total) * 100}%` }} />
-          ) : null,
-        )}
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {SEVERITY_SEGMENTS.map(({ key, dotClass }) => (
-          <div key={key} className="rounded-xl border border-border/70 px-3 py-2">
-            <div className="flex items-center gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden="true" />
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">{key}</p>
-            </div>
-            <p className="font-data mt-1 text-lg font-semibold">{counts[key]}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export function DashboardPage({ metrics, status, lastRefresh }) {
+export function DashboardPage({ metrics, graph, status, lastRefresh }) {
   const totalClaims = Number.isFinite(metrics.totalClaims) ? metrics.totalClaims : "Unavailable";
   const highRiskClaims = Number.isFinite(metrics.highRiskClaims) ? metrics.highRiskClaims : "Unavailable";
   const averageRiskScore = Number.isFinite(metrics.averageRiskScore) ? metrics.averageRiskScore : "Unavailable";
-  const confirmedFraud = metrics.recentDetections.filter((item) => item.status === "CONFIRMED_FRAUD").length;
-  const openInvestigations = metrics.recentDetections.filter((item) => item.status === "UNDER_INVESTIGATION").length;
-  const providersFlagged = metrics.recentDetections.length;
   const activeNetworks = Number.isFinite(metrics.activeFraudSchemes) ? metrics.activeFraudSchemes : "Unavailable";
 
   if (status === "loading") {
     return (
       <div className="space-y-5">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 6 }).map((_, idx) => (
+        {Array.from({ length: 4 }).map((_, idx) => (
           <div key={idx} className="investigator-surface p-5">
             <Skeleton className="h-3 w-28" />
             <Skeleton className="mt-4 h-8 w-24" />
@@ -99,98 +52,98 @@ export function DashboardPage({ metrics, status, lastRefresh }) {
   }
 
   return (
-    <PageFrame
-      eyebrow="Dashboard"
-      title="Fraud operations overview"
-      description="A compact operational view of the current investigator snapshot, with the most important risk indicators surfaced first."
-      actions={[
-        <MetricPill key="ledger" label="Ledger" value={metrics.ledgerStatus} tone={metrics.ledgerStatus === "Connected" ? "success" : "warning"} />,
-        <MetricPill key="refresh" label="Refreshed" value={lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "waiting"} />,
-      ]}
-    >
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        <StatCard title="Total Claims" value={totalClaims} description="Claims available in the current snapshot" icon={FileText} />
-        <StatCard title="High Risk Claims" value={highRiskClaims} description="Claims above the operational risk threshold" icon={ShieldAlert} tone={metricTone(highRiskClaims)} />
-        <StatCard title="Confirmed Fraud" value={confirmedFraud} description="Claims already confirmed by investigators" icon={ShieldCheck} tone="danger" />
-        <StatCard title="Open Investigations" value={openInvestigations} description="Cases still in active review" icon={Gauge} tone="warning" />
-        <StatCard title="Providers Flagged" value={providersFlagged} description="High-impact providers surfaced by the engine" icon={Building2} />
-        <StatCard title="Active Networks" value={activeNetworks} description="Scheme clusters with meaningful fraud activity" icon={Radar} />
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 border-b border-border-soft pb-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-1.5">
+          <p className="font-data text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">Investigator Dashboard</p>
+          <h1 className="font-display text-[28px] font-semibold tracking-[-0.02em] text-foreground">Claims risk intelligence</h1>
+          <p className="max-w-2xl text-xs leading-6 text-muted-2">
+            Real-time fraud detection and operational monitoring across the scheme partition.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <MetricPill variant="console" key="ledger" label="Ledger" value={metrics.ledgerStatus} tone={metrics.ledgerStatus === "Connected" ? "success" : "warning"} />
+          <MetricPill variant="console" key="refresh" label="Refreshed" value={lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "waiting"} />
+        </div>
+      </header>
+
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard variant="console" title="Claims Screened" value={totalClaims} description="Total volume in current snapshot" icon={FileText} />
+        <StatCard variant="console" title="Priority Alerts" value={highRiskClaims} description="Claims exceeding risk threshold" icon={ShieldAlert} tone="danger" />
+        <StatCard variant="console" title="Avg Risk Score" value={averageRiskScore} description="Mean engine confidence" icon={AlertTriangle} tone={riskScoreTone(averageRiskScore)} />
+        <StatCard variant="console" title="Active Networks" value={activeNetworks} description="Suspicious clusters identified" icon={Radar} />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[2fr_1fr]">
-        <SectionCard title="Recent Detections" description="The latest high-impact claims sorted by severity and score. Select a claim to open its full case file.">
+      <section className="grid gap-5 xl:grid-cols-[1fr_400px]">
+        <SectionCard variant="console" title="Priority claims queue" description="The most critical items flagged by the detection engine, sorted by descending risk severity.">
           {metrics.recentDetections.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">No detections available yet.</p>
+            <div className="p-8 text-center">
+              <p className="text-sm text-muted">No priority claims available.</p>
+            </div>
           ) : (
-            <div className="space-y-3">
-              {metrics.recentDetections.map((item) => (
-                <Link
-                  key={item.claimId}
-                  to={`/claims/${encodeURIComponent(item.claimId)}`}
-                  className="group block rounded-xl border border-border/70 bg-background/70 px-4 py-4 transition-colors hover:border-primary/50 hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-data text-sm font-semibold tracking-tight">{item.claimId}</p>
-                        <StatusIndicator tone={severityStatusTone(item.severity)}>{item.severity}</StatusIndicator>
-                        <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
-                      </div>
-                      <p className="text-sm text-muted-foreground">Policy holder: {item.policyHolder}</p>
-                      <p className="text-xs text-muted-foreground">Triggered rules: {(item.triggeredRules || []).slice(0, 2).join(" · ") || "No rules"}</p>
-                    </div>
-                    <div className="w-24 text-right">
-                      <p className="font-data text-2xl font-semibold tracking-tight">{item.riskScore}</p>
-                      <p className="text-xs text-muted-foreground">Risk score</p>
-                      <RiskScoreBar score={item.riskScore} className="mt-2" />
-                    </div>
-                  </div>
-                </Link>
-              ))}
+            <div className="overflow-x-auto investigator-scrollbar">
+              <table className="investigator-table w-full whitespace-nowrap">
+                <thead>
+                  <tr>
+                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Reference</th>
+                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Member ID</th>
+                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Provider ID</th>
+                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Risk / Sev</th>
+                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Investigation Status</th>
+                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Updated</th>
+                    <th className="w-[40px] px-2 py-3 border-b border-border-soft"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metrics.recentDetections.map((item) => (
+                    <tr key={item.claimId} className="group hover:bg-white/[0.02] transition-colors border-b border-border-soft/50 last:border-0">
+                      <td className="px-[18px] py-[14px]">
+                        <Link to={`/claims/${encodeURIComponent(item.claimId)}`} className="text-primary hover:underline font-semibold text-[13px]">{item.claimId}</Link>
+                      </td>
+                      <td className="px-[18px] py-[14px] text-[13px] text-foreground">{item.memberId || "Unknown"}</td>
+                      <td className="px-[18px] py-[14px] text-[13px] text-foreground">{item.providerId || "Unknown"}</td>
+                      <td className="px-[18px] py-[14px]">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold text-[13px] ${item.riskScore >= 75 ? "text-[#ee716b]" : item.riskScore >= 40 ? "text-[#e6a74d]" : "text-[#62ce9b]"}`}>{item.riskScore}</span>
+                          <span className="text-[11px] text-muted-2 uppercase tracking-wider">{item.severity}</span>
+                        </div>
+                      </td>
+                      <td className="px-[18px] py-[14px]">
+                        <StatusIndicator variant="badge" tone={claimStatusTone(item.status)}>{formatStatus(item.status)}</StatusIndicator>
+                      </td>
+                      <td className="px-[18px] py-[14px] text-[12px] text-muted-2">
+                        {item.detectionDate ? new Date(item.detectionDate).toLocaleDateString() : "—"}
+                      </td>
+                      <td className="px-[18px] py-[14px] text-right">
+                        <Link to={`/claims/${encodeURIComponent(item.claimId)}`} className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-white/5 text-muted hover:bg-primary/20 hover:text-primary transition-colors focus:outline-none focus:ring-2 focus:ring-primary" aria-label={`View claim ${item.claimId}`}>
+                          <ArrowUpRight className="w-4 h-4" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </SectionCard>
 
-        <SectionCard title="Investigation Summary" description="Compact snapshot of operational posture and workflow status.">
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-border/70 bg-secondary/30 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Average risk score</p>
-                  <p className="mt-1 text-3xl font-semibold tracking-tight">{averageRiskScore}</p>
-                </div>
-                <AlertTriangle className="h-6 w-6 text-primary" />
+        <SectionCard variant="console" title="Suspicious relationship network" description="Live graph of linked entities and known collusive structures.">
+          <div className="p-3">
+             <NetworkGraph 
+                graph={graph} 
+                height="360px"
+                compact={true}
+                showControls={false}
+                showMiniMap={false}
+              />
+              <div className="mt-4 px-2">
+                 <Link to="/network" className="text-[11px] font-semibold uppercase tracking-[0.15em] text-primary hover:underline flex items-center gap-1.5 w-fit">
+                    Open network intelligence <ArrowUpRight className="w-3.5 h-3.5" />
+                 </Link>
               </div>
-              {Number.isFinite(averageRiskScore) ? <RiskScoreBar score={averageRiskScore} className="mt-3" /> : null}
-              <p className="mt-2 text-sm text-muted-foreground">Mean score across the currently indexed claims.</p>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Severity breakdown</p>
-              <SeverityBreakdown detections={metrics.recentDetections} />
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-              <div className="rounded-xl border border-border/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">High-risk claim rate</p>
-                <p className="mt-1 text-lg font-semibold">{Number.isFinite(totalClaims) && Number.isFinite(highRiskClaims) && totalClaims > 0 ? `${Math.round((highRiskClaims / totalClaims) * 100)}%` : "Unavailable"}</p>
-              </div>
-              <div className="rounded-xl border border-border/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Recent activity</p>
-                <p className="mt-1 text-lg font-semibold">{metrics.recentDetections.length} claims surfaced</p>
-              </div>
-              <div className="rounded-xl border border-border/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Ledger link</p>
-                <p className="mt-1 text-lg font-semibold">{metrics.ledgerStatus}</p>
-              </div>
-              <div className="rounded-xl border border-border/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Refresh status</p>
-                <p className="mt-1 text-lg font-semibold">{lastRefresh ? "Current" : "Waiting"}</p>
-              </div>
-            </div>
           </div>
         </SectionCard>
       </section>
-    </PageFrame>
+    </div>
   );
 }

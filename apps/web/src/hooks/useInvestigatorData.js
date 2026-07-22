@@ -182,6 +182,15 @@ export function useInvestigatorData({ enabled = true } = {}) {
 
     const recentDetections = claims
       .slice()
+      .sort((a, b) => {
+        // 1. Risk score descending
+        const riskDiff = (b.riskScore || 0) - (a.riskScore || 0);
+        if (riskDiff !== 0) return riskDiff;
+        // 2. Detection or update date descending
+        const dateA = a.detectionDate ? new Date(a.detectionDate).getTime() : 0;
+        const dateB = b.detectionDate ? new Date(b.detectionDate).getTime() : 0;
+        return dateB - dateA;
+      })
       .slice(0, 8);
 
     return {
@@ -190,6 +199,7 @@ export function useInvestigatorData({ enabled = true } = {}) {
       averageRiskScore: avgRisk,
       activeFraudSchemes,
       recentDetections,
+      allClaims: claims,
       ledgerStatus: isLedgerLinked(report?.ledgerReference) ? "Connected" : "Unavailable",
     };
   }, [state.report, state.claims, state.risk]);

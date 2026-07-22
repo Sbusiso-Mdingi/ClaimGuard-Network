@@ -24,6 +24,11 @@ export default {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        "surface-sunken": "hsl(var(--surface-sunken))",
+        "surface-elevated": "hsl(var(--surface-elevated))",
+        "surface-card": "hsl(var(--surface-card))",
+        "border-soft": "hsl(var(--border-soft))",
+        "muted-2": "hsl(var(--text-muted-2))",
       },
       borderRadius: {
         lg: "0.75rem",

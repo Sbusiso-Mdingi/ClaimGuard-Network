@@ -146,8 +146,8 @@ test("renders dashboard and routes to claim details", async () => {
   const user = userEvent.setup();
   render(<AppRoot />);
 
-  expect(await screen.findByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
-  expect(screen.getByText(/Total claims/i)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
+  expect(screen.getByText(/Claims Screened/i)).toBeInTheDocument();
 
   for (const [, requestOptions] of global.fetch.mock.calls.slice(0, 3)) {
     expect(requestOptions.headers.get("x-claimguard-user")).toBe("analyst-alpha");
@@ -178,7 +178,7 @@ test("live refresh toggle controls browser polling", async () => {
     await Promise.resolve();
   });
 
-  expect(screen.getByRole("heading", { name: /Fraud operations overview/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
   expect(global.fetch).toHaveBeenCalledTimes(4);
 
   await act(async () => {
@@ -187,7 +187,7 @@ test("live refresh toggle controls browser polling", async () => {
   });
   expect(global.fetch).toHaveBeenCalledTimes(8);
 
-  fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Paused/i }));
 
   await act(async () => {
     vi.advanceTimersByTime(30000);
@@ -203,5 +203,6 @@ test("shows unavailable state without substituting demo analytics when backend A
 
   expect(await screen.findByText(/Dashboard Unavailable/i)).toBeInTheDocument();
   expect(screen.getByText("ClaimGuard")).toBeInTheDocument();
-  expect(screen.queryByText(/Total claims/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Claims Screened/i)).not.toBeInTheDocument();
 });
+

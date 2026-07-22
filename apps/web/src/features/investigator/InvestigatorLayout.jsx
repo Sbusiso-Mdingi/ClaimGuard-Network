@@ -67,26 +67,26 @@ export function InvestigatorLayout({
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3 lg:hidden">
+      <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border-soft bg-surface-elevated px-4 py-3 lg:hidden">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
             size="sm"
-            className="h-10 w-10 rounded-lg"
+            className="h-10 w-10 rounded-lg text-muted-2 hover:text-foreground"
             onClick={() => setSidebarOpen(true)}
             aria-label="Open navigation"
           >
             <Menu className="h-5 w-5" />
           </Button>
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary border border-border-soft">
             <Activity className="h-4 w-4" />
           </span>
-          <p className="font-data text-xs uppercase tracking-[0.2em] text-muted-foreground">Investigator console</p>
+          <p className="font-data text-xs uppercase tracking-[0.2em] text-muted">Investigator console</p>
         </div>
         <Button
           variant="ghost"
           size="sm"
-          className="h-10 w-10 rounded-full"
+          className="h-10 w-10 rounded-full text-muted-2 hover:text-foreground"
           onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
           aria-label="Toggle theme on mobile"
         >
@@ -96,35 +96,35 @@ export function InvestigatorLayout({
 
       {sidebarOpen ? (
         <div
-          className="fixed inset-0 z-30 bg-background/70 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-30 bg-background/80 backdrop-blur-sm lg:hidden"
           aria-hidden="true"
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
 
-      <div className="mx-auto grid min-h-screen w-full max-w-[1680px] grid-cols-1 lg:grid-cols-[300px_1fr]">
+      <div className="mx-auto grid min-h-screen w-full max-w-[1680px] grid-cols-1 lg:grid-cols-[260px_1fr]">
         <aside
           className={[
-            "fixed inset-y-0 left-0 z-40 flex h-screen w-[300px] flex-col overflow-y-auto border-r border-border bg-card px-4 py-4 transition-transform duration-200 investigator-scrollbar",
+            "fixed inset-y-0 left-0 z-40 flex h-screen w-[260px] flex-col overflow-y-auto border-r border-border-soft bg-surface-elevated px-4 py-5 transition-transform duration-200 investigator-scrollbar",
             sidebarOpen ? "translate-x-0" : "-translate-x-full",
             "lg:sticky lg:top-0 lg:z-auto lg:w-auto lg:translate-x-0",
           ].join(" ")}
         >
-          <div className="mb-5 flex items-center justify-between gap-3 border-b border-border/70 pb-4">
+          <div className="mb-6 flex items-center justify-between gap-3">
             <Link to="/" className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-border-soft shadow-inner">
                 <Activity className="h-5 w-5" />
               </span>
               <div>
-                <p className="font-display text-sm font-semibold tracking-tight">ClaimGuard</p>
-                <p className="font-data text-xs uppercase tracking-[0.2em] text-muted-foreground">Investigator console</p>
+                <p className="font-display text-[15px] font-semibold tracking-tight leading-none text-foreground">ClaimGuard</p>
+                <p className="font-data text-[9px] uppercase tracking-[0.2em] text-muted-2 mt-1">Investigator console</p>
               </div>
             </Link>
             <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-10 w-10 rounded-full"
+                className="h-8 w-8 rounded-full hidden lg:inline-flex text-muted-2 hover:text-foreground hover:bg-white/5"
                 onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
                 aria-label="Toggle theme"
               >
@@ -133,7 +133,7 @@ export function InvestigatorLayout({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-10 w-10 rounded-full lg:hidden"
+                className="h-8 w-8 rounded-full lg:hidden text-muted-2 hover:text-foreground"
                 onClick={() => setSidebarOpen(false)}
                 aria-label="Close navigation"
               >
@@ -142,18 +142,17 @@ export function InvestigatorLayout({
             </div>
           </div>
 
-          <nav className="space-y-5">
+          <nav className="space-y-6">
             {visibleNavGroups.map((group, groupIndex) => (
               <section
                 key={group.key}
-                className={groupIndex > 0 ? "border-t border-border/70 pt-5" : ""}
+                className={groupIndex > 0 ? "border-t border-border-soft/50 pt-5" : ""}
                 aria-label={group.title}
               >
-                <div className="px-3 pb-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">{group.title}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{group.subtitle}</p>
+                <div className="px-2 pb-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">{group.title}</p>
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   {group.items.map((item, itemIndex) => (
                     <NavLink
                       key={item.to}
@@ -161,14 +160,14 @@ export function InvestigatorLayout({
                       end={item.to === "/"}
                       className={({ isActive }) =>
                         [
-                          "group flex items-center gap-3 rounded-lg border-l-2 px-3 py-3 text-sm font-medium transition-all",
+                          "group flex items-center gap-3 rounded-[10px] px-2 py-2 text-[13px] font-medium transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary",
                           isActive
-                            ? "border-primary bg-secondary/60 text-foreground"
-                            : "border-transparent text-muted-foreground hover:border-border hover:bg-secondary/30 hover:text-foreground",
+                            ? "bg-primary/10 text-primary shadow-[inset_2px_0_0_0_currentColor]"
+                            : "text-muted hover:bg-white/5 hover:text-foreground",
                         ].join(" ")
                       }
                     >
-                      <span className="font-data flex h-9 w-9 items-center justify-center rounded-lg bg-background/70 text-[11px] text-muted-foreground group-[.active]:border-primary/40 group-[.active]:text-primary">
+                      <span className="font-data flex h-7 w-7 items-center justify-center rounded-lg bg-black/20 text-[10px] text-muted group-[.active]:text-primary group-[.active]:bg-primary/20">
                         {String(itemIndex + 1).padStart(2, "0")}
                       </span>
                       <span className="flex-1">{item.label}</span>
@@ -179,63 +178,68 @@ export function InvestigatorLayout({
             ))}
           </nav>
 
-          <div className="mt-auto space-y-3 pt-4">
+          <div className="mt-auto space-y-4 pt-6 border-t border-border-soft/50">
             <RoleSwitcher />
             {mode === "session" ? (
-              <div className="rounded-xl border border-border bg-background/50 p-4">
-                <p className="text-sm font-semibold">{identity.label}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{identity.tenantLabel}</p>
-                <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={logout}>Sign out</Button>
+              <div className="rounded-[12px] border border-border-soft bg-surface-card p-3 shadow-sm">
+                <p className="text-[13px] font-semibold text-foreground">{identity.label}</p>
+                <p className="text-[11px] text-muted-2 mt-0.5">{identity.tenantLabel}</p>
+                <Button type="button" variant="outline" size="sm" className="mt-3 w-full h-8 text-xs border-border-soft bg-white/5 hover:bg-white/10 hover:text-foreground text-muted" onClick={logout}>Sign out</Button>
               </div>
             ) : null}
           </div>
         </aside>
 
         <main className="min-w-0 p-4 md:p-6 xl:p-8">
-          <header className="mb-6 flex flex-col gap-4 rounded-xl border border-border/70 bg-card px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                Tenant: {identity.tenantLabel || identity.tenantId}
-              </Badge>
-              <Badge variant="outline" className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                Role: {formatRole(identity.role)}
-              </Badge>
-              <Badge variant="outline" className="gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                <Activity className="h-3.5 w-3.5" />
-                {mode === "session" ? "Session Authenticated" : "Demo Header Mode"}
-              </Badge>
+          <header className="mb-6 flex flex-col gap-4 rounded-[14px] border border-border-soft bg-surface-elevated px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#71a8d9]" aria-hidden="true" />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Tenant:</span>
+                <span className="text-[11px] font-semibold text-foreground">{identity.tenantLabel || identity.tenantId}</span>
+              </div>
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Role:</span>
+                <span className="text-[11px] font-semibold text-foreground">{formatRole(identity.role)}</span>
+              </div>
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1">
+                <Activity className="h-3 w-3 text-[#62ce9b]" />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+                  {mode === "session" ? "Authenticated" : "Demo Mode"}
+                </span>
+              </div>
             </div>
             {showLiveControls ? (
-              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                <Badge variant={ledgerStatus === "Connected" ? "success" : "warning"} className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                  Ledger: {ledgerStatus}
-                </Badge>
-                <div className="inline-flex rounded-full border border-border bg-background p-1">
+              <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
+                <div className={`inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1 ${ledgerStatus === "Connected" ? "text-[#62ce9b]" : "text-[#e6a74d]"}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${ledgerStatus === "Connected" ? "bg-[#62ce9b]" : "bg-[#e6a74d]"}`} aria-hidden="true" />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Ledger:</span>
+                  <span className="text-[11px] font-semibold">{ledgerStatus}</span>
+                </div>
+                <div className="inline-flex rounded-full border border-border-soft bg-black/20 p-0.5">
                   <Button
                     size="sm"
-                    variant={liveRefreshEnabled ? "default" : "ghost"}
+                    variant="ghost"
                     onClick={() => setLiveRefreshEnabled(true)}
                     aria-label="Enable live refresh"
-                    className="rounded-full px-4"
+                    className={`h-7 rounded-full px-3 text-[11px] font-semibold hover:bg-transparent ${liveRefreshEnabled ? "bg-primary/20 text-primary border border-primary/30" : "text-muted hover:text-foreground"}`}
                   >
                     Live Refresh
                   </Button>
                   <Button
                     size="sm"
-                    variant={!liveRefreshEnabled ? "default" : "ghost"}
+                    variant="ghost"
                     onClick={() => setLiveRefreshEnabled(false)}
                     aria-label="Disable live refresh"
-                    className="rounded-full px-4"
+                    className={`h-7 rounded-full px-3 text-[11px] font-semibold hover:bg-transparent ${!liveRefreshEnabled ? "bg-white/10 text-foreground border border-border-soft" : "text-muted hover:text-foreground"}`}
                   >
-                    Refresh Off
+                    Paused
                   </Button>
                 </div>
-                <Button size="sm" variant="outline" onClick={refreshNow} className="rounded-full px-4">
+                <Button size="sm" variant="outline" onClick={refreshNow} className="h-8 rounded-full px-4 text-xs border-border-soft bg-white/5 hover:bg-white/10 text-foreground">
                   Refresh
                 </Button>
-                <Badge variant="outline" className="rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em]">
-                  Last: {lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "Waiting"}
-                </Badge>
               </div>
             ) : null}
           </header>

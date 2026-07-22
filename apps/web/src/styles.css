@@ -39,30 +39,37 @@
 
   .dark {
     /* Case File — after hours (default) */
-    --background: 214 24% 6%;
-    --foreground: 43 19% 88%;
-    --card: 213 18% 10%;
-    --card-foreground: 43 19% 88%;
-    --popover: 213 18% 10%;
-    --popover-foreground: 43 19% 88%;
-    --primary: 33 57% 51%;
-    --primary-foreground: 214 24% 6%;
-    --secondary: 213 15% 15%;
-    --secondary-foreground: 43 19% 88%;
-    --muted: 213 15% 15%;
-    --muted-foreground: 220 10% 59%;
-    --accent: 207 34% 52%;
-    --accent-foreground: 214 24% 6%;
-    --destructive: 5 55% 50%;
-    --destructive-foreground: 43 19% 92%;
-    --border: 212 13% 17%;
-    --input: 212 13% 17%;
-    --ring: 33 57% 51%;
+    --background: 213 33% 5%;
+    --foreground: 42 17% 89%;
+    --card: 212 27% 11%;
+    --card-foreground: 42 17% 89%;
+    --popover: 212 28% 9%;
+    --popover-foreground: 42 17% 89%;
+    --primary: 34 65% 50%;
+    --primary-foreground: 213 33% 5%;
+    --secondary: 215 23% 16%;
+    --secondary-foreground: 42 17% 89%;
+    --muted: 215 23% 16%;
+    --muted-foreground: 213 16% 62%;
+    --accent: 208 56% 65%;
+    --accent-foreground: 213 33% 5%;
+    --destructive: 3 81% 68%;
+    --destructive-foreground: 213 33% 5%;
+    --border: 213 20% 20%;
+    --input: 213 20% 20%;
+    --ring: 34 65% 50%;
 
-    --stamp-danger: 5 60% 65%;
-    --stamp-warning: 33 60% 62%;
-    --stamp-success: 154 35% 60%;
-    --stamp-info: 207 40% 65%;
+    /* Investigator Console Tokens */
+    --surface-sunken: 213 33% 5%;
+    --surface-elevated: 212 28% 9%;
+    --surface-card: 212 27% 11%;
+    --border-soft: 215 23% 16%;
+    --text-muted-2: 212 11% 46%;
+
+    --stamp-danger: 3 81% 68%;
+    --stamp-warning: 34 65% 50%;
+    --stamp-success: 152 51% 60%;
+    --stamp-info: 208 56% 65%;
   }
 
   * {

@@ -18,47 +18,71 @@ export function PageFrame({ eyebrow, title, description, actions, children }) {
   );
 }
 
-export function SectionCard({ title, description, actions, children, className = "" }) {
+export function SectionCard({ title, description, actions, children, className = "", variant = "default" }) {
+  const isConsole = variant === "console";
   return (
-    <Card className={`rounded-xl border border-border/70 bg-card shadow-none ${className}`}>
-      <CardHeader className="space-y-2 pb-4">
+    <Card className={`${isConsole ? "rounded-[14px] border border-border-soft bg-gradient-to-br from-[#151c24] to-[#11171e] shadow-xl shadow-black/20" : "rounded-xl border border-border/70 bg-card shadow-none"} ${className}`}>
+      <CardHeader className={`${isConsole ? "px-[18px] py-[15px] border-b border-border-soft" : "space-y-2 pb-4"}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
-            <CardTitle className="font-display text-base font-semibold tracking-tight">{title}</CardTitle>
-            {description ? <CardDescription className="max-w-3xl text-sm leading-6">{description}</CardDescription> : null}
+            <CardTitle className={isConsole ? "font-display text-[18px] font-semibold m-0" : "font-display text-base font-semibold tracking-tight"}>{title}</CardTitle>
+            {description ? <CardDescription className={isConsole ? "text-[11px] leading-[1.55] text-muted mt-1.5 max-w-3xl" : "max-w-3xl text-sm leading-6"}>{description}</CardDescription> : null}
           </div>
           {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
         </div>
       </CardHeader>
-      <CardContent className="pt-0">{children}</CardContent>
+      <CardContent className={isConsole ? "p-0" : "pt-0"}>{children}</CardContent>
     </Card>
   );
 }
 
-export function StatCard({ title, value, description, icon: Icon, tone = "default" }) {
+export function StatCard({ title, value, description, icon: Icon, tone = "default", variant = "default" }) {
+  const isConsole = variant === "console";
+
   const toneStyles = {
     success: {
-      border: "border-emerald-500/40",
+      border: isConsole ? "border-emerald-500/20" : "border-emerald-500/40",
       accent: "bg-emerald-500/70",
-      chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+      chip: isConsole ? "bg-emerald-500/10 text-[#62ce9b] border border-border-soft" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+      value: isConsole ? "text-[#62ce9b]" : "",
     },
     warning: {
-      border: "border-amber-500/40",
+      border: isConsole ? "border-amber-500/20" : "border-amber-500/40",
       accent: "bg-amber-500/70",
-      chip: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+      chip: isConsole ? "bg-amber-500/10 text-[#e6a74d] border border-border-soft" : "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+      value: isConsole ? "text-[#e6a74d]" : "",
     },
     danger: {
-      border: "border-rose-500/40",
+      border: isConsole ? "border-rose-500/20" : "border-rose-500/40",
       accent: "bg-rose-500/70",
-      chip: "bg-rose-500/10 text-rose-600 dark:text-rose-300",
+      chip: isConsole ? "bg-rose-500/10 text-[#ee716b] border border-border-soft" : "bg-rose-500/10 text-rose-600 dark:text-rose-300",
+      value: isConsole ? "text-[#ee716b]" : "",
     },
     default: {
-      border: "border-border/80",
+      border: isConsole ? "border-border-soft" : "border-border/80",
       accent: "bg-primary/50",
-      chip: "bg-primary/10 text-primary",
+      chip: isConsole ? "bg-white/5 text-muted border border-border-soft" : "bg-primary/10 text-primary",
+      value: "",
     },
   };
   const styles = toneStyles[tone] || toneStyles.default;
+
+  if (isConsole) {
+    return (
+      <Card className={`relative overflow-hidden rounded-[14px] bg-gradient-to-br from-[#151c24] to-[#11171e] shadow-xl shadow-black/20 border ${styles.border} min-h-[116px] p-[17px]`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] text-muted">{title}</span>
+          {Icon ? (
+            <span className={`flex h-[27px] w-[27px] items-center justify-center rounded-lg font-data text-[11px] ${styles.chip}`}>
+              <Icon className="h-3.5 w-3.5" />
+            </span>
+          ) : null}
+        </div>
+        <div className={`mt-[15px] text-[27px] font-semibold tracking-[-0.035em] ${styles.value}`}>{value}</div>
+        {description && <div className="mt-1.5 text-[10px] text-muted">{description}</div>}
+      </Card>
+    );
+  }
 
   return (
     <Card className={`relative overflow-hidden rounded-xl bg-card shadow-none ${styles.border}`}>
@@ -81,20 +105,25 @@ export function StatCard({ title, value, description, icon: Icon, tone = "defaul
   );
 }
 
-export function MetricPill({ label, value, tone = "default" }) {
-  const toneClasses =
-    tone === "success"
-      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : tone === "warning"
-        ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-        : tone === "danger"
-          ? "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300"
-          : "border-border bg-secondary text-foreground";
+export function MetricPill({ label, value, tone = "default", variant = "default" }) {
+  const isConsole = variant === "console";
+  
+  const toneClasses = isConsole ? (
+    tone === "success" ? "border-[#62ce9b]/30 bg-[#62ce9b]/10 text-[#8fd5b3]" :
+    tone === "warning" ? "border-primary/35 bg-primary/10 text-[#efbf78]" :
+    tone === "danger" ? "border-[#ee716b]/30 bg-[#ee716b]/10 text-[#ff9a94]" :
+    "border-border bg-black/25 text-[#c6ccd3]"
+  ) : (
+    tone === "success" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" :
+    tone === "warning" ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300" :
+    tone === "danger" ? "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300" :
+    "border-border bg-secondary text-foreground"
+  );
 
   return (
-    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${toneClasses}`}>
-      <span className="uppercase tracking-[0.18em] text-[10px] opacity-70">{label}</span>
-      <span className="font-data">{value}</span>
+    <div className={`inline-flex items-center gap-2 rounded-full border ${isConsole ? "min-h-[28px] px-2.5 py-1.5 text-[9px] font-semibold" : "px-3 py-1 text-xs font-medium"} ${toneClasses}`}>
+      {label && <span className={isConsole ? "uppercase tracking-[0.11em] font-data opacity-80" : "uppercase tracking-[0.18em] text-[10px] opacity-70"}>{label}</span>}
+      <span className={isConsole ? "font-sans font-semibold" : "font-data"}>{value}</span>
     </div>
   );
 }
@@ -108,12 +137,17 @@ const STATUS_TONE_VAR = {
 
 export function StatusIndicator({ children, tone = "info", variant = "stamp" }) {
   if (variant === "badge") {
-    const badgeVariant =
-      tone === "danger" ? "destructive" : tone === "warning" ? "warning" : tone === "success" ? "success" : "outline";
+    // Console style badge
+    const badgeTone = 
+      tone === "danger" ? "text-[#ff9a94] border-[#ee716b]/30 bg-[#ee716b]/10" :
+      tone === "warning" ? "text-[#efba69] border-primary/30 bg-primary/10" :
+      tone === "success" ? "text-[#8fd5b3] border-[#62ce9b]/30 bg-[#62ce9b]/10" :
+      "text-[#9eb7ca] border-[#71a8d9]/25 bg-[#71a8d9]/10";
+      
     return (
-      <Badge variant={badgeVariant} className="rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide">
+      <span className={`inline-flex items-center gap-[5px] px-2 py-1.5 border rounded-full text-[9px] font-semibold whitespace-nowrap ${badgeTone}`}>
         {children}
-      </Badge>
+      </span>
     );
   }
 
