@@ -8,7 +8,7 @@
     "./migrate": "./src/migrate.js"
   },
   "dependencies": {
-    "drizzle-orm": "^0.38.0",
+    "drizzle-orm": "^0.45.2",
     "mysql2": "^3.12.0"
   },
   "scripts": {
