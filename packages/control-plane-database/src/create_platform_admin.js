@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import mysql from "mysql2/promise";
-import { hashPassword } from "./password.js";
+import { hashPassword, passwordParametersRecord, ARGON2ID_VERSION } from "./password.js";
+import { buildControlPlaneConnectionOptions, createControlPlanePool } from "./client.js";
+import { createControlPlaneRepositories } from "./repositories.js";
+import { createControlPlaneService } from "./control-plane-service.js";
 
 const SECRETS_DIR = "/Users/sbusisomdingi/ClaimGuard-Secrets";
 const CREDENTIALS_FILE = path.join(SECRETS_DIR, "admin_credentials.txt");
@@ -16,47 +19,83 @@ async function run() {
     process.exit(1);
   }
 
-  const pool = mysql.createPool(controlUrl);
+  const pool = createControlPlanePool(controlUrl);
+  const repositories = createControlPlaneRepositories(pool);
+  const service = createControlPlaneService({ pool, repositories });
 
   try {
-    // 1. Ensure the platform-operations organisation exists
-    const [orgRows] = await pool.execute(
-      "SELECT organisation_id FROM organisations WHERE canonical_slug = ?",
-      [PLATFORM_ORG_SLUG]
-    );
+    let organisation;
+    try {
+      organisation = await repositories.organisations.getBySlug(PLATFORM_ORG_SLUG);
+    } catch (e) {}
 
-    let organisationId = orgRows?.[0]?.organisation_id;
-    if (!organisationId) {
-      organisationId = crypto.randomUUID();
-      await pool.execute(
-        `INSERT INTO organisations (organisation_id, display_name, canonical_slug, deployment_class, organisation_type, status)
-         VALUES (?, 'ClaimGuard Platform Operations', ?, 'production', 'platform_operations', 'active')`,
-        [organisationId, PLATFORM_ORG_SLUG]
+    if (!organisation) {
+      const [orgRows] = await pool.execute(
+        "SELECT organisation_id FROM organisations WHERE canonical_slug = ?",
+        [PLATFORM_ORG_SLUG]
       );
-      console.log(`✅ Created platform operations organisation (${organisationId})`);
+      if (orgRows.length > 0) {
+        organisation = { organisationId: orgRows[0].organisation_id };
+        console.log(`✅ Platform operations organisation already exists (${organisation.organisationId}) (raw lookup)`);
+      } else {
+        organisation = await service.createDraftOrganisation({
+          displayName: "ClaimGuard Platform Operations",
+          canonicalSlug: PLATFORM_ORG_SLUG,
+          organisationType: "platform",
+          deploymentClass: "production",
+        }, { type: "system", id: "admin-provisioner", source: "admin-provisioner" });
+        
+        await service.transitionOrganisation(organisation.organisationId, "provisioning");
+        await service.transitionOrganisation(organisation.organisationId, "ready_for_activation");
+        organisation = await service.transitionOrganisation(organisation.organisationId, "active");
+        
+        console.log(`✅ Created platform operations organisation (${organisation.organisationId})`);
+      }
     } else {
-      console.log(`✅ Platform operations organisation already exists (${organisationId})`);
+      console.log(`✅ Platform operations organisation already exists (${organisation.organisationId})`);
     }
 
     // 2. Ensure the sysadmin identity exists
-    const [userRows] = await pool.execute(
-      "SELECT identity_id FROM identities WHERE organisation_id = ? AND username = ?",
-      [organisationId, ADMIN_USERNAME]
-    );
+    let credential = await repositories.authentication.getInternalCredential({ 
+      organisationId: organisation.organisationId, 
+      username: ADMIN_USERNAME 
+    });
 
-    let identityId = userRows?.[0]?.identity_id;
-
-    if (!identityId) {
-      identityId = crypto.randomUUID();
+    if (!credential) {
       const rawPassword = crypto.randomBytes(16).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 16);
-      const hashedPassword = await hashPassword(rawPassword);
+      const passwordHash = await hashPassword(rawPassword);
+      
+      const user = await repositories.identity.createUser({
+        displayName: "System Administrator", 
+        canonicalContact: `${ADMIN_USERNAME}@${PLATFORM_ORG_SLUG}.invalid`, 
+        status: "active",
+      });
+      
+      const membership = await repositories.identity.createMembership({
+        userId: user.userId, 
+        organisationId: organisation.organisationId, 
+        status: "active", 
+        validFrom: new Date(),
+      });
+      
+      await repositories.identity.createCredential({
+        userId: user.userId, 
+        organisationId: organisation.organisationId, 
+        username: ADMIN_USERNAME, 
+        status: "active",
+        passwordHash, 
+        passwordAlgorithm: "argon2id", 
+        passwordParameters: passwordParametersRecord(), 
+        passwordVersion: ARGON2ID_VERSION,
+      });
 
-      await pool.execute(
-        `INSERT INTO identities (identity_id, organisation_id, username, display_name, role_labels, credential_hash)
-         VALUES (?, ?, ?, 'System Administrator', 'platform_administrator', ?)`,
-        [identityId, organisationId, ADMIN_USERNAME, hashedPassword]
-      );
-      console.log(`✅ Created ${ADMIN_USERNAME} account (${identityId})`);
+      await service.assignMembershipRole({
+        membershipId: membership.membershipId, 
+        roleKey: "platform_administrator",
+        actorRoleKeys: ["platform_administrator"],
+      }, { type: "system", id: "admin-provisioner", source: "admin-provisioner" });
+
+      console.log(`✅ Created ${ADMIN_USERNAME} account (${user.userId})`);
 
       // 3. Save the credentials securely to the secrets directory
       await fs.mkdir(SECRETS_DIR, { recursive: true });
@@ -76,7 +115,7 @@ Keep this file safe and never commit it to source control.
       console.log(`\n🔐 Credentials securely saved to:\n   ${CREDENTIALS_FILE}`);
       console.log(`\nYou can now log in to the ClaimGuard web app using:\nOrg: ${PLATFORM_ORG_SLUG}\nUser: ${ADMIN_USERNAME}`);
     } else {
-      console.log(`✅ ${ADMIN_USERNAME} account already exists (${identityId}). Password unchanged.`);
+      console.log(`✅ ${ADMIN_USERNAME} account already exists (${credential.userId}). Password unchanged.`);
       console.log(`\nYou can log in to the ClaimGuard web app using:\nOrg: ${PLATFORM_ORG_SLUG}\nUser: ${ADMIN_USERNAME}`);
     }
 
