@@ -43,7 +43,19 @@ function StatusScreen({ title, description, actionLabel, onAction }) {
 function InvestigatorRoutes() {
   const { identity } = useRole();
   const platformOnly = identity.organisationType === "platform";
-  const data = useInvestigatorData({ enabled: !platformOnly });
+  
+  const investigatorRoles = [
+    "claims_analyst",
+    "scheme_user",
+    "fraud_analyst",
+    "investigator"
+  ];
+  
+  const hasInvestigatorRole = identity.roles
+    ? identity.roles.some((r) => investigatorRoles.includes(r))
+    : investigatorRoles.includes(identity.role);
+    
+  const data = useInvestigatorData({ enabled: hasInvestigatorRole && !platformOnly });
 
   function renderPageContent(readyElement, options = {}) {
     if (data.status === "loading") {
