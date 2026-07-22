@@ -2,17 +2,17 @@ import { createBackendHealth, createBackendInfo } from "@claimguard/shared-schem
 import { OPERATIONAL_ROUTE_IDS, CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
 import {
   createRequireOperationalRouteAuthorizationMiddleware,
-  createRequireTenantAccessMiddleware,
-  createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
 
 export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = null, detectionStrategyRepository = null, tenantRepository = null }) {
   const requireInternalDataPlaneHealth = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH,
   });
-  const requireTenantAccess = createRequireTenantAccessMiddleware({ tenantRepository });
-  const requireAdminPermission = createRequirePermissionMiddleware({
-    permission: CLAIMGUARD_PERMISSIONS.TENANT_SETTINGS_MANAGE,
+  const requireDetectionStrategyView = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_VIEW,
+  });
+  const requireDetectionStrategyUpdate = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_UPDATE,
   });
 
   function summarizePools(metrics = { pools: [] }) {
@@ -104,7 +104,7 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     });
   });
 
-  app.get("/admin/detection-strategy", requireTenantAccess, async (c) => {
+  app.get("/detection/strategy", requireDetectionStrategyView, async (c) => {
     if (!detectionStrategyRepository) {
       return c.json({ available: false, message: "Detection strategy repository not available" }, 503);
     }
@@ -113,7 +113,7 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     return c.json({ available: true, strategy });
   });
 
-  app.put("/admin/detection-strategy", requireTenantAccess, requireAdminPermission, async (c) => {
+  app.put("/detection/strategy", requireDetectionStrategyUpdate, async (c) => {
     if (!detectionStrategyRepository) {
       return c.json({ available: false, message: "Detection strategy repository not available" }, 503);
     }

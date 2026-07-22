@@ -75,7 +75,7 @@ class FakeSnapshots:
 
     def load_tenant_snapshot(self, *, tenant_id):
         self.tenant_ids.append(tenant_id)
-        return TenantSnapshot(tenant_id, None, None, "2026-07-16T00:00:00+00:00", "w1", [], [], [], [])
+        return TenantSnapshot(tenant_id, None, None, "deterministic_rules", None, "2026-07-16T00:00:00+00:00", "w1", [], [], [], [])
 
 
 class FakePublisher:

@@ -254,6 +254,8 @@ export const OPERATIONAL_ROUTE_IDS = Object.freeze({
   REGISTRY_HISTORY: "registry.history",
   REGISTRY_DETAIL: "registry.detail",
   INTERNAL_DATA_PLANE_HEALTH: "internal.data_plane.health",
+  DETECTION_STRATEGY_VIEW: "detection.strategy.view",
+  DETECTION_STRATEGY_UPDATE: "detection.strategy.update",
 });
 
 export const OPERATIONAL_ROUTE_PREFIXES = Object.freeze([
@@ -471,6 +473,22 @@ const operationalRoutePolicyEntries = [
     permissions: [CLAIMGUARD_PERMISSIONS.PLATFORM_HEALTH_VIEW],
     permissionMode: "all",
     requiresOperationalDataPlane: false,
+  },
+  {
+    id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_VIEW,
+    method: "GET",
+    pathPattern: "/detection/strategy",
+    permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT],
+    permissionMode: "all",
+    requiresOperationalDataPlane: true,
+  },
+  {
+    id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_UPDATE,
+    method: "PUT",
+    pathPattern: "/detection/strategy",
+    permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT],
+    permissionMode: "all",
+    requiresOperationalDataPlane: true,
   },
 ];
 

@@ -11,7 +11,7 @@ export function DetectionEngineSettings({ tenantId }) {
   useEffect(() => {
     async function fetchStrategy() {
       try {
-        const response = await fetch("/api/admin/detection-strategy");
+        const response = await fetch("/api/detection/strategy");
         if (!response.ok) throw new Error("Failed to load strategy");
         const data = await response.json();
         if (data.strategy) {
@@ -31,7 +31,7 @@ export function DetectionEngineSettings({ tenantId }) {
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch("/api/admin/detection-strategy", {
+      const response = await fetch("/api/detection/strategy", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ strategyType, endpointUrl }),
