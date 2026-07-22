@@ -1,3 +1,13 @@
+import "newrelic";
+import * as Sentry from "@sentry/node";
+
+if (process.env.SENTRY_DSN_API) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN_API,
+    tracesSampleRate: 1.0,
+  });
+}
+
 import { serve } from "@hono/node-server";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -31,10 +31,10 @@
     "vitest": "^2.1.9"
   },
   "scripts": {
-    "dev": "cd src && vite",
+    "dev": "cd src && doppler run -- vite",
     "build": "cd src && vite build --outDir ../dist --emptyOutDir",
     "lint": "node --check src/server.js && node --check src/sentry-smoke.js",
-    "serve": "node src/server.js",
+    "serve": "doppler run -- node src/server.js",
     "test": "vitest --run"
   }
 }
