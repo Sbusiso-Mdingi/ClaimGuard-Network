@@ -325,4 +325,4 @@ resource customModelAppKVRead 'Microsoft.Authorization/roleAssignments@2022-04-0
 //   ... (original definition) ...
 // }
 
-output mlInferenceFqdn string = mlInferenceApp.properties.configuration.ingress.fqdn
+output customModelFqdn string = customModelImageSecret != '' ? customModelApp.properties.configuration.ingress.fqdn : ''
