@@ -509,7 +509,13 @@ def evaluate_against_ground_truth(bundle: DataBundle, provider_findings: dict[st
     }
 
 
-def analyze_bundle(bundle: DataBundle, top_n: int = 10, ground_truth: dict[str, object] | None = None) -> dict[str, object]:
+def analyze_bundle(
+    bundle: DataBundle,
+    top_n: int = 10,
+    ground_truth: dict[str, object] | None = None,
+    detection_strategy: str = "deterministic_rules",
+    ml_endpoint_url: str | None = None,
+) -> dict[str, object]:
     scheme_reports: list[dict[str, object]] = []
     all_provider_findings: dict[str, Finding] = {}
     all_member_findings: dict[str, Finding] = {}
@@ -623,6 +629,8 @@ def analyze_bundle(bundle: DataBundle, top_n: int = 10, ground_truth: dict[str, 
             "available": False,
             "note": "Attach runtime ledger entries from the API service when database-backed ledger is enabled.",
         },
+        detection_strategy=detection_strategy,
+        ml_endpoint_url=ml_endpoint_url,
     )
 
     return {

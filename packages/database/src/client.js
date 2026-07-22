@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 
-import { ledgerEntriesTable } from "./index.js";
+import { ledgerEntriesTable, detectionStrategiesTable } from "./index.js";
 
 export function buildConnectionOptions(databaseUrl, options = {}) {
   const parsedUrl = new URL(databaseUrl);
@@ -53,5 +53,5 @@ export function createDatabase(databaseUrl, options = {}) {
 
 export function createDatabaseFromPool(pool, { mode = "default" } = {}) {
   if (!pool) throw new TypeError("A verified operational pool is required.");
-  return drizzle(pool, { mode, schema: { ledgerEntriesTable } });
+  return drizzle(pool, { mode, schema: { ledgerEntriesTable, detectionStrategiesTable } });
 }

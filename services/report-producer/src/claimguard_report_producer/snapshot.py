@@ -24,6 +24,8 @@ class TenantSnapshot:
     tenant_id: str
     tenant_slug: str | None
     tenant_display_name: str | None
+    detection_strategy: str
+    ml_endpoint_url: str | None
     captured_at: str
     watermark: str
     schemes: list[dict[str, object]]
@@ -54,9 +56,11 @@ class PyMySqlTenantSnapshotRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT tenant_id, tenant_slug, tenant_name, UTC_TIMESTAMP(3) AS captured_at
-                    FROM tenants
-                    WHERE tenant_id = %s AND status = 'active'
+                    SELECT t.tenant_id, t.tenant_slug, t.tenant_name, UTC_TIMESTAMP(3) AS captured_at,
+                           ds.strategy_type, ds.endpoint_url
+                    FROM tenants t
+                    LEFT JOIN detection_strategies ds ON ds.tenant_id = t.tenant_id AND ds.is_active = 1
+                    WHERE t.tenant_id = %s AND t.status = 'active'
                     LIMIT 1
                     """,
                     [canonical_tenant_id],
@@ -133,6 +137,8 @@ class PyMySqlTenantSnapshotRepository:
             tenant_id=canonical_tenant_id,
             tenant_slug=str(tenant.get("tenant_slug") or "") or None,
             tenant_display_name=str(tenant.get("tenant_name") or "") or None,
+            detection_strategy=str(tenant.get("strategy_type") or "deterministic_rules"),
+            ml_endpoint_url=str(tenant.get("endpoint_url") or "") or None,
             captured_at=_iso_timestamp(tenant.get("captured_at")),
             watermark=watermark,
             schemes=schemes,

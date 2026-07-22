@@ -1,6 +1,7 @@
 import React from "react";
 import { useRole } from "../../context/RoleContext";
 import { PageFrame, SectionCard } from "./InvestigatorUI";
+import { DetectionEngineSettings } from "./DetectionEngineSettings";
 
 function PlannedCapability({ title }) {
   return (
@@ -37,7 +38,7 @@ export function SchemeAdminPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <PlannedCapability title="Tenant / scheme configuration" />
           <PlannedCapability title="User management" />
-          <PlannedCapability title="Detection engine configuration" />
+          <DetectionEngineSettings tenantId={identity.tenantId} />
           <PlannedCapability title="Operational metrics for this tenant" />
         </div>
       </SectionCard>

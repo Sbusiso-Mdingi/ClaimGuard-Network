@@ -9,6 +9,7 @@ import { createLedgerRepository } from "./ledger-repository.js";
 import { createSharedFraudRegistryRepository } from "./shared-fraud-registry-repository.js";
 import { createScopedReadRepositories } from "./scoped-read-repositories.js";
 import { createTenantRepository } from "./tenant-repository.js";
+import { createDetectionStrategyRepository } from "./detection-strategy-repository.js";
 
 export function createOperationalRepositories(dataPlaneContext, pool) {
   const context = requireOperationalDataPlaneContext(dataPlaneContext);
@@ -29,5 +30,6 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     fraudWorkflow: createFraudWorkflowRepository(pool, options),
     reportSnapshots: scopedReads.reportSnapshots,
     tenants: createTenantRepository(pool, { dataPlaneContext: context, allowLegacyDefault: false }),
+    detectionStrategy: createDetectionStrategyRepository(db, pool, options),
   });
 }

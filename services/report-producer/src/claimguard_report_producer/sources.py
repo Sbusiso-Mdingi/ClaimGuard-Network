@@ -44,6 +44,8 @@ def build_report_from_tenant_snapshot(
             source_type="mysql_tenant_snapshot",
             source_watermark=snapshot.watermark,
             generation_correlation_id=correlation_id,
+            detection_strategy=snapshot.detection_strategy,
+            ml_endpoint_url=snapshot.ml_endpoint_url,
             producer_version="report-producer-0.2.0",
         ),
         top_n=top_n,

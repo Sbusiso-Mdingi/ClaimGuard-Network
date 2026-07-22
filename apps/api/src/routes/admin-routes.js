@@ -1,10 +1,18 @@
 import { createBackendHealth, createBackendInfo } from "@claimguard/shared-schema";
-import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
-import { createRequireOperationalRouteAuthorizationMiddleware } from "../middleware/authorization-middleware.js";
+import { OPERATIONAL_ROUTE_IDS, CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import {
+  createRequireOperationalRouteAuthorizationMiddleware,
+  createRequireTenantAccessMiddleware,
+  createRequirePermissionMiddleware,
+} from "../middleware/authorization-middleware.js";
 
-export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = null }) {
+export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = null, detectionStrategyRepository = null, tenantRepository = null }) {
   const requireInternalDataPlaneHealth = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH,
+  });
+  const requireTenantAccess = createRequireTenantAccessMiddleware({ tenantRepository });
+  const requireAdminPermission = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.TENANT_SETTINGS_MANAGE,
   });
 
   function summarizePools(metrics = { pools: [] }) {
@@ -94,5 +102,37 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
         lastFailureCategory: pool.lastFailureCategory,
       } : null,
     });
+  });
+
+  app.get("/admin/detection-strategy", requireTenantAccess, async (c) => {
+    if (!detectionStrategyRepository) {
+      return c.json({ available: false, message: "Detection strategy repository not available" }, 503);
+    }
+    const tenantContext = c.get("tenantContext");
+    const strategy = await detectionStrategyRepository.getActiveStrategy(tenantContext);
+    return c.json({ available: true, strategy });
+  });
+
+  app.put("/admin/detection-strategy", requireTenantAccess, requireAdminPermission, async (c) => {
+    if (!detectionStrategyRepository) {
+      return c.json({ available: false, message: "Detection strategy repository not available" }, 503);
+    }
+    const tenantContext = c.get("tenantContext");
+    const payload = await c.req.json().catch(() => ({}));
+
+    if (!payload.strategyType) {
+      return c.json({ available: false, message: "strategyType is required" }, 400);
+    }
+
+    if (payload.strategyType === "ml_endpoint" && !payload.endpointUrl) {
+      return c.json({ available: false, message: "endpointUrl is required for ml_endpoint strategy" }, 400);
+    }
+
+    const strategy = await detectionStrategyRepository.setStrategy(tenantContext, {
+      strategyType: payload.strategyType,
+      endpointUrl: payload.endpointUrl,
+    });
+
+    return c.json({ available: true, strategy });
   });
 }

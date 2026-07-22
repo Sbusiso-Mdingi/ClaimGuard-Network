@@ -213,6 +213,7 @@ export function createBackendApp({
     registryService: createOperationalDependencyProxy("registryService", services.registryService),
     ledgerRepository: createOperationalDependencyProxy("ledgerRepository", ledgerRepository),
     tenantRepository: createOperationalDependencyProxy("tenantRepository", tenantRepository),
+    detectionStrategyRepository: createOperationalDependencyProxy("detectionStrategyRepository", null),
   } : {
     ...services,
     claimsReadRepository: services.claimReadRepository,
@@ -286,6 +287,7 @@ export function createBackendApp({
           reportService: reportServices.get(pool),
           ledgerRepository: repositories.ledger,
           tenantRepository: repositories.tenants,
+          detectionStrategyRepository: repositories.detectionStrategy,
           operationalRepositories: repositories,
         };
       },
@@ -310,6 +312,8 @@ export function createBackendApp({
   registerAdminRoutes(app, {
     reportService: services.reportService,
     dataPlaneRuntime,
+    detectionStrategyRepository: dependencies.detectionStrategyRepository,
+    tenantRepository: dependencies.tenantRepository,
   });
 
   if (controlPlaneRepositories && controlPlaneService) {

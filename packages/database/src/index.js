@@ -103,3 +103,13 @@ export const ledgerEntriesTable = mysqlTable("ledger_entries", {
   payload: json("payload").notNull(),
   tenantId: varchar("tenant_id", { length: 64 }),
 });
+
+export const detectionStrategiesTable = mysqlTable("detection_strategies", {
+  id: int("id").autoincrement().primaryKey(),
+  tenantId: varchar("tenant_id", { length: 128 }).notNull(),
+  strategyType: varchar("strategy_type", { length: 64 }).notNull().default("deterministic_rules"),
+  endpointUrl: varchar("endpoint_url", { length: 512 }),
+  isActive: int("is_active").notNull().default(1),
+  createdAt: varchar("created_at", { length: 64 }).notNull(),
+  updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+});
