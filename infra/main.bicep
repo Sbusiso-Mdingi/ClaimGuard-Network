@@ -9,6 +9,9 @@ param workerIdentityName string
 @description('Name of the existing Azure Container Registry.')
 param containerRegistryName string
 
+@description('Name of the existing Azure Container Apps Environment.')
+param containerAppsEnvironmentName string
+
 @description('Name of the existing Key Vault.')
 param keyVaultName string
 
@@ -232,3 +235,49 @@ resource cosmosDbGraph 'Microsoft.DocumentDB/databaseAccounts/gremlinDatabases/g
     }
   }
 }
+
+resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' existing = {
+  name: containerAppsEnvironmentName
+}
+
+resource mlInferenceApp 'Microsoft.App/containerApps@2023-05-01' = {
+  name: 'claimguard-ml-inference'
+  location: location
+  identity: {
+    type: 'None'
+  }
+  properties: {
+    managedEnvironmentId: containerAppEnvironment.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 80
+        allowInsecure: false
+        traffic: [
+          {
+            latestRevision: true
+            weight: 100
+          }
+        ]
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'inference-api'
+          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 1
+      }
+    }
+  }
+}
+
+output mlInferenceFqdn string = mlInferenceApp.properties.configuration.ingress.fqdn

@@ -1,0 +1,345 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.45.15.27210",
+      "templateHash": "288952997113607305"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region used by the report-worker managed identity."
+      }
+    },
+    "workerIdentityName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the dedicated report-worker user-assigned managed identity."
+      }
+    },
+    "containerRegistryName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing Azure Container Registry."
+      }
+    },
+    "keyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing Key Vault."
+      }
+    },
+    "controlPlaneSecretName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing control-plane database connection secret."
+      }
+    },
+    "operationalSecretName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing operational database connection secret."
+      }
+    },
+    "reportWorkerPrivateSecretNames": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Exact private-route Key Vault secret names for the one organisation assigned to this worker. Leave empty until an organisation is selected."
+      }
+    },
+    "reportStorageAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing report storage account."
+      }
+    },
+    "reportStorageContainerName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing private report blob container."
+      }
+    },
+    "githubActionsPrincipalId": {
+      "type": "string",
+      "metadata": {
+        "description": "Object ID of the GitHub Actions OIDC service principal."
+      }
+    },
+    "provisionerIdentityName": {
+      "type": "string",
+      "defaultValue": "claimguard-provisioner-identity",
+      "metadata": {
+        "description": "Name of the existing provisioning-worker user-assigned managed identity."
+      }
+    },
+    "cosmosDbAccountName": {
+      "type": "string",
+      "defaultValue": "[format('cg-graph-{0}', uniqueString(resourceGroup().id))]",
+      "metadata": {
+        "description": "Name of the Cosmos DB account. Must be globally unique."
+      }
+    }
+  },
+  "variables": {
+    "acrPullRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+    "keyVaultSecretsUserRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+    "storageBlobDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "keyVaultDataAccessAdministratorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8b54135c-b56d-4d72-a534-26097cfdc8d8')]"
+  },
+  "resources": {
+    "reportWorkerIdentity": {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('workerIdentityName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "component": "report-producer",
+        "managedBy": "bicep",
+        "workload": "claims-processing"
+      }
+    },
+    "provisionerIdentity": {
+      "existing": true,
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('provisionerIdentityName')]"
+    },
+    "containerRegistry": {
+      "existing": true,
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[parameters('containerRegistryName')]"
+    },
+    "keyVault": {
+      "existing": true,
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[parameters('keyVaultName')]"
+    },
+    "controlPlaneSecret": {
+      "existing": true,
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/{1}', parameters('keyVaultName'), parameters('controlPlaneSecretName'))]"
+    },
+    "operationalSecret": {
+      "existing": true,
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/{1}', parameters('keyVaultName'), parameters('operationalSecretName'))]"
+    },
+    "reportWorkerPrivateSecrets": {
+      "copy": {
+        "name": "reportWorkerPrivateSecrets",
+        "count": "[length(parameters('reportWorkerPrivateSecretNames'))]"
+      },
+      "existing": true,
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/{1}', parameters('keyVaultName'), parameters('reportWorkerPrivateSecretNames')[copyIndex()])]"
+    },
+    "reportStorageAccount": {
+      "existing": true,
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('reportStorageAccountName')]"
+    },
+    "reportBlobService": {
+      "existing": true,
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', parameters('reportStorageAccountName'), 'default')]"
+    },
+    "reportStorageContainer": {
+      "existing": true,
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', parameters('reportStorageAccountName'), 'default', parameters('reportStorageContainerName'))]"
+    },
+    "reportWorkerAcrPull": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('workerIdentityName')), variables('acrPullRoleDefinitionId'))]",
+      "properties": {
+        "description": "Allow the ClaimGuard report worker to pull immutable images.",
+        "principalId": "[reference('reportWorkerIdentity').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]"
+      },
+      "dependsOn": [
+        "reportWorkerIdentity"
+      ]
+    },
+    "reportWorkerControlPlaneSecretRead": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('controlPlaneSecretName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('controlPlaneSecretName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('workerIdentityName')), variables('keyVaultSecretsUserRoleDefinitionId'))]",
+      "properties": {
+        "description": "Allow the ClaimGuard report worker to resolve its approved data-plane route.",
+        "principalId": "[reference('reportWorkerIdentity').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleDefinitionId')]"
+      },
+      "dependsOn": [
+        "reportWorkerIdentity"
+      ]
+    },
+    "reportWorkerOperationalSecretRead": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('operationalSecretName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('operationalSecretName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('workerIdentityName')), variables('keyVaultSecretsUserRoleDefinitionId'))]",
+      "properties": {
+        "description": "Allow the ClaimGuard report worker to drain the operational durable outbox.",
+        "principalId": "[reference('reportWorkerIdentity').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleDefinitionId')]"
+      },
+      "dependsOn": [
+        "reportWorkerIdentity"
+      ]
+    },
+    "reportWorkerPrivateSecretReads": {
+      "copy": {
+        "name": "reportWorkerPrivateSecretReads",
+        "count": "[length(parameters('reportWorkerPrivateSecretNames'))]"
+      },
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('reportWorkerPrivateSecretNames')[copyIndex()])]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('reportWorkerPrivateSecretNames')[copyIndex()]), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('workerIdentityName')), variables('keyVaultSecretsUserRoleDefinitionId'))]",
+      "properties": {
+        "description": "Allow the ClaimGuard report worker to resolve one approved private data-plane route.",
+        "principalId": "[reference('reportWorkerIdentity').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleDefinitionId')]"
+      },
+      "dependsOn": [
+        "reportWorkerIdentity"
+      ]
+    },
+    "reportWorkerBlobWrite": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('reportStorageAccountName'), 'default', parameters('reportStorageContainerName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('reportStorageAccountName'), 'default', parameters('reportStorageContainerName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('workerIdentityName')), variables('storageBlobDataContributorRoleDefinitionId'))]",
+      "properties": {
+        "description": "Allow the ClaimGuard report worker to publish only to the report container.",
+        "principalId": "[reference('reportWorkerIdentity').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('storageBlobDataContributorRoleDefinitionId')]"
+      },
+      "dependsOn": [
+        "reportWorkerIdentity"
+      ]
+    },
+    "githubActionsControlPlaneSecretRead": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('controlPlaneSecretName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults/secrets', parameters('keyVaultName'), parameters('controlPlaneSecretName')), parameters('githubActionsPrincipalId'), variables('keyVaultSecretsUserRoleDefinitionId'))]",
+      "properties": {
+        "description": "Allow the ClaimGuard GitHub deployment identity to run control-plane migrations.",
+        "principalId": "[parameters('githubActionsPrincipalId')]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleDefinitionId')]"
+      }
+    },
+    "provisionerKeyVaultDataAccessAdministration": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('provisionerIdentityName')), variables('keyVaultDataAccessAdministratorRoleDefinitionId'))]",
+      "properties": {
+        "description": "Allow the provisioning controller to delegate only approved Key Vault data-plane roles for new tenant secrets.",
+        "principalId": "[reference('provisionerIdentity').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('keyVaultDataAccessAdministratorRoleDefinitionId')]"
+      },
+      "dependsOn": [
+        "provisionerIdentity"
+      ]
+    },
+    "cosmosDbAccount": {
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "apiVersion": "2023-11-15",
+      "name": "[parameters('cosmosDbAccountName')]",
+      "location": "[parameters('location')]",
+      "kind": "GlobalDocumentDB",
+      "properties": {
+        "databaseAccountOfferType": "Standard",
+        "locations": [
+          {
+            "locationName": "[parameters('location')]",
+            "failoverPriority": 0,
+            "isZoneRedundant": false
+          }
+        ],
+        "capabilities": [
+          {
+            "name": "EnableGremlin"
+          }
+        ]
+      }
+    },
+    "cosmosDbDatabase": {
+      "type": "Microsoft.DocumentDB/databaseAccounts/gremlinDatabases",
+      "apiVersion": "2023-11-15",
+      "name": "[format('{0}/{1}', parameters('cosmosDbAccountName'), 'claimguard-graph')]",
+      "properties": {
+        "resource": {
+          "id": "claimguard-graph"
+        }
+      },
+      "dependsOn": [
+        "cosmosDbAccount"
+      ]
+    },
+    "cosmosDbGraph": {
+      "type": "Microsoft.DocumentDB/databaseAccounts/gremlinDatabases/graphs",
+      "apiVersion": "2023-11-15",
+      "name": "[format('{0}/{1}/{2}', parameters('cosmosDbAccountName'), 'claimguard-graph', 'fraud-network')]",
+      "properties": {
+        "resource": {
+          "id": "fraud-network",
+          "partitionKey": {
+            "paths": [
+              "/partitionKey"
+            ],
+            "kind": "Hash"
+          }
+        }
+      },
+      "dependsOn": [
+        "cosmosDbDatabase"
+      ]
+    }
+  },
+  "outputs": {
+    "workerIdentityId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('workerIdentityName'))]"
+    },
+    "workerIdentityClientId": {
+      "type": "string",
+      "value": "[reference('reportWorkerIdentity').clientId]"
+    },
+    "workerIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference('reportWorkerIdentity').principalId]"
+    },
+    "privateSecretRoleCount": {
+      "type": "int",
+      "value": "[length(references('reportWorkerPrivateSecretReads', 'full'))]"
+    }
+  }
+}

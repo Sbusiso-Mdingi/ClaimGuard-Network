@@ -117,6 +117,7 @@ jobs:
               CONTROL_PLANE_MYSQL_URL=secretref:control-plane-url \
               MYSQL_URL=secretref:operational-url \
               AZURE_CLIENT_ID="$WORKER_IDENTITY_CLIENT_ID" \
+              ML_INFERENCE_URL="https://claimguard-ml-inference.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io" \
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
@@ -179,6 +180,7 @@ jobs:
               CONTROL_PLANE_MYSQL_URL=secretref:control-plane-url \
               MYSQL_URL=secretref:operational-url \
               AZURE_CLIENT_ID="$WORKER_IDENTITY_CLIENT_ID" \
+              ML_INFERENCE_URL="https://claimguard-ml-inference.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io" \
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
