@@ -22,6 +22,41 @@ def _required_environment(name: str) -> str:
     return value
 
 
+def _deployment_prefix(deployment_id: str) -> str:
+    return deployment_id.replace("-", "_").upper()
+
+
+def _deployment_environment(
+    deployment_id: str,
+    name: str,
+    *,
+    default: str | None = None,
+    required: bool = False,
+) -> str:
+    prefix = _deployment_prefix(deployment_id)
+    value = (
+        os.environ.get(f"{name}_{prefix}")
+        or os.environ.get(name, default or "")
+    ).strip()
+    if required and not value:
+        raise ValueError(f"{name} is required for deployment {deployment_id}.")
+    return value
+
+
+def _deployment_float(
+    deployment_id: str,
+    name: str,
+    default: str,
+) -> float:
+    return float(
+        _deployment_environment(
+            deployment_id,
+            name,
+            default=default,
+        )
+    )
+
+
 class ModelDeploymentRegistry:
     def __init__(self) -> None:
         self._cache: Dict[str, ModelServiceClient] = {}
@@ -37,23 +72,62 @@ class ModelDeploymentRegistry:
 
             # In a full implementation, we might map specific deployment IDs to specific URLs.
             # Here we default to the environment variables, allowing optional overrides per deployment ID.
-            prefix = deployment_id.replace("-", "_").upper()
-            base_url = os.environ.get(f"MODEL_SERVICE_BASE_URL_{prefix}") or _required_environment("MODEL_SERVICE_BASE_URL")
-            audience = os.environ.get(f"MODEL_SERVICE_AUDIENCE_{prefix}") or _required_environment("MODEL_SERVICE_AUDIENCE")
-            pseudonymization_key = os.environ.get(f"MODEL_SERVICE_PSEUDONYMIZATION_KEY_{prefix}") or _required_environment("MODEL_SERVICE_PSEUDONYMIZATION_KEY")
+            base_url = _deployment_environment(
+                deployment_id,
+                "MODEL_SERVICE_BASE_URL",
+                required=True,
+            ) or _required_environment("MODEL_SERVICE_BASE_URL")
+            audience = _deployment_environment(
+                deployment_id,
+                "MODEL_SERVICE_AUDIENCE",
+                required=True,
+            ) or _required_environment("MODEL_SERVICE_AUDIENCE")
+            pseudonymization_key = _deployment_environment(
+                deployment_id,
+                "MODEL_SERVICE_PSEUDONYMIZATION_KEY",
+                required=True,
+            ) or _required_environment("MODEL_SERVICE_PSEUDONYMIZATION_KEY")
 
             expectations = ModelServiceExpectations(
                 deployment_id=deployment_id,
-                ensemble_id=os.environ.get("MODEL_SERVICE_EXPECTED_ENSEMBLE_ID", ENSEMBLE_ID).strip(),
-                ensemble_version=os.environ.get("MODEL_SERVICE_EXPECTED_ENSEMBLE_VERSION", ENSEMBLE_VERSION).strip(),
-                feature_schema_version=os.environ.get("MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION", FEATURE_SCHEMA_VERSION).strip(),
-                baseline_threshold=float(os.environ.get("MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD", "0.08760971001434723")),
-                ring_threshold=float(os.environ.get("MODEL_SERVICE_EXPECTED_RING_THRESHOLD", "0.148")),
-                phantom_threshold=float(os.environ.get("MODEL_SERVICE_EXPECTED_PHANTOM_THRESHOLD", "0.8138303120761656")),
+                ensemble_id=_deployment_environment(
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_ENSEMBLE_ID",
+                    default=ENSEMBLE_ID,
+                ),
+                ensemble_version=_deployment_environment(
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_ENSEMBLE_VERSION",
+                    default=ENSEMBLE_VERSION,
+                ),
+                feature_schema_version=_deployment_environment(
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION",
+                    default=FEATURE_SCHEMA_VERSION,
+                ),
+                baseline_threshold=_deployment_float(
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD",
+                    "0.08760971001434723",
+                ),
+                ring_threshold=_deployment_float(
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_RING_THRESHOLD",
+                    "0.148",
+                ),
+                phantom_threshold=_deployment_float(
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_PHANTOM_THRESHOLD",
+                    "0.8138303120761656",
+                ),
             )
 
             try:
-                timeout_seconds = float(os.environ.get("MODEL_SERVICE_TIMEOUT_SECONDS", "120"))
+                timeout_seconds = _deployment_float(
+                    deployment_id,
+                    "MODEL_SERVICE_TIMEOUT_SECONDS",
+                    "120",
+                )
             except ValueError:
                 timeout_seconds = 120.0
 
