@@ -9,6 +9,11 @@ import {
   runWithTenantContext,
 } from "../src/index.js";
 
+
+const FIXED_DATABASE_TIMESTAMP =
+  "2026-07-23 12:30:45.123";
+
+
 function modelClaimFields() {
   return {
     received_date: "2026-07-20",
@@ -24,478 +29,2044 @@ function modelClaimFields() {
   };
 }
 
-function createFakePool({ tenantId = "tenant_default" } = {}) {
-  const executions = [];
-  let outboxRow = null;
 
+function claimInput({
+  claimId = "C-100",
+  amount = 233.19,
+  schemeId = "scheme_a",
+  memberId = "M-1",
+  providerId = "P-1",
+} = {}) {
   return {
-    executions,
-    async getConnection() {
-      return {
-        async beginTransaction() {},
-        async execute(sql, params) {
-          executions.push({ sql, params });
-          if (/SELECT tenant_id, claim_version FROM claims/i.test(sql) || /SELECT tenant_id FROM claims/i.test(sql)) {
-            return [[]];
-          }
-          if (/SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = \? AND is_active = 1/i.test(sql)) {
-            return [[{ id: 1, strategy_type: "deterministic_rules", model_deployment_id: null }]];
-          }
-          if (/SELECT tenant_id FROM schemes/i.test(sql)) {
-            return [[{ tenant_id: tenantId }]];
-          }
-          if (/SELECT tenant_id, scheme_id FROM members/i.test(sql)) {
-            return [[{ tenant_id: tenantId, scheme_id: "scheme_a" }]];
-          }
-          if (/SELECT tenant_id, scheme_id FROM providers/i.test(sql)) {
-            return [[{ tenant_id: tenantId, scheme_id: "scheme_a" }]];
-          }
-          if (/INSERT INTO claim_processing_outbox/i.test(sql)) {
-            const [id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, max_attempts, detection_strategy_id, strategy_type, model_deployment_id] = params;
-            outboxRow = {
-              id,
-              tenant_id,
-              job_type,
-              aggregate_type,
-              aggregate_id,
-              correlation_id,
-              idempotency_key,
-              payload,
-              status: "pending",
-              attempt_count: 0,
-              max_attempts,
-              detection_strategy_id,
-              strategy_type,
-              model_deployment_id,
-            };
-            return [{ affectedRows: 1 }];
-          }
-          if (/FROM claim_processing_outbox/i.test(sql)) {
-            return [[outboxRow]];
-          }
-          return [{ affectedRows: 1 }];
-        },
-        async commit() {},
-        async rollback() {},
-        release() {},
-      };
-    },
+    claim_id: claimId,
+    scheme_id: schemeId,
+    member_id: memberId,
+    provider_id: providerId,
+    service_date: "2026-07-20",
+    billing_code: "CONSULT",
+    amount,
+    ...modelClaimFields(),
   };
 }
 
-test("claim ingestion repository inserts claims through transaction", async () => {
-  const pool = createFakePool();
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
-  const result = await repository.ingestClaims({
-    source: "upstream-connector",
-    claims: [
-      {
-        claim_id: "C-100",
-        scheme_id: "scheme_a",
-        member_id: "M-1",
-        provider_id: "P-1",
-        service_date: "2025-01-15",
-        ...modelClaimFields(),
-        billing_code: "CONSULT",
-        amount: 233.19,
-      },
-    ],
-  });
+function normalizeSql(sql) {
+  return String(sql)
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  assert.equal(result.received, 1);
-  assert.equal(result.inserted, 1);
-  assert.equal(result.updated, 0);
-  assert.equal(result.source, "upstream-connector");
-  assert.equal(result.processing.status, "queued");
-  assert.equal(result.processing.asynchronous, true);
-  assert.equal(pool.executions.length, 9);
-  assert.match(pool.executions[5].sql, /INSERT INTO claims/i);
-  assert.equal(pool.executions[5].params.at(-1), "tenant_default");
-  assert.match(pool.executions[7].sql, /INSERT INTO claim_processing_outbox/i);
-  assert.equal(pool.executions[7].params[1], "tenant_default");
-});
 
-test("reference data and claims are accepted in one authoritative batch", async () => {
-  const pool = createFakePool();
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
-
-  const result = await repository.ingestClaims({
-    source: "medical-aid-desktop",
-    schemes: [{ scheme_id: "scheme_a", scheme_name: "Scheme A" }],
-    members: [{
-      member_id: "M-1", scheme_id: "scheme_a", first_name: "token:first", last_name: "token:last",
-      date_of_birth: "1985-01-01", gender: "unspecified", identity_number: "token:identity",
-      banking_detail: "token:member-bank", home_region: "Gauteng", home_lat: -26.2,
-      home_lon: 28.0, join_date: "2020-01-01",
-    }],
-    providers: [{
-      provider_id: "P-1", scheme_id: "scheme_a", practice_number: "practice-1", specialty: "GP",
-      practice_name: "Practice 1", banking_detail: "token:provider-bank", practice_region: "Gauteng",
-      practice_lat: -26.2, practice_lon: 28.0,
-      provider_kind: "INDIVIDUAL", provider_category: "GENERAL_PRACTITIONER",
-    }],
-    claims: [{
-      claim_id: "C-REFERENCE", scheme_id: "scheme_a", member_id: "M-1", provider_id: "P-1",
-      service_date: "2026-07-19", billing_code: "CONSULT", amount: 450,
-      ...modelClaimFields(),
-    }],
-  });
-
-  assert.deepEqual(result.referenceData, {
-    schemes: { received: 1, inserted: 0, updated: 1 },
-    members: { received: 1, inserted: 1, updated: 0 },
-    providers: { received: 1, inserted: 1, updated: 0 },
-  });
-  assert.equal(result.inserted, 1);
-  assert.equal(result.processing.status, "queued");
-  assert.equal(pool.executions.some(({ sql }) => /INSERT INTO members/i.test(sql)), true);
-  assert.equal(pool.executions.some(({ sql }) => /INSERT INTO providers/i.test(sql)), true);
-});
-
-test("reference identifiers remain immutable across tenants", async () => {
-  let rolledBack = false;
-  const pool = {
-    async getConnection() {
-      return {
-        async beginTransaction() {},
-        async execute(sql) {
-          if (/SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = \? AND is_active = 1/i.test(sql)) {
-            return [[{ id: 1, strategy_type: "deterministic_rules", model_deployment_id: null }]];
-          }
-          if (/SELECT tenant_id FROM schemes/i.test(sql)) return [[{ tenant_id: "tenant_beta" }]];
-          throw new Error(`Unexpected SQL: ${sql}`);
-        },
-        async commit() {},
-        async rollback() { rolledBack = true; },
-        release() {},
-      };
-    },
-  };
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
-
-  await assert.rejects(
-    () => runWithTenantContext({ tenant_id: "tenant_alpha" }, () => repository.ingestClaims({
-      schemes: [{ scheme_id: "scheme_a", scheme_name: "Scheme A" }],
-      claims: [{
-        claim_id: "C-1", scheme_id: "scheme_a", member_id: "M-1", provider_id: "P-1",
-        service_date: "2026-07-19", billing_code: "CONSULT", amount: 450,
-        ...modelClaimFields(),
-      }],
-    })),
-    ReferenceOwnershipConflictError,
+function cloneMap(map) {
+  return new Map(
+    [...map].map(
+      ([key, value]) => [
+        key,
+        value && typeof value === "object"
+          ? { ...value }
+          : value,
+      ],
+    ),
   );
-  assert.equal(rolledBack, true);
-});
+}
 
-test("claim ingestion repository validates required fields", async () => {
-  const pool = createFakePool();
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
 
-  await assert.rejects(
-    () =>
-      repository.ingestClaims({
-        claims: [
-          {
-            claim_id: "C-101",
-            scheme_id: "scheme_a",
-          },
-        ],
-      }),
-    /missing required fields/i,
-  );
-});
-
-test("claim ingestion repository persists tenant_id from active tenant context", async () => {
-  const pool = createFakePool({ tenantId: "tenant_alpha" });
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
-
-  await runWithTenantContext(
-    {
-      tenant_id: "tenant_alpha",
-      tenant_slug: "alpha",
-      scheme_id: null,
-      source: "header",
-    },
-    async () => {
-      await repository.ingestClaims({
-        source: "api",
-        claims: [
-          {
-            claim_id: "C-102",
-            scheme_id: "scheme_a",
-            member_id: "M-2",
-            provider_id: "P-2",
-            service_date: "2025-01-16",
-            ...modelClaimFields(),
-            billing_code: "XRAY",
-            amount: 100.0,
-          },
-        ],
-      });
-    },
-  );
-
-  assert.equal(pool.executions.length, 9);
-  assert.equal(pool.executions[5].params.at(-1), "tenant_alpha");
-  assert.match(pool.executions[5].sql, /tenant_id/i);
-  assert.equal(pool.executions[7].params[1], "tenant_alpha");
-});
-
-function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = false } = {}) {
-  const claims = new Map();
-  const outbox = new Map();
-  let rollbackCount = 0;
-
+function cloneReferenceMaps(references) {
   return {
+    schemes: cloneMap(references.schemes),
+    members: cloneMap(references.members),
+    providers: cloneMap(references.providers),
+  };
+}
+
+
+function replaceMap(target, source) {
+  target.clear();
+
+  for (const [key, value] of source) {
+    target.set(
+      key,
+      value && typeof value === "object"
+        ? { ...value }
+        : value,
+    );
+  }
+}
+
+
+function restoreReferences(target, source) {
+  replaceMap(
+    target.schemes,
+    source.schemes,
+  );
+
+  replaceMap(
+    target.members,
+    source.members,
+  );
+
+  replaceMap(
+    target.providers,
+    source.providers,
+  );
+}
+
+
+function createMemoryPool({
+  tenantId = "tenant_default",
+  seedReferences = true,
+  activeStrategy = {
+    id: 1,
+    strategy_type: "deterministic_rules",
+    model_deployment_id: null,
+  },
+  failClaimInsert = false,
+  failOutboxInsert = false,
+} = {}) {
+  const executions = [];
+
+  const references = {
+    schemes: new Map(),
+    members: new Map(),
+    providers: new Map(),
+  };
+
+  if (seedReferences) {
+    references.schemes.set(
+      "scheme_a",
+      {
+        tenant_id: tenantId,
+      },
+    );
+
+    references.members.set(
+      "M-1",
+      {
+        tenant_id: tenantId,
+        scheme_id: "scheme_a",
+      },
+    );
+
+    references.providers.set(
+      "P-1",
+      {
+        tenant_id: tenantId,
+        scheme_id: "scheme_a",
+      },
+    );
+  }
+
+  const claims = new Map();
+  const claimVersions = new Map();
+  const outbox = new Map();
+
+  let rollbackCount = 0;
+  let commitCount = 0;
+
+  function claimVersionKey(
+    versionTenantId,
+    claimId,
+    claimVersion,
+  ) {
+    return (
+      `${versionTenantId}:`
+      + `${claimId}:`
+      + `${claimVersion}`
+    );
+  }
+
+  function outboxKey(
+    jobTenantId,
+    idempotencyKey,
+  ) {
+    return (
+      `${jobTenantId}:`
+      + idempotencyKey
+    );
+  }
+
+  function referenceMap(tableName) {
+    const map = references[tableName];
+
+    if (!map) {
+      throw new Error(
+        `Unsupported reference table ${tableName}.`,
+      );
+    }
+
+    return map;
+  }
+
+  const pool = {
+    executions,
+    references,
     claims,
+    claimVersions,
     outbox,
+
     get rollbackCount() {
       return rollbackCount;
     },
+
+    get commitCount() {
+      return commitCount;
+    },
+
+    setReferenceTenant(
+      nextTenantId,
+    ) {
+      for (
+        const row
+        of references.schemes.values()
+      ) {
+        row.tenant_id = nextTenantId;
+      }
+
+      for (
+        const row
+        of references.members.values()
+      ) {
+        row.tenant_id = nextTenantId;
+      }
+
+      for (
+        const row
+        of references.providers.values()
+      ) {
+        row.tenant_id = nextTenantId;
+      }
+    },
+
     async getConnection() {
       let transactionSnapshot = null;
-      let outboxSnapshot = null;
+
       return {
         async beginTransaction() {
-          transactionSnapshot = new Map([...claims].map(([id, claim]) => [id, { ...claim }]));
-          outboxSnapshot = new Map([...outbox].map(([id, job]) => [id, { ...job }]));
+          transactionSnapshot = {
+            references:
+              cloneReferenceMaps(
+                references,
+              ),
+
+            claims:
+              cloneMap(
+                claims,
+              ),
+
+            claimVersions:
+              cloneMap(
+                claimVersions,
+              ),
+
+            outbox:
+              cloneMap(
+                outbox,
+              ),
+          };
         },
-        async execute(sql, params) {
-          if (/SELECT tenant_id, claim_version FROM claims/i.test(sql) || /SELECT tenant_id FROM claims/i.test(sql)) {
-            const claim = claims.get(params[0]);
-            return [claim ? [{ tenant_id: claim.tenant_id, claim_version: claim.claim_version }] : []];
+
+        async execute(
+          sql,
+          params = [],
+        ) {
+          const statement =
+            normalizeSql(sql);
+
+          executions.push({
+            sql: statement,
+            params,
+          });
+
+          if (
+            statement.includes(
+              "FROM detection_strategies",
+            )
+          ) {
+            return [
+              activeStrategy
+                ? [
+                    {
+                      ...activeStrategy,
+                    },
+                  ]
+                : [],
+            ];
           }
-          if (/SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = \? AND is_active = 1/i.test(sql)) {
-            return [[{ id: 1, strategy_type: "deterministic_rules", model_deployment_id: null }]];
+
+          if (
+            statement.includes(
+              "UTC_TIMESTAMP(3) AS context_cutoff_at",
+            )
+          ) {
+            return [
+              [
+                {
+                  context_cutoff_at:
+                    FIXED_DATABASE_TIMESTAMP,
+                },
+              ],
+            ];
           }
-          if (/SELECT tenant_id FROM schemes/i.test(sql)) {
-            return [[{ tenant_id: "tenant_alpha" }]];
-          }
-          if (/SELECT tenant_id, scheme_id FROM members/i.test(sql)) {
-            return [[{ tenant_id: "tenant_alpha", scheme_id: "scheme_a" }]];
-          }
-          if (/SELECT tenant_id, scheme_id FROM providers/i.test(sql)) {
-            return [[{ tenant_id: "tenant_alpha", scheme_id: "scheme_a" }]];
-          }
-          if (/INSERT INTO claims/i.test(sql)) {
-            if (failClaimInsert) {
-              throw new Error("claim insert failed");
+
+          if (
+            statement.includes(
+              "FROM claims c",
+            )
+            && statement.includes(
+              "LEFT JOIN claim_versions cv",
+            )
+          ) {
+            const claimId =
+              params[0];
+
+            const claim =
+              claims.get(
+                claimId,
+              );
+
+            if (!claim) {
+              return [
+                [],
+              ];
             }
+
+            const version =
+              claimVersions.get(
+                claimVersionKey(
+                  claim.tenant_id,
+                  claimId,
+                  claim.current_claim_version,
+                ),
+              );
+
+            return [
+              [
+                {
+                  tenant_id:
+                    claim.tenant_id,
+
+                  current_claim_version:
+                    claim.current_claim_version,
+
+                  payload_hash:
+                    version?.payload_hash
+                    || null,
+
+                  claim_payload:
+                    version?.claim_payload
+                    || null,
+                },
+              ],
+            ];
+          }
+
+          const referenceSelect =
+            statement.match(
+              /FROM (schemes|members|providers) WHERE/i,
+            );
+
+          if (referenceSelect) {
+            const tableName =
+              referenceSelect[1]
+                .toLowerCase();
+
+            const record =
+              referenceMap(
+                tableName,
+              ).get(
+                params[0],
+              );
+
+            return [
+              record
+                ? [
+                    {
+                      ...record,
+                    },
+                  ]
+                : [],
+            ];
+          }
+
+          if (
+            statement.startsWith(
+              "INSERT INTO schemes",
+            )
+          ) {
             const [
-              claim_id, claim_version, scheme_id, member_id, provider_id, service_date,
-              received_date, billing_code, amount, quantity, benefit_option,
-              network_type, line_type, tariff_discipline, diagnosis_code,
-              rendering_practitioner_id, rendering_practitioner_category,
-              rendering_known_to_billing_provider, tenant_id,
+              schemeId,
+              ,
+              recordTenantId,
             ] = params;
-            if (claims.has(claim_id)) {
-              const error = new Error("duplicate");
-              error.code = "ER_DUP_ENTRY";
+
+            references.schemes.set(
+              schemeId,
+              {
+                tenant_id:
+                  recordTenantId,
+              },
+            );
+
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
+          }
+
+          if (
+            statement.startsWith(
+              "INSERT INTO members",
+            )
+          ) {
+            const [
+              memberId,
+              schemeId,
+            ] = params;
+
+            const recordTenantId =
+              params.at(-1);
+
+            references.members.set(
+              memberId,
+              {
+                tenant_id:
+                  recordTenantId,
+
+                scheme_id:
+                  schemeId,
+              },
+            );
+
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
+          }
+
+          if (
+            statement.startsWith(
+              "INSERT INTO providers",
+            )
+          ) {
+            const [
+              providerId,
+              schemeId,
+            ] = params;
+
+            const recordTenantId =
+              params.at(-1);
+
+            references.providers.set(
+              providerId,
+              {
+                tenant_id:
+                  recordTenantId,
+
+                scheme_id:
+                  schemeId,
+              },
+            );
+
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
+          }
+
+          if (
+            statement.startsWith(
+              "UPDATE schemes",
+            )
+            || statement.startsWith(
+              "UPDATE members",
+            )
+            || statement.startsWith(
+              "UPDATE providers",
+            )
+          ) {
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
+          }
+
+          if (
+            statement.startsWith(
+              "INSERT INTO claims",
+            )
+          ) {
+            if (failClaimInsert) {
+              throw new Error(
+                "claim insert failed",
+              );
+            }
+
+            const [
+              claimId,
+              schemeId,
+              memberId,
+              providerId,
+              serviceDate,
+              receivedDate,
+              billingCode,
+              amount,
+              quantity,
+              benefitOption,
+              networkType,
+              lineType,
+              tariffDiscipline,
+              diagnosisCode,
+              renderingPractitionerId,
+              renderingPractitionerCategory,
+              renderingKnownToBillingProvider,
+              claimTenantId,
+            ] = params;
+
+            if (
+              claims.has(
+                claimId,
+              )
+            ) {
+              const error =
+                new Error(
+                  "duplicate claim",
+                );
+
+              error.code =
+                "ER_DUP_ENTRY";
+
               throw error;
             }
-            claims.set(claim_id, {
-              claim_id, scheme_id, member_id, provider_id, service_date,
-              received_date, billing_code, amount, quantity, benefit_option,
-              network_type, line_type, tariff_discipline, diagnosis_code,
-              rendering_practitioner_id, rendering_practitioner_category,
-              rendering_known_to_billing_provider, tenant_id, claim_version,
-            });
-            return [{ affectedRows: 1 }];
+
+            claims.set(
+              claimId,
+              {
+                claim_id:
+                  claimId,
+
+                current_claim_version:
+                  1,
+
+                scheme_id:
+                  schemeId,
+
+                member_id:
+                  memberId,
+
+                provider_id:
+                  providerId,
+
+                service_date:
+                  serviceDate,
+
+                received_date:
+                  receivedDate,
+
+                billing_code:
+                  billingCode,
+
+                amount,
+                quantity,
+
+                benefit_option:
+                  benefitOption,
+
+                network_type:
+                  networkType,
+
+                line_type:
+                  lineType,
+
+                tariff_discipline:
+                  tariffDiscipline,
+
+                diagnosis_code:
+                  diagnosisCode,
+
+                rendering_practitioner_id:
+                  renderingPractitionerId,
+
+                rendering_practitioner_category:
+                  renderingPractitionerCategory,
+
+                rendering_known_to_billing_provider:
+                  renderingKnownToBillingProvider,
+
+                tenant_id:
+                  claimTenantId,
+              },
+            );
+
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
           }
-          if (/INSERT INTO claim_versions/i.test(sql)) {
-             return [{ affectedRows: 1 }];
-          }
-          if (/UPDATE claims/i.test(sql)) {
+
+          if (
+            statement.startsWith(
+              "INSERT INTO claim_versions",
+            )
+          ) {
             const [
-              claim_version, scheme_id, member_id, provider_id, service_date, received_date,
-              billing_code, amount, quantity, benefit_option, network_type,
-              line_type, tariff_discipline, diagnosis_code,
-              rendering_practitioner_id, rendering_practitioner_category,
-              rendering_known_to_billing_provider, claim_id, tenant_id,
+              versionTenantId,
+              claimId,
+              claimVersion,
+              schemeId,
+              memberId,
+              providerId,
+              serviceDate,
+              receivedDate,
+              billingCode,
+              amount,
+              claimPayload,
+              payloadHash,
+              versionReason,
             ] = params;
-            const existing = claims.get(claim_id);
-            if (existing?.tenant_id === tenant_id) {
-              claims.set(claim_id, {
-                ...existing, scheme_id, member_id, provider_id, service_date,
-                received_date, billing_code, amount, quantity, benefit_option,
-                network_type, line_type, tariff_discipline, diagnosis_code,
-                rendering_practitioner_id, rendering_practitioner_category,
-                rendering_known_to_billing_provider, claim_version,
-              });
-              return [{ affectedRows: 1 }];
-            }
-            return [{ affectedRows: 0 }];
+
+            claimVersions.set(
+              claimVersionKey(
+                versionTenantId,
+                claimId,
+                claimVersion,
+              ),
+              {
+                tenant_id:
+                  versionTenantId,
+
+                claim_id:
+                  claimId,
+
+                claim_version:
+                  claimVersion,
+
+                scheme_id:
+                  schemeId,
+
+                member_id:
+                  memberId,
+
+                provider_id:
+                  providerId,
+
+                service_date:
+                  serviceDate,
+
+                received_date:
+                  receivedDate,
+
+                billing_code:
+                  billingCode,
+
+                amount,
+
+                claim_payload:
+                  claimPayload,
+
+                payload_hash:
+                  payloadHash,
+
+                version_reason:
+                  versionReason,
+              },
+            );
+
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
           }
-          if (/INSERT INTO claim_processing_outbox/i.test(sql)) {
+
+          if (
+            statement.startsWith(
+              "UPDATE claim_versions SET payload_hash",
+            )
+          ) {
+            const [
+              payloadHash,
+              versionTenantId,
+              claimId,
+              claimVersion,
+            ] = params;
+
+            const key =
+              claimVersionKey(
+                versionTenantId,
+                claimId,
+                claimVersion,
+              );
+
+            const existing =
+              claimVersions.get(
+                key,
+              );
+
+            if (existing) {
+              existing.payload_hash =
+                payloadHash;
+            }
+
+            return [
+              {
+                affectedRows:
+                  existing ? 1 : 0,
+              },
+            ];
+          }
+
+          if (
+            statement.startsWith(
+              "UPDATE claims SET current_claim_version",
+            )
+          ) {
+            const nextVersion =
+              params[0];
+
+            const claimValues =
+              params.slice(
+                1,
+                17,
+              );
+
+            const claimId =
+              params[17];
+
+            const claimTenantId =
+              params[18];
+
+            const expectedVersion =
+              params[19];
+
+            const existing =
+              claims.get(
+                claimId,
+              );
+
+            if (
+              !existing
+              || existing.tenant_id
+                !== claimTenantId
+              || existing.current_claim_version
+                !== expectedVersion
+            ) {
+              return [
+                {
+                  affectedRows: 0,
+                },
+              ];
+            }
+
+            const [
+              schemeId,
+              memberId,
+              providerId,
+              serviceDate,
+              receivedDate,
+              billingCode,
+              amount,
+              quantity,
+              benefitOption,
+              networkType,
+              lineType,
+              tariffDiscipline,
+              diagnosisCode,
+              renderingPractitionerId,
+              renderingPractitionerCategory,
+              renderingKnownToBillingProvider,
+            ] = claimValues;
+
+            claims.set(
+              claimId,
+              {
+                ...existing,
+
+                current_claim_version:
+                  nextVersion,
+
+                scheme_id:
+                  schemeId,
+
+                member_id:
+                  memberId,
+
+                provider_id:
+                  providerId,
+
+                service_date:
+                  serviceDate,
+
+                received_date:
+                  receivedDate,
+
+                billing_code:
+                  billingCode,
+
+                amount,
+                quantity,
+
+                benefit_option:
+                  benefitOption,
+
+                network_type:
+                  networkType,
+
+                line_type:
+                  lineType,
+
+                tariff_discipline:
+                  tariffDiscipline,
+
+                diagnosis_code:
+                  diagnosisCode,
+
+                rendering_practitioner_id:
+                  renderingPractitionerId,
+
+                rendering_practitioner_category:
+                  renderingPractitionerCategory,
+
+                rendering_known_to_billing_provider:
+                  renderingKnownToBillingProvider,
+              },
+            );
+
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
+          }
+
+          if (
+            statement.startsWith(
+              "INSERT INTO claim_processing_outbox",
+            )
+          ) {
             if (failOutboxInsert) {
-              throw new Error("outbox insert failed");
+              throw new Error(
+                "outbox insert failed",
+              );
             }
-            const [id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, max_attempts, detection_strategy_id, strategy_type, model_deployment_id] = params;
-            const key = `${tenant_id}:${idempotency_key}`;
-            if (!outbox.has(key)) {
-              outbox.set(key, {
-                id,
-                tenant_id,
-                job_type,
-                aggregate_type,
-                aggregate_id,
-                correlation_id,
-                idempotency_key,
-                payload,
-                status: "pending",
-                attempt_count: 0,
-                max_attempts,
-                detection_strategy_id,
-                strategy_type,
-                model_deployment_id,
-              });
-              return [{ affectedRows: 1 }];
+
+            const [
+              id,
+              jobTenantId,
+              jobType,
+              aggregateType,
+              aggregateId,
+              correlationId,
+              idempotencyKey,
+              payload,
+              maxAttempts,
+              detectionStrategyId,
+              strategyType,
+              modelDeploymentId,
+            ] = params;
+
+            const key =
+              outboxKey(
+                jobTenantId,
+                idempotencyKey,
+              );
+
+            if (
+              !outbox.has(
+                key,
+              )
+            ) {
+              outbox.set(
+                key,
+                {
+                  id,
+
+                  tenant_id:
+                    jobTenantId,
+
+                  job_type:
+                    jobType,
+
+                  aggregate_type:
+                    aggregateType,
+
+                  aggregate_id:
+                    aggregateId,
+
+                  correlation_id:
+                    correlationId,
+
+                  idempotency_key:
+                    idempotencyKey,
+
+                  payload,
+
+                  status:
+                    "pending",
+
+                  attempt_count:
+                    0,
+
+                  max_attempts:
+                    maxAttempts,
+
+                  available_at:
+                    FIXED_DATABASE_TIMESTAMP,
+
+                  leased_at:
+                    null,
+
+                  lease_expires_at:
+                    null,
+
+                  leased_by:
+                    null,
+
+                  last_error:
+                    null,
+
+                  failure_code:
+                    null,
+
+                  failed_watermark:
+                    null,
+
+                  covered_report_id:
+                    null,
+
+                  covered_watermark:
+                    null,
+
+                  covered_at:
+                    null,
+
+                  detection_strategy_id:
+                    detectionStrategyId,
+
+                  strategy_type:
+                    strategyType,
+
+                  model_deployment_id:
+                    modelDeploymentId,
+
+                  created_at:
+                    FIXED_DATABASE_TIMESTAMP,
+
+                  updated_at:
+                    FIXED_DATABASE_TIMESTAMP,
+
+                  completed_at:
+                    null,
+                },
+              );
+
+              return [
+                {
+                  affectedRows: 1,
+                },
+              ];
             }
-            return [{ affectedRows: 0 }];
+
+            return [
+              {
+                affectedRows: 0,
+              },
+            ];
           }
-          if (/FROM claim_processing_outbox/i.test(sql)) {
-            return [[outbox.get(`${params[0]}:${params[1]}`)].filter(Boolean)];
+
+          if (
+            statement.includes(
+              "FROM claim_processing_outbox",
+            )
+            && statement.includes(
+              "idempotency_key = ?",
+            )
+          ) {
+            const [
+              jobTenantId,
+              idempotencyKey,
+            ] = params;
+
+            const row =
+              outbox.get(
+                outboxKey(
+                  jobTenantId,
+                  idempotencyKey,
+                ),
+              );
+
+            return [
+              row
+                ? [
+                    {
+                      ...row,
+                    },
+                  ]
+                : [],
+            ];
           }
-          throw new Error(`Unexpected SQL: ${sql}`);
+
+          throw new Error(
+            `Unexpected SQL: ${statement}`,
+          );
         },
+
         async commit() {
+          commitCount += 1;
           transactionSnapshot = null;
         },
+
         async rollback() {
           rollbackCount += 1;
-          claims.clear();
-          for (const [id, claim] of transactionSnapshot || []) claims.set(id, claim);
-          outbox.clear();
-          for (const [id, job] of outboxSnapshot || []) outbox.set(id, job);
+
+          if (!transactionSnapshot) {
+            return;
+          }
+
+          restoreReferences(
+            references,
+            transactionSnapshot.references,
+          );
+
+          replaceMap(
+            claims,
+            transactionSnapshot.claims,
+          );
+
+          replaceMap(
+            claimVersions,
+            transactionSnapshot.claimVersions,
+          );
+
+          replaceMap(
+            outbox,
+            transactionSnapshot.outbox,
+          );
         },
+
         release() {},
       };
     },
   };
+
+  return pool;
 }
 
-function claimInput(amount) {
-  return {
-    claim_id: "C-IMMUTABLE",
-    scheme_id: "scheme_a",
-    member_id: "M-1",
-    provider_id: "P-1",
-    service_date: "2026-07-16",
-    ...modelClaimFields(),
-    billing_code: "CONSULT",
-    amount,
-  };
-}
 
-test("claim ownership is immutable while same-tenant updates remain idempotent", async () => {
-  const pool = createStatefulClaimPool();
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+test(
+  "new claims create immutable version one and a prospective scoring job",
+  async () => {
+    const pool =
+      createMemoryPool();
 
-  await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
-    repository.ingestClaims({ claims: [claimInput(100)] }),
-  );
-  const update = await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
-    repository.ingestClaims({ claims: [claimInput(125)] }),
-  );
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
 
-  await assert.rejects(
-    () => runWithTenantContext({ tenant_id: "tenant_beta" }, () =>
-      repository.ingestClaims({ claims: [claimInput(999)] }),
-    ),
-    ClaimOwnershipConflictError,
-  );
+    const result =
+      await repository.ingestClaims({
+        source:
+          "upstream-connector",
 
-  assert.equal(update.inserted, 0);
-  assert.equal(update.updated, 1);
-  assert.equal(pool.claims.get("C-IMMUTABLE").tenant_id, "tenant_alpha");
-  assert.equal(pool.claims.get("C-IMMUTABLE").amount, 125);
-  assert.equal(pool.outbox.size, 2);
-  assert.equal(pool.rollbackCount, 1);
-});
+        correlationId:
+          "request-100",
 
-test("claim and outbox creation commit together and identical retries reuse one job", async () => {
-  const pool = createStatefulClaimPool();
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+        claims: [
+          claimInput(),
+        ],
+      });
 
-  const first = await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
-    repository.ingestClaims({ claims: [claimInput(100)], correlationId: "request-1" }),
-  );
-  const retry = await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
-    repository.ingestClaims({ claims: [claimInput(100)], correlationId: "request-2" }),
-  );
+    assert.equal(
+      result.received,
+      1,
+    );
 
-  assert.equal(pool.claims.size, 1);
-  assert.equal(pool.outbox.size, 1);
-  assert.equal(first.processing.reused, false);
-  assert.equal(retry.processing.reused, true);
-  assert.equal(retry.processing.jobId, first.processing.jobId);
-  assert.equal(retry.processing.correlationId, "request-1");
-});
+    assert.equal(
+      result.inserted,
+      1,
+    );
 
-test("outbox enqueue failure rolls back the claim write", async () => {
-  const pool = createStatefulClaimPool({ failOutboxInsert: true });
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+    assert.equal(
+      result.updated,
+      0,
+    );
 
-  await assert.rejects(
-    () => runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
-      repository.ingestClaims({ claims: [claimInput(100)] }),
-    ),
-    /outbox insert failed/,
-  );
+    assert.equal(
+      result.unchanged,
+      0,
+    );
 
-  assert.equal(pool.claims.size, 0);
-  assert.equal(pool.outbox.size, 0);
-  assert.equal(pool.rollbackCount, 1);
-});
+    assert.equal(
+      result.versioned,
+      1,
+    );
 
-test("claim failure creates no outbox job", async () => {
-  const pool = createStatefulClaimPool({ failClaimInsert: true });
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+    assert.equal(
+      result.processing.status,
+      "queued",
+    );
 
-  await assert.rejects(
-    () => runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
-      repository.ingestClaims({ claims: [claimInput(100)] }),
-    ),
-    /claim insert failed/,
-  );
+    assert.equal(
+      result.processing.asynchronous,
+      true,
+    );
 
-  assert.equal(pool.claims.size, 0);
-  assert.equal(pool.outbox.size, 0);
-});
+    assert.equal(
+      result.processing.reused,
+      false,
+    );
 
-test("ownership conflict rolls back without creating an outbox job", async () => {
-  const pool = createStatefulClaimPool();
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
-  await runWithTenantContext({ tenant_id: "tenant_alpha" }, () =>
-    repository.ingestClaims({ claims: [claimInput(100)] }),
-  );
+    const claim =
+      pool.claims.get(
+        "C-100",
+      );
 
-  await assert.rejects(
-    () => runWithTenantContext({ tenant_id: "tenant_beta" }, () =>
-      repository.ingestClaims({ claims: [claimInput(100)] }),
-    ),
-    ClaimOwnershipConflictError,
-  );
+    assert.equal(
+      claim.current_claim_version,
+      1,
+    );
 
-  assert.equal(pool.outbox.size, 1);
-  assert.equal([...pool.outbox.values()][0].tenant_id, "tenant_alpha");
-});
+    assert.equal(
+      claim.tenant_id,
+      "tenant_default",
+    );
 
-test("claim references cannot cross tenant or scheme boundaries", async () => {
-  const pool = createStatefulClaimPool();
-  const repository = createClaimIngestionRepository(pool, { allowLegacyTenantContext: true });
+    const version =
+      pool.claimVersions.get(
+        "tenant_default:C-100:1",
+      );
 
-  await assert.rejects(
-    () => runWithTenantContext({ tenant_id: "tenant_beta" }, () =>
-      repository.ingestClaims({
-        claims: [{ ...claimInput(100), claim_id: "C-CROSS-TENANT" }],
-      }),
-    ),
-    ClaimReferenceValidationError,
-  );
+    assert.equal(
+      version.version_reason,
+      "initial_submission",
+    );
 
-  assert.equal(pool.claims.size, 0);
-  assert.equal(pool.outbox.size, 0);
-  assert.equal(pool.rollbackCount, 1);
-});
+    assert.match(
+      version.payload_hash,
+      /^[a-f0-9]{64}$/,
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      1,
+    );
+
+    const job =
+      [...pool.outbox.values()][0];
+
+    assert.equal(
+      job.job_type,
+      "claim_detection",
+    );
+
+    assert.equal(
+      job.strategy_type,
+      "deterministic_rules",
+    );
+
+    assert.equal(
+      job.detection_strategy_id,
+      1,
+    );
+
+    assert.deepEqual(
+      JSON.parse(
+        job.payload,
+      ),
+      {
+        schema_version: 2,
+
+        dataset_scope:
+          "triggering_claim_versions",
+
+        source:
+          "upstream-connector",
+
+        context_cutoff_at:
+          "2026-07-23T12:30:45.123Z",
+
+        targets: [
+          {
+            claim_id:
+              "C-100",
+
+            claim_version:
+              1,
+          },
+        ],
+      },
+    );
+  },
+);
+
+
+test(
+  "reference data and claims are committed in one authoritative batch",
+  async () => {
+    const pool =
+      createMemoryPool({
+        seedReferences: false,
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    const result =
+      await repository.ingestClaims({
+        source:
+          "medical-aid-desktop",
+
+        schemes: [
+          {
+            scheme_id:
+              "scheme_a",
+
+            scheme_name:
+              "Scheme A",
+          },
+        ],
+
+        members: [
+          {
+            member_id:
+              "M-1",
+
+            scheme_id:
+              "scheme_a",
+
+            first_name:
+              "token:first",
+
+            last_name:
+              "token:last",
+
+            date_of_birth:
+              "1985-01-01",
+
+            gender:
+              "unspecified",
+
+            identity_number:
+              "token:identity",
+
+            banking_detail:
+              "token:member-bank",
+
+            home_region:
+              "Gauteng",
+
+            home_lat:
+              -26.2,
+
+            home_lon:
+              28,
+
+            join_date:
+              "2020-01-01",
+          },
+        ],
+
+        providers: [
+          {
+            provider_id:
+              "P-1",
+
+            scheme_id:
+              "scheme_a",
+
+            practice_number:
+              "practice-1",
+
+            specialty:
+              "GP",
+
+            practice_name:
+              "Practice 1",
+
+            banking_detail:
+              "token:provider-bank",
+
+            practice_region:
+              "Gauteng",
+
+            practice_lat:
+              -26.2,
+
+            practice_lon:
+              28,
+
+            provider_kind:
+              "INDIVIDUAL",
+
+            provider_category:
+              "GENERAL_PRACTITIONER",
+          },
+        ],
+
+        claims: [
+          claimInput({
+            claimId:
+              "C-REFERENCE",
+          }),
+        ],
+      });
+
+    assert.deepEqual(
+      result.referenceData,
+      {
+        schemes: {
+          received: 1,
+          inserted: 1,
+          updated: 0,
+        },
+
+        members: {
+          received: 1,
+          inserted: 1,
+          updated: 0,
+        },
+
+        providers: {
+          received: 1,
+          inserted: 1,
+          updated: 0,
+        },
+      },
+    );
+
+    assert.equal(
+      result.inserted,
+      1,
+    );
+
+    assert.equal(
+      result.processing.status,
+      "queued",
+    );
+
+    assert.equal(
+      pool.references.schemes
+        .get("scheme_a")
+        .tenant_id,
+      "tenant_default",
+    );
+  },
+);
+
+
+test(
+  "ingestion fails closed when the tenant has no active detection strategy",
+  async () => {
+    const pool =
+      createMemoryPool({
+        activeStrategy: null,
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await assert.rejects(
+      () =>
+        repository.ingestClaims({
+          claims: [
+            claimInput(),
+          ],
+        }),
+      /no active detection strategy/i,
+    );
+
+    assert.equal(
+      pool.claims.size,
+      0,
+    );
+
+    assert.equal(
+      pool.claimVersions.size,
+      0,
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      0,
+    );
+
+    assert.equal(
+      pool.rollbackCount,
+      1,
+    );
+  },
+);
+
+
+test(
+  "required claim fields are validated before opening a transaction",
+  async () => {
+    const pool =
+      createMemoryPool();
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await assert.rejects(
+      () =>
+        repository.ingestClaims({
+          claims: [
+            {
+              claim_id:
+                "C-INCOMPLETE",
+
+              scheme_id:
+                "scheme_a",
+            },
+          ],
+        }),
+      /member_id is required/i,
+    );
+
+    assert.equal(
+      pool.executions.length,
+      0,
+    );
+  },
+);
+
+
+test(
+  "reference identifiers remain immutable across tenants",
+  async () => {
+    const pool =
+      createMemoryPool({
+        tenantId:
+          "tenant_beta",
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await assert.rejects(
+      () =>
+        runWithTenantContext(
+          {
+            tenant_id:
+              "tenant_alpha",
+          },
+          () =>
+            repository.ingestClaims({
+              schemes: [
+                {
+                  scheme_id:
+                    "scheme_a",
+
+                  scheme_name:
+                    "Scheme A",
+                },
+              ],
+
+              claims: [
+                claimInput(),
+              ],
+            }),
+        ),
+      ReferenceOwnershipConflictError,
+    );
+
+    assert.equal(
+      pool.rollbackCount,
+      1,
+    );
+
+    assert.equal(
+      pool.claims.size,
+      0,
+    );
+  },
+);
+
+
+test(
+  "identical retries create no artificial claim version or second job",
+  async () => {
+    const pool =
+      createMemoryPool({
+        tenantId:
+          "tenant_alpha",
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    const first =
+      await runWithTenantContext(
+        {
+          tenant_id:
+            "tenant_alpha",
+        },
+        () =>
+          repository.ingestClaims({
+            source:
+              "api",
+
+            correlationId:
+              "request-1",
+
+            claims: [
+              claimInput({
+                claimId:
+                  "C-IDEMPOTENT",
+              }),
+            ],
+          }),
+      );
+
+    const retry =
+      await runWithTenantContext(
+        {
+          tenant_id:
+            "tenant_alpha",
+        },
+        () =>
+          repository.ingestClaims({
+            source:
+              "api",
+
+            correlationId:
+              "request-2",
+
+            claims: [
+              claimInput({
+                claimId:
+                  "C-IDEMPOTENT",
+              }),
+            ],
+          }),
+      );
+
+    assert.equal(
+      first.inserted,
+      1,
+    );
+
+    assert.equal(
+      first.versioned,
+      1,
+    );
+
+    assert.equal(
+      retry.inserted,
+      0,
+    );
+
+    assert.equal(
+      retry.updated,
+      0,
+    );
+
+    assert.equal(
+      retry.unchanged,
+      1,
+    );
+
+    assert.equal(
+      retry.versioned,
+      0,
+    );
+
+    assert.deepEqual(
+      retry.processing,
+      {
+        status:
+          "not_queued",
+
+        asynchronous:
+          false,
+
+        jobId:
+          null,
+
+        correlationId:
+          "request-2",
+
+        reused:
+          false,
+
+        skipped:
+          true,
+
+        reason:
+          "no_claim_changes",
+      },
+    );
+
+    assert.equal(
+      pool.claimVersions.size,
+      1,
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      1,
+    );
+  },
+);
+
+
+test(
+  "changed claims create an immutable amendment and a second prospective job",
+  async () => {
+    const pool =
+      createMemoryPool({
+        tenantId:
+          "tenant_alpha",
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await runWithTenantContext(
+      {
+        tenant_id:
+          "tenant_alpha",
+      },
+      () =>
+        repository.ingestClaims({
+          claims: [
+            claimInput({
+              claimId:
+                "C-AMENDMENT",
+
+              amount:
+                100,
+            }),
+          ],
+        }),
+    );
+
+    const amendment =
+      await runWithTenantContext(
+        {
+          tenant_id:
+            "tenant_alpha",
+        },
+        () =>
+          repository.ingestClaims({
+            claims: [
+              claimInput({
+                claimId:
+                  "C-AMENDMENT",
+
+                amount:
+                  125,
+              }),
+            ],
+          }),
+      );
+
+    assert.equal(
+      amendment.inserted,
+      0,
+    );
+
+    assert.equal(
+      amendment.updated,
+      1,
+    );
+
+    assert.equal(
+      amendment.unchanged,
+      0,
+    );
+
+    assert.equal(
+      amendment.versioned,
+      1,
+    );
+
+    assert.equal(
+      pool.claims
+        .get("C-AMENDMENT")
+        .current_claim_version,
+      2,
+    );
+
+    assert.equal(
+      pool.claims
+        .get("C-AMENDMENT")
+        .amount,
+      125,
+    );
+
+    assert.equal(
+      pool.claimVersions.size,
+      2,
+    );
+
+    assert.equal(
+      pool.claimVersions
+        .get(
+          "tenant_alpha:C-AMENDMENT:2",
+        )
+        .version_reason,
+      "claim_amendment",
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      2,
+    );
+
+    const targets =
+      [...pool.outbox.values()]
+        .map(
+          (row) =>
+            JSON.parse(
+              row.payload,
+            ).targets[0],
+        )
+        .sort(
+          (left, right) =>
+            left.claim_version
+            - right.claim_version,
+        );
+
+    assert.deepEqual(
+      targets,
+      [
+        {
+          claim_id:
+            "C-AMENDMENT",
+
+          claim_version:
+            1,
+        },
+
+        {
+          claim_id:
+            "C-AMENDMENT",
+
+          claim_version:
+            2,
+        },
+      ],
+    );
+  },
+);
+
+
+test(
+  "claim identifiers cannot be reassigned to another tenant",
+  async () => {
+    const pool =
+      createMemoryPool({
+        tenantId:
+          "tenant_alpha",
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await runWithTenantContext(
+      {
+        tenant_id:
+          "tenant_alpha",
+      },
+      () =>
+        repository.ingestClaims({
+          claims: [
+            claimInput({
+              claimId:
+                "C-OWNED",
+            }),
+          ],
+        }),
+    );
+
+    /*
+     * Isolate the claim-ownership assertion by
+     * simulating references valid for tenant_beta.
+     */
+    pool.setReferenceTenant(
+      "tenant_beta",
+    );
+
+    await assert.rejects(
+      () =>
+        runWithTenantContext(
+          {
+            tenant_id:
+              "tenant_beta",
+          },
+          () =>
+            repository.ingestClaims({
+              claims: [
+                claimInput({
+                  claimId:
+                    "C-OWNED",
+
+                  amount:
+                    999,
+                }),
+              ],
+            }),
+        ),
+      ClaimOwnershipConflictError,
+    );
+
+    assert.equal(
+      pool.claims
+        .get("C-OWNED")
+        .tenant_id,
+      "tenant_alpha",
+    );
+
+    assert.equal(
+      pool.claims
+        .get("C-OWNED")
+        .amount,
+      233.19,
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      1,
+    );
+
+    assert.equal(
+      pool.rollbackCount,
+      1,
+    );
+  },
+);
+
+
+test(
+  "outbox enqueue failure rolls back the claim and its immutable version",
+  async () => {
+    const pool =
+      createMemoryPool({
+        tenantId:
+          "tenant_alpha",
+
+        failOutboxInsert:
+          true,
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await assert.rejects(
+      () =>
+        runWithTenantContext(
+          {
+            tenant_id:
+              "tenant_alpha",
+          },
+          () =>
+            repository.ingestClaims({
+              claims: [
+                claimInput(),
+              ],
+            }),
+        ),
+      /outbox insert failed/i,
+    );
+
+    assert.equal(
+      pool.claims.size,
+      0,
+    );
+
+    assert.equal(
+      pool.claimVersions.size,
+      0,
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      0,
+    );
+
+    assert.equal(
+      pool.rollbackCount,
+      1,
+    );
+  },
+);
+
+
+test(
+  "claim insert failure creates neither a claim version nor an outbox job",
+  async () => {
+    const pool =
+      createMemoryPool({
+        tenantId:
+          "tenant_alpha",
+
+        failClaimInsert:
+          true,
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await assert.rejects(
+      () =>
+        runWithTenantContext(
+          {
+            tenant_id:
+              "tenant_alpha",
+          },
+          () =>
+            repository.ingestClaims({
+              claims: [
+                claimInput(),
+              ],
+            }),
+        ),
+      /claim insert failed/i,
+    );
+
+    assert.equal(
+      pool.claims.size,
+      0,
+    );
+
+    assert.equal(
+      pool.claimVersions.size,
+      0,
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      0,
+    );
+
+    assert.equal(
+      pool.rollbackCount,
+      1,
+    );
+  },
+);
+
+
+test(
+  "claim references cannot cross tenant boundaries",
+  async () => {
+    const pool =
+      createMemoryPool({
+        tenantId:
+          "tenant_alpha",
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+        },
+      );
+
+    await assert.rejects(
+      () =>
+        runWithTenantContext(
+          {
+            tenant_id:
+              "tenant_beta",
+          },
+          () =>
+            repository.ingestClaims({
+              claims: [
+                claimInput({
+                  claimId:
+                    "C-CROSS-TENANT",
+                }),
+              ],
+            }),
+        ),
+      ClaimReferenceValidationError,
+    );
+
+    assert.equal(
+      pool.claims.size,
+      0,
+    );
+
+    assert.equal(
+      pool.claimVersions.size,
+      0,
+    );
+
+    assert.equal(
+      pool.outbox.size,
+      0,
+    );
+
+    assert.equal(
+      pool.rollbackCount,
+      1,
+    );
+  },
+);
