@@ -50,11 +50,11 @@ param reportStorageContainerName string = 'claimguard-reports'
 param reportWorkerJobName string = 'claimguard-report-producer'
 
 var acrPullRoleDefinitionId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
+  'Microsoft.Authorization/roleDefinitions'
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 )
 var keyVaultSecretsUserRoleDefinitionId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
+  'Microsoft.Authorization/roleDefinitions'
   '4633458b-17de-408a-b874-0445c86b69e6'
 )
 
@@ -130,7 +130,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
     component: 'report-producer'
     managedBy: 'bicep'
     modelDeploymentId: modelDeploymentId
-    schemaVersion: '13'
+    schemaVersion: '14'
   }
   identity: {
     type: 'UserAssigned'
@@ -266,7 +266,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
             }
             {
               name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS'
-              value: '13'
+              value: '14'
             }
             {
               name: 'REPORT_WORKER_BATCH_SIZE'
