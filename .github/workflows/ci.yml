@@ -295,7 +295,7 @@ jobs:
           az webapp config appsettings set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_WEBAPP_API" \
-            --settings WEBSITE_RUN_FROM_PACKAGE=1 SCM_DO_BUILD_DURING_DEPLOYMENT=false SENTRY_DSN_API="${{ secrets.SENTRY_DSN_API }}" NEW_RELIC_LICENSE_KEY="${{ secrets.NEW_RELIC_LICENSE_KEY }}"
+            --settings WEBSITE_RUN_FROM_PACKAGE=1 SCM_DO_BUILD_DURING_DEPLOYMENT=false SENTRY_DSN_API="${{ secrets.SENTRY_DSN_API }}" NEW_RELIC_LICENSE_KEY="${{ secrets.NEW_RELIC_LICENSE_KEY }}" NEW_RELIC_LOG=stdout NEW_RELIC_LOG_LEVEL=info
 
       - name: Deploy web app with retry
         uses: nick-fields/retry@v3
