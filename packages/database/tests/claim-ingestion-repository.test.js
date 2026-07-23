@@ -35,8 +35,11 @@ function createFakePool({ tenantId = "tenant_default" } = {}) {
         async beginTransaction() {},
         async execute(sql, params) {
           executions.push({ sql, params });
-          if (/SELECT tenant_id FROM claims/i.test(sql)) {
+          if (/SELECT tenant_id, claim_version FROM claims/i.test(sql) || /SELECT tenant_id FROM claims/i.test(sql)) {
             return [[]];
+          }
+          if (/SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = \? AND is_active = 1/i.test(sql)) {
+            return [[{ id: 1, strategy_type: "deterministic_rules", model_deployment_id: null }]];
           }
           if (/SELECT tenant_id FROM schemes/i.test(sql)) {
             return [[{ tenant_id: tenantId }]];
@@ -48,7 +51,7 @@ function createFakePool({ tenantId = "tenant_default" } = {}) {
             return [[{ tenant_id: tenantId, scheme_id: "scheme_a" }]];
           }
           if (/INSERT INTO claim_processing_outbox/i.test(sql)) {
-            const [id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, max_attempts] = params;
+            const [id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, max_attempts, detection_strategy_id, strategy_type, model_deployment_id] = params;
             outboxRow = {
               id,
               tenant_id,
@@ -61,6 +64,9 @@ function createFakePool({ tenantId = "tenant_default" } = {}) {
               status: "pending",
               attempt_count: 0,
               max_attempts,
+              detection_strategy_id,
+              strategy_type,
+              model_deployment_id,
             };
             return [{ affectedRows: 1 }];
           }
@@ -103,11 +109,11 @@ test("claim ingestion repository inserts claims through transaction", async () =
   assert.equal(result.source, "upstream-connector");
   assert.equal(result.processing.status, "queued");
   assert.equal(result.processing.asynchronous, true);
-  assert.equal(pool.executions.length, 7);
-  assert.match(pool.executions[4].sql, /INSERT INTO claims/i);
-  assert.equal(pool.executions[4].params.at(-1), "tenant_default");
-  assert.match(pool.executions[5].sql, /INSERT INTO claim_processing_outbox/i);
-  assert.equal(pool.executions[5].params[1], "tenant_default");
+  assert.equal(pool.executions.length, 9);
+  assert.match(pool.executions[5].sql, /INSERT INTO claims/i);
+  assert.equal(pool.executions[5].params.at(-1), "tenant_default");
+  assert.match(pool.executions[7].sql, /INSERT INTO claim_processing_outbox/i);
+  assert.equal(pool.executions[7].params[1], "tenant_default");
 });
 
 test("reference data and claims are accepted in one authoritative batch", async () => {
@@ -154,6 +160,9 @@ test("reference identifiers remain immutable across tenants", async () => {
       return {
         async beginTransaction() {},
         async execute(sql) {
+          if (/SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = \? AND is_active = 1/i.test(sql)) {
+            return [[{ id: 1, strategy_type: "deterministic_rules", model_deployment_id: null }]];
+          }
           if (/SELECT tenant_id FROM schemes/i.test(sql)) return [[{ tenant_id: "tenant_beta" }]];
           throw new Error(`Unexpected SQL: ${sql}`);
         },
@@ -227,10 +236,10 @@ test("claim ingestion repository persists tenant_id from active tenant context",
     },
   );
 
-  assert.equal(pool.executions.length, 7);
-  assert.equal(pool.executions[4].params.at(-1), "tenant_alpha");
-  assert.match(pool.executions[4].sql, /tenant_id/i);
-  assert.equal(pool.executions[5].params[1], "tenant_alpha");
+  assert.equal(pool.executions.length, 9);
+  assert.equal(pool.executions[5].params.at(-1), "tenant_alpha");
+  assert.match(pool.executions[5].sql, /tenant_id/i);
+  assert.equal(pool.executions[7].params[1], "tenant_alpha");
 });
 
 function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = false } = {}) {
@@ -253,9 +262,12 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
           outboxSnapshot = new Map([...outbox].map(([id, job]) => [id, { ...job }]));
         },
         async execute(sql, params) {
-          if (/SELECT tenant_id FROM claims/i.test(sql)) {
+          if (/SELECT tenant_id, claim_version FROM claims/i.test(sql) || /SELECT tenant_id FROM claims/i.test(sql)) {
             const claim = claims.get(params[0]);
-            return [claim ? [{ tenant_id: claim.tenant_id }] : []];
+            return [claim ? [{ tenant_id: claim.tenant_id, claim_version: claim.claim_version }] : []];
+          }
+          if (/SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = \? AND is_active = 1/i.test(sql)) {
+            return [[{ id: 1, strategy_type: "deterministic_rules", model_deployment_id: null }]];
           }
           if (/SELECT tenant_id FROM schemes/i.test(sql)) {
             return [[{ tenant_id: "tenant_alpha" }]];
@@ -271,7 +283,7 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
               throw new Error("claim insert failed");
             }
             const [
-              claim_id, scheme_id, member_id, provider_id, service_date,
+              claim_id, claim_version, scheme_id, member_id, provider_id, service_date,
               received_date, billing_code, amount, quantity, benefit_option,
               network_type, line_type, tariff_discipline, diagnosis_code,
               rendering_practitioner_id, rendering_practitioner_category,
@@ -287,13 +299,16 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
               received_date, billing_code, amount, quantity, benefit_option,
               network_type, line_type, tariff_discipline, diagnosis_code,
               rendering_practitioner_id, rendering_practitioner_category,
-              rendering_known_to_billing_provider, tenant_id,
+              rendering_known_to_billing_provider, tenant_id, claim_version,
             });
             return [{ affectedRows: 1 }];
           }
+          if (/INSERT INTO claim_versions/i.test(sql)) {
+             return [{ affectedRows: 1 }];
+          }
           if (/UPDATE claims/i.test(sql)) {
             const [
-              scheme_id, member_id, provider_id, service_date, received_date,
+              claim_version, scheme_id, member_id, provider_id, service_date, received_date,
               billing_code, amount, quantity, benefit_option, network_type,
               line_type, tariff_discipline, diagnosis_code,
               rendering_practitioner_id, rendering_practitioner_category,
@@ -306,7 +321,7 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
                 received_date, billing_code, amount, quantity, benefit_option,
                 network_type, line_type, tariff_discipline, diagnosis_code,
                 rendering_practitioner_id, rendering_practitioner_category,
-                rendering_known_to_billing_provider,
+                rendering_known_to_billing_provider, claim_version,
               });
               return [{ affectedRows: 1 }];
             }
@@ -316,7 +331,7 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
             if (failOutboxInsert) {
               throw new Error("outbox insert failed");
             }
-            const [id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, max_attempts] = params;
+            const [id, tenant_id, job_type, aggregate_type, aggregate_id, correlation_id, idempotency_key, payload, max_attempts, detection_strategy_id, strategy_type, model_deployment_id] = params;
             const key = `${tenant_id}:${idempotency_key}`;
             if (!outbox.has(key)) {
               outbox.set(key, {
@@ -331,6 +346,9 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
                 status: "pending",
                 attempt_count: 0,
                 max_attempts,
+                detection_strategy_id,
+                strategy_type,
+                model_deployment_id,
               });
               return [{ affectedRows: 1 }];
             }

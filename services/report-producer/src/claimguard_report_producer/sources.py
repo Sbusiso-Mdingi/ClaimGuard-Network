@@ -5,7 +5,8 @@ import sys
 
 from .model_report import build_model_detection_report
 from .model_service import ModelServiceClient, ModelServiceUnavailable
-from .snapshot import TenantSnapshot
+from .snapshot import ProspectiveScoringSnapshot
+from .detection_results import PyMySqlDetectionResultsRepository
 
 
 def _detection_imports():
@@ -23,16 +24,21 @@ def _detection_imports():
 
 
 def build_report_from_tenant_snapshot(
-    snapshot: TenantSnapshot,
+    snapshot: ProspectiveScoringSnapshot,
     *,
     correlation_id: str,
     top_n: int = 10,
     model_client: ModelServiceClient | None = None,
+    results_repository: PyMySqlDetectionResultsRepository | None = None,
 ) -> dict[str, object]:
     if snapshot.detection_strategy == "approved_model":
         if model_client is None:
             raise ModelServiceUnavailable(watermark=snapshot.watermark)
         review = model_client.review(snapshot)
+        
+        if results_repository is not None:
+            results_repository.save_results(snapshot=snapshot, review=review)
+            
         return build_model_detection_report(
             snapshot,
             review,
@@ -52,7 +58,7 @@ def build_report_from_tenant_snapshot(
         schemes=snapshot.schemes,
         members=snapshot.members,
         providers=snapshot.providers,
-        claims=snapshot.claims,
+        claims=snapshot.context_claims + snapshot.target_claims,
         data_dir=Path("tenant-snapshot"),
     )
     return run_detection_orchestration(

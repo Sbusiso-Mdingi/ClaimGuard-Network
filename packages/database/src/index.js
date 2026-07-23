@@ -112,4 +112,8 @@ export const detectionStrategiesTable = mysqlTable("detection_strategies", {
   isActive: int("is_active").notNull().default(1),
   createdAt: varchar("created_at", { length: 64 }).notNull(),
   updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+  activatedAt: varchar("activated_at", { length: 64 }),
+  deactivatedAt: varchar("deactivated_at", { length: 64 }),
+  actor: varchar("actor", { length: 255 }),
+  changeReason: varchar("change_reason", { length: 65535 }),
 });

@@ -131,13 +131,24 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     const tenantContext = c.get("tenantContext");
     const payload = await c.req.json().catch(() => ({}));
 
-    const permittedKeys = new Set(["strategyType", "modelDeploymentId"]);
+    const permittedKeys = new Set(["strategyType", "modelDeploymentId", "changeReason"]);
     if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
       return c.json({ available: false, message: "The strategy payload contains unsupported fields." }, 400);
     }
     if (!["deterministic_rules", "approved_model"].includes(payload.strategyType)) {
       return c.json({ available: false, message: "strategyType must be deterministic_rules or approved_model." }, 400);
     }
+
+    const authContext = c.get("authContext");
+    const actor = String(authContext?.user_id || "").trim();
+    if (!actor) {
+      return c.json({ available: false, message: "Authenticated actor identity is unavailable." }, 401);
+    }
+    const changeReason = String(payload.changeReason || "").trim();
+    if (!changeReason || changeReason.length > 500) {
+      return c.json({ available: false, message: "changeReason must contain 1–500 characters." }, 400);
+    }
+
     const modelDeploymentId = String(payload.modelDeploymentId || "").trim() || null;
     if (payload.strategyType === "approved_model" && (
       !modelDeploymentId
@@ -152,7 +163,7 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
 
     const strategy = await detectionStrategyRepository.setStrategy(
       tenantContext,
-      { strategyType: payload.strategyType, modelDeploymentId },
+      { strategyType: payload.strategyType, modelDeploymentId, actor, changeReason },
     );
 
     return c.json({ available: true, strategy });

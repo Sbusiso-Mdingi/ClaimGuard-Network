@@ -118,6 +118,8 @@ def validate_detection_report(report: object, *, expected_tenant_id: str) -> dic
         for identifier in ("claimId", "providerId", "memberId", "schemeId"):
             if not isinstance(claim.get(identifier), str) or not claim[identifier].strip():
                 raise ReportContractError(f"report.claims[{index}].{identifier} is required.")
+        if claim.get("claimVersion") is not None and not isinstance(claim.get("claimVersion"), int):
+            raise ReportContractError(f"report.claims[{index}].claimVersion must be an integer if present.")
         amount = claim.get("amount")
         if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(float(amount)):
             raise ReportContractError(f"report.claims[{index}].amount must be a finite number.")

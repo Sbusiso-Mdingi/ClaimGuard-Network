@@ -18,6 +18,9 @@ class OutboxJob:
     status: str
     attempt_count: int
     max_attempts: int
+    detection_strategy_id: int | None
+    strategy_type: str | None
+    model_deployment_id: str | None
 
 
 def _map_job(row: dict[str, object]) -> OutboxJob:
@@ -41,6 +44,9 @@ def _map_job(row: dict[str, object]) -> OutboxJob:
         status=str(row.get("status") or ""),
         attempt_count=int(row.get("attempt_count") or 0),
         max_attempts=int(row.get("max_attempts") or 0),
+        detection_strategy_id=int(row.get("detection_strategy_id")) if row.get("detection_strategy_id") is not None else None,
+        strategy_type=str(row.get("strategy_type") or "") or None,
+        model_deployment_id=str(row.get("model_deployment_id") or "") or None,
     )
 
 

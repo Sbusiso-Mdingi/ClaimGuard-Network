@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 import hashlib
 import json
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from .outbox import OutboxJob
 
 def _iso_timestamp(value: object) -> str:
     if isinstance(value, datetime):
@@ -20,7 +22,7 @@ def _iso_timestamp(value: object) -> str:
 
 
 @dataclass(frozen=True)
-class TenantSnapshot:
+class ProspectiveScoringSnapshot:
     tenant_id: str
     tenant_slug: str | None
     tenant_display_name: str | None
@@ -31,7 +33,8 @@ class TenantSnapshot:
     schemes: list[dict[str, object]]
     members: list[dict[str, object]]
     providers: list[dict[str, object]]
-    claims: list[dict[str, object]]
+    target_claims: list[dict[str, object]]
+    context_claims: list[dict[str, object]]
 
 
 class PyMySqlTenantSnapshotRepository:
@@ -41,7 +44,7 @@ class PyMySqlTenantSnapshotRepository:
         self.connection_factory = connection_factory
         self.allowed_tenant_ids = allowed_tenant_ids
 
-    def load_tenant_snapshot(self, *, tenant_id: str) -> TenantSnapshot:
+    def load_tenant_snapshot(self, *, tenant_id: str, jobs: list[OutboxJob]) -> ProspectiveScoringSnapshot:
         canonical_tenant_id = str(tenant_id or "").strip()
         if not canonical_tenant_id:
             raise ValueError("tenant_id is required for a tenant snapshot.")
@@ -106,8 +109,46 @@ class PyMySqlTenantSnapshotRepository:
                 )
                 providers = list(cursor.fetchall())
 
-                cursor.execute(
-                    """
+                target_claim_ids = list({
+                    str(claim.get("claim_id") or "")
+                    for job in jobs
+                    if isinstance(job.payload, dict) and isinstance(job.payload.get("claims"), list)
+                    for claim in job.payload.get("claims")
+                    if str(claim.get("claim_id") or "").strip()
+                })
+
+                if target_claim_ids:
+                    placeholders = ", ".join(["%s"] * len(target_claim_ids))
+                    cursor.execute(
+                        f"""
+                        SELECT cv.claim_id, cv.claim_version, cv.claim_payload
+                        FROM claim_versions cv
+                        INNER JOIN (
+                            SELECT claim_id, MAX(claim_version) AS max_version
+                            FROM claim_versions
+                            WHERE tenant_id = %s AND claim_id IN ({placeholders})
+                            GROUP BY claim_id
+                        ) max_cv ON cv.claim_id = max_cv.claim_id AND cv.claim_version = max_cv.max_version
+                        WHERE cv.tenant_id = %s
+                        ORDER BY cv.claim_id
+                        """,
+                        [canonical_tenant_id, *target_claim_ids, canonical_tenant_id]
+                    )
+                    raw_target_claims = list(cursor.fetchall())
+                    target_claims = []
+                    for row in raw_target_claims:
+                        payload = row.get("claim_payload")
+                        if isinstance(payload, (bytes, bytearray)):
+                            payload = payload.decode("utf-8")
+                        if isinstance(payload, str):
+                            payload = json.loads(payload)
+                        claim_data = dict(payload)
+                        claim_data["claim_version"] = row["claim_version"]
+                        target_claims.append(claim_data)
+                else:
+                    target_claims = []
+
+                query = """
                     SELECT claim_id, scheme_id, member_id, provider_id, service_date,
                       received_date, billing_code, amount, quantity, benefit_option,
                       network_type, line_type, tariff_discipline, diagnosis_code,
@@ -115,11 +156,15 @@ class PyMySqlTenantSnapshotRepository:
                       rendering_known_to_billing_provider, created_at, updated_at
                     FROM claims
                     WHERE tenant_id = %s
-                    ORDER BY claim_id
-                    """,
-                    [canonical_tenant_id],
-                )
-                claims = list(cursor.fetchall())
+                """
+                params = [canonical_tenant_id]
+                if target_claim_ids:
+                    query += f" AND claim_id NOT IN ({placeholders})"
+                    params.extend(target_claim_ids)
+                query += " ORDER BY claim_id"
+
+                cursor.execute(query, params)
+                context_claims = list(cursor.fetchall())
             connection.commit()
         except Exception:
             connection.rollback()
@@ -127,26 +172,31 @@ class PyMySqlTenantSnapshotRepository:
         finally:
             connection.close()
 
-        max_updated = max((_iso_timestamp(claim.get("updated_at")) for claim in claims), default="none")
+        max_updated = max((_iso_timestamp(claim.get("updated_at")) for claim in context_claims), default="none")
         corpus_digest = hashlib.sha256(
             json.dumps(
-                {"schemes": schemes, "members": members, "providers": providers, "claims": claims},
+                {"schemes": schemes, "members": members, "providers": providers, "context_claims": context_claims, "target_claims": target_claims},
                 sort_keys=True,
                 separators=(",", ":"),
                 default=str,
             ).encode("utf-8")
         ).hexdigest()
-        watermark = f"claims-updated:{max_updated}:count:{len(claims)}:corpus-sha256:{corpus_digest}"
-        return TenantSnapshot(
+        watermark = f"claims-updated:{max_updated}:count:{len(target_claims) + len(context_claims)}:corpus-sha256:{corpus_digest}"
+        
+        pinned_strategy = jobs[0].strategy_type if jobs and jobs[0].strategy_type else str(tenant.get("strategy_type") or "deterministic_rules")
+        pinned_deployment = jobs[0].model_deployment_id if jobs else str(tenant.get("model_deployment_id") or "") or None
+
+        return ProspectiveScoringSnapshot(
             tenant_id=canonical_tenant_id,
             tenant_slug=str(tenant.get("tenant_slug") or "") or None,
             tenant_display_name=str(tenant.get("tenant_name") or "") or None,
-            detection_strategy=str(tenant.get("strategy_type") or "deterministic_rules"),
-            model_deployment_id=str(tenant.get("model_deployment_id") or "") or None,
+            detection_strategy=pinned_strategy,
+            model_deployment_id=pinned_deployment,
             captured_at=_iso_timestamp(tenant.get("captured_at")),
             watermark=watermark,
             schemes=schemes,
             members=members,
             providers=providers,
-            claims=claims,
+            target_claims=target_claims,
+            context_claims=context_claims,
         )

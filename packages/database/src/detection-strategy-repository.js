@@ -55,12 +55,7 @@ export function createDetectionStrategyRepository(_db, pool, options = {}) {
       );
       const row = rows?.[0] || null;
       if (!row) {
-        return {
-          tenantId,
-          strategyType: "deterministic_rules",
-          modelDeploymentId: null,
-          isActive: 1,
-        };
+        throw new Error("Tenant has no active detection strategy.");
       }
       return {
         tenantId: row.tenant_id,
@@ -72,7 +67,7 @@ export function createDetectionStrategyRepository(_db, pool, options = {}) {
       };
     },
 
-    async setStrategy(tenantContext, { strategyType, modelDeploymentId = null }) {
+    async setStrategy(tenantContext, { strategyType, modelDeploymentId = null, actor, changeReason }) {
       const tenantId = tenantIdFor(tenantContext);
       const canonicalStrategy = String(strategyType || "").trim();
       const canonicalDeploymentId = String(modelDeploymentId || "").trim() || null;
@@ -95,14 +90,14 @@ export function createDetectionStrategyRepository(_db, pool, options = {}) {
       try {
         await connection.beginTransaction();
         await connection.execute(
-          "UPDATE detection_strategies SET is_active = 0 WHERE tenant_id = ? AND is_active = 1",
+          "UPDATE detection_strategies SET is_active = 0, deactivated_at = UTC_TIMESTAMP(3) WHERE tenant_id = ? AND is_active = 1",
           [tenantId],
         );
         await connection.execute(
           `INSERT INTO detection_strategies
-            (tenant_id, strategy_type, model_deployment_id, is_active)
-           VALUES (?, ?, ?, 1)`,
-          [tenantId, canonicalStrategy, canonicalDeploymentId],
+            (tenant_id, strategy_type, model_deployment_id, is_active, activated_at, actor, change_reason)
+           VALUES (?, ?, ?, 1, UTC_TIMESTAMP(3), ?, ?)`,
+          [tenantId, canonicalStrategy, canonicalDeploymentId, actor, changeReason],
         );
         await connection.commit();
       } catch (error) {

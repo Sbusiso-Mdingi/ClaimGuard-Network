@@ -18,6 +18,7 @@ export const defaultMigrationPaths = Object.freeze([
   fileURLToPath(new URL("../migrations/0011_detection_strategies.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0012_custom_model.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0013_approved_model_contract.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0014_prospective_claim_detection.sql", import.meta.url)),
 ]);
 
 const MIGRATION_LOCK_NAME = "claimguard_operational_migrations";

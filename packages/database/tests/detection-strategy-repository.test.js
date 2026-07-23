@@ -71,6 +71,8 @@ test("approved model selection stores only an allowlisted deployment identifier"
       "tenant_alpha",
       "approved_model",
       "claim-review-ensemble-1.1.0",
+      undefined,
+      undefined,
     ]);
     assert.equal(pool.calls.some((call) => call.operation === "commit"), true);
     assert.equal(pool.calls.some((call) => call.operation === "rollback"), false);

@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 from .model_service import ClaimReviewResult, ReviewWindowResult
-from .snapshot import TenantSnapshot
+from .snapshot import ProspectiveScoringSnapshot
 
 
 MODEL_REPORT_ENGINE_VERSION = "claim-review-consumer-1.0.0"
@@ -60,7 +60,7 @@ def _claim_reasons(score: ClaimReviewResult) -> list[str]:
 
 
 def _stable_report_id(
-    snapshot: TenantSnapshot,
+    snapshot: ProspectiveScoringSnapshot,
     review: ReviewWindowResult,
 ) -> str:
     payload = {
@@ -87,7 +87,7 @@ def _date_text(value: object) -> str:
 
 
 def build_model_detection_report(
-    snapshot: TenantSnapshot,
+    snapshot: ProspectiveScoringSnapshot,
     review: ReviewWindowResult,
     *,
     correlation_id: str,
@@ -96,7 +96,7 @@ def build_model_detection_report(
     if review.watermark != snapshot.watermark:
         raise ValueError("Model review watermark differs from its tenant snapshot.")
     score_by_claim = {score.claim_id: score for score in review.scores}
-    claim_ids = [str(claim.get("claim_id") or "") for claim in snapshot.claims]
+    claim_ids = [str(claim.get("claim_id") or "") for claim in snapshot.target_claims]
     if (
         len(score_by_claim) != len(review.scores)
         or set(score_by_claim) != set(claim_ids)
@@ -112,7 +112,7 @@ def build_model_detection_report(
     service_dates: list[str] = []
 
     for claim in sorted(
-        snapshot.claims,
+        snapshot.target_claims,
         key=lambda item: str(item.get("claim_id") or ""),
     ):
         claim_id = str(claim["claim_id"])
@@ -131,6 +131,7 @@ def build_model_detection_report(
         claims.append(
             {
                 "claimId": claim_id,
+                "claimVersion": claim.get("claim_version"),
                 "providerId": provider_id,
                 "memberId": member_id,
                 "schemeId": str(claim["scheme_id"]),
@@ -179,6 +180,8 @@ def build_model_detection_report(
         key=lambda item: str(item.get("provider_id") or ""),
     ):
         provider_id = str(provider["provider_id"])
+        if provider_id not in provider_claim_risks:
+            continue
         risks = provider_claim_risks[provider_id]
         risk_score = round(max(risks, default=0.0), 3)
         review_count = provider_review_counts[provider_id]
@@ -210,6 +213,8 @@ def build_model_detection_report(
         key=lambda item: str(item.get("member_id") or ""),
     ):
         member_id = str(member["member_id"])
+        if member_id not in member_claim_risks:
+            continue
         risks = member_claim_risks[member_id]
         risk_score = round(max(risks, default=0.0), 3)
         review_count = member_review_counts[member_id]
@@ -242,7 +247,7 @@ def build_model_detection_report(
             for item in sorted(
                 snapshot.members,
                 key=lambda value: str(value.get("member_id") or ""),
-            )
+            ) if str(item.get("member_id") or "") in member_claim_risks
         ),
         *(
             {
@@ -252,7 +257,7 @@ def build_model_detection_report(
             for item in sorted(
                 snapshot.providers,
                 key=lambda value: str(value.get("provider_id") or ""),
-            )
+            ) if str(item.get("provider_id") or "") in provider_claim_risks
         ),
     ]
     claim_scores = [float(claim["riskScore"]) for claim in claims]

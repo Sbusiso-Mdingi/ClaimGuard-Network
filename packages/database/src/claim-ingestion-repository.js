@@ -317,6 +317,16 @@ export function createClaimIngestionRepository(pool, {
 
       try {
         await connection.beginTransaction();
+
+        const [strategyRows] = await connection.execute(
+          "SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = ? AND is_active = 1",
+          [tenantId]
+        );
+        const activeStrategy = strategyRows[0];
+        if (!activeStrategy) {
+          throw new Error("Tenant has no active detection strategy.");
+        }
+
         referenceData = await ingestReferenceData(connection, {
           schemes,
           members,
@@ -328,10 +338,12 @@ export function createClaimIngestionRepository(pool, {
         for (const rawClaim of claims) {
           const claim = normalizeClaim(rawClaim);
           const [ownershipRows] = await connection.execute(
-            "SELECT tenant_id FROM claims WHERE claim_id = ? FOR UPDATE",
+            "SELECT tenant_id, claim_version FROM claims WHERE claim_id = ? FOR UPDATE",
             [claim.claim_id],
           );
           const existingTenantId = ownershipRows?.[0]?.tenant_id ?? null;
+          const currentClaimVersion = ownershipRows?.[0]?.claim_version ?? 0;
+          const nextClaimVersion = currentClaimVersion ? currentClaimVersion + 1 : 1;
           if (ownershipRows?.length > 0 && existingTenantId !== tenantId) {
             throw new ClaimOwnershipConflictError();
           }
@@ -385,47 +397,82 @@ export function createClaimIngestionRepository(pool, {
           if (ownershipRows?.length > 0) {
             await connection.execute(
               `UPDATE claims
-               SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?,
+               SET claim_version = ?, scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?,
                  received_date = ?, billing_code = ?, amount = ?, quantity = ?,
                  benefit_option = ?, network_type = ?, line_type = ?,
                  tariff_discipline = ?, diagnosis_code = ?,
                  rendering_practitioner_id = ?, rendering_practitioner_category = ?,
                  rendering_known_to_billing_provider = ?
                WHERE claim_id = ? AND tenant_id = ?`,
-              [...claimValues, claim.claim_id, tenantId],
+              [nextClaimVersion, ...claimValues, claim.claim_id, tenantId],
+            );
+            await connection.execute(
+              `INSERT INTO claim_versions (
+                tenant_id, claim_id, claim_version, scheme_id, member_id, provider_id,
+                service_date, received_date, billing_code, amount, claim_payload, version_reason
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                tenantId, claim.claim_id, nextClaimVersion, claim.scheme_id, claim.member_id, claim.provider_id,
+                claim.service_date, claim.received_date, claim.billing_code, claim.amount,
+                JSON.stringify(rawClaim), "update"
+              ]
             );
             updated += 1;
           } else {
             try {
               await connection.execute(
                 `INSERT INTO claims (
-                  claim_id, scheme_id, member_id, provider_id, service_date,
+                  claim_id, claim_version, scheme_id, member_id, provider_id, service_date,
                   received_date, billing_code, amount, quantity, benefit_option,
                   network_type, line_type, tariff_discipline, diagnosis_code,
                   rendering_practitioner_id, rendering_practitioner_category,
                   rendering_known_to_billing_provider, tenant_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [claim.claim_id, ...claimValues, tenantId],
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [claim.claim_id, nextClaimVersion, ...claimValues, tenantId],
+              );
+              await connection.execute(
+                `INSERT INTO claim_versions (
+                  tenant_id, claim_id, claim_version, scheme_id, member_id, provider_id,
+                  service_date, received_date, billing_code, amount, claim_payload, version_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  tenantId, claim.claim_id, nextClaimVersion, claim.scheme_id, claim.member_id, claim.provider_id,
+                  claim.service_date, claim.received_date, claim.billing_code, claim.amount,
+                  JSON.stringify(rawClaim), "insert"
+                ]
               );
             } catch (error) {
               if (error?.code !== "ER_DUP_ENTRY") throw error;
               const [racedOwnershipRows] = await connection.execute(
-                "SELECT tenant_id FROM claims WHERE claim_id = ? FOR UPDATE",
+                "SELECT tenant_id, claim_version FROM claims WHERE claim_id = ? FOR UPDATE",
                 [claim.claim_id],
               );
               if (racedOwnershipRows?.[0]?.tenant_id !== tenantId) {
                 throw new ClaimOwnershipConflictError();
               }
+              const racedClaimVersion = racedOwnershipRows?.[0]?.claim_version ?? 0;
+              const racedNextClaimVersion = racedClaimVersion + 1;
               await connection.execute(
                 `UPDATE claims
-                 SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?,
+                 SET claim_version = ?, scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?,
                    received_date = ?, billing_code = ?, amount = ?, quantity = ?,
                    benefit_option = ?, network_type = ?, line_type = ?,
                    tariff_discipline = ?, diagnosis_code = ?,
                    rendering_practitioner_id = ?, rendering_practitioner_category = ?,
                    rendering_known_to_billing_provider = ?
                  WHERE claim_id = ? AND tenant_id = ?`,
-                [...claimValues, claim.claim_id, tenantId],
+                [racedNextClaimVersion, ...claimValues, claim.claim_id, tenantId],
+              );
+              await connection.execute(
+                `INSERT INTO claim_versions (
+                  tenant_id, claim_id, claim_version, scheme_id, member_id, provider_id,
+                  service_date, received_date, billing_code, amount, claim_payload, version_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  tenantId, claim.claim_id, racedNextClaimVersion, claim.scheme_id, claim.member_id, claim.provider_id,
+                  claim.service_date, claim.received_date, claim.billing_code, claim.amount,
+                  JSON.stringify(rawClaim), "raced_update"
+                ]
               );
               updated += 1;
               continue;
@@ -440,6 +487,9 @@ export function createClaimIngestionRepository(pool, {
           source,
           correlationId: correlationId || undefined,
           maxAttempts: configuredMaxAttempts(maxOutboxAttempts),
+          detectionStrategyId: activeStrategy.id,
+          strategyType: activeStrategy.strategy_type,
+          modelDeploymentId: activeStrategy.model_deployment_id,
         });
         await connection.commit();
       } catch (error) {

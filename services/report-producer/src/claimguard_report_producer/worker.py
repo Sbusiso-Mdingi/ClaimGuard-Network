@@ -10,7 +10,8 @@ from uuid import uuid4
 
 from .contract import ReportContractError, validate_detection_report
 from .data_plane import discover_active_worker_organisation_ids, resolve_worker_data_plane_scope
-from .model_service import ModelServiceClient
+from .model_registry import ModelDeploymentRegistry
+from .detection_results import PyMySqlDetectionResultsRepository
 from .outbox import OutboxJob, PyMySqlOutboxRepository
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
 from .snapshot import PyMySqlTenantSnapshotRepository
@@ -104,18 +105,20 @@ class ReportProducerWorker:
         repository,
         publisher,
         snapshot_repository,
+        results_repository,
         config: WorkerConfig,
         logger: StructuredWorkerLogger | None = None,
         scope_validator=None,
-        model_client: ModelServiceClient | None = None,
+        model_registry: ModelDeploymentRegistry | None = None,
     ) -> None:
         self.repository = repository
         self.publisher = publisher
         self.snapshot_repository = snapshot_repository
+        self.results_repository = results_repository
         self.config = config
         self.logger = logger or StructuredWorkerLogger()
         self.scope_validator = scope_validator
-        self.model_client = model_client
+        self.model_registry = model_registry
 
     def run_once(self) -> int:
         if self.scope_validator is not None:
@@ -126,7 +129,7 @@ class ReportProducerWorker:
             lease_seconds=self.config.lease_seconds,
         )
         self.logger.emit("info", "outbox_batch_leased", job_count=len(jobs), worker_id=self.config.worker_id)
-        jobs_by_tenant: dict[str, list[OutboxJob]] = {}
+        jobs_by_strategy: dict[tuple[str, int | None, str | None, str | None], list[OutboxJob]] = {}
         for job in jobs:
             self.logger.emit("info", "outbox_job_leased", job)
             try:
@@ -141,9 +144,10 @@ class ReportProducerWorker:
                 )
                 self.logger.emit("error", "outbox_job_dead_lettered", job, error_type=type(error).__name__)
                 continue
-            jobs_by_tenant.setdefault(job.tenant_id, []).append(job)
-        for tenant_jobs in jobs_by_tenant.values():
-            self._process_tenant_jobs(tenant_jobs)
+            key = (job.tenant_id, job.detection_strategy_id, job.strategy_type, job.model_deployment_id)
+            jobs_by_strategy.setdefault(key, []).append(job)
+        for strategy_jobs in jobs_by_strategy.values():
+            self._process_tenant_jobs(strategy_jobs)
         return len(jobs)
 
     def run_continuously(self) -> None:
@@ -183,13 +187,18 @@ class ReportProducerWorker:
                 if candidate.tenant_id != job.tenant_id:
                     raise InvalidTenantMetadataError("A coalesced batch crossed tenant boundaries.")
 
-            snapshot = self.snapshot_repository.load_tenant_snapshot(tenant_id=job.tenant_id)
+            model_client = None
+            if job.strategy_type == "approved_model" and job.model_deployment_id:
+                model_client = self.model_registry.client_for(job.model_deployment_id)
+
+            snapshot = self.snapshot_repository.load_tenant_snapshot(tenant_id=job.tenant_id, jobs=jobs)
             correlation_id = ",".join(sorted(candidate.correlation_id for candidate in jobs))
             report = build_report_from_tenant_snapshot(
                 snapshot,
                 correlation_id=correlation_id,
                 top_n=self.config.top_n,
-                model_client=self.model_client,
+                model_client=model_client,
+                results_repository=self.results_repository,
             )
             validate_detection_report(report, expected_tenant_id=job.tenant_id)
             published = self.publisher.publish(
@@ -284,7 +293,7 @@ class ReportProducerWorker:
 
     @staticmethod
     def _validate_job(job: OutboxJob) -> None:
-        if job.job_type != "report_production":
+        if job.job_type != "claim_detection":
             raise UnsupportedJobTypeError("Unsupported outbox job type.")
         if job.aggregate_type != "claim_batch":
             raise UnsupportedJobTypeError("Unsupported outbox aggregate type.")
@@ -325,7 +334,7 @@ def create_worker_from_environment(
     )
     supported_schema_versions = frozenset(
         value.strip()
-        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "13").split(",")
+        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "14").split(",")
         if value.strip()
     )
 
@@ -373,25 +382,17 @@ def create_worker_from_environment(
     else:
         raise ValueError("REPORT_STORAGE_BACKEND must be file or azure_blob.")
 
-    model_environment_names = {
-        "MODEL_SERVICE_BASE_URL",
-        "MODEL_SERVICE_AUDIENCE",
-        "MODEL_SERVICE_PSEUDONYMIZATION_KEY",
-        "MODEL_SERVICE_DEPLOYMENT_ID",
-    }
-    model_client = (
-        ModelServiceClient.from_environment()
-        if any(os.environ.get(name, "").strip() for name in model_environment_names)
-        else None
-    )
+    model_registry = ModelDeploymentRegistry()
+    results_repository = PyMySqlDetectionResultsRepository(repository.connection_factory, scope.tenant_ids)
 
     return ReportProducerWorker(
         repository=repository,
         publisher=publisher,
         snapshot_repository=snapshot_repository,
+        results_repository=results_repository,
         config=WorkerConfig.from_environment(),
         scope_validator=validate_scope,
-        model_client=model_client,
+        model_registry=model_registry,
     )
 
 
@@ -402,7 +403,7 @@ def create_discovered_workers_from_environment(
 ) -> list[ReportProducerWorker]:
     supported_schema_versions = frozenset(
         value.strip()
-        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "13").split(",")
+        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "14").split(",")
         if value.strip()
     )
     organisation_ids = discover_active_worker_organisation_ids(

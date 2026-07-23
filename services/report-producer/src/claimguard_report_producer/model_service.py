@@ -14,13 +14,13 @@ from typing import Protocol, TYPE_CHECKING
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
-    from .snapshot import TenantSnapshot
+    from .snapshot import ProspectiveScoringSnapshot
 
 
-REQUEST_SCHEMA_VERSION = "claimguard.claim-review-request.v2"
-RESPONSE_SCHEMA_VERSION = "claimguard.claim-review-response.v2"
+REQUEST_SCHEMA_VERSION = "claimguard.claim-screening-request.v3"
+RESPONSE_SCHEMA_VERSION = "claimguard.claim-screening-response.v3"
 FEATURE_SCHEMA_VERSION = "claim-feature-schema-2026.2"
-ANALYSIS_MODE = "RETROSPECTIVE_CLOSED_WINDOW_REVIEW"
+ANALYSIS_MODE = "PROSPECTIVE_CLAIM_SCREENING"
 ENSEMBLE_ID = "claimguard-claim-fraud-ensemble"
 ENSEMBLE_VERSION = "1.1.0"
 MAX_REVIEW_CLAIMS = 10_000
@@ -362,12 +362,12 @@ class ModelServiceClient:
 
     def _request(
         self,
-        snapshot: "TenantSnapshot",
+        snapshot: "ProspectiveScoringSnapshot",
     ) -> tuple[dict[str, object], dict[str, str]]:
         watermark = _text(snapshot.watermark, "watermark", "")
-        if not 1 <= len(snapshot.claims) <= MAX_REVIEW_CLAIMS:
+        if not 1 <= len(snapshot.target_claims) <= MAX_REVIEW_CLAIMS:
             raise ModelServiceContractError(
-                "The closed review window contains an unsupported claim count.",
+                "The prospective review window contains an unsupported target claim count.",
                 watermark=watermark,
             )
         if snapshot.model_deployment_id != self.expectations.deployment_id:
@@ -380,64 +380,67 @@ class ModelServiceClient:
             str(item.get("provider_id") or ""): item for item in snapshot.providers
         }
         claim_token_to_id: dict[str, str] = {}
-        claims: list[dict[str, object]] = []
-        for claim in sorted(
-            snapshot.claims,
-            key=lambda item: str(item.get("claim_id") or ""),
-        ):
-            claim_id = _text(claim.get("claim_id"), "claim_id", watermark)
-            provider_id = _text(claim.get("provider_id"), "provider_id", watermark)
-            provider = providers.get(provider_id)
-            if provider is None:
-                raise ModelServiceContractError(
-                    "A claim billing provider is absent from the closed snapshot.",
-                    watermark=watermark,
-                )
-            claim_token = self._token(
-                snapshot.tenant_id,
-                "claim",
-                claim_id,
-                watermark=watermark,
-            )
-            if claim_token in claim_token_to_id:
-                raise ModelServiceContractError(
-                    "The closed review window contains duplicate claim identifiers.",
-                    watermark=watermark,
-                )
-            claim_token_to_id[claim_token] = claim_id
-            rendering_id = claim.get("rendering_practitioner_id")
-            rendering_token = (
-                self._token(
-                    snapshot.tenant_id,
-                    "rendering",
-                    rendering_id,
-                    watermark=watermark,
-                )
-                if rendering_id is not None and str(rendering_id).strip()
-                else None
-            )
-            rendering_category = _text(
-                claim.get("rendering_practitioner_category"),
-                "rendering_practitioner_category",
-                watermark,
-            )
-            rendering_known = bool(
-                claim.get("rendering_known_to_billing_provider")
-            )
-            if rendering_token is None and (
-                rendering_category != "NONE" or rendering_known
+        def _map_claims(source_claims, is_target: bool):
+            mapped_claims = []
+            for claim in sorted(
+                source_claims,
+                key=lambda item: str(item.get("claim_id") or ""),
             ):
-                raise ModelServiceContractError(
-                    "Rendering-practitioner facts are internally inconsistent.",
+                claim_id = _text(claim.get("claim_id"), "claim_id", watermark)
+                provider_id = _text(claim.get("provider_id"), "provider_id", watermark)
+                provider = providers.get(provider_id)
+                if provider is None:
+                    raise ModelServiceContractError(
+                        "A claim billing provider is absent from the closed snapshot.",
+                        watermark=watermark,
+                    )
+                claim_token = self._token(
+                    snapshot.tenant_id,
+                    "claim",
+                    claim_id,
                     watermark=watermark,
                 )
-            if rendering_token is not None and rendering_category == "NONE":
-                raise ModelServiceContractError(
-                    "Rendering-practitioner facts are internally inconsistent.",
-                    watermark=watermark,
+                if is_target:
+                    if claim_token in claim_token_to_id:
+                        raise ModelServiceContractError(
+                            "The closed review window contains duplicate claim identifiers.",
+                            watermark=watermark,
+                        )
+                    claim_token_to_id[claim_token] = claim_id
+                    
+                rendering_id = claim.get("rendering_practitioner_id")
+                rendering_token = (
+                    self._token(
+                        snapshot.tenant_id,
+                        "rendering",
+                        rendering_id,
+                        watermark=watermark,
+                    )
+                    if rendering_id is not None and str(rendering_id).strip()
+                    else None
                 )
-            claims.append(
-                {
+                rendering_category = _text(
+                    claim.get("rendering_practitioner_category"),
+                    "rendering_practitioner_category",
+                    watermark,
+                )
+                rendering_known = bool(
+                    claim.get("rendering_known_to_billing_provider")
+                )
+                if rendering_token is None and (
+                    rendering_category != "NONE" or rendering_known
+                ):
+                    raise ModelServiceContractError(
+                        "Rendering-practitioner facts are internally inconsistent.",
+                        watermark=watermark,
+                    )
+                if rendering_token is not None and rendering_category == "NONE":
+                    raise ModelServiceContractError(
+                        "Rendering-practitioner facts are internally inconsistent.",
+                        watermark=watermark,
+                    )
+                
+                mapped_claim = {
                     "claimId": claim_token,
                     "memberKey": self._token(
                         snapshot.tenant_id,
@@ -517,7 +520,15 @@ class ModelServiceClient:
                     "renderingPractitionerCategory": rendering_category,
                     "renderingKnownToBillingProvider": rendering_known,
                 }
-            )
+                
+                if is_target:
+                    mapped_claim["claimVersion"] = claim.get("claim_version")
+
+                mapped_claims.append(mapped_claim)
+            return mapped_claims
+            
+        target_claims = _map_claims(snapshot.target_claims, is_target=True)
+        context_claims = _map_claims(snapshot.context_claims, is_target=False)
 
         request_digest = hashlib.sha256(
             (
@@ -546,12 +557,15 @@ class ModelServiceClient:
                     ),
                     "watermark": watermark,
                 },
-                "claims": claims,
+                "targetClaims": target_claims,
+                "contextFeatures": {
+                    "historicalClaims": context_claims
+                },
             },
             claim_token_to_id,
         )
 
-    def review(self, snapshot: "TenantSnapshot") -> ReviewWindowResult:
+    def review(self, snapshot: "ProspectiveScoringSnapshot") -> ReviewWindowResult:
         request, claim_token_to_id = self._request(snapshot)
         watermark = str(request["window"]["watermark"])
         request_id = str(request["requestId"])

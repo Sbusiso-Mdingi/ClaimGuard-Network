@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export const CLAIM_PROCESSING_JOB_TYPE = "report_production";
+export const CLAIM_PROCESSING_JOB_TYPE = "claim_detection";
 export const CLAIM_PROCESSING_AGGREGATE_TYPE = "claim_batch";
 
 export const CLAIM_PROCESSING_STATUS = Object.freeze({
@@ -83,6 +83,9 @@ function mapJob(row) {
     coveredReportId: row.covered_report_id,
     coveredWatermark: row.covered_watermark,
     coveredAt: row.covered_at,
+    detectionStrategyId: row.detection_strategy_id,
+    strategyType: row.strategy_type,
+    modelDeploymentId: row.model_deployment_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
@@ -118,6 +121,9 @@ export async function enqueueClaimProcessingJob(executor, {
   source = "api",
   correlationId = crypto.randomUUID(),
   maxAttempts = 5,
+  detectionStrategyId,
+  strategyType,
+  modelDeploymentId,
 } = {}) {
   const canonicalTenantId = requireText(tenantId, "tenantId");
   const canonicalCorrelationId = requireText(correlationId, "correlationId");
@@ -138,6 +144,9 @@ export async function enqueueClaimProcessingJob(executor, {
     schema_version: 1,
     dataset_scope: "triggering_claim_batch",
     source,
+    detectionStrategyId,
+    strategyType,
+    modelDeploymentId: modelDeploymentId || null,
     claims: normalizedClaims,
   };
 
@@ -145,8 +154,9 @@ export async function enqueueClaimProcessingJob(executor, {
     `
       INSERT INTO claim_processing_outbox (
         id, tenant_id, job_type, aggregate_type, aggregate_id,
-        correlation_id, idempotency_key, payload, status, max_attempts
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        correlation_id, idempotency_key, payload, status, max_attempts,
+        detection_strategy_id, strategy_type, model_deployment_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE id = id
     `,
     [
@@ -159,6 +169,9 @@ export async function enqueueClaimProcessingJob(executor, {
       idempotencyKey,
       JSON.stringify(payload),
       positiveInteger(maxAttempts, 5),
+      detectionStrategyId,
+      strategyType,
+      modelDeploymentId || null,
     ],
   );
 

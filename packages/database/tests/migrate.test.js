@@ -35,10 +35,10 @@ test("applyMigrations executes, records, checksum-validates, and skips all schem
   const status = await getOperationalMigrationStatus(pool);
 
   assert.equal(first.appliedStatements > 0, true);
-  assert.equal(first.applied.length, 13);
+  assert.equal(first.applied.length, 14);
   assert.equal(second.appliedStatements, 0);
   assert.equal(second.applied.length, 0);
-  assert.equal(second.skipped.length, 13);
+  assert.equal(second.skipped.length, 14);
   assert.equal(status.pending.length, 0);
   assert.equal(pool.statements.slice(statementCountAfterFirst).some((statement) => String(statement).includes("ALTER TABLE claims ADD COLUMN")), false);
   assert.ok(pool.statements.some((statement) => String(statement).includes("CREATE TABLE IF NOT EXISTS ledger_entries")));
