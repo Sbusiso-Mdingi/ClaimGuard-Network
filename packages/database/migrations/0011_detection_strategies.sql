@@ -12,7 +12,7 @@ CREATE TABLE `detection_strategies` (
   `created_at` timestamp NOT NULL DEFAULT (now()),
   `updated_at` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `detection_strategies_id` PRIMARY KEY(`id`),
-  CONSTRAINT `detection_strategies_tenant_id_fk` FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`tenant_id`) ON DELETE cascade ON UPDATE cascade
+  CONSTRAINT `detection_strategies_tenant_id_fk` FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`tenant_id`) ON DELETE cascade
 );
 
 -- Ensure only one active strategy per tenant
