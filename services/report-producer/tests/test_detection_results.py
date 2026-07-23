@@ -494,7 +494,9 @@ class FakeCursor:
                 SCORED_AT,
 
             "result_payload":
-                params[12],
+                json.loads(
+                    params[12]
+                ),
 
             "result_hash":
                 params[13],
