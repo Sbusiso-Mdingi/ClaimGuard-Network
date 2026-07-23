@@ -33,6 +33,21 @@ function cookieFrom(response) {
   return response.headers.get("set-cookie")?.split(";", 1)[0] || "";
 }
 
+function modelClaimFields(serviceDate) {
+  return {
+    received_date: serviceDate,
+    quantity: 1,
+    benefit_option: "COMPREHENSIVE",
+    network_type: "IN_NETWORK",
+    line_type: "PROFESSIONAL",
+    tariff_discipline: "MEDICAL",
+    diagnosis_code: "Z00.0",
+    rendering_practitioner_id: null,
+    rendering_practitioner_category: "NONE",
+    rendering_known_to_billing_provider: false,
+  };
+}
+
 async function seedOperationalFixtures(pool) {
   await pool.execute(
     `INSERT INTO tenants (tenant_id, tenant_slug, tenant_name, status) VALUES
@@ -59,16 +74,21 @@ async function seedOperationalFixtures(pool) {
   await pool.execute(
     `INSERT INTO providers
       (provider_id, scheme_id, practice_number, specialty, practice_name, banking_detail,
-       practice_region, practice_lat, practice_lon, tenant_id) VALUES
-      ('ALPHA-PROVIDER-1', 'ALPHA01', 'ALPHA-PRACTICE', 'GP', 'Alpha Practice', 'ALPHA-PBANK', 'Alpha Region', -26.1, 28.0, 'tenant_alpha'),
-      ('BETA-PROVIDER-1', 'BETA01', 'BETA-PRACTICE', 'GP', 'Beta Practice', 'BETA-PBANK', 'Beta Region', -33.9, 18.4, 'tenant_beta')`,
+       practice_region, practice_lat, practice_lon, provider_kind,
+       provider_category, tenant_id) VALUES
+      ('ALPHA-PROVIDER-1', 'ALPHA01', 'ALPHA-PRACTICE', 'GP', 'Alpha Practice', 'ALPHA-PBANK', 'Alpha Region', -26.1, 28.0, 'INDIVIDUAL', 'GENERAL_PRACTITIONER', 'tenant_alpha'),
+      ('BETA-PROVIDER-1', 'BETA01', 'BETA-PRACTICE', 'GP', 'Beta Practice', 'BETA-PBANK', 'Beta Region', -33.9, 18.4, 'INDIVIDUAL', 'GENERAL_PRACTITIONER', 'tenant_beta')`,
   );
   await pool.execute(
     `INSERT INTO claims
-      (claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id) VALUES
-      ('ALPHA-CLAIM-1', 'ALPHA01', 'ALPHA-MEMBER-1', 'ALPHA-PROVIDER-1', '2026-07-01', 'GP01', 101.00, 'tenant_alpha'),
-      ('ALPHA-CLAIM-2', 'ALPHA01', 'ALPHA-MEMBER-1', 'ALPHA-PROVIDER-1', '2026-07-01', 'GP02', 102.00, 'tenant_alpha'),
-      ('BETA-CLAIM-1', 'BETA01', 'BETA-MEMBER-1', 'BETA-PROVIDER-1', '2026-07-01', 'GP01', 202.00, 'tenant_beta')`,
+      (claim_id, scheme_id, member_id, provider_id, service_date, received_date,
+       billing_code, amount, quantity, benefit_option, network_type, line_type,
+       tariff_discipline, diagnosis_code, rendering_practitioner_id,
+       rendering_practitioner_category, rendering_known_to_billing_provider,
+       tenant_id) VALUES
+      ('ALPHA-CLAIM-1', 'ALPHA01', 'ALPHA-MEMBER-1', 'ALPHA-PROVIDER-1', '2026-07-01', '2026-07-01', 'GP01', 101.00, 1, 'COMPREHENSIVE', 'IN_NETWORK', 'PROFESSIONAL', 'MEDICAL', 'Z00.0', NULL, 'NONE', 0, 'tenant_alpha'),
+      ('ALPHA-CLAIM-2', 'ALPHA01', 'ALPHA-MEMBER-1', 'ALPHA-PROVIDER-1', '2026-07-01', '2026-07-01', 'GP02', 102.00, 1, 'COMPREHENSIVE', 'IN_NETWORK', 'PROFESSIONAL', 'MEDICAL', 'Z00.0', NULL, 'NONE', 0, 'tenant_alpha'),
+      ('BETA-CLAIM-1', 'BETA01', 'BETA-MEMBER-1', 'BETA-PROVIDER-1', '2026-07-01', '2026-07-01', 'GP01', 202.00, 1, 'COMPREHENSIVE', 'IN_NETWORK', 'PROFESSIONAL', 'MEDICAL', 'Z00.0', NULL, 'NONE', 0, 'tenant_beta')`,
   );
   await pool.execute(
     `INSERT INTO investigations
@@ -241,6 +261,7 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
       body: { claims: [{
         claim_id: "ALPHA-CLAIM-NEW", scheme_id: "ALPHA01", member_id: "ALPHA-MEMBER-1",
         provider_id: "ALPHA-PROVIDER-1", service_date: "2026-07-02", billing_code: "GP03", amount: 303,
+        ...modelClaimFields("2026-07-02"),
       }] },
     });
     assert.equal(ingested.status, 202, JSON.stringify(await ingested.clone().json()));
@@ -263,7 +284,7 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
 
     const crossIngest = await request(alphaClaims, "/claims/ingest", {
       method: "POST",
-      body: { claims: [{ claim_id: "BETA-ATTEMPT", scheme_id: "BETA01", member_id: "BETA-MEMBER-1", provider_id: "BETA-PROVIDER-1", service_date: "2026-07-02", billing_code: "X", amount: 1 }] },
+      body: { claims: [{ claim_id: "BETA-ATTEMPT", scheme_id: "BETA01", member_id: "BETA-MEMBER-1", provider_id: "BETA-PROVIDER-1", service_date: "2026-07-02", billing_code: "X", amount: 1, ...modelClaimFields("2026-07-02") }] },
     });
     assert.equal(crossIngest.status, 403);
 
@@ -314,15 +335,15 @@ test("Phase 11D real-MySQL session, isolation, rotation, suspension, platform, a
       await assert.rejects(() => isolatedManager.acquire(betaContext), (error) => error.code === code);
       assert.equal(isolatedManager.metrics().cachedPools, 0);
       await operationalPool.execute(
-        "UPDATE data_plane_metadata SET database_mode='legacy_shared', logical_database_identifier='legacy-operational-shared', schema_version='10', environment_key='legacy', migration_version=10 WHERE metadata_key='primary'",
+        "UPDATE data_plane_metadata SET database_mode='legacy_shared', logical_database_identifier='legacy-operational-shared', schema_version='13', environment_key='legacy', migration_version=13 WHERE metadata_key='primary'",
       );
     }
     const missingManager = createTenantConnectionManager({ adapters: { legacy_shared: createLegacySharedAdapter({ databaseUrl: operationalUrl }) } });
     await operationalPool.execute("DELETE FROM data_plane_metadata WHERE metadata_key='primary'");
     await assert.rejects(() => missingManager.acquire(betaContext), (error) => error.code === "DATA_PLANE_METADATA_MISSING");
-    await operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('primary','legacy_shared','legacy-operational-shared','10','legacy',10)");
+    await operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('primary','legacy_shared','legacy-operational-shared','13','legacy',13)");
     await assert.rejects(
-      () => operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('secondary','legacy_shared','legacy-operational-shared','10','legacy',10)"),
+      () => operationalPool.execute("INSERT INTO data_plane_metadata (metadata_key,database_mode,logical_database_identifier,schema_version,environment_key,migration_version) VALUES ('secondary','legacy_shared','legacy-operational-shared','13','legacy',13)"),
       (error) => error.code === "ER_CHECK_CONSTRAINT_VIOLATED",
     );
 

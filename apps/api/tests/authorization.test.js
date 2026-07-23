@@ -317,6 +317,7 @@ test("confirmation ignores untrusted scheme metadata while claim ingestion rejec
           member_id: "member-beta",
           provider_id: "provider-beta",
           service_date: "2026-07-13",
+          ...modelClaimFields("2026-07-13"),
           billing_code: "CONSULT",
           amount: 299.99,
         },
@@ -464,6 +465,7 @@ test("cross-tenant claim ownership conflict returns 409 and queues only the owne
     member_id: "member-1",
     provider_id: "provider-1",
     service_date: "2026-07-16",
+    ...modelClaimFields("2026-07-16"),
     billing_code: "CONSULT",
     amount: 100,
   };
@@ -552,3 +554,17 @@ test("claims read routes require claims.view_own and enforce canonical tenant co
   assert.equal(missingDetail.status, 404);
   assert.deepEqual(observed, [alphaTenant.tenant_id, alphaTenant.tenant_id, alphaTenant.tenant_id]);
 });
+function modelClaimFields(serviceDate) {
+  return {
+    received_date: serviceDate,
+    quantity: 1,
+    benefit_option: "COMPREHENSIVE",
+    network_type: "IN_NETWORK",
+    line_type: "PROFESSIONAL",
+    tariff_discipline: "MEDICAL",
+    diagnosis_code: "Z00.0",
+    rendering_practitioner_id: null,
+    rendering_practitioner_category: "NONE",
+    rendering_known_to_billing_provider: false,
+  };
+}

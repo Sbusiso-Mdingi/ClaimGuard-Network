@@ -15,6 +15,7 @@ import { HistoryPage } from "./features/investigator/HistoryPage";
 // 1. Added top-level context and page imports
 import { RoleProvider, useRole } from "./context/RoleContext";
 import { LoginPage } from "./features/auth/LoginPage";
+import { SignupPage } from "./features/auth/SignupPage";
 import { InvestigationsPage } from "./features/investigator/InvestigationsPage";
 import { InvestigationWorkspacePage } from "./features/investigator/InvestigationWorkspacePage";
 import { CommitteeRegistryPage } from "./features/investigator/CommitteeRegistryPage";
@@ -194,7 +195,10 @@ export default function AppRoot() {
       {/* 3. Wrapped the router with the RoleProvider state element wrapper */}
       <RoleProvider>
         <BrowserRouter>
-          <AuthenticationBoundary />
+          <Routes>
+            <Route path="/auth/signup" element={<SignupPage />} />
+            <Route path="*" element={<AuthenticationBoundary />} />
+          </Routes>
         </BrowserRouter>
       </RoleProvider>
     </ErrorBoundary>

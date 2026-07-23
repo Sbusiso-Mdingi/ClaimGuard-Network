@@ -3,8 +3,7 @@ import "./DetectionEngineSettings.css";
 
 export function DetectionEngineSettings({ tenantId }) {
   const [strategyType, setStrategyType] = useState("deterministic_rules");
-  const [endpointUrl, setEndpointUrl] = useState("");
-  const [customModelSecret, setCustomModelSecret] = useState("");
+  const [modelDeploymentId, setModelDeploymentId] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -17,8 +16,7 @@ export function DetectionEngineSettings({ tenantId }) {
         const data = await response.json();
         if (data.strategy) {
           setStrategyType(data.strategy.strategyType);
-          setEndpointUrl(data.strategy.endpointUrl || "");
-          setCustomModelSecret(data.strategy.customModelImageSecret || "");
+          setModelDeploymentId(data.strategy.modelDeploymentId || "");
         }
       } catch (err) {
         setError(err.message);
@@ -38,8 +36,7 @@ export function DetectionEngineSettings({ tenantId }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           strategyType,
-          endpointUrl: endpointUrl || null,
-          customModelImageSecret: customModelSecret || null,
+          modelDeploymentId: modelDeploymentId || null,
         }),
       });
       if (!response.ok) {
@@ -90,8 +87,8 @@ export function DetectionEngineSettings({ tenantId }) {
         </div>
 
         <div 
-          className={`strategy-card ml-endpoint ${strategyType === "ml_endpoint" ? "active ml-endpoint" : ""}`}
-          onClick={() => setStrategyType("ml_endpoint")}
+          className={`strategy-card ml-endpoint ${strategyType === "approved_model" ? "active ml-endpoint" : ""}`}
+          onClick={() => setStrategyType("approved_model")}
         >
           <div className="strategy-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -101,40 +98,25 @@ export function DetectionEngineSettings({ tenantId }) {
             </svg>
           </div>
           <div className="strategy-content">
-            <h4 className="strategy-name">Custom Detection Engine</h4>
-            <p className="strategy-desc">Bring your own engine by connecting a custom remote endpoint.</p>
+            <h4 className="strategy-name">Approved ClaimGuard Model</h4>
+            <p className="strategy-desc">Use a versioned model deployment approved by the ClaimGuard environment.</p>
           </div>
           <div className="strategy-status" />
         </div>
       </div>
 
-      {strategyType === "ml_endpoint" && (
+      {strategyType === "approved_model" && (
         <div className="url-input-container">
-          <label className="url-input-label" htmlFor="ml-endpoint-url">
-            Custom Engine Endpoint URL
+          <label className="url-input-label" htmlFor="model-deployment-id">
+            Approved Model Deployment ID
           </label>
           <input
-            id="ml-endpoint-url"
-            className="url-input"
-            type="url"
-            placeholder="https://your-custom-engine.com/evaluate"
-            value={endpointUrl}
-            onChange={(e) => setEndpointUrl(e.target.value)}
-          />
-        </div>
-      )}
-      {strategyType === "ml_endpoint" && (
-        <div className="secret-input-container" style={{ marginTop: "1rem" }}>
-          <label className="url-input-label" htmlFor="custom-model-secret">
-            Custom Model Secret Name (Key Vault)
-          </label>
-          <input
-            id="custom-model-secret"
+            id="model-deployment-id"
             className="url-input"
             type="text"
-            placeholder="my-custom-model-secret"
-            value={customModelSecret}
-            onChange={(e) => setCustomModelSecret(e.target.value)}
+            placeholder="claimguard-claim-fraud-ensemble-1.1.0"
+            value={modelDeploymentId}
+            onChange={(e) => setModelDeploymentId(e.target.value)}
           />
         </div>
       )}
@@ -144,7 +126,7 @@ export function DetectionEngineSettings({ tenantId }) {
       <button 
         className="save-button" 
         onClick={handleSave} 
-        disabled={saving || (strategyType === "ml_endpoint" && !endpointUrl)}
+        disabled={saving || (strategyType === "approved_model" && !modelDeploymentId)}
       >
         {saving && <div className="loading-spinner" />}
         {saving ? "Saving Configuration..." : "Save Strategy Configuration"}

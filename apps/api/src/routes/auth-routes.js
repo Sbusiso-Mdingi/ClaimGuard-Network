@@ -54,7 +54,7 @@ async function loginHandler(c, { authenticationService, configuration }) {
   }
 }
 
-export function registerAuthRoutes(app, { authenticationService, configuration, configurationRepository = null }) {
+export function registerAuthRoutes(app, { authenticationService, configuration, configurationRepository = null, controlPlaneService = null }) {
   app.post("/auth/login", (c) => loginHandler(c, { authenticationService, configuration }));
   app.post("/o/:organisationSlug/login", (c) => loginHandler(c, { authenticationService, configuration }));
 
@@ -76,6 +76,60 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
     if (resolved) await authenticationService.logout(resolved, c.get("authenticationMetadata") || {});
     c.header("Set-Cookie", serializeCookie(configuration, "", { maxAgeSeconds: 0, expires: new Date(0) }));
     return c.json({ authenticated: false });
+  });
+
+  app.get("/auth/invitation/:token", async (c) => {
+    if (!controlPlaneService) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Invitations are not configured." }, 404);
+    }
+    const token = c.req.param("token");
+    try {
+      const invitation = await controlPlaneService.getInvitationByToken(token);
+      if (!invitation) {
+        return c.json({ available: false, code: "INVITATION_NOT_FOUND", message: "This invitation link is invalid." }, 404);
+      }
+      if (invitation.status !== "pending") {
+        return c.json({ available: false, code: "INVITATION_CONSUMED", message: "This invitation has already been used." }, 410);
+      }
+      if (new Date(invitation.expiresAt) < new Date()) {
+        return c.json({ available: false, code: "INVITATION_EXPIRED", message: "This invitation has expired." }, 410);
+      }
+      return c.json({
+        available: true,
+        organisationName: invitation.organisationName,
+        canonicalSlug: invitation.canonicalSlug,
+        email: invitation.email,
+      });
+    } catch {
+      return c.json({ available: false, code: "INVITATION_ERROR", message: "Could not validate invitation." }, 400);
+    }
+  });
+
+  app.post("/auth/signup", async (c) => {
+    if (!controlPlaneService) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Signup is not configured." }, 404);
+    }
+    let input;
+    try { input = await c.req.json(); } catch { input = {}; }
+    const { token, displayName, username, password } = input;
+    if (!token || !displayName || !username || !password) {
+      return c.json({ available: false, code: "INVALID_INPUT", message: "token, displayName, username, and password are required." }, 400);
+    }
+    if (password.length < 8) {
+      return c.json({ available: false, code: "WEAK_PASSWORD", message: "Password must be at least 8 characters." }, 400);
+    }
+    try {
+      const result = await controlPlaneService.signupWithInvitation({ token, displayName, username, password }, {});
+      return c.json({
+        available: true,
+        message: "Account created successfully. You can now sign in.",
+        user: { userId: result.user.userId, displayName: result.user.displayName },
+      }, 201);
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 400;
+      const code = error?.code || "SIGNUP_FAILED";
+      return c.json({ available: false, code, message: error?.message || "Signup failed." }, status);
+    }
   });
 
   app.get("/auth/demo-accounts", async (c) => {

@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 
 import { ControlPlaneConflictError, ControlPlaneNotFoundError, ControlPlaneValidationError } from "./errors.js";
+import { hashPassword, passwordParametersRecord, ARGON2ID_VERSION } from "./password.js";
+import { normalizeUsername } from "./validation.js";
 import { withControlPlaneTransaction } from "./transaction.js";
 
 const ORGANISATION_TRANSITIONS = Object.freeze({
@@ -93,14 +95,14 @@ export function createControlPlaneService({ pool, repositories }) {
           );
         }
         const route = await repositories.routes.getInternalLatestReadyForOrganisation(organisationId, { executor });
-        if (!route || route.route_type !== "private_database" || String(route.schema_version) !== "10") {
-          throw new ControlPlaneConflictError("A schema-10 private route is required.", "PRIVATE_ROUTE_NOT_READY");
+        if (!route || route.route_type !== "private_database" || String(route.schema_version) !== "13") {
+          throw new ControlPlaneConflictError("A schema-13 private route is required.", "PRIVATE_ROUTE_NOT_READY");
         }
         const [gateRows] = await executor.execute(
           `SELECT
              (SELECT COUNT(*) FROM organisation_schema_status
-               WHERE organisation_id = ? AND route_id = ? AND expected_schema_version = '10'
-                 AND observed_schema_version = '10' AND compatibility_status = 'compatible') AS schema_ready,
+               WHERE organisation_id = ? AND route_id = ? AND expected_schema_version = '13'
+                 AND observed_schema_version = '13' AND compatibility_status = 'compatible') AS schema_ready,
              (SELECT COUNT(*) FROM worker_routing_status
                WHERE organisation_id = ? AND worker_type = 'report-worker' AND status = 'ready') AS worker_ready,
              (SELECT COUNT(*) FROM report_storage_partitions
@@ -389,6 +391,245 @@ export function createControlPlaneService({ pool, repositories }) {
           source: actor?.source || "control-plane-service",
         });
         return updated;
+      });
+    },
+
+    async createAdminInvitation({ organisationId, email, invitedBy = null, expiresInHours = 72 }, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const organisation = await repositories.organisations.getById(organisationId, { executor });
+        if (!organisation) throw new ControlPlaneNotFoundError("Organisation was not found.", "ORGANISATION_NOT_FOUND");
+
+        const rawToken = crypto.randomBytes(32).toString("base64url");
+        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+        const invitationId = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + expiresInHours * 3600_000);
+
+        await executor.execute(
+          `INSERT INTO admin_invitations (invitation_id, organisation_id, email, token_hash, status, invited_by, expires_at)
+           VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+          [invitationId, organisationId, email.trim().toLowerCase(), tokenHash, invitedBy, expiresAt],
+        );
+
+        await audit(executor, {
+          actorType: actor?.type || "user", actorId: actor?.id || null,
+          organisationScopeId: organisationId, action: "admin_invitation.create",
+          targetType: "admin_invitation", targetId: invitationId,
+          afterSummary: { email: email.trim().toLowerCase(), expiresAt: expiresAt.toISOString() },
+          correlationId: actor?.correlationId || null, outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+
+        return { invitationId, token: rawToken, email: email.trim().toLowerCase(), expiresAt };
+      });
+    },
+
+    async getInvitationByToken(rawToken) {
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+      const [rows] = await pool.execute(
+        `SELECT i.*, o.display_name AS organisation_name, o.canonical_slug
+         FROM admin_invitations i
+         JOIN organisations o ON o.organisation_id = i.organisation_id
+         WHERE i.token_hash = ? LIMIT 1`,
+        [tokenHash],
+      );
+      const row = rows?.[0];
+      if (!row) return null;
+      return {
+        invitationId: row.invitation_id,
+        organisationId: row.organisation_id,
+        organisationName: row.organisation_name,
+        canonicalSlug: row.canonical_slug,
+        email: row.email,
+        status: row.status,
+        expiresAt: row.expires_at,
+        consumedAt: row.consumed_at,
+      };
+    },
+
+    async listInvitations(organisationId) {
+      const [rows] = await pool.execute(
+        `SELECT invitation_id, email, status, created_at, expires_at, consumed_at
+         FROM admin_invitations WHERE organisation_id = ? ORDER BY created_at DESC`,
+        [organisationId],
+      );
+      return (rows || []).map((row) => ({
+        invitationId: row.invitation_id,
+        email: row.email,
+        status: row.status,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        consumedAt: row.consumed_at,
+      }));
+    },
+
+    async signupWithInvitation({ token, displayName, username, password }, actor) {
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const [invRows] = await executor.execute(
+          `SELECT * FROM admin_invitations WHERE token_hash = ? FOR UPDATE`,
+          [tokenHash],
+        );
+        const invitation = invRows?.[0];
+        if (!invitation) throw new ControlPlaneNotFoundError("Invitation not found or invalid.", "INVITATION_NOT_FOUND");
+        if (invitation.status !== "pending") {
+          throw new ControlPlaneConflictError("This invitation has already been used or revoked.", "INVITATION_CONSUMED");
+        }
+        if (new Date(invitation.expires_at) < new Date()) {
+          await executor.execute(`UPDATE admin_invitations SET status = 'expired' WHERE invitation_id = ?`, [invitation.invitation_id]);
+          throw new ControlPlaneConflictError("This invitation has expired.", "INVITATION_EXPIRED");
+        }
+
+        const organisationId = invitation.organisation_id;
+
+        // Create user
+        const user = await repositories.identity.createUser({
+          displayName: displayName.trim(),
+          canonicalContact: invitation.email,
+          status: "active",
+        }, { executor });
+
+        // Create credential
+        const passwordHash = await hashPassword(password);
+        await repositories.identity.createCredential({
+          userId: user.userId,
+          organisationId,
+          username: normalizeUsername(username),
+          status: "active",
+          passwordHash,
+          passwordAlgorithm: "argon2id",
+          passwordParameters: passwordParametersRecord(),
+          passwordVersion: ARGON2ID_VERSION,
+        }, { executor });
+
+        // Create membership
+        const membership = await repositories.identity.createMembership({
+          userId: user.userId,
+          organisationId,
+          status: "active",
+          validFrom: new Date(),
+          invitedBy: invitation.invited_by,
+        }, { executor });
+
+        // Assign scheme_administrator role
+        const role = await repositories.identity.resolveRole("scheme_administrator", { executor });
+        if (role) {
+          await repositories.identity.assignRole({
+            membershipId: membership.membershipId,
+            roleId: role.roleId,
+            assignedBy: invitation.invited_by,
+          }, { executor });
+        }
+
+        // Consume the invitation
+        await executor.execute(
+          `UPDATE admin_invitations SET status = 'consumed', consumed_at = UTC_TIMESTAMP(3), consumed_by_user_id = ? WHERE invitation_id = ?`,
+          [user.userId, invitation.invitation_id],
+        );
+
+        await audit(executor, {
+          actorType: "user", actorId: user.userId,
+          organisationScopeId: organisationId, action: "admin_invitation.consumed",
+          targetType: "admin_invitation", targetId: invitation.invitation_id,
+          afterSummary: { userId: user.userId, username: normalizeUsername(username) },
+          correlationId: actor?.correlationId || null, outcome: "success",
+          source: "signup",
+        });
+
+        return { user, membership, organisationId };
+      });
+    },
+
+    async createSchemeUser({ organisationId, displayName, username, password, roleKey }, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const organisation = await repositories.organisations.getById(organisationId, { executor });
+        if (!organisation || organisation.organisationType !== "medical_scheme") {
+          throw new ControlPlaneNotFoundError("Medical-scheme organisation was not found.", "ORGANISATION_NOT_FOUND");
+        }
+
+        const passwordHash = await hashPassword(password);
+        const user = await repositories.identity.createUser({
+          displayName: displayName.trim(),
+          canonicalContact: `${normalizeUsername(username)}@${organisation.canonicalSlug}.local`,
+          status: "active",
+        }, { executor });
+
+        await repositories.identity.createCredential({
+          userId: user.userId,
+          organisationId,
+          username: normalizeUsername(username),
+          status: "active",
+          passwordHash,
+          passwordAlgorithm: "argon2id",
+          passwordParameters: passwordParametersRecord(),
+          passwordVersion: ARGON2ID_VERSION,
+        }, { executor });
+
+        const membership = await repositories.identity.createMembership({
+          userId: user.userId,
+          organisationId,
+          status: "active",
+          validFrom: new Date(),
+          invitedBy: actor?.id || null,
+        }, { executor });
+
+        if (roleKey) {
+          const role = await repositories.identity.resolveRole(roleKey, { executor });
+          if (!role) throw new ControlPlaneNotFoundError("Role was not found.", "ROLE_NOT_FOUND");
+          if (role.organisationScope !== "medical_scheme") {
+            throw new ControlPlaneValidationError("Role scope does not match the organisation type.", "ROLE_SCOPE_MISMATCH");
+          }
+          await repositories.identity.assignRole({
+            membershipId: membership.membershipId,
+            roleId: role.roleId,
+            assignedBy: actor?.id || null,
+          }, { executor });
+        }
+
+        await audit(executor, {
+          actorType: actor?.type || "user", actorId: actor?.id || null,
+          organisationScopeId: organisationId, action: "scheme_user.create",
+          targetType: "user", targetId: user.userId,
+          afterSummary: { displayName: user.displayName, username: normalizeUsername(username), roleKey },
+          correlationId: actor?.correlationId || null, outcome: "success",
+          source: actor?.source || "scheme-admin",
+        });
+
+        return { user, membership };
+      });
+    },
+
+    async disableSchemeUser({ organisationId, userId }, actor) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const user = await repositories.identity.updateUserStatus(userId, "disabled", { executor });
+
+        // Also disable the membership
+        const [membershipRows] = await executor.execute(
+          `SELECT membership_id FROM organisation_memberships WHERE user_id = ? AND organisation_id = ? LIMIT 1`,
+          [userId, organisationId],
+        );
+        if (membershipRows?.[0]) {
+          await repositories.identity.updateMembershipStatus(membershipRows[0].membership_id, "disabled", { executor });
+        }
+
+        // Disable credentials
+        const [credRows] = await executor.execute(
+          `SELECT credential_id FROM credential_identities WHERE user_id = ? AND organisation_id = ?`,
+          [userId, organisationId],
+        );
+        for (const cred of credRows || []) {
+          await repositories.identity.updateCredentialStatus(cred.credential_id, "disabled", { executor });
+        }
+
+        await audit(executor, {
+          actorType: actor?.type || "user", actorId: actor?.id || null,
+          organisationScopeId: organisationId, action: "scheme_user.disable",
+          targetType: "user", targetId: userId,
+          afterSummary: { status: "disabled" },
+          correlationId: actor?.correlationId || null, outcome: "success",
+          source: actor?.source || "scheme-admin",
+        });
+
+        return user;
       });
     },
   };

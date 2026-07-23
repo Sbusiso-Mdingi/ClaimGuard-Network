@@ -32,7 +32,7 @@ The API exposes only safe public readiness fields. Authenticated `/internal/data
 Every active medical-scheme organisation needs exactly one active `legacy_shared` route with:
 
 - logical database identifier `legacy-operational-shared`;
-- schema version `10`;
+- schema version `13`;
 - monotonically increasing route generation;
 - a verified legacy mapping linked to that route;
 - provisioning status `active` and a non-suspended health state.

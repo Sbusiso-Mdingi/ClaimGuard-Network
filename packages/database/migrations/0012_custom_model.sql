@@ -1,3 +1,4 @@
--- Add a column to store the Key Vault secret name for the custom model image (optional)
+-- Store only the infrastructure-approved deployment identifier. Model image
+-- locations, service origins, and credentials are never tenant configuration.
 ALTER TABLE detection_strategies
-ADD COLUMN custom_model_image_secret VARCHAR(255) NULL;
+ADD COLUMN model_deployment_id VARCHAR(128) NULL;

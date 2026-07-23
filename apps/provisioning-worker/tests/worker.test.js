@@ -35,7 +35,7 @@ test("private database upgrade has a resumable schema and route-promotion sequen
     "write_data_plane_metadata",
     "verify_database_isolation",
     "grant_report_worker_secret_access",
-    "register_schema_10_route",
+    "register_schema_13_route",
     "record_schema_compatibility",
     "mark_report_worker_ready",
   ]);
@@ -45,7 +45,7 @@ test("private databases use canonical operational migrations and private metadat
   const worker = await readFile(new URL("../src/worker.js", import.meta.url), "utf8");
   assert.match(worker, /applyMigrations\(connection/);
   assert.match(worker, /database_mode = 'private_database'/);
-  assert.match(worker, /migration_version = 10/);
+  assert.match(worker, /migration_version = 13/);
   assert.doesNotMatch(worker, /simulator-worker/);
   assert.match(worker, /cross-database access/);
   assert.match(worker, /GRANT SELECT, INSERT, UPDATE, DELETE ON/);

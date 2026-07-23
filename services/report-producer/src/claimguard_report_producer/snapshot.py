@@ -25,7 +25,7 @@ class TenantSnapshot:
     tenant_slug: str | None
     tenant_display_name: str | None
     detection_strategy: str
-    ml_endpoint_url: str | None
+    model_deployment_id: str | None
     captured_at: str
     watermark: str
     schemes: list[dict[str, object]]
@@ -57,7 +57,7 @@ class PyMySqlTenantSnapshotRepository:
                 cursor.execute(
                     """
                     SELECT t.tenant_id, t.tenant_slug, t.tenant_name, UTC_TIMESTAMP(3) AS captured_at,
-                           ds.strategy_type, ds.endpoint_url
+                           ds.strategy_type, ds.model_deployment_id
                     FROM tenants t
                     LEFT JOIN detection_strategies ds ON ds.tenant_id = t.tenant_id AND ds.is_active = 1
                     WHERE t.tenant_id = %s AND t.status = 'active'
@@ -96,7 +96,8 @@ class PyMySqlTenantSnapshotRepository:
                 cursor.execute(
                     """
                     SELECT provider_id, scheme_id, practice_number, specialty, practice_name,
-                      banking_detail, practice_region, practice_lat, practice_lon
+                      banking_detail, practice_region, practice_lat, practice_lon,
+                      provider_kind, provider_category
                     FROM providers
                     WHERE tenant_id = %s
                     ORDER BY provider_id
@@ -108,7 +109,10 @@ class PyMySqlTenantSnapshotRepository:
                 cursor.execute(
                     """
                     SELECT claim_id, scheme_id, member_id, provider_id, service_date,
-                      billing_code, amount, created_at, updated_at
+                      received_date, billing_code, amount, quantity, benefit_option,
+                      network_type, line_type, tariff_discipline, diagnosis_code,
+                      rendering_practitioner_id, rendering_practitioner_category,
+                      rendering_known_to_billing_provider, created_at, updated_at
                     FROM claims
                     WHERE tenant_id = %s
                     ORDER BY claim_id
@@ -138,7 +142,7 @@ class PyMySqlTenantSnapshotRepository:
             tenant_slug=str(tenant.get("tenant_slug") or "") or None,
             tenant_display_name=str(tenant.get("tenant_name") or "") or None,
             detection_strategy=str(tenant.get("strategy_type") or "deterministic_rules"),
-            ml_endpoint_url=str(tenant.get("endpoint_url") or "") or None,
+            model_deployment_id=str(tenant.get("model_deployment_id") or "") or None,
             captured_at=_iso_timestamp(tenant.get("captured_at")),
             watermark=watermark,
             schemes=schemes,

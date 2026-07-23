@@ -9,6 +9,21 @@ import {
   runWithTenantContext,
 } from "../src/index.js";
 
+function modelClaimFields() {
+  return {
+    received_date: "2026-07-20",
+    quantity: 1,
+    benefit_option: "COMPREHENSIVE",
+    network_type: "IN_NETWORK",
+    line_type: "PROFESSIONAL",
+    tariff_discipline: "MEDICAL",
+    diagnosis_code: "Z00.0",
+    rendering_practitioner_id: null,
+    rendering_practitioner_category: "NONE",
+    rendering_known_to_billing_provider: false,
+  };
+}
+
 function createFakePool({ tenantId = "tenant_default" } = {}) {
   const executions = [];
   let outboxRow = null;
@@ -75,6 +90,7 @@ test("claim ingestion repository inserts claims through transaction", async () =
         member_id: "M-1",
         provider_id: "P-1",
         service_date: "2025-01-15",
+        ...modelClaimFields(),
         billing_code: "CONSULT",
         amount: 233.19,
       },
@@ -89,7 +105,7 @@ test("claim ingestion repository inserts claims through transaction", async () =
   assert.equal(result.processing.asynchronous, true);
   assert.equal(pool.executions.length, 7);
   assert.match(pool.executions[4].sql, /INSERT INTO claims/i);
-  assert.equal(pool.executions[4].params[7], "tenant_default");
+  assert.equal(pool.executions[4].params.at(-1), "tenant_default");
   assert.match(pool.executions[5].sql, /INSERT INTO claim_processing_outbox/i);
   assert.equal(pool.executions[5].params[1], "tenant_default");
 });
@@ -111,10 +127,12 @@ test("reference data and claims are accepted in one authoritative batch", async 
       provider_id: "P-1", scheme_id: "scheme_a", practice_number: "practice-1", specialty: "GP",
       practice_name: "Practice 1", banking_detail: "token:provider-bank", practice_region: "Gauteng",
       practice_lat: -26.2, practice_lon: 28.0,
+      provider_kind: "INDIVIDUAL", provider_category: "GENERAL_PRACTITIONER",
     }],
     claims: [{
       claim_id: "C-REFERENCE", scheme_id: "scheme_a", member_id: "M-1", provider_id: "P-1",
       service_date: "2026-07-19", billing_code: "CONSULT", amount: 450,
+      ...modelClaimFields(),
     }],
   });
 
@@ -153,6 +171,7 @@ test("reference identifiers remain immutable across tenants", async () => {
       claims: [{
         claim_id: "C-1", scheme_id: "scheme_a", member_id: "M-1", provider_id: "P-1",
         service_date: "2026-07-19", billing_code: "CONSULT", amount: 450,
+        ...modelClaimFields(),
       }],
     })),
     ReferenceOwnershipConflictError,
@@ -199,6 +218,7 @@ test("claim ingestion repository persists tenant_id from active tenant context",
             member_id: "M-2",
             provider_id: "P-2",
             service_date: "2025-01-16",
+            ...modelClaimFields(),
             billing_code: "XRAY",
             amount: 100.0,
           },
@@ -208,7 +228,7 @@ test("claim ingestion repository persists tenant_id from active tenant context",
   );
 
   assert.equal(pool.executions.length, 7);
-  assert.equal(pool.executions[4].params[7], "tenant_alpha");
+  assert.equal(pool.executions[4].params.at(-1), "tenant_alpha");
   assert.match(pool.executions[4].sql, /tenant_id/i);
   assert.equal(pool.executions[5].params[1], "tenant_alpha");
 });
@@ -250,20 +270,44 @@ function createStatefulClaimPool({ failClaimInsert = false, failOutboxInsert = f
             if (failClaimInsert) {
               throw new Error("claim insert failed");
             }
-            const [claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id] = params;
+            const [
+              claim_id, scheme_id, member_id, provider_id, service_date,
+              received_date, billing_code, amount, quantity, benefit_option,
+              network_type, line_type, tariff_discipline, diagnosis_code,
+              rendering_practitioner_id, rendering_practitioner_category,
+              rendering_known_to_billing_provider, tenant_id,
+            ] = params;
             if (claims.has(claim_id)) {
               const error = new Error("duplicate");
               error.code = "ER_DUP_ENTRY";
               throw error;
             }
-            claims.set(claim_id, { claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id });
+            claims.set(claim_id, {
+              claim_id, scheme_id, member_id, provider_id, service_date,
+              received_date, billing_code, amount, quantity, benefit_option,
+              network_type, line_type, tariff_discipline, diagnosis_code,
+              rendering_practitioner_id, rendering_practitioner_category,
+              rendering_known_to_billing_provider, tenant_id,
+            });
             return [{ affectedRows: 1 }];
           }
           if (/UPDATE claims/i.test(sql)) {
-            const [scheme_id, member_id, provider_id, service_date, billing_code, amount, claim_id, tenant_id] = params;
+            const [
+              scheme_id, member_id, provider_id, service_date, received_date,
+              billing_code, amount, quantity, benefit_option, network_type,
+              line_type, tariff_discipline, diagnosis_code,
+              rendering_practitioner_id, rendering_practitioner_category,
+              rendering_known_to_billing_provider, claim_id, tenant_id,
+            ] = params;
             const existing = claims.get(claim_id);
             if (existing?.tenant_id === tenant_id) {
-              claims.set(claim_id, { ...existing, scheme_id, member_id, provider_id, service_date, billing_code, amount });
+              claims.set(claim_id, {
+                ...existing, scheme_id, member_id, provider_id, service_date,
+                received_date, billing_code, amount, quantity, benefit_option,
+                network_type, line_type, tariff_discipline, diagnosis_code,
+                rendering_practitioner_id, rendering_practitioner_category,
+                rendering_known_to_billing_provider,
+              });
               return [{ affectedRows: 1 }];
             }
             return [{ affectedRows: 0 }];
@@ -320,6 +364,7 @@ function claimInput(amount) {
     member_id: "M-1",
     provider_id: "P-1",
     service_date: "2026-07-16",
+    ...modelClaimFields(),
     billing_code: "CONSULT",
     amount,
   };

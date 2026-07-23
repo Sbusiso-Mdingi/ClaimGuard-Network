@@ -37,7 +37,7 @@ const REQUIRED_UPGRADE_STEPS = Object.freeze([
   "write_data_plane_metadata",
   "verify_database_isolation",
   "grant_report_worker_secret_access",
-  "register_schema_10_route",
+  "register_schema_13_route",
   "record_schema_compatibility",
   "mark_report_worker_ready",
 ]);
@@ -120,10 +120,10 @@ function parseAzurePolicy(organisation) {
   const region = requireEnv("AZURE_APPROVED_REGION");
   const storageAccount = requireEnv("AZURE_APPROVED_STORAGE_ACCOUNT");
   const reportContainer = requireEnv("AZURE_APPROVED_REPORT_CONTAINER");
-  const schemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION?.trim() || "10";
+  const schemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION?.trim() || "13";
   const environmentKey = process.env.AZURE_APPROVED_ENVIRONMENT_KEY?.trim() || "production";
   const subscriptionId = requireEnv("AZURE_APPROVED_SUBSCRIPTION_ID");
-  if (schemaVersion !== "10") throw new Error("PRIVATE_TENANT_SCHEMA_VERSION must be 10 for the canonical operational schema.");
+  if (schemaVersion !== "13") throw new Error("PRIVATE_TENANT_SCHEMA_VERSION must be 13 for the canonical operational schema.");
   return {
     resourceGroup,
     mysqlServerName,
@@ -222,7 +222,7 @@ async function ensurePrivateSchema(adminPool, databaseName, organisation, policy
     await connection.query(
       `UPDATE data_plane_metadata
        SET database_mode = 'private_database', logical_database_identifier = ?,
-         schema_version = ?, environment_key = ?, migration_version = 10
+         schema_version = ?, environment_key = ?, migration_version = 13
        WHERE metadata_key = 'primary'`,
       [policy.logicalDatabaseIdentifier, policy.schemaVersion, policy.environmentKey],
     );
@@ -439,7 +439,7 @@ async function runProvisioningOperation({
       || metadata.logical_database_identifier !== policy.logicalDatabaseIdentifier
       || String(metadata.schema_version) !== policy.schemaVersion
       || metadata.environment_key !== policy.environmentKey
-      || Number(metadata.migration_version) !== 10) {
+      || Number(metadata.migration_version) !== 13) {
       throw new Error("Private data-plane metadata verification failed.");
     }
   });
@@ -531,9 +531,9 @@ async function runProvisioningOperation({
       `INSERT INTO organisation_schema_status
         (organisation_id, route_id, expected_schema_version, observed_schema_version,
          compatibility_status, last_checked_at, safe_error_summary)
-       VALUES (?, ?, '10', '10', 'compatible', UTC_TIMESTAMP(3), NULL)
-       ON DUPLICATE KEY UPDATE route_id = VALUES(route_id), expected_schema_version = '10',
-         observed_schema_version = '10', compatibility_status = 'compatible',
+       VALUES (?, ?, '13', '13', 'compatible', UTC_TIMESTAMP(3), NULL)
+       ON DUPLICATE KEY UPDATE route_id = VALUES(route_id), expected_schema_version = '13',
+         observed_schema_version = '13', compatibility_status = 'compatible',
          last_checked_at = UTC_TIMESTAMP(3), safe_error_summary = NULL`,
       [organisation.organisationId, routeId],
     );
@@ -561,7 +561,7 @@ async function runProvisioningOperation({
         const [rows] = await adminPool.execute(
           `SELECT COUNT(*) AS count FROM \`${policy.databaseName}\`.data_plane_metadata
            WHERE metadata_key = 'primary' AND database_mode = 'private_database'
-             AND logical_database_identifier = ? AND schema_version = ? AND migration_version = 10`,
+             AND logical_database_identifier = ? AND schema_version = ? AND migration_version = 13`,
           [policy.logicalDatabaseIdentifier, policy.schemaVersion],
         );
         return Number(rows?.[0]?.count || 0) === 1;
@@ -686,8 +686,8 @@ async function runUpgradeOperation({
     const metadata = rows?.[0];
     if (!metadata || metadata.database_mode !== "private_database"
       || metadata.logical_database_identifier !== policy.logicalDatabaseIdentifier
-      || String(metadata.schema_version) !== "10" || metadata.environment_key !== policy.environmentKey
-      || Number(metadata.migration_version) !== 10) {
+      || String(metadata.schema_version) !== "13" || metadata.environment_key !== policy.environmentKey
+      || Number(metadata.migration_version) !== 13) {
       throw new Error("Upgraded private data-plane metadata verification failed.");
     }
   });
@@ -705,10 +705,10 @@ async function runUpgradeOperation({
     await grantReportWorkerSecretAccess(policy, secretNames);
   });
 
-  await runStep("register_schema_10_route", async () => {
+  await runStep("register_schema_13_route", async () => {
     const [existingRows] = await controlPool.execute(
       `SELECT route_id FROM data_plane_routes
-       WHERE organisation_id = ? AND schema_version = '10' AND retired_at IS NULL
+       WHERE organisation_id = ? AND schema_version = '13' AND retired_at IS NULL
        ORDER BY route_generation DESC LIMIT 1`,
       [organisation.organisationId],
     );
@@ -724,7 +724,7 @@ async function runUpgradeOperation({
       databaseName: policy.databaseName,
       secretReference: sourceRoute.secret_reference,
       region: policy.region,
-      schemaVersion: "10",
+      schemaVersion: "13",
       provisioningStatus: organisation.status === "active" ? "active" : "ready",
       healthStatus: "healthy",
       activate: organisation.status === "active",
@@ -735,20 +735,20 @@ async function runUpgradeOperation({
     if (!upgradedRoute?.routeId) {
       const [rows] = await controlPool.execute(
         `SELECT route_id FROM data_plane_routes
-         WHERE organisation_id = ? AND schema_version = '10' AND retired_at IS NULL
+         WHERE organisation_id = ? AND schema_version = '13' AND retired_at IS NULL
          ORDER BY route_generation DESC LIMIT 1`,
         [organisation.organisationId],
       );
       upgradedRoute = rows?.[0] ? { routeId: rows[0].route_id } : null;
     }
-    if (!upgradedRoute?.routeId) throw new Error("Schema-10 route was not registered.");
+    if (!upgradedRoute?.routeId) throw new Error("Schema-13 route was not registered.");
     await controlPool.execute(
       `INSERT INTO organisation_schema_status
         (organisation_id, route_id, expected_schema_version, observed_schema_version,
          compatibility_status, last_checked_at, safe_error_summary)
-       VALUES (?, ?, '10', '10', 'compatible', UTC_TIMESTAMP(3), NULL)
-       ON DUPLICATE KEY UPDATE route_id = VALUES(route_id), expected_schema_version = '10',
-         observed_schema_version = '10', compatibility_status = 'compatible',
+       VALUES (?, ?, '13', '13', 'compatible', UTC_TIMESTAMP(3), NULL)
+       ON DUPLICATE KEY UPDATE route_id = VALUES(route_id), expected_schema_version = '13',
+         observed_schema_version = '13', compatibility_status = 'compatible',
          last_checked_at = UTC_TIMESTAMP(3), safe_error_summary = NULL`,
       [organisation.organisationId, upgradedRoute.routeId],
     );

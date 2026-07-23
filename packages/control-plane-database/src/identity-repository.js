@@ -158,5 +158,65 @@ export function createIdentityRepository(defaultExecutor) {
       );
       return (rows || []).map((row) => row.role_key);
     },
+
+    async listUsersByOrganisation(organisationId, { executor } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT u.user_id, u.display_name, u.canonical_contact, u.status AS user_status,
+                m.membership_id, m.status AS membership_status, m.created_at AS joined_at,
+                ci.normalized_username, ci.status AS credential_status,
+                GROUP_CONCAT(r.role_key ORDER BY r.role_key SEPARATOR ',') AS role_keys
+         FROM users u
+         JOIN organisation_memberships m ON m.user_id = u.user_id AND m.organisation_id = ?
+         LEFT JOIN credential_identities ci ON ci.user_id = u.user_id AND ci.organisation_id = ? AND ci.authentication_provider = 'local_password'
+         LEFT JOIN membership_roles mr ON mr.membership_id = m.membership_id AND mr.revoked_at IS NULL
+         LEFT JOIN roles r ON r.role_id = mr.role_id
+         GROUP BY u.user_id, u.display_name, u.canonical_contact, u.status,
+                  m.membership_id, m.status, m.created_at, ci.normalized_username, ci.status
+         ORDER BY u.display_name`,
+        [organisationId, organisationId],
+      );
+      return (rows || []).map((row) => ({
+        userId: row.user_id,
+        displayName: row.display_name,
+        canonicalContact: row.canonical_contact,
+        userStatus: row.user_status,
+        membershipId: row.membership_id,
+        membershipStatus: row.membership_status,
+        joinedAt: row.joined_at,
+        username: row.normalized_username || null,
+        credentialStatus: row.credential_status || null,
+        roles: row.role_keys ? row.role_keys.split(",") : [],
+      }));
+    },
+
+    async updateUserStatus(userId, status, { executor } = {}) {
+      requireEnum(status, USER_STATUSES, "user_status");
+      const db = executorOr(defaultExecutor, executor);
+      await db.execute(
+        `UPDATE users SET status = ?, disabled_at = CASE WHEN ? = 'disabled' THEN UTC_TIMESTAMP(3) ELSE disabled_at END WHERE user_id = ?`,
+        [status, status, userId],
+      );
+      return this.getSafeUser(userId, { executor: db });
+    },
+
+    async updateCredentialStatus(credentialId, status, { executor } = {}) {
+      requireEnum(status, CREDENTIAL_STATUSES, "credential_status");
+      const db = executorOr(defaultExecutor, executor);
+      await db.execute(
+        `UPDATE credential_identities SET status = ? WHERE credential_id = ?`,
+        [status, credentialId],
+      );
+      return this.getSafeCredential(credentialId, { executor: db });
+    },
+
+    async updateMembershipStatus(membershipId, status, { executor } = {}) {
+      requireEnum(status, MEMBERSHIP_STATUSES, "membership_status");
+      const db = executorOr(defaultExecutor, executor);
+      await db.execute(
+        `UPDATE organisation_memberships SET status = ? WHERE membership_id = ?`,
+        [status, membershipId],
+      );
+      return this.getMembership(membershipId, { executor: db });
+    },
   };
 }

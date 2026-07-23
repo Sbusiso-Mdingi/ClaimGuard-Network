@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-import json
-import urllib.request
 from typing import Callable
 
 
@@ -253,39 +251,7 @@ class RuleEngine:
     def __init__(self, rules: list[RuleFn] | None = None) -> None:
         self._rules = rules or DEFAULT_RULES
 
-    def evaluate(self, graph: GraphForRules, strategy: str = "deterministic_rules", ml_endpoint_url: str | None = None) -> list[RuleHit]:
-        if strategy == "ml_endpoint":
-            if not ml_endpoint_url:
-                raise ValueError("ml_endpoint_url must be provided when strategy is 'ml_endpoint'")
-            
-            payload = json.dumps({
-                "entities": graph.entities,
-                "relationships": graph.relationships,
-                "claim_counts": graph.claim_counts,
-            }).encode("utf-8")
-            
-            req = urllib.request.Request(
-                ml_endpoint_url,
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            
-            try:
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-                    hits = []
-                    for h in data.get("hits", []):
-                        hits.append(RuleHit(
-                            rule_id=str(h.get("rule_id", "")),
-                            title=str(h.get("title", "")),
-                            weight=int(h.get("weight", 0)),
-                            evidence=list(h.get("evidence", [])),
-                        ))
-                    return sorted(hits, key=lambda hit: (hit.rule_id, hit.evidence[0] if hit.evidence else ""))
-            except Exception as e:
-                raise RuntimeError(f"ML endpoint failed: {e}") from e
-
+    def evaluate(self, graph: GraphForRules) -> list[RuleHit]:
         hits: list[RuleHit] = []
         for rule in self._rules:
             hits.extend(rule(graph))

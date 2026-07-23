@@ -11,7 +11,7 @@ function fixture({ organisation = {}, routes = null, mapping = undefined } = {})
   const resolvedRoutes = routes ?? [{
     route_id: "route-alpha", organisation_id: "org-alpha", route_type: "legacy_shared",
     logical_database_identifier: "legacy-operational-shared", database_name: "operational",
-    route_generation: 3, schema_version: "10", provisioning_status: "active", health_status: "healthy",
+    route_generation: 3, schema_version: "13", provisioning_status: "active", health_status: "healthy",
     retired_at: null, region: "za-north",
   }];
   const resolvedMapping = mapping === undefined ? {
@@ -38,7 +38,7 @@ test("active medical-scheme route resolves canonical immutable DataPlaneContext"
 test("route resolution fails closed for no route, multiple routes, suspension, retirement, unsupported type/schema, and missing mapping", async () => {
   const baseRoute = {
     route_id: "route-alpha", organisation_id: "org-alpha", route_type: "legacy_shared",
-    logical_database_identifier: "legacy-operational-shared", route_generation: 1, schema_version: "10",
+    logical_database_identifier: "legacy-operational-shared", route_generation: 1, schema_version: "13",
     provisioning_status: "active", health_status: "healthy", retired_at: null,
   };
   const cases = [
@@ -83,7 +83,7 @@ test("private route resolves organisation-scoped operational tenant identity", a
       logical_database_identifier: "private:org-private",
       database_name: "claimguard_tenant_discovery_health",
       route_generation: 1,
-      schema_version: "10",
+      schema_version: "13",
       provisioning_status: "active",
       health_status: "healthy",
       retired_at: null,

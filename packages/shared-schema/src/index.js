@@ -81,6 +81,8 @@ export const claimIngestionProviderSchema = z.object({
   practice_region: z.string().trim().min(1).max(128),
   practice_lat: z.number().finite().min(-90).max(90),
   practice_lon: z.number().finite().min(-180).max(180),
+  provider_kind: z.string().trim().min(1).max(64),
+  provider_category: z.string().trim().min(1).max(128),
 }).strict();
 
 export const claimIngestionClaimSchema = z.object({
@@ -89,9 +91,45 @@ export const claimIngestionClaimSchema = z.object({
   member_id: identifier(128),
   provider_id: identifier(128),
   service_date: dateOnly,
+  received_date: dateOnly,
   billing_code: z.string().trim().min(1).max(64),
-  amount: z.number().finite().nonnegative().max(9_999_999_999.99),
-}).strict();
+  amount: z.number().finite().positive().max(9_999_999_999.99),
+  quantity: z.number().finite().positive().max(999_999_999.999),
+  benefit_option: z.string().trim().min(1).max(128),
+  network_type: z.string().trim().min(1).max(64),
+  line_type: z.string().trim().min(1).max(64),
+  tariff_discipline: z.string().trim().min(1).max(128),
+  diagnosis_code: z.string().trim().min(1).max(32),
+  rendering_practitioner_id: identifier(128).nullable(),
+  rendering_practitioner_category: z.string().trim().min(1).max(128),
+  rendering_known_to_billing_provider: z.boolean(),
+}).strict().superRefine((claim, context) => {
+  if (claim.received_date < claim.service_date) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["received_date"],
+      message: "received_date cannot precede service_date.",
+    });
+  }
+  const noRenderingPractitioner = claim.rendering_practitioner_id === null;
+  if (noRenderingPractitioner && (
+    claim.rendering_practitioner_category !== "NONE"
+    || claim.rendering_known_to_billing_provider
+  )) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["rendering_practitioner_id"],
+      message: "Missing rendering practitioners must use category NONE and known=false.",
+    });
+  }
+  if (!noRenderingPractitioner && claim.rendering_practitioner_category === "NONE") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["rendering_practitioner_category"],
+      message: "A rendering practitioner cannot use category NONE.",
+    });
+  }
+});
 
 export function createClaimIngestionBatchSchema({ maxBatchSize = 500, maxReferenceRecords = 2_000 } = {}) {
   return z.object({
@@ -157,6 +195,34 @@ const forbiddenReportFieldNames = new Set([
 
 export const detectionReportContractVersion = "1.0";
 
+const modelReviewSchema = z.object({
+  baselineFraudProbability: finiteNumber.min(0).max(1),
+  baselinePredictedClass: z.enum(["LEGITIMATE", "FRAUD"]),
+  baselineThreshold: finiteNumber.min(0).max(1),
+  ringProbability: finiteNumber.min(0).max(1),
+  ringReviewHit: z.boolean(),
+  ringThreshold: finiteNumber.min(0).max(1),
+  phantomProbability: finiteNumber.min(0).max(1),
+  phantomReviewHit: z.boolean(),
+  phantomThreshold: finiteNumber.min(0).max(1),
+  compositeReviewRecommended: z.boolean(),
+}).strict().superRefine((review, context) => {
+  const baselineHit = review.baselineFraudProbability >= review.baselineThreshold;
+  const ringHit = review.ringProbability >= review.ringThreshold;
+  const phantomHit = review.phantomProbability >= review.phantomThreshold;
+  if (
+    (review.baselinePredictedClass === "FRAUD") !== baselineHit
+    || review.ringReviewHit !== ringHit
+    || review.phantomReviewHit !== phantomHit
+    || review.compositeReviewRecommended !== (baselineHit || ringHit || phantomHit)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Model decisions must match the published thresholds.",
+    });
+  }
+});
+
 const canonicalClaimSchema = z.object({
   claimId: z.string().min(1),
   providerId: z.string().min(1),
@@ -170,6 +236,7 @@ const canonicalClaimSchema = z.object({
   ruleHits: z.array(z.object({ ruleId: z.string(), title: z.string(), weight: finiteNumber })),
   evidenceReferences: z.array(z.unknown()),
   processingStatus: z.string().nullable(),
+  modelReview: modelReviewSchema.optional(),
 }).strict();
 
 const graphNodeSchema = z.object({ entity_id: z.string().min(1) }).passthrough();
@@ -199,6 +266,15 @@ export const detectionReportSchema = z.object({
     detectionEngineVersion: z.string().min(1),
     producerVersion: z.string().min(1),
     generationCorrelationId: z.string(),
+    model: z.object({
+      deploymentId: identifier(128),
+      ensembleId: identifier(128),
+      ensembleVersion: identifier(64),
+      featureSchemaVersion: identifier(128),
+      analysisMode: z.literal("RETROSPECTIVE_CLOSED_WINDOW_REVIEW"),
+      requestId: identifier(128),
+      riskScoreBasis: z.literal("THRESHOLD_NORMALIZED_MAX_COMPONENT"),
+    }).strict().optional(),
   }).strict(),
   summary: z.object({
     totalClaims: z.number().int().nonnegative(),
@@ -241,6 +317,12 @@ export const detectionReportSchema = z.object({
   }
   if (report.summary.riskDistribution.low + report.summary.riskDistribution.medium + report.summary.riskDistribution.high !== report.claims.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Report risk distribution is inconsistent." });
+  }
+  if (report.metadata.model && report.claims.some((claim) => !claim.modelReview)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Model reports require modelReview on every claim." });
+  }
+  if (!report.metadata.model && report.claims.some((claim) => claim.modelReview)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Deterministic reports cannot contain modelReview results." });
   }
 });
 

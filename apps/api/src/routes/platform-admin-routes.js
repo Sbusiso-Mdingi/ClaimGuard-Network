@@ -67,7 +67,7 @@ function approvedAzurePolicy({ organisationId, canonicalSlug, deploymentClass })
   const region = process.env.AZURE_APPROVED_REGION || "southafricanorth";
   const reportContainer = process.env.AZURE_APPROVED_REPORT_CONTAINER || "claimguard-reports";
   const reportPartitionStrategy = process.env.REPORT_PARTITION_STRATEGY || "prefix";
-  const privateSchemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "10";
+  const privateSchemaVersion = process.env.PRIVATE_TENANT_SCHEMA_VERSION || "13";
   const safeSlug = String(canonicalSlug || "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase().slice(0, 40) || "tenant";
   return {
     subscriptionId,
@@ -189,6 +189,54 @@ export function registerPlatformAdminRoutes(app, {
     }
   });
 
+  app.post("/admin/platform/organisations/:id/invite-admin", requirePlatformAdmin, async (c) => {
+    if (!controlPlaneService?.createAdminInvitation) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Invitations are not configured." }, 404);
+    }
+    const actor = actorFromContext(c);
+    const organisationId = c.req.param("id");
+    const payload = await c.req.json().catch(() => ({}));
+    const email = String(payload?.email || "").trim().toLowerCase();
+
+    if (!email) {
+      return c.json({ available: false, code: "INVALID_INPUT", message: "email is required." }, 400);
+    }
+
+    try {
+      const result = await controlPlaneService.createAdminInvitation({
+        organisationId,
+        email,
+        invitedBy: actor.id,
+      }, actor);
+
+      // We return the raw token so the UI can construct the signup URL
+      return c.json({
+        available: true,
+        invitationId: result.invitationId,
+        token: result.token,
+        email: result.email,
+        expiresAt: result.expiresAt,
+      }, 201);
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 400;
+      const code = error?.code || "INVITE_FAILED";
+      return c.json({ available: false, code, message: error?.message || "Failed to create invitation." }, status);
+    }
+  });
+
+  app.get("/admin/platform/organisations/:id/invitations", requirePlatformAdmin, async (c) => {
+    if (!controlPlaneService?.listInvitations) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Invitations are not configured." }, 404);
+    }
+    const organisationId = c.req.param("id");
+    try {
+      const invitations = await controlPlaneService.listInvitations(organisationId);
+      return c.json({ available: true, invitations });
+    } catch (error) {
+      return c.json({ available: false, code: "FETCH_FAILED", message: "Failed to list invitations." }, 500);
+    }
+  });
+
   app.get("/admin/platform/global-detection-engine", requirePlatformAdmin, async (c) => {
     try {
       const flag = await controlPlaneRepositories.configuration.getFeatureFlag({
@@ -196,7 +244,7 @@ export function registerPlatformAdminRoutes(app, {
       });
       return c.json({
         available: true,
-        strategy: flag?.value || { endpointUrl: "", customModelImageSecret: "" },
+        strategy: flag?.value || { modelDeploymentId: "" },
       });
     } catch (error) {
       return c.json({ available: false, message: "Failed to load global detection engine config" }, 500);
@@ -206,12 +254,21 @@ export function registerPlatformAdminRoutes(app, {
   app.put("/admin/platform/global-detection-engine", requirePlatformAdmin, async (c) => {
     try {
       const payload = await c.req.json();
+      const modelDeploymentId = String(payload.modelDeploymentId || "").trim();
+      const approvedDeploymentIds = new Set(
+        String(process.env.APPROVED_MODEL_DEPLOYMENT_IDS || "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+      );
+      if (!modelDeploymentId || !approvedDeploymentIds.has(modelDeploymentId)) {
+        return c.json({ available: false, message: "modelDeploymentId is not approved in this environment." }, 400);
+      }
       await controlPlaneRepositories.configuration.setFeatureFlag({
         flagKey: "global_detection_engine",
         valueType: "json",
         value: {
-          endpointUrl: payload.endpointUrl || null,
-          customModelImageSecret: payload.customModelImageSecret || null,
+          modelDeploymentId,
         },
         enabled: true,
       });

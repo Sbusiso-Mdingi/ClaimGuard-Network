@@ -15,9 +15,9 @@ export class DataPlaneMetadataMismatchError extends Error {
 export function createLegacySharedAdapter({
   databaseUrl,
   expectedEnvironment = "legacy",
-  supportedSchemaVersions = ["10"],
+  supportedSchemaVersions = ["13"],
   expectedLogicalDatabaseIdentifier = "legacy-operational-shared",
-  expectedMigrationVersion = 10,
+  expectedMigrationVersion = 13,
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),
 } = {}) {

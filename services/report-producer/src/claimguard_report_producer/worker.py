@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from .contract import ReportContractError, validate_detection_report
 from .data_plane import discover_active_worker_organisation_ids, resolve_worker_data_plane_scope
+from .model_service import ModelServiceClient
 from .outbox import OutboxJob, PyMySqlOutboxRepository
 from .publisher import AzureBlobReportPublisher, FileReportPublisher
 from .snapshot import PyMySqlTenantSnapshotRepository
@@ -106,6 +107,7 @@ class ReportProducerWorker:
         config: WorkerConfig,
         logger: StructuredWorkerLogger | None = None,
         scope_validator=None,
+        model_client: ModelServiceClient | None = None,
     ) -> None:
         self.repository = repository
         self.publisher = publisher
@@ -113,6 +115,7 @@ class ReportProducerWorker:
         self.config = config
         self.logger = logger or StructuredWorkerLogger()
         self.scope_validator = scope_validator
+        self.model_client = model_client
 
     def run_once(self) -> int:
         if self.scope_validator is not None:
@@ -133,6 +136,8 @@ class ReportProducerWorker:
                     job=job,
                     worker_id=self.config.worker_id,
                     last_error=type(error).__name__,
+                    failure_code=type(error).__name__,
+                    failed_watermark=None,
                 )
                 self.logger.emit("error", "outbox_job_dead_lettered", job, error_type=type(error).__name__)
                 continue
@@ -184,6 +189,7 @@ class ReportProducerWorker:
                 snapshot,
                 correlation_id=correlation_id,
                 top_n=self.config.top_n,
+                model_client=self.model_client,
             )
             validate_detection_report(report, expected_tenant_id=job.tenant_id)
             published = self.publisher.publish(
@@ -207,18 +213,31 @@ class ReportProducerWorker:
                     covered_watermark=snapshot.watermark,
                 )
         except (TerminalJobError, ReportContractError) as error:
+            failure_code = _failure_code(error)
+            failed_watermark = _failed_watermark(error)
             for candidate in jobs:
                 self.repository.mark_dead_letter(
                     job=candidate,
                     worker_id=self.config.worker_id,
-                    last_error=type(error).__name__,
+                    last_error=failure_code,
+                    failure_code=failure_code,
+                    failed_watermark=failed_watermark,
                 )
-                self.logger.emit("error", "outbox_job_dead_lettered", candidate, error_type=type(error).__name__)
+                self.logger.emit(
+                    "error",
+                    "outbox_job_dead_lettered",
+                    candidate,
+                    error_type=type(error).__name__,
+                    failure_code=failure_code,
+                    failed_watermark=failed_watermark,
+                )
         except Exception as error:  # noqa: BLE001
             for candidate in jobs:
                 self._retry_or_dead_letter(candidate, error)
 
     def _retry_or_dead_letter(self, job: OutboxJob, error: Exception) -> None:
+        failure_code = _failure_code(error)
+        failed_watermark = _failed_watermark(error)
         effective_maximum_attempts = min(
             job.max_attempts if job.max_attempts > 0 else self.config.maximum_attempts,
             self.config.maximum_attempts,
@@ -227,9 +246,18 @@ class ReportProducerWorker:
             self.repository.mark_dead_letter(
                 job=job,
                 worker_id=self.config.worker_id,
-                last_error=type(error).__name__,
+                last_error=failure_code,
+                failure_code=failure_code,
+                failed_watermark=failed_watermark,
             )
-            self.logger.emit("error", "outbox_job_dead_lettered", job, error_type=type(error).__name__)
+            self.logger.emit(
+                "error",
+                "outbox_job_dead_lettered",
+                job,
+                error_type=type(error).__name__,
+                failure_code=failure_code,
+                failed_watermark=failed_watermark,
+            )
             return
 
         delay = min(
@@ -240,7 +268,9 @@ class ReportProducerWorker:
             job=job,
             worker_id=self.config.worker_id,
             delay_seconds=delay,
-            last_error=type(error).__name__,
+            last_error=failure_code,
+            failure_code=failure_code,
+            failed_watermark=failed_watermark,
         )
         self.logger.emit(
             "warning",
@@ -248,6 +278,8 @@ class ReportProducerWorker:
             job,
             retry_delay_seconds=delay,
             error_type=type(error).__name__,
+            failure_code=failure_code,
+            failed_watermark=failed_watermark,
         )
 
     @staticmethod
@@ -269,6 +301,17 @@ class ReportProducerWorker:
         # Payload contents are trigger metadata only. Detection always reloads the tenant snapshot.
 
 
+def _failure_code(error: Exception) -> str:
+    code = getattr(error, "code", None)
+    return str(code or type(error).__name__)[:64]
+
+
+def _failed_watermark(error: Exception) -> str | None:
+    value = getattr(error, "watermark", None)
+    rendered = str(value or "").strip()
+    return rendered[:1024] if rendered else None
+
+
 def create_worker_from_environment(
     *,
     backend: str | None = None,
@@ -282,7 +325,7 @@ def create_worker_from_environment(
     )
     supported_schema_versions = frozenset(
         value.strip()
-        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "10").split(",")
+        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "13").split(",")
         if value.strip()
     )
 
@@ -330,12 +373,25 @@ def create_worker_from_environment(
     else:
         raise ValueError("REPORT_STORAGE_BACKEND must be file or azure_blob.")
 
+    model_environment_names = {
+        "MODEL_SERVICE_BASE_URL",
+        "MODEL_SERVICE_AUDIENCE",
+        "MODEL_SERVICE_PSEUDONYMIZATION_KEY",
+        "MODEL_SERVICE_DEPLOYMENT_ID",
+    }
+    model_client = (
+        ModelServiceClient.from_environment()
+        if any(os.environ.get(name, "").strip() for name in model_environment_names)
+        else None
+    )
+
     return ReportProducerWorker(
         repository=repository,
         publisher=publisher,
         snapshot_repository=snapshot_repository,
         config=WorkerConfig.from_environment(),
         scope_validator=validate_scope,
+        model_client=model_client,
     )
 
 
@@ -346,7 +402,7 @@ def create_discovered_workers_from_environment(
 ) -> list[ReportProducerWorker]:
     supported_schema_versions = frozenset(
         value.strip()
-        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "10").split(",")
+        for value in os.environ.get("DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS", "13").split(",")
         if value.strip()
     )
     organisation_ids = discover_active_worker_organisation_ids(

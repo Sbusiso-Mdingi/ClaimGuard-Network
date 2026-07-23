@@ -13,7 +13,7 @@ from claimguard_report_producer.outbox import OutboxJob, PyMySqlOutboxRepository
 class DataPlaneScopedOutboxTests(unittest.TestCase):
     @staticmethod
     def _pymysql_module(
-        *, migration_version: int, route_type: str = "legacy_shared", schema_version: str = "10"
+        *, migration_version: int, route_type: str = "legacy_shared", schema_version: str = "13"
     ):
         class Cursor:
             def __init__(self, kind):
@@ -120,7 +120,7 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
 
             def fetchall(self):
                 self.assertIn("worker_routing_status", self.query)
-                self.assertEqual(self.params, ["10"])
+                self.assertEqual(self.params, ["13"])
                 return [
                     {"organisation_id": "org-bonitas"},
                     {"organisation_id": "org-discovery"},
@@ -172,14 +172,14 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
             repository.mark_dead_letter(job=job, worker_id="worker", last_error="failure")
 
     def test_worker_scope_requires_the_current_operational_schema(self):
-        with patch.dict("sys.modules", {"pymysql": self._pymysql_module(migration_version=10)}):
+        with patch.dict("sys.modules", {"pymysql": self._pymysql_module(migration_version=13)}):
             scope = resolve_worker_data_plane_scope(
                 control_plane_url="mysql://user:secret@control/controls",
                 operational_url="mysql://user:secret@operational/operational",
                 organisation_ids=["org-alpha"],
                 allowed_organisation_ids=frozenset({"org-alpha"}),
             )
-        self.assertEqual(scope.schema_version, "10")
+        self.assertEqual(scope.schema_version, "13")
         self.assertEqual(scope.tenant_ids, frozenset({"tenant_alpha"}))
 
         with patch.dict("sys.modules", {"pymysql": self._pymysql_module(migration_version=8)}):
@@ -211,7 +211,7 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
 
         with patch.dict(
             "sys.modules",
-            {"pymysql": self._pymysql_module(migration_version=10, route_type="private_database")},
+            {"pymysql": self._pymysql_module(migration_version=13, route_type="private_database")},
         ):
             scope = resolve_worker_data_plane_scope(
                 control_plane_url="mysql://user:secret@control/controls",
@@ -224,7 +224,7 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
 
         self.assertEqual(scope.route_type, "private_database")
         self.assertEqual(scope.tenant_ids, frozenset({"org-alpha"}))
-        self.assertEqual(scope.schema_version, "10")
+        self.assertEqual(scope.schema_version, "13")
         self.assertIn("tenant%40runtime:p%3Aa%2Fss@claimguard.mysql.database.azure.com", scope.operational_url)
         self.assertNotIn("p:a/ss", repr(scope))
 
@@ -233,7 +233,7 @@ class DataPlaneScopedOutboxTests(unittest.TestCase):
             "sys.modules",
             {
                 "pymysql": self._pymysql_module(
-                    migration_version=10,
+                    migration_version=13,
                     route_type="private_database",
                     schema_version="8",
                 )

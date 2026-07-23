@@ -5,6 +5,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from claimguard_report_producer.outbox import OutboxJob
+from claimguard_report_producer.model_service import ModelServiceUnavailable
 from claimguard_report_producer.snapshot import TenantSnapshot
 from claimguard_report_producer.worker import ReportProducerWorker, WorkerConfig
 
@@ -61,11 +62,11 @@ class FakeRepository:
         return True
 
     def mark_retry(self, **kwargs):
-        self.retried.append(kwargs["job"])
+        self.retried.append(kwargs)
         return True
 
     def mark_dead_letter(self, **kwargs):
-        self.dead.append(kwargs["job"])
+        self.dead.append(kwargs)
         return True
 
 
@@ -193,7 +194,10 @@ class WorkerTests(TestCase):
             repository=repository, publisher=FakePublisher(), snapshot_repository=FakeSnapshots(), config=config(), logger=FakeLogger()
         )
         worker.run_once()
-        self.assertEqual([item.id for item in repository.dead], ["bad-payload", "bad-type"])
+        self.assertEqual(
+            [item["job"].id for item in repository.dead],
+            ["bad-payload", "bad-type"],
+        )
 
     @patch("claimguard_report_producer.worker.build_report_from_tenant_snapshot")
     def test_publication_failure_retries_every_covered_job(self, build_report) -> None:
@@ -208,7 +212,31 @@ class WorkerTests(TestCase):
             logger=FakeLogger(),
         )
         worker.run_once()
-        self.assertEqual([item.id for item in repository.retried], ["job-1", "job-2"])
+        self.assertEqual(
+            [item["job"].id for item in repository.retried],
+            ["job-1", "job-2"],
+        )
+
+    @patch("claimguard_report_producer.worker.build_report_from_tenant_snapshot")
+    def test_model_outage_records_typed_failure_and_watermark(self, build_report) -> None:
+        build_report.side_effect = ModelServiceUnavailable(
+            watermark="snapshot-watermark",
+        )
+        repository = FakeRepository([job("job-model")])
+        worker = ReportProducerWorker(
+            repository=repository,
+            publisher=FakePublisher(),
+            snapshot_repository=FakeSnapshots(),
+            config=config(),
+            logger=FakeLogger(),
+        )
+
+        worker.run_once()
+
+        retry = repository.retried[0]
+        self.assertEqual(retry["job"].id, "job-model")
+        self.assertEqual(retry["failure_code"], "MODEL_SERVICE_UNAVAILABLE")
+        self.assertEqual(retry["failed_watermark"], "snapshot-watermark")
 
     def test_empty_batch_returns_without_snapshot(self) -> None:
         snapshots = FakeSnapshots()

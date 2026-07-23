@@ -168,7 +168,7 @@ function createControlPlaneHarness() {
       }
       const updated = { ...organisation, status: "active", activationState: "activated" };
       organisations.set(organisationId, updated);
-      return { organisation: updated, route: { routeId: `route-${organisationId}`, schemaVersion: "10" } };
+      return { organisation: updated, route: { routeId: `route-${organisationId}`, schemaVersion: "13" } };
     },
     async createIntegrationCredential({ organisationId, displayName, serviceActorId }) {
       const credential = {

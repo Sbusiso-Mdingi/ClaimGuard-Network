@@ -15,10 +15,10 @@ test("real MySQL operational migrations, checksums, metadata singleton, and cons
     const first = await applyMigrations(pool, undefined, { applicationVersion: "integration-test" });
     const second = await applyMigrations(pool, undefined, { applicationVersion: "integration-test" });
     const status = await getOperationalMigrationStatus(pool);
-    assert.equal(first.applied.length + first.skipped.length, 10);
+    assert.equal(first.applied.length + first.skipped.length, 13);
     assert.equal(second.applied.length, 0);
     assert.equal(second.appliedStatements, 0);
-    assert.equal(status.applied.length, 10);
+    assert.equal(status.applied.length, 13);
     assert.equal(status.pending.length, 0);
 
     const [columns] = await pool.execute(
@@ -70,7 +70,7 @@ test("real MySQL operational migrations, checksums, metadata singleton, and cons
     const [metadata] = await pool.execute("SELECT * FROM data_plane_metadata");
     assert.equal(metadata.length, 1);
     assert.equal(metadata[0].metadata_key, "primary");
-    assert.equal(metadata[0].migration_version, 10);
+    assert.equal(metadata[0].migration_version, 13);
   } finally {
     await pool.end();
   }

@@ -1,5 +1,6 @@
 import { TenantReportNotFoundError } from "../application-errors.js";
 import { parseDetectionReport } from "@claimguard/shared-schema";
+import { CLAIM_PROCESSING_STATUS } from "@claimguard/database";
 
 function reportStorageFailure() {
   return {
@@ -54,6 +55,7 @@ async function buildRuntimeLedgerReference(ledgerRepository) {
 export function createReportService({
   reportStorage,
   ledgerRepository = null,
+  generationRepository = null,
 } = {}) {
   const reportCacheTtlMsRaw = Number.parseInt(process.env.REPORT_CACHE_TTL_MS || "15000", 10);
   const reportCacheTtlMs = Number.isFinite(reportCacheTtlMsRaw) && reportCacheTtlMsRaw >= 0 ? reportCacheTtlMsRaw : 15000;
@@ -300,6 +302,89 @@ export function createReportService({
           risk: loaded.report.risk,
         },
       };
+    },
+
+    async getDetectionStatus(tenantContext) {
+      const tenantId = tenantContext?.tenant_id || null;
+      if (!tenantId) {
+        return {
+          ok: false,
+          status: 403,
+          body: {
+            available: false,
+            code: "TENANT_CONTEXT_REQUIRED",
+            message: "Tenant authorization failed for this request.",
+          },
+        };
+      }
+      if (!generationRepository?.getLatestGenerationStatus) {
+        return {
+          ok: false,
+          status: 503,
+          body: {
+            available: false,
+            code: "GENERATION_STATUS_UNAVAILABLE",
+            message: "Detection generation status is not configured.",
+          },
+        };
+      }
+
+      try {
+        const [generation, loaded] = await Promise.all([
+          generationRepository.getLatestGenerationStatus({ tenantId }),
+          this.loadReportOrFail(tenantContext),
+        ]);
+        const reportWatermark = loaded.ok
+          ? loaded.report.metadata.source.watermark
+          : null;
+        const targetWatermark = generation?.coveredWatermark
+          || generation?.failedWatermark
+          || null;
+        let freshness = "unknown";
+        if (!generation) freshness = reportWatermark ? "current" : "not_generated";
+        else if (
+          generation.status === CLAIM_PROCESSING_STATUS.COMPLETED
+          && generation.coveredWatermark === reportWatermark
+        ) freshness = "current";
+        else if (targetWatermark && targetWatermark !== reportWatermark) freshness = "stale";
+        else if (["pending", "processing", "retry"].includes(generation.status)) freshness = "pending";
+        else if (generation.status === "dead_letter") freshness = "stale";
+
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            available: true,
+            report: {
+              available: Boolean(loaded.ok),
+              watermark: reportWatermark,
+              freshness,
+            },
+            generation: generation ? {
+              jobId: generation.id,
+              status: generation.status,
+              attemptCount: generation.attemptCount,
+              maxAttempts: generation.maxAttempts,
+              failureCode: generation.failureCode,
+              failedWatermark: generation.failedWatermark,
+              coveredReportId: generation.coveredReportId,
+              coveredWatermark: generation.coveredWatermark,
+              updatedAt: generation.updatedAt,
+              completedAt: generation.completedAt,
+            } : null,
+          },
+        };
+      } catch {
+        return {
+          ok: false,
+          status: 503,
+          body: {
+            available: false,
+            code: "GENERATION_STATUS_UNAVAILABLE",
+            message: "Detection generation status could not be read.",
+          },
+        };
+      }
     },
   };
 }

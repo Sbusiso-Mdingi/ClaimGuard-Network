@@ -21,8 +21,7 @@ function ReadOnlyRow({ label, value }) {
 }
 
 export function GlobalDetectionEngineSettings() {
-  const [endpointUrl, setEndpointUrl] = useState("");
-  const [customModelSecret, setCustomModelSecret] = useState("");
+  const [modelDeploymentId, setModelDeploymentId] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -33,8 +32,7 @@ export function GlobalDetectionEngineSettings() {
       try {
         const payload = await apiJson("/admin/platform/global-detection-engine");
         if (payload.strategy) {
-          setEndpointUrl(payload.strategy.endpointUrl || "");
-          setCustomModelSecret(payload.strategy.customModelImageSecret || "");
+          setModelDeploymentId(payload.strategy.modelDeploymentId || "");
         }
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Failed to load global detection config");
@@ -54,8 +52,7 @@ export function GlobalDetectionEngineSettings() {
       await apiJson("/admin/platform/global-detection-engine", {
         method: "PUT",
         body: JSON.stringify({
-          endpointUrl: endpointUrl || null,
-          customModelImageSecret: customModelSecret || null,
+          modelDeploymentId: modelDeploymentId || null,
         }),
       });
       setMessage("Global detection engine configuration updated successfully.");
@@ -74,26 +71,17 @@ export function GlobalDetectionEngineSettings() {
     <form onSubmit={handleSave} className="space-y-4">
       {error && <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
       {message && <div className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">{message}</div>}
-      <WizardField label="Custom Model Endpoint URL">
-        <input
-          type="url"
-          required
-          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="https://your-custom-engine.com/evaluate"
-          value={endpointUrl}
-          onChange={(e) => setEndpointUrl(e.target.value)}
-        />
-      </WizardField>
-      <WizardField label="Key Vault Secret Name">
+      <WizardField label="Approved Model Deployment ID">
         <input
           type="text"
+          required
           className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="my-custom-model-secret"
-          value={customModelSecret}
-          onChange={(e) => setCustomModelSecret(e.target.value)}
+          placeholder="claimguard-claim-fraud-ensemble-1.1.0"
+          value={modelDeploymentId}
+          onChange={(e) => setModelDeploymentId(e.target.value)}
         />
       </WizardField>
-      <button type="submit" disabled={saving || !endpointUrl} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
+      <button type="submit" disabled={saving || !modelDeploymentId} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
         {saving ? "Saving..." : "Save Configuration"}
       </button>
     </form>
@@ -307,6 +295,32 @@ export function PlatformAdminPage() {
     }
   }
 
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitationUrl, setInvitationUrl] = useState("");
+
+  async function handleInviteSchemeAdmin(e) {
+    e.preventDefault();
+    const organisationId = organisation?.organisation?.organisationId;
+    if (!organisationId || !inviteEmail) return;
+    setLoading(true);
+    setError("");
+    setInvitationUrl("");
+    try {
+      const payload = await apiJson(`/admin/platform/organisations/${encodeURIComponent(organisationId)}/invite-admin`, {
+        method: "POST",
+        body: JSON.stringify({ email: inviteEmail }),
+      });
+      const url = `${window.location.origin}/auth/signup?token=${payload.token}`;
+      setInvitationUrl(url);
+      setMessage("Invitation created successfully. Copy the URL to send to the administrator.");
+      setInviteEmail("");
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : "Failed to create invitation.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (operation?.operationId) {
@@ -403,6 +417,36 @@ export function PlatformAdminPage() {
           {message ? <p className="text-sm text-emerald-600">{message}</p> : null}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
         </form>
+      </SectionCard>
+
+      <SectionCard title="Invite Scheme Administrator" description="Generate a self-service signup link for a medical scheme administrator.">
+        {!organisation?.organisation?.organisationId ? (
+          <p className="text-sm text-muted-foreground">Select or create an organisation first.</p>
+        ) : (
+          <form className="grid gap-4" onSubmit={handleInviteSchemeAdmin}>
+            <WizardField label="Administrator Email Address">
+              <input
+                type="email"
+                className="rounded-xl border border-border bg-background px-3 py-2"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="admin@scheme.example.com"
+                required
+              />
+            </WizardField>
+            <div className="flex flex-wrap gap-2">
+              <button type="submit" className="rounded-xl bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={loading || !inviteEmail}>
+                Generate Invitation
+              </button>
+            </div>
+            {invitationUrl && (
+              <div className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-4">
+                <p className="font-semibold">Copy this URL and send it to the scheme administrator:</p>
+                <code className="mt-2 block break-all rounded-lg bg-background p-3 text-sm">{invitationUrl}</code>
+              </div>
+            )}
+          </form>
+        )}
       </SectionCard>
 
       <SectionCard title="Connect the medical aid's claims server" description="Create a separate, revocable credential for each sending server. Tokens are shown once and stored by ClaimGuard only as hashes.">

@@ -25,7 +25,7 @@ const approvedEnvironment = Object.freeze({
   AZURE_APPROVED_REPORT_CONTAINER: "reports",
   AZURE_APPROVED_REGION: "southafricanorth",
   AZURE_APPROVED_ENVIRONMENT_KEY: "test",
-  PRIVATE_TENANT_SCHEMA_VERSION: "10",
+  PRIVATE_TENANT_SCHEMA_VERSION: "13",
   PROVISIONING_ALLOW_ENV_SECRET_FALLBACK: "true",
   PROVISIONING_MAX_OPERATIONS: "1",
 });
@@ -154,12 +154,12 @@ integration("real MySQL onboarding is leased, isolated, retryable, and leaves ro
     }, {
       databaseMode: "private_database",
       logicalDatabaseIdentifier: `private:${first.organisation.organisationId}`,
-      schemaVersion: "10",
+      schemaVersion: "13",
       environmentKey: "test",
-      migrationVersion: 10,
+      migrationVersion: 13,
     });
     const [migrationRows] = await adminPool.execute(`SELECT COUNT(*) AS count FROM \`${generatedDatabases[0]}\`.operational_migration_history`);
-    assert.equal(Number(migrationRows[0].count), 10);
+    assert.equal(Number(migrationRows[0].count), 13);
 
     const [privateRoutes] = await controlPool.execute(
       "SELECT route_type, provisioning_status, active_route_slot FROM data_plane_routes WHERE organisation_id = ? AND route_type = 'private_database'",

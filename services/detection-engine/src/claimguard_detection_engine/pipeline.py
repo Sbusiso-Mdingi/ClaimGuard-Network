@@ -175,8 +175,6 @@ def run_detection_pipeline(
     *,
     ledger_reference: dict[str, object] | None = None,
     graph_store: GraphStore | None = None,
-    detection_strategy: str = "deterministic_rules",
-    ml_endpoint_url: str | None = None,
 ) -> dict[str, object]:
     normalized_claims = normalize_claim_data(raw_claims)
     graph = build_internal_graph(normalized_claims)
@@ -189,8 +187,6 @@ def run_detection_pipeline(
             relationships=graph.relationships,
             claim_counts=dict(claim_counts),
         ),
-        strategy=detection_strategy,
-        ml_endpoint_url=ml_endpoint_url,
     )
 
     serialized_hits = [

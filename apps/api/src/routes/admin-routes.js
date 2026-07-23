@@ -4,6 +4,17 @@ import {
   createRequireOperationalRouteAuthorizationMiddleware,
 } from "../middleware/authorization-middleware.js";
 
+const DEPLOYMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function approvedModelDeploymentIds() {
+  return new Set(
+    String(process.env.APPROVED_MODEL_DEPLOYMENT_IDS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+}
+
 export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = null, detectionStrategyRepository = null, tenantRepository = null }) {
   const requireInternalDataPlaneHealth = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH,
@@ -120,20 +131,29 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     const tenantContext = c.get("tenantContext");
     const payload = await c.req.json().catch(() => ({}));
 
-    if (!payload.strategyType) {
-      return c.json({ available: false, message: "strategyType is required" }, 400);
+    const permittedKeys = new Set(["strategyType", "modelDeploymentId"]);
+    if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
+      return c.json({ available: false, message: "The strategy payload contains unsupported fields." }, 400);
+    }
+    if (!["deterministic_rules", "approved_model"].includes(payload.strategyType)) {
+      return c.json({ available: false, message: "strategyType must be deterministic_rules or approved_model." }, 400);
+    }
+    const modelDeploymentId = String(payload.modelDeploymentId || "").trim() || null;
+    if (payload.strategyType === "approved_model" && (
+      !modelDeploymentId
+      || !DEPLOYMENT_ID_PATTERN.test(modelDeploymentId)
+      || !approvedModelDeploymentIds().has(modelDeploymentId)
+    )) {
+      return c.json({ available: false, message: "modelDeploymentId is not approved in this environment." }, 400);
+    }
+    if (payload.strategyType === "deterministic_rules" && modelDeploymentId) {
+      return c.json({ available: false, message: "Deterministic strategy cannot select a model deployment." }, 400);
     }
 
-    if (payload.strategyType === "ml_endpoint" && !payload.endpointUrl) {
-      return c.json({ available: false, message: "endpointUrl is required for ml_endpoint strategy" }, 400);
-    }
-
-    // customModelImageSecret is optional; it should be the name of a Key Vault secret storing the model image URL
-    const strategy = await detectionStrategyRepository.setStrategy(tenantContext, {
-      strategyType: payload.strategyType,
-      endpointUrl: payload.endpointUrl,
-      customModelImageSecret: payload.customModelImageSecret,
-    });
+    const strategy = await detectionStrategyRepository.setStrategy(
+      tenantContext,
+      { strategyType: payload.strategyType, modelDeploymentId },
+    );
 
     return c.json({ available: true, strategy });
   });

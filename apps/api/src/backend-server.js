@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   createClaimIngestionRepository,
+  createClaimProcessingOutboxRepository,
   createDatabase,
   createInvestigationRepository,
   createFraudWorkflowRepository,
@@ -49,6 +50,7 @@ let investigationRepository = null;
 let sharedFraudRegistryRepository = null;
 let fraudWorkflowRepository = null;
 let claimIngestionService = null;
+let generationRepository = null;
 let tenantRepository = null;
 let databasePool = null;
 let controlPlanePool = null;
@@ -64,6 +66,7 @@ if (databaseUrl && authenticationConfiguration.mode === "demo_headers") {
   sharedFraudRegistryRepository = createSharedFraudRegistryRepository(database.pool);
   fraudWorkflowRepository = createFraudWorkflowRepository(database.pool);
   claimIngestionService = createClaimIngestionRepository(database.pool, { allowLegacyTenantContext: true });
+  generationRepository = createClaimProcessingOutboxRepository(database.pool);
   tenantRepository = createTenantRepository(database.pool, { allowLegacyDefault: true });
   databasePool = database.pool;
 }
@@ -89,7 +92,7 @@ if (authenticationConfiguration.mode === "session") {
   const legacySharedAdapter = createLegacySharedAdapter({
     databaseUrl,
     expectedEnvironment: process.env.DATA_PLANE_ENVIRONMENT || "legacy",
-    supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "10").split(",").map((value) => value.trim()).filter(Boolean),
+    supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "13").split(",").map((value) => value.trim()).filter(Boolean),
     connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
   });
   const connectionManager = createTenantConnectionManager({
@@ -97,7 +100,7 @@ if (authenticationConfiguration.mode === "session") {
       legacy_shared: legacySharedAdapter,
       private_database: createPrivateDatabaseAdapter({
         expectedEnvironment: process.env.DATA_PLANE_PRIVATE_ENVIRONMENT || "production",
-        supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "10").split(",").map((value) => value.trim()).filter(Boolean),
+        supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "13").split(",").map((value) => value.trim()).filter(Boolean),
         connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
       }),
     },
@@ -136,6 +139,7 @@ const app = createBackendApp({
   sharedFraudRegistryRepository,
   fraudWorkflowRepository,
   claimIngestionService,
+  generationRepository,
   tenantRepository,
   reportStorage,
   authenticationConfiguration,

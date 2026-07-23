@@ -8,6 +8,9 @@ export function registerDetectionRoutes(app, { reportService, tenantRepository =
   const requireDetectionReport = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.DETECTION_REPORT,
   });
+  const requireDetectionStatus = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DETECTION_STATUS,
+  });
   const requireDetectionGraph = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.DETECTION_GRAPH,
   });
@@ -28,6 +31,11 @@ export function registerDetectionRoutes(app, { reportService, tenantRepository =
 
   app.get("/detection/risk", requireDetectionRisk, requireTenantAccess, async (c) => {
     const result = await reportService.getDetectionRisk(c.get("tenantContext"));
+    return c.json(result.body, result.status);
+  });
+
+  app.get("/detection/status", requireDetectionStatus, requireTenantAccess, async (c) => {
+    const result = await reportService.getDetectionStatus(c.get("tenantContext"));
     return c.json(result.body, result.status);
   });
 }

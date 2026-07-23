@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from .model_report import build_model_detection_report
+from .model_service import ModelServiceClient, ModelServiceUnavailable
 from .snapshot import TenantSnapshot
 
 
@@ -25,7 +27,26 @@ def build_report_from_tenant_snapshot(
     *,
     correlation_id: str,
     top_n: int = 10,
+    model_client: ModelServiceClient | None = None,
 ) -> dict[str, object]:
+    if snapshot.detection_strategy == "approved_model":
+        if model_client is None:
+            raise ModelServiceUnavailable(watermark=snapshot.watermark)
+        review = model_client.review(snapshot)
+        return build_model_detection_report(
+            snapshot,
+            review,
+            correlation_id=correlation_id,
+        )
+
+    if snapshot.detection_strategy != "deterministic_rules":
+        raise ModelServiceUnavailable(
+            "The selected detection strategy is unsupported.",
+            watermark=snapshot.watermark,
+        )
+
+    # The deterministic engine is loaded only for an explicitly selected
+    # deterministic strategy. It is never a fallback for an approved model.
     build_data_bundle_from_records, DetectionSnapshot, run_detection_orchestration = _detection_imports()
     bundle = build_data_bundle_from_records(
         schemes=snapshot.schemes,
@@ -44,9 +65,7 @@ def build_report_from_tenant_snapshot(
             source_type="mysql_tenant_snapshot",
             source_watermark=snapshot.watermark,
             generation_correlation_id=correlation_id,
-            detection_strategy=snapshot.detection_strategy,
-            ml_endpoint_url=snapshot.ml_endpoint_url,
-            producer_version="report-producer-0.2.0",
+            producer_version="report-producer-0.3.0",
         ),
         top_n=top_n,
     )

@@ -13,7 +13,7 @@ function context(overrides = {}) {
     organisationId: "org-alpha", routeId: "route-alpha", routeType: "legacy_shared", routeGeneration: 1,
     operationalTenantId: "tenant-alpha", operationalTenantSlug: "alpha", ...overrides,
     organisationType: "medical_scheme", organisationStatus: "active", logicalDatabaseIdentifier: "legacy-operational-shared",
-    databaseName: "operational", schemaVersion: "10", deploymentClass: "demo",
+    databaseName: "operational", schemaVersion: "13", deploymentClass: "demo",
   });
 }
 

@@ -1,6 +1,4 @@
 import mysql from "mysql2/promise";
-import { DefaultAzureCredential } from "@azure/identity";
-import { SecretClient } from "@azure/keyvault-secrets";
 
 import { buildConnectionOptions, requireOperationalDataPlaneContext } from "@claimguard/database";
 
@@ -17,7 +15,7 @@ function parseSecretId(secretId) {
   };
 }
 
-async function resolveSecret(secretId, clients, credential) {
+async function resolveSecret(secretId, clients, credential, SecretClient) {
   const parsed = parseSecretId(secretId);
   const clientKey = parsed.vaultBaseUrl.toLowerCase();
   if (!clients.has(clientKey)) {
@@ -37,12 +35,12 @@ function splitSecretReferences(secretReference) {
 }
 
 export function createPrivateDatabaseAdapter({
-  supportedSchemaVersions = ["10"],
+  supportedSchemaVersions = ["13"],
   expectedEnvironment = "production",
-  expectedMigrationVersion = 10,
+  expectedMigrationVersion = 13,
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),
-  credential = new DefaultAzureCredential(),
+  credential = null,
 } = {}) {
   const secretClients = new Map();
   const resolvedConnectionUrls = new Map();
@@ -55,11 +53,22 @@ export function createPrivateDatabaseAdapter({
     if (refs.length < 4) {
       throw new Error("Private route secret reference must include username, password, host, and database secret URLs.");
     }
+    const [
+      resolvedCredential,
+      { SecretClient },
+    ] = await Promise.all([
+      credential
+        ? Promise.resolve(credential)
+        : import("@azure/identity").then(
+          ({ DefaultAzureCredential }) => new DefaultAzureCredential(),
+        ),
+      import("@azure/keyvault-secrets"),
+    ]);
     const [username, password, host, databaseName] = await Promise.all([
-      resolveSecret(refs[0], secretClients, credential),
-      resolveSecret(refs[1], secretClients, credential),
-      resolveSecret(refs[2], secretClients, credential),
-      resolveSecret(refs[3], secretClients, credential),
+      resolveSecret(refs[0], secretClients, resolvedCredential, SecretClient),
+      resolveSecret(refs[1], secretClients, resolvedCredential, SecretClient),
+      resolveSecret(refs[2], secretClients, resolvedCredential, SecretClient),
+      resolveSecret(refs[3], secretClients, resolvedCredential, SecretClient),
     ]);
 
     const encodedUser = encodeURIComponent(username);

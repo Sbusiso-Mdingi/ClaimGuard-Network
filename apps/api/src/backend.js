@@ -13,6 +13,7 @@ import { createSessionCsrfMiddleware } from "./session-security-middleware.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerAdminRoutes } from "./routes/admin-routes.js";
 import { registerPlatformAdminRoutes } from "./routes/platform-admin-routes.js";
+import { registerSchemeAdminRoutes } from "./routes/scheme-admin-routes.js";
 import { registerClaimsRoutes } from "./routes/claims-routes.js";
 import { registerDetectionRoutes } from "./routes/detection-routes.js";
 import { registerInvestigationsRoutes } from "./routes/investigations-routes.js";
@@ -35,10 +36,12 @@ function createDomainServices({
   fraudWorkflowRepository,
   claimIngestionRepository,
   claimReadRepository,
+  generationRepository,
 } = {}) {
   const reportService = createReportService({
     reportStorage,
     ledgerRepository,
+    generationRepository,
   });
 
   const claimIngestionService = createClaimIngestionService({
@@ -176,6 +179,7 @@ export function createBackendApp({
   fraudWorkflowRepository = null,
   claimIngestionService = null,
   claimReadRepository = null,
+  generationRepository = null,
   tenantRepository = null,
   authenticationProvider = null,
   authenticationConfiguration = Object.freeze({ mode: "demo_headers" }),
@@ -201,6 +205,7 @@ export function createBackendApp({
     fraudWorkflowRepository,
     claimIngestionRepository: claimIngestionService,
     claimReadRepository,
+    generationRepository,
   });
 
   const dependencies = dataPlaneRuntime ? {
@@ -214,11 +219,13 @@ export function createBackendApp({
     ledgerRepository: createOperationalDependencyProxy("ledgerRepository", ledgerRepository),
     tenantRepository: createOperationalDependencyProxy("tenantRepository", tenantRepository),
     detectionStrategyRepository: createOperationalDependencyProxy("detectionStrategyRepository", null),
+    generationRepository: createOperationalDependencyProxy("generationRepository", generationRepository),
   } : {
     ...services,
     claimsReadRepository: services.claimReadRepository,
     ledgerRepository,
     tenantRepository,
+    generationRepository,
   };
 
   const app = new Hono();
@@ -279,15 +286,22 @@ export function createBackendApp({
             fraudWorkflowRepository: repositories.fraudWorkflow,
             claimIngestionRepository: repositories.claims,
             claimReadRepository: claimsReadRepository,
+            generationRepository: repositories.claimProcessingOutbox,
           });
-        if (!reportServices.has(pool)) reportServices.set(pool, servicesForRequest.reportService);
+        if (!reportServices.has(pool)) reportServices.set(pool, new Map());
+        const tenantReportServices = reportServices.get(pool);
+        const reportServiceKey = dataPlaneContext.operationalTenantId;
+        if (!tenantReportServices.has(reportServiceKey)) {
+          tenantReportServices.set(reportServiceKey, servicesForRequest.reportService);
+        }
         return {
           ...servicesForRequest,
           claimsReadRepository: servicesForRequest.claimReadRepository,
-          reportService: reportServices.get(pool),
+          reportService: tenantReportServices.get(reportServiceKey),
           ledgerRepository: repositories.ledger,
           tenantRepository: repositories.tenants,
           detectionStrategyRepository: repositories.detectionStrategy,
+          generationRepository: repositories.claimProcessingOutbox,
           operationalRepositories: repositories,
         };
       },
@@ -306,6 +320,7 @@ export function createBackendApp({
       authenticationService,
       configuration: authenticationConfiguration,
       configurationRepository: controlPlaneConfigurationRepository,
+      controlPlaneService,
     });
   }
 
@@ -321,6 +336,9 @@ export function createBackendApp({
       controlPlaneRepositories,
       controlPlaneService,
       deploymentClass: authenticationConfiguration.deploymentClass,
+    });
+    registerSchemeAdminRoutes(app, {
+      controlPlaneService,
     });
   }
 

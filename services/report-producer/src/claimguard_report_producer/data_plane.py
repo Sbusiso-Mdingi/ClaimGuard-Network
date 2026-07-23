@@ -103,7 +103,7 @@ class WorkerDataPlaneScope:
 def discover_active_worker_organisation_ids(
     *,
     control_plane_url: str,
-    supported_schema_versions: frozenset[str] = frozenset({"10"}),
+    supported_schema_versions: frozenset[str] = frozenset({"13"}),
 ) -> tuple[str, ...]:
     if not supported_schema_versions:
         raise DataPlaneRouteError("At least one supported data-plane schema version is required.")
@@ -150,7 +150,7 @@ def resolve_worker_data_plane_scope(
     allowed_organisation_ids: frozenset[str] | None = None,
     environment_key: str = "legacy",
     private_environment_key: str = "production",
-    supported_schema_versions: frozenset[str] = frozenset({"10"}),
+    supported_schema_versions: frozenset[str] = frozenset({"13"}),
     credential=None,
     secret_client_factory=None,
 ) -> WorkerDataPlaneScope:
@@ -243,7 +243,7 @@ def resolve_worker_data_plane_scope(
                 or metadata["logical_database_identifier"] != route["logical_database_identifier"]
                 or str(metadata["schema_version"]) != schema_version
                 or metadata["environment_key"] != expected_environment
-                or int(metadata["migration_version"]) != 10
+                or int(metadata["migration_version"]) != 13
             ):
                 raise DataPlaneRouteError("Report-worker data-plane metadata verification failed.")
     finally:

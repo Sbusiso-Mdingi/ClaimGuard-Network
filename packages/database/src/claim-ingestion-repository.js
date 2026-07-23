@@ -35,8 +35,18 @@ function normalizeClaim(claim) {
     member_id: claim.member_id,
     provider_id: claim.provider_id,
     service_date: claim.service_date,
+    received_date: claim.received_date,
     billing_code: claim.billing_code,
     amount: claim.amount,
+    quantity: claim.quantity,
+    benefit_option: claim.benefit_option,
+    network_type: claim.network_type,
+    line_type: claim.line_type,
+    tariff_discipline: claim.tariff_discipline,
+    diagnosis_code: claim.diagnosis_code,
+    rendering_practitioner_id: claim.rendering_practitioner_id,
+    rendering_practitioner_category: claim.rendering_practitioner_category,
+    rendering_known_to_billing_provider: claim.rendering_known_to_billing_provider,
   };
 }
 
@@ -47,8 +57,17 @@ function validateClaim(claim) {
     "member_id",
     "provider_id",
     "service_date",
+    "received_date",
     "billing_code",
     "amount",
+    "quantity",
+    "benefit_option",
+    "network_type",
+    "line_type",
+    "tariff_discipline",
+    "diagnosis_code",
+    "rendering_practitioner_category",
+    "rendering_known_to_billing_provider",
   ];
   const missing = requiredFields.filter((field) => claim[field] === undefined || claim[field] === null || claim[field] === "");
   if (missing.length > 0) {
@@ -234,6 +253,8 @@ async function ingestReferenceData(connection, { schemes, members, providers, te
       provider.practice_region,
       provider.practice_lat,
       provider.practice_lon,
+      provider.provider_kind,
+      provider.provider_category,
     ];
     const result = await upsertTenantOwnedRecord(connection, {
       tableName: "providers",
@@ -243,12 +264,14 @@ async function ingestReferenceData(connection, { schemes, members, providers, te
       tenantId,
       insertSql: `INSERT INTO providers (
         provider_id, scheme_id, practice_number, specialty, practice_name,
-        banking_detail, practice_region, practice_lat, practice_lon, tenant_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        banking_detail, practice_region, practice_lat, practice_lon,
+        provider_kind, provider_category, tenant_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertParams: [provider.provider_id, ...values],
       updateSql: `UPDATE providers SET
         scheme_id = ?, practice_number = ?, specialty = ?, practice_name = ?,
-        banking_detail = ?, practice_region = ?, practice_lat = ?, practice_lon = ?
+        banking_detail = ?, practice_region = ?, practice_lat = ?, practice_lon = ?,
+        provider_kind = ?, provider_category = ?
         WHERE provider_id = ? AND tenant_id = ?`,
       updateParams: values,
     });
@@ -345,14 +368,29 @@ export function createClaimIngestionRepository(pool, {
             claim.member_id,
             claim.provider_id,
             claim.service_date,
+            claim.received_date,
             claim.billing_code,
             claim.amount,
+            claim.quantity,
+            claim.benefit_option,
+            claim.network_type,
+            claim.line_type,
+            claim.tariff_discipline,
+            claim.diagnosis_code,
+            claim.rendering_practitioner_id,
+            claim.rendering_practitioner_category,
+            claim.rendering_known_to_billing_provider,
           ];
 
           if (ownershipRows?.length > 0) {
             await connection.execute(
               `UPDATE claims
-               SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?, billing_code = ?, amount = ?
+               SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?,
+                 received_date = ?, billing_code = ?, amount = ?, quantity = ?,
+                 benefit_option = ?, network_type = ?, line_type = ?,
+                 tariff_discipline = ?, diagnosis_code = ?,
+                 rendering_practitioner_id = ?, rendering_practitioner_category = ?,
+                 rendering_known_to_billing_provider = ?
                WHERE claim_id = ? AND tenant_id = ?`,
               [...claimValues, claim.claim_id, tenantId],
             );
@@ -361,8 +399,12 @@ export function createClaimIngestionRepository(pool, {
             try {
               await connection.execute(
                 `INSERT INTO claims (
-                  claim_id, scheme_id, member_id, provider_id, service_date, billing_code, amount, tenant_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                  claim_id, scheme_id, member_id, provider_id, service_date,
+                  received_date, billing_code, amount, quantity, benefit_option,
+                  network_type, line_type, tariff_discipline, diagnosis_code,
+                  rendering_practitioner_id, rendering_practitioner_category,
+                  rendering_known_to_billing_provider, tenant_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [claim.claim_id, ...claimValues, tenantId],
               );
             } catch (error) {
@@ -376,7 +418,12 @@ export function createClaimIngestionRepository(pool, {
               }
               await connection.execute(
                 `UPDATE claims
-                 SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?, billing_code = ?, amount = ?
+                 SET scheme_id = ?, member_id = ?, provider_id = ?, service_date = ?,
+                   received_date = ?, billing_code = ?, amount = ?, quantity = ?,
+                   benefit_option = ?, network_type = ?, line_type = ?,
+                   tariff_discipline = ?, diagnosis_code = ?,
+                   rendering_practitioner_id = ?, rendering_practitioner_category = ?,
+                   rendering_known_to_billing_provider = ?
                  WHERE claim_id = ? AND tenant_id = ?`,
                 [...claimValues, claim.claim_id, tenantId],
               );

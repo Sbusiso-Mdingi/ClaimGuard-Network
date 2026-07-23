@@ -102,6 +102,7 @@ class PyMySqlOutboxRepository:
               lease_expires_at = NULL,
               leased_by = NULL,
               last_error = 'Worker lease expired before completion.',
+              failure_code = 'WORKER_LEASE_EXPIRED',
               completed_at = CASE
                 WHEN attempt_count >= max_attempts THEN UTC_TIMESTAMP(3)
                 ELSE NULL
@@ -157,7 +158,9 @@ class PyMySqlOutboxRepository:
                       leased_at = UTC_TIMESTAMP(3),
                       lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL %s SECOND),
                       leased_by = %s,
-                      last_error = NULL
+                      last_error = NULL,
+                      failure_code = NULL,
+                      failed_watermark = NULL
                     WHERE id IN ({placeholders})
                     """,
                     [safe_lease_seconds, worker_id, *ids],
@@ -213,7 +216,9 @@ class PyMySqlOutboxRepository:
                   leased_at = NULL,
                   lease_expires_at = NULL,
                   leased_by = NULL,
-                  last_error = NULL
+                  last_error = NULL,
+                  failure_code = NULL,
+                  failed_watermark = NULL
                 WHERE id = %s AND tenant_id = %s
                   AND status = 'processing' AND leased_by = %s
             """,
@@ -252,7 +257,9 @@ class PyMySqlOutboxRepository:
                           leased_at = NULL,
                           lease_expires_at = NULL,
                           leased_by = NULL,
-                          last_error = NULL
+                          last_error = NULL,
+                          failure_code = NULL,
+                          failed_watermark = NULL
                         WHERE id = %s AND tenant_id = %s
                           AND status = 'processing' AND leased_by = %s
                         """,
@@ -276,6 +283,8 @@ class PyMySqlOutboxRepository:
         worker_id: str,
         delay_seconds: int,
         last_error: str,
+        failure_code: str | None = None,
+        failed_watermark: str | None = None,
     ) -> bool:
         self._require_allowed_tenant(job.tenant_id)
         return self._transition(
@@ -287,11 +296,21 @@ class PyMySqlOutboxRepository:
                   leased_at = NULL,
                   lease_expires_at = NULL,
                   leased_by = NULL,
-                  last_error = %s
+                  last_error = %s,
+                  failure_code = %s,
+                  failed_watermark = %s
                 WHERE id = %s AND tenant_id = %s
                   AND status = 'processing' AND leased_by = %s
             """,
-            params=[max(1, min(int(delay_seconds), 86400)), last_error[:255], job.id, job.tenant_id, worker_id],
+            params=[
+                max(1, min(int(delay_seconds), 86400)),
+                last_error[:255],
+                (failure_code or last_error)[:64],
+                failed_watermark[:1024] if failed_watermark else None,
+                job.id,
+                job.tenant_id,
+                worker_id,
+            ],
         )
 
     def mark_dead_letter(
@@ -300,6 +319,8 @@ class PyMySqlOutboxRepository:
         job: OutboxJob,
         worker_id: str,
         last_error: str,
+        failure_code: str | None = None,
+        failed_watermark: str | None = None,
     ) -> bool:
         self._require_allowed_tenant(job.tenant_id)
         return self._transition(
@@ -311,9 +332,18 @@ class PyMySqlOutboxRepository:
                   leased_at = NULL,
                   lease_expires_at = NULL,
                   leased_by = NULL,
-                  last_error = %s
+                  last_error = %s,
+                  failure_code = %s,
+                  failed_watermark = %s
                 WHERE id = %s AND tenant_id = %s
                   AND status = 'processing' AND leased_by = %s
             """,
-            params=[last_error[:255], job.id, job.tenant_id, worker_id],
+            params=[
+                last_error[:255],
+                (failure_code or last_error)[:64],
+                failed_watermark[:1024] if failed_watermark else None,
+                job.id,
+                job.tenant_id,
+                worker_id,
+            ],
         )

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
-import { createCanonicalDetectionReport } from "./helpers/detection-report.js";
+import {
+  createCanonicalDetectionReport,
+  createCanonicalModelDetectionReport,
+} from "./helpers/detection-report.js";
 
 import { createBackendApp } from "../src/backend.js";
 import { createAuthenticatedAuthContext } from "../src/middleware/auth-context.js";
@@ -15,6 +18,21 @@ function developmentAuthHeaders({
     "x-claimguard-user": user,
     "x-claimguard-role": role,
     "x-claimguard-user-tenant": tenantId,
+  };
+}
+
+function modelClaimFields(serviceDate) {
+  return {
+    received_date: serviceDate,
+    quantity: 1,
+    benefit_option: "COMPREHENSIVE",
+    network_type: "IN_NETWORK",
+    line_type: "PROFESSIONAL",
+    tariff_discipline: "MEDICAL",
+    diagnosis_code: "Z00.0",
+    rendering_practitioner_id: null,
+    rendering_practitioner_category: "NONE",
+    rendering_known_to_billing_provider: false,
   };
 }
 
@@ -242,6 +260,66 @@ test("detection report endpoint returns a configured report", async () => {
   assert.equal(json.report.risk.riskScore, 87);
 });
 
+test("detection report endpoint accepts the authoritative approved-model contract", async () => {
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub(
+      createCanonicalModelDetectionReport(),
+    ),
+  });
+
+  const response = await app.request("http://localhost/detection/report", {
+    headers: developmentAuthHeaders(),
+  });
+  const json = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(json.report.history.ruleExecution.notExecuted, true);
+  assert.equal(
+    json.report.metadata.model.deploymentId,
+    "claim-fraud-ensemble-1.1.0",
+  );
+  assert.equal(
+    json.report.claims[0].modelReview.compositeReviewRecommended,
+    true,
+  );
+});
+
+test("detection status distinguishes a stale report after model failure", async () => {
+  const app = createBackendApp({
+    reportStorage: createReportStorageStub(
+      createCanonicalModelDetectionReport({ watermark: "old-window" }),
+    ),
+    generationRepository: {
+      async getLatestGenerationStatus({ tenantId }) {
+        assert.equal(tenantId, "tenant_default");
+        return {
+          id: "job-model-1",
+          status: "retry",
+          attemptCount: 2,
+          maxAttempts: 5,
+          failureCode: "MODEL_SERVICE_UNAVAILABLE",
+          failedWatermark: "new-window",
+          coveredReportId: null,
+          coveredWatermark: null,
+          updatedAt: "2026-07-23T09:00:00.000Z",
+          completedAt: null,
+        };
+      },
+    },
+  });
+
+  const response = await app.request("http://localhost/detection/status", {
+    headers: developmentAuthHeaders(),
+  });
+  const json = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(json.report.freshness, "stale");
+  assert.equal(json.report.watermark, "old-window");
+  assert.equal(json.generation.failureCode, "MODEL_SERVICE_UNAVAILABLE");
+  assert.equal(json.generation.failedWatermark, "new-window");
+});
+
 test("detection report endpoint does not mutate the detection artifact with runtime ledger data", async () => {
   const app = createBackendApp({
     reportStorage: createReportStorageStub({
@@ -393,6 +471,7 @@ test("claims ingestion endpoint requires configured ingestion service", async ()
     body: JSON.stringify({ claims: [{
       claim_id: "C1", scheme_id: "scheme_a", member_id: "M1", provider_id: "P1",
       service_date: "2026-07-16", billing_code: "CONSULT", amount: 100,
+      ...modelClaimFields("2026-07-16"),
     }] }),
   });
 
@@ -474,6 +553,7 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
         provider_id: "P-20", scheme_id: "scheme_a", practice_number: "PR-20", specialty: "GP",
         practice_name: "Practice 20", banking_detail: "bank-token-20", practice_region: "Gauteng",
         practice_lat: -26.2041, practice_lon: 28.0473,
+        provider_kind: "INDIVIDUAL", provider_category: "GENERAL_PRACTITIONER",
       }],
       claims: [
         {
@@ -482,6 +562,7 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
           member_id: "M-10",
           provider_id: "P-20",
           service_date: "2025-02-01",
+          ...modelClaimFields("2025-02-01"),
           billing_code: "CONSULT",
           amount: 91.4,
         },
@@ -739,6 +820,7 @@ test("claims ingestion commits an asynchronous outbox-backed processing request"
           member_id: "M-500",
           provider_id: "P-500",
           service_date: "2026-01-15",
+          ...modelClaimFields("2026-01-15"),
           billing_code: "CONSULT",
           amount: 321.11,
         },

@@ -1,200 +1,114 @@
-# ClaimGuard report-worker Azure deployment plan
+# ClaimGuard approved-model Azure deployment plan
 
 > **Status:** Validated
+>
+> **Approved scope:** Azure for Students (`896d3c72-d979-4bdc-a37f-060988d12032`), resource group `ClaimGuard`, South Africa North.
 
-Generated: 2026-07-19
-Approved by user: 2026-07-19
+Prepared: 2026-07-23
 
 ## 1. Objective
 
-Deploy the existing production report-processing worker as a scheduled Azure Container Apps Job. This worker drains durable claim outbox records, runs the detection pipeline, and publishes report artifacts. It is not a claim simulator and it does not generate claims.
+Deploy the sealed `claimguard-claim-fraud-ensemble:1.1.0` as ClaimGuard's approved plug-and-play model and deploy the schema-13 report producer that consumes it.
 
-This is a narrow update to existing ClaimGuard infrastructure. The API, web application, databases, registry, Key Vault, storage account, Container Apps environment, and observability workspace remain unchanged.
+The approved-model strategy has no deterministic fallback. Model unavailability, authentication failure, contract mismatch, or incomplete claim coverage is recorded as `MODEL_SERVICE_UNAVAILABLE`; deterministic rules are not executed on that path.
 
-### 2026-07-19 onboarding and tenant-promotion extension
+## 2. Repository and ownership boundary
 
-Promote the three existing medical-aid private databases from schema 8 to schema 10, retain ClaimGuard as an active route-less platform organisation, and complete the web-admin onboarding path. Platform administrators can create, provision, upgrade, activate, issue one-time per-server ingestion credentials, review sync instructions, and revoke credentials without using Azure Portal.
+The model source remains a standalone, non-Git project at:
 
-The provisioning controller receives the built-in `Key Vault Data Access Administrator` role on the existing vault. Azure constrains that role with ABAC to approved Key Vault data roles. The controller uses it only to assign `Key Vault Secrets User` to the fixed report-worker principal on each tenant route's four exact secrets; the report worker receives no vault-wide secret-read role.
+`/Users/sbusisomdingi/Downloads/ClaimGuard-Scenario-Lab`
 
-## 2. Requirements and Azure context
+It is not copied into ClaimGuard and is not uploaded through GitHub. Azure Container Registry receives a local build context directly from the Downloads project.
 
-| Attribute | Value |
-|---|---|
-| Path | Modify existing Azure application |
-| Classification | Production-shaped |
-| Scale | Small initial workload; bounded single-replica scheduled drain |
-| Budget | Cost-optimized within the existing Azure for Students subscription |
-| Subscription | Azure for Students (`896d3c72-d979-4bdc-a37f-060988d12032`) |
-| Tenant | `8efc1bb9-b90f-4a48-bf6c-ba0686193b80` |
-| Resource group | `ClaimGuard` |
-| Location | South Africa North (`southafricanorth`) |
-| Policy constraint | Subscription policy permits `southafricanorth` |
-| Data classification | Medical-claim data; credentials remain in Key Vault and reports remain in a private blob container |
+ClaimGuard owns only the typed model client, schema-13 snapshot adapter, report contract, detection-strategy deployment ID, and scheduled report-worker job.
 
-The subscription and location are the existing production context and were included in the exact deployment scope approved by the user.
+## 3. Current Azure state
 
-## 3. Components
-
-| Component | Type | Technology | Deployment target |
-|---|---|---|---|
-| Report producer | Background worker | Python 3.12 container | Azure Container Apps scheduled job |
-| Detection engine | Worker dependency | Python | Included in worker image |
-| Durable outbox | Operational data | Azure Database for MySQL | Existing service; Key Vault reference only |
-| Data-plane routing | Control-plane data | Azure Database for MySQL | Existing service; Key Vault reference only |
-| Report artifacts | Blob storage | Azure Storage | Existing private `claimguard-reports` container |
-
-## 4. Recipe
-
-**Selected:** AZCLI with Bicep-managed identity and RBAC bootstrap.
-
-The repository already deploys through GitHub Actions and Azure CLI. Bicep is added for the security-sensitive, reproducible identity and least-privilege role assignments; the workflow remains responsible for immutable image build, job create/update, and smoke verification.
-
-## 5. Architecture and security boundaries
-
-| Item | Existing or new | Configuration |
+| Resource | Current state | Required state |
 |---|---|---|
-| Container Apps environment | Existing | `claimguard-env-11e` |
-| Container registry | Existing | `claimguardacr11e`; admin credentials disabled |
-| Worker managed identity | New | `claimguard-report-worker-identity` |
-| Scheduled job | New | `claimguard-report-producer`; `*/5 * * * *` UTC |
-| Key Vault | Existing | `claimguard-kv-ufs`; RBAC authorization |
-| Blob container | Existing | `cgrpt0715sa/claimguard-reports`; public access disabled |
+| `claimguard-ml-inference` Container App | Public hello-world image; no auth; target port 80 | Sealed model image by digest; target port 8000; Entra auth; health probes |
+| `claimguard-report-producer` Container Apps Job | Absent | Scheduled schema-13 drain every five minutes |
+| `claimguard-report-worker-identity` | Exists with exact ACR, Key Vault, and Blob roles | Reused by the job and accepted as the only model caller |
+| Model-service identity | Absent | Dedicated AcrPull-only user-assigned identity |
+| Model Entra application | Absent | Dedicated single-tenant audience for bearer-token validation |
+| API approved deployment allowlist | Absent | `claimguard-claim-fraud-ensemble:1.1.0` |
 
-The worker identity receives only:
+## 4. Deployment recipe
 
-- `AcrPull` on the exact registry.
-- `Key Vault Secrets User` on the exact operational database secret.
-- `Key Vault Secrets User` on the exact control-plane database secret.
-- `Storage Blob Data Contributor` on the exact report container.
+**Recipe:** Bicep plus Azure CLI, executed locally.
 
-For a selected `private_database` organisation, the plan can add `Key Vault Secrets User` on exactly the four secret names referenced by that route. The parameter is intentionally empty until the user selects an organisation and its schema is compatible; vault-wide access is not permitted.
+Source-of-truth templates:
 
-The GitHub Actions OIDC service principal receives `Key Vault Secrets User` only on the exact control-plane database secret so the existing CI deployment can run the control-plane migration. No credentials or secret values are committed.
+- Scenario Lab: `deployment/model-service/azure.bicep`
+- ClaimGuard: `infra/report-worker.bicep`
 
-## 6. Provisioning limits and capacity
+The legacy ClaimGuard `customModelImageSecret` block has been removed. Tenant configuration may select only an allow-listed deployment ID and cannot supply a URL, image, endpoint, credential, or secret.
 
-| Resource type | New | Current | Total after deployment | Limit/capacity | Result and source |
-|---|---:|---:|---:|---:|---|
-| `Microsoft.ManagedIdentity/userAssignedIdentities` | 1 | 3 | 4 | No customer-adjustable regional quota exposed | Pass; live Azure inventory |
-| `Microsoft.App/jobs` | 1 | 1 | 2 | Uses existing environment capacity | Pass; live Azure inventory |
-| Managed Environment Consumption Cores | 1 during execution | 0 | 1 | 100 | Pass; `az containerapp env list-usages` |
-| `Microsoft.App/managedEnvironments` | 0 | 1 | 1 | 1 | Pass; no new environment; Azure Quota Management |
+## 5. Security and identity
 
-Azure Quota Management provider registration was enabled to perform the subscription-level check. No quota increase is required.
+| Principal | Permission | Scope |
+|---|---|---|
+| `claimguard-model-service-identity` | `AcrPull` | Exact ACR |
+| `claimguard-report-worker-identity` | `AcrPull` | Exact ACR |
+| `claimguard-report-worker-identity` | `Key Vault Secrets User` | Exact operational, control-plane, tenant-route, and model-pseudonym secrets |
+| `claimguard-report-worker-identity` | `Storage Blob Data Contributor` | Exact report container |
 
-## 7. Research and implementation decisions
+Container Apps built-in authentication validates the dedicated Entra audience and rejects unauthenticated traffic. Its authorization policy and the model application both allow only the report-worker principal. `/health/live` and `/health/ready` are excluded from authentication and expose status only.
 
-- Container Apps scheduled jobs use five-field UTC cron expressions; `*/5 * * * *` runs every five minutes.
-- A user-assigned managed identity is used for deterministic Key Vault, ACR, and Blob authentication.
-- Role assignments set `principalType: ServicePrincipal` and use deterministic names.
-- Existing Key Vault secrets and the existing blob container are referenced, not recreated.
-- The job drains a bounded number of batches per execution to prevent overlapping unbounded work.
-- The worker follows the API's authoritative route contract for both `legacy_shared` and `private_database`, resolves private credentials from Key Vault in memory, and detects route or credential rotation between batches.
-- The GitHub workflow builds an immutable image tagged with the commit SHA and verifies one job execution after deployment.
+Raw member, provider, practitioner, and claim identifiers never cross the model boundary. The report worker HMAC-pseudonymizes them using a dedicated random Key Vault secret.
 
-## 8. Functional verification
+No generic subscription-, resource-group-, registry-, vault-, or storage-wide application data access is introduced.
 
-- Worker unit and CLI behavior: verified locally.
-- Complete monorepo lint, build, and test suite: passed locally.
-- Deployment workflow YAML: parsed locally.
-- Live end-to-end check: pending deployment; the workflow must start a job execution and observe `Succeeded`.
-- A successful empty drain is acceptable when no claims are queued. A real-claim processing cycle belongs to the later claims-stream task.
+## 6. Deployment sequence
 
-## 9. Execution checklist
+- [x] Implement strict schema-13 model client and report contract.
+- [x] Validate exact parity against the sealed Gate F/H corpus.
+- [x] Validate regenerated ingestion batches against ClaimGuard's shared schema.
+- [x] Pass Scenario Lab tests, lint, and type checks.
+- [x] Pass ClaimGuard tests, lint, build, and diff checks.
+- [x] Build and smoke-test both non-root Linux model and report-worker images locally.
+- [x] Replace the obsolete model infrastructure seam.
+- [x] Complete fresh Bicep compile, ARM validation, what-if, policy, and static RBAC checks.
+- [ ] Build and push immutable images directly to the existing ACR.
+- [ ] Create the model identity and verify AcrPull propagation.
+- [ ] Create the dedicated single-tenant Entra model audience and short-lived Container Apps auth credential.
+- [ ] Update `claimguard-ml-inference` in place and verify readiness plus authenticated scoring.
+- [ ] Create the model-pseudonym Key Vault secret and deploy `claimguard-report-producer`.
+- [ ] Add the approved deployment ID to the API environment.
+- [ ] Apply schema-13 operational/control-plane migrations before enabling model selection.
+- [ ] Start one report-worker execution and verify typed success or a legitimate empty drain.
+- [ ] Verify live identities, exact RBAC scopes, auth policy, image digests, and environment variables.
 
-### Planning and preparation
+The API/web application deployment is separately gated because the local ClaimGuard worktree contains unrelated user changes. Those changes must not be shipped as a side effect of this model deployment.
 
-- [x] Scan the existing workspace and Azure deployment model.
-- [x] Confirm the existing subscription, resource group, location, and policy constraint.
-- [x] Check live Container Apps capacity and resource counts.
-- [x] Select the AZCLI recipe for the existing custom GitHub Actions deployment.
-- [x] Define the identity and exact least-privilege scopes.
-- [x] Receive user approval for the exact Azure changes.
-- [x] Generate and compile the identity/RBAC Bicep.
-- [x] Update status to `Ready for Validation`.
-
-### Validation
-
-- [x] Authenticate to the approved subscription.
-- [x] Compile Bicep.
-- [x] Validate the resource-group deployment.
-- [x] Run an Azure what-if preview and confirm only approved changes.
-- [x] Build the report-worker container.
-- [x] Run repository lint, build, tests, YAML parse, and diff checks.
-- [x] Perform static role and scope verification.
-- [x] Revalidate the final private-route-capable worker, dependency lock, image, Bicep, and workflows.
-- [x] Record the post-diagnosis validation proof and update status to `Validated`.
-
-### Deployment
-
-- [x] Complete the pre-deployment subscription, location, conflict, and RBAC checks.
-- [x] Deploy the identity and five baseline role assignments.
-- [x] Verify live role assignments at exact scopes.
-- [x] Temporarily grant the signed-in user read access to the one control-plane secret, query eligible organisation metadata without printing credentials, and immediately revoke that temporary assignment.
-- [ ] Deploy the constrained provisioning-controller role.
-- [ ] Commit, push, and update the existing pull request.
-- [ ] Upgrade Bonitas, Discovery Health, and Momentum Health to schema 10 and activate their generation-2 routes.
-- [ ] Merge after CI passes.
-- [ ] Deploy the API, web interface, and auto-discovering report-producer workflow from `main`.
-- [ ] Verify the job schedule, managed identity, secrets, storage scope, and a successful execution.
-- [ ] Update status to `Deployed`.
-
-## 10. Validation proof
+## 7. Validation proof
 
 | Check | Command | Result | Timestamp |
 |---|---|---|---|
-| Azure CLI and context | `az version`; `az account show` | Pass: CLI 2.88.0; approved subscription and tenant | 2026-07-19 15:48 SAST |
-| Bicep compilation | `az bicep build`; `az bicep build-params` | Pass | 2026-07-19 15:48 SAST |
-| ARM validation | `az deployment group validate` | Pass: `Succeeded` | 2026-07-19 15:49 SAST |
-| What-if preview | `az deployment group what-if` | Pass: six creates only (one identity and five role assignments); no updates or deletes | 2026-07-19 15:50 SAST |
-| Azure policy | `az policy assignment list` | Pass: `southafricanorth` is in the allowed-locations policy | 2026-07-19 15:30 SAST |
-| Azure capacity | `az quota list`; `az quota usage list`; `az containerapp env list-usages` | Pass: no new environment; 1 of 100 consumption cores required | 2026-07-19 15:41 SAST |
-| Worker image | `docker build --tag claimguard-report-producer:validation --file services/report-producer/Dockerfile .` | Pass | 2026-07-19 15:54 SAST |
-| Application verification | `pnpm turbo run lint build test` | Pass: 27 of 27 tasks | 2026-07-19 15:56 SAST |
-| Workflow and diff validation | Ruby YAML parse; `git diff --check` | Pass | 2026-07-19 15:56 SAST |
-| Static role verification | Inspect all `Microsoft.Authorization/roleAssignments` scopes | Pass: exact ACR, Key Vault secret, and blob-container scopes; no resource-group or subscription scopes | 2026-07-19 15:56 SAST |
-| Private-route worker tests | `uv run --project services/report-producer --frozen python -m unittest discover ...` | Pass: 32 tests; schema 8 fails closed before secret resolution | 2026-07-19 16:17 SAST |
-| Post-diagnosis application verification | `pnpm turbo run lint build test` | Pass: 27 of 27 tasks | 2026-07-19 16:14 SAST |
-| Post-diagnosis ARM validation | Bicep compile, parameter compile, `az deployment group validate`, and what-if | Pass: template valid and no unapproved live changes with private-secret list empty | 2026-07-19 16:10 SAST |
-| Post-diagnosis worker image | `docker build --tag claimguard-report-producer:validation ...` | Pass with `azure-keyvault-secrets==4.11.0` | 2026-07-19 16:16 SAST |
-| Tenant-activation extension | Bicep compile, parameter compile, ARM validation, and what-if | Pass: one new constrained Key Vault role; dynamic managed-identity references only; no deletes or resource replacements | 2026-07-19 16:59 SAST |
-| Final application verification | `pnpm turbo run lint build test --output-logs=errors-only --summarize` | Pass: 27 of 27 tasks | 2026-07-19 16:58 SAST |
-
-### Static role assignment verification
-
-- Identity checked: `claimguard-report-worker-identity`.
-- Confirmed: `AcrPull` on `claimguardacr11e`.
-- Confirmed: `Key Vault Secrets User` separately on the control-plane and operational secret resources.
-- Confirmed: `Storage Blob Data Contributor` on only `cgrpt0715sa/claimguard-reports`.
-- GitHub Actions OIDC principal confirmed: `Key Vault Secrets User` on only the control-plane secret.
-- No generic `Owner`, `Contributor`, or resource-group-wide application data access is introduced.
+| Local application suites | `pnpm test`; `pnpm lint`; `pnpm build`; Scenario Lab pytest/ruff/mypy | Pass | 2026-07-23 |
+| Report-worker image | Narrow-context `docker build`; non-root image inspect; package import smoke | Pass: linux/amd64, UID/GID 10001 | 2026-07-23 |
+| Model image | Pinned Docker build; readiness and inference smoke | Pass: linux/amd64, UID 10001, digest `sha256:65360d57ac90aea446c36effe50125122710cc3b3178cd8c95c99cdf04c94605` | 2026-07-23 |
+| Model Bicep local compile | `az bicep build`; `az bicep build-params` | Pass | 2026-07-23 |
+| Worker Bicep local compile | `az bicep build`; `az bicep build-params` | Pass | 2026-07-23 |
+| Model ARM validation | Azure validation helper: `az deployment group validate` | Pass against `ClaimGuard` | 2026-07-23 12:18 SAST |
+| Model structured what-if | `az deployment group what-if --result-format ResourceIdOnly` | Pass: create identity, exact AcrPull, and auth config; deploy existing model app; no deletes | 2026-07-23 12:19 SAST |
+| Worker ARM validation | Azure validation helper: `az deployment group validate` | Pass against `ClaimGuard` | 2026-07-23 12:20 SAST |
+| Worker structured what-if | `az deployment group what-if --result-format ResourceIdOnly` | Pass: create job, pseudonym secret, and exact secret role; existing AcrPull unchanged; no deletes | 2026-07-23 12:21 SAST |
+| Azure policy | `az policy assignment list` | Pass: `southafricanorth` is in the enforced allowed-location set | 2026-07-23 12:22 SAST |
+| Bicep lint and final compile | `az bicep lint`; `az bicep build` | Pass for model, report worker, and legacy bootstrap templates | 2026-07-23 12:25 SAST |
+| Static RBAC verification | Inspect every `Microsoft.Authorization/roleAssignments` principal, role, and scope | Pass: model identity has exact-ACR `AcrPull`; worker addition is exact-secret `Key Vault Secrets User`; baseline roles remain resource/secret/container scoped | 2026-07-23 12:26 SAST |
+| Workflow and diff safety | YAML parse; removed-seam search; `git diff --check` | Pass; unsafe schema-10 workflow retired | 2026-07-23 12:26 SAST |
 
 **Validated by:** Azure validation workflow
 
-**Validation timestamp:** 2026-07-19 16:59 SAST
+**Validation timestamp:** 2026-07-23 12:27 SAST
 
-## 10A. Live deployment and routing discovery
+## 8. Rollback
 
-- Baseline deployment `claimguard-report-worker-security-20260719` succeeded at 2026-07-19 15:58 SAST.
-- Worker identity principal: `7d7b986b-2984-4aba-925c-9a009ee56c67`.
-- All five baseline roles were verified live at the exact ACR, secret, and blob-container scopes.
-- Temporary operator secret access was removed and a clean role query returned no remaining assignment.
-- No currently active organisation meets the worker's canonical schema-10 gate. Bonitas, Discovery Health, and Momentum Health each have an active `private_database` route recorded as schema `8`; their legacy mappings are not linked to those private routes, as expected for private routing.
-- The worker job and GitHub organisation variables remain undeployed/unset. Selecting an organisation and resolving the schema-8-to-10 route promotion require explicit user direction and separate validation.
+- Model rollback: restore the prior Container App revision/image only after disabling the report job. The hello-world placeholder is not an acceptable operating fallback.
+- Worker rollback: disable the scheduled job or redeploy the prior immutable worker image.
+- Strategy rollback: select `deterministic_rules` explicitly per tenant. This is an administrative strategy change, not an automatic runtime fallback.
+- Identity rollback: remove only newly introduced model identity/role assignments after both workloads are disabled.
+- Database migrations are forward-only and are not rolled back automatically.
 
-## 11. Files
-
-| File | Purpose | Status |
-|---|---|---|
-| `.azure/deployment-plan.md` | Deployment source of truth | Updated |
-| `infra/main.bicep` | Worker identity and exact RBAC scopes | Validated |
-| `infra/main.bicepparam` | Non-secret environment parameters | Validated |
-| `.github/workflows/producer-deploy.yml` | Build, deploy, schedule, and smoke-test worker | Validated |
-| `.github/workflows/ci.yml` | Apply both control-plane and operational migrations | Validated |
-
-## 12. Rollback
-
-- Application rollback: redeploy the prior immutable worker image or remove/disable the scheduled job.
-- RBAC rollback: remove only the role assignments created by `infra/main.bicep` after the job is disabled.
-- Data rollback: no database data is generated or deleted by infrastructure deployment; migrations remain forward-only and are handled by the existing migration process.
+No resource deletion, database drop, secret purge, or broad RBAC removal is part of this deployment.

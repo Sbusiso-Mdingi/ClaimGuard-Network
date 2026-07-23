@@ -25,8 +25,6 @@ class DetectionSnapshot:
     source_type: str
     source_watermark: str
     generation_correlation_id: str
-    detection_strategy: str = "deterministic_rules"
-    ml_endpoint_url: str | None = None
     generated_at: str | None = None
     producer_version: str = "detection-engine-cli"
     historical_window: dict[str, object] | None = None
@@ -99,8 +97,6 @@ def run_detection_orchestration(snapshot: DetectionSnapshot, *, top_n: int = 10)
         snapshot.bundle,
         top_n=0,
         ground_truth=snapshot.ground_truth,
-        detection_strategy=snapshot.detection_strategy,
-        ml_endpoint_url=snapshot.ml_endpoint_url,
     )
     provider_findings = {
         finding["entity_id"]: finding

@@ -36,6 +36,8 @@ const referenceBatch = () => ({
     practice_region: "Gauteng",
     practice_lat: -26.2041,
     practice_lon: 28.0473,
+    provider_kind: "INDIVIDUAL",
+    provider_category: "GENERAL_PRACTITIONER",
   }],
   claims: [{
     claim_id: "claim-1",
@@ -43,8 +45,18 @@ const referenceBatch = () => ({
     member_id: "member-1",
     provider_id: "provider-1",
     service_date: "2026-07-19",
+    received_date: "2026-07-20",
     billing_code: "CONSULT",
     amount: 450,
+    quantity: 1,
+    benefit_option: "COMPREHENSIVE",
+    network_type: "IN_NETWORK",
+    line_type: "PROFESSIONAL",
+    tariff_discipline: "MEDICAL",
+    diagnosis_code: "Z00.0",
+    rendering_practitioner_id: null,
+    rendering_practitioner_category: "NONE",
+    rendering_known_to_billing_provider: false,
   }],
 });
 

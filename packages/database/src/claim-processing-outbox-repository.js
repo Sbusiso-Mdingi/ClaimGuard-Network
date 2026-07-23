@@ -78,6 +78,11 @@ function mapJob(row) {
     leaseExpiresAt: row.lease_expires_at,
     leasedBy: row.leased_by,
     lastError: row.last_error,
+    failureCode: row.failure_code,
+    failedWatermark: row.failed_watermark,
+    coveredReportId: row.covered_report_id,
+    coveredWatermark: row.covered_watermark,
+    coveredAt: row.covered_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
@@ -191,6 +196,7 @@ async function recoverExpiredLeasesWithExecutor(executor, tenantId = null) {
         lease_expires_at = NULL,
         leased_by = NULL,
         last_error = 'Worker lease expired before completion.',
+        failure_code = 'WORKER_LEASE_EXPIRED',
         completed_at = CASE
           WHEN attempt_count >= max_attempts THEN UTC_TIMESTAMP(3)
           ELSE NULL
@@ -271,7 +277,9 @@ export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext =
               leased_at = UTC_TIMESTAMP(3),
               lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ? SECOND),
               leased_by = ?,
-              last_error = NULL
+              last_error = NULL,
+              failure_code = NULL,
+              failed_watermark = NULL
             WHERE id IN (${placeholders})
           `,
           [timeoutSeconds, canonicalWorkerId, ...ids],
@@ -306,7 +314,9 @@ export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext =
             leased_at = NULL,
             lease_expires_at = NULL,
             leased_by = NULL,
-            last_error = NULL
+            last_error = NULL,
+            failure_code = NULL,
+            failed_watermark = NULL
           WHERE id = ? AND tenant_id = ? AND status = 'processing' AND leased_by = ?
         `,
         [requireText(id, "id"), requireText(tenantId, "tenantId"), requireText(workerId, "workerId")],
@@ -314,7 +324,15 @@ export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext =
       return Number(result?.affectedRows || 0) === 1;
     },
 
-    async markRetry({ id, tenantId, workerId, delaySeconds, lastError }) {
+    async markRetry({
+      id,
+      tenantId,
+      workerId,
+      delaySeconds,
+      lastError,
+      failureCode = null,
+      failedWatermark = null,
+    }) {
       if (canonicalTenantId && tenantId !== canonicalTenantId) throw new Error("Outbox tenant does not match the verified data-plane context.");
       const [result] = await pool.execute(
         `
@@ -325,12 +343,16 @@ export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext =
             leased_at = NULL,
             lease_expires_at = NULL,
             leased_by = NULL,
-            last_error = ?
+            last_error = ?,
+            failure_code = ?,
+            failed_watermark = ?
           WHERE id = ? AND tenant_id = ? AND status = 'processing' AND leased_by = ?
         `,
         [
           Math.min(positiveInteger(delaySeconds, 1), 86400),
           String(lastError || "Retryable producer failure.").slice(0, 255),
+          String(failureCode || lastError || "RETRYABLE_PRODUCER_FAILURE").slice(0, 64),
+          failedWatermark ? String(failedWatermark).slice(0, 1024) : null,
           requireText(id, "id"),
           requireText(tenantId, "tenantId"),
           requireText(workerId, "workerId"),
@@ -339,7 +361,14 @@ export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext =
       return Number(result?.affectedRows || 0) === 1;
     },
 
-    async markDeadLetter({ id, tenantId, workerId, lastError }) {
+    async markDeadLetter({
+      id,
+      tenantId,
+      workerId,
+      lastError,
+      failureCode = null,
+      failedWatermark = null,
+    }) {
       if (canonicalTenantId && tenantId !== canonicalTenantId) throw new Error("Outbox tenant does not match the verified data-plane context.");
       const [result] = await pool.execute(
         `
@@ -350,11 +379,15 @@ export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext =
             leased_at = NULL,
             lease_expires_at = NULL,
             leased_by = NULL,
-            last_error = ?
+            last_error = ?,
+            failure_code = ?,
+            failed_watermark = ?
           WHERE id = ? AND tenant_id = ? AND status = 'processing' AND leased_by = ?
         `,
         [
           String(lastError || "Terminal producer failure.").slice(0, 255),
+          String(failureCode || lastError || "TERMINAL_PRODUCER_FAILURE").slice(0, 64),
+          failedWatermark ? String(failedWatermark).slice(0, 1024) : null,
           requireText(id, "id"),
           requireText(tenantId, "tenantId"),
           requireText(workerId, "workerId"),
@@ -373,6 +406,23 @@ export function createClaimProcessingOutboxRepository(pool, { dataPlaneContext =
           LIMIT 1
         `,
         [requireText(id, "id"), requireText(tenantId, "tenantId")],
+      );
+      return mapJob(rows?.[0]);
+    },
+
+    async getLatestGenerationStatus({ tenantId }) {
+      if (canonicalTenantId && tenantId !== canonicalTenantId) {
+        throw new Error("Outbox tenant does not match the verified data-plane context.");
+      }
+      const [rows] = await pool.execute(
+        `
+          SELECT *
+          FROM claim_processing_outbox
+          WHERE tenant_id = ? AND job_type = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        `,
+        [requireText(tenantId, "tenantId"), CLAIM_PROCESSING_JOB_TYPE],
       );
       return mapJob(rows?.[0]);
     },
