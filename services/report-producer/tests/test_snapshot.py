@@ -564,10 +564,8 @@ class SnapshotTests(
         ]
 
         history_rows = [
-            /*
-             * Same member, provider, billing code,
-             * service date and amount as CLAIM-A.
-             */
+            # Same member, provider, billing code,
+            # service date and amount as CLAIM-A.
             claim_version_row(
                 claim_id="HISTORY-1",
                 claim_version=1,
@@ -616,10 +614,8 @@ class SnapshotTests(
                     )
                 ),
             ),
-            /*
-             * A historical version of a target claim.
-             * It must be excluded by claim_id.
-             */
+            # A historical version of a target claim.
+            # It must be excluded by claim_id.
             claim_version_row(
                 claim_id="CLAIM-A",
                 claim_version=1,
