@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  randomUUID,
+} from "node:crypto";
 
 import {
   applyMigrations,
@@ -62,7 +65,7 @@ const TEST_TENANTS = [
 ];
 
 const ALPHA_NEW_CLAIM_ID =
-  "ALPHA-CLAIM-NEW";
+  `ALPHA-CLAIM-NEW-${randomUUID()}`;
 
 
 function cookieFrom(
@@ -408,7 +411,7 @@ async function insertBaselineClaim(
 
   await pool.execute(
     `
-      INSERT INTO claim_versions (
+      INSERT IGNORE INTO claim_versions (
         tenant_id,
         claim_id,
         claim_version,
@@ -438,9 +441,22 @@ async function insertBaselineClaim(
         NULL,
         'legacy_baseline'
       )
-      ON DUPLICATE KEY UPDATE
-        claim_id =
-          VALUES(claim_id)
+    `,
+    [
+      claim.tenant_id,
+      claim.claim_id,
+      claim.scheme_id,
+      claim.member_id,
+      claim.provider_id,
+      claim.service_date,
+      claim.received_date,
+      claim.billing_code,
+      claim.amount,
+      JSON.stringify(
+        payload,
+      ),
+    ],
+  );
     `,
     [
       claim.tenant_id,
@@ -477,30 +493,6 @@ async function seedOperationalFixtures(
         AND job_type =
           'claim_detection'
     `,
-  );
-
-  await pool.execute(
-    `
-      DELETE FROM claim_versions
-      WHERE tenant_id =
-        'tenant_alpha'
-        AND claim_id = ?
-    `,
-    [
-      ALPHA_NEW_CLAIM_ID,
-    ],
-  );
-
-  await pool.execute(
-    `
-      DELETE FROM claims
-      WHERE tenant_id =
-        'tenant_alpha'
-        AND claim_id = ?
-    `,
-    [
-      ALPHA_NEW_CLAIM_ID,
-    ],
   );
 
   await pool.execute(
@@ -3205,7 +3197,7 @@ test(
       );
 
       const [
-        versionRows,
+        mysqlVersionRows,
       ] =
         await operationalPool.execute(
           "SELECT VERSION() AS version",
@@ -3220,7 +3212,7 @@ test(
             14,
 
           mysqlVersion:
-            versionRows[0]
+            mysqlVersionRows[0]
               .version,
 
           organisations: {
