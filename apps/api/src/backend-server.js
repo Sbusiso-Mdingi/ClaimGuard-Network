@@ -44,6 +44,12 @@ const databaseUrl = process.env.MYSQL_URL;
 const moduleDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
 const authenticationConfiguration = resolveAuthenticationConfiguration();
+const supportedDataPlaneSchemaVersions = String(
+  process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "14",
+)
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 let ledgerRepository = null;
 let investigationRepository = null;
@@ -72,11 +78,16 @@ if (databaseUrl && authenticationConfiguration.mode === "demo_headers") {
 }
 
 if (authenticationConfiguration.mode === "session") {
-  if (!databaseUrl) throw new Error("MYSQL_URL is required by the explicit legacy_shared route adapter in session mode.");
-  if (databaseUrl) assertDistinctDatabaseUrls(process.env.CONTROL_PLANE_MYSQL_URL, databaseUrl);
+  if (!databaseUrl) {
+    throw new Error("MYSQL_URL is required by the explicit legacy_shared route adapter in session mode.");
+  }
+  assertDistinctDatabaseUrls(process.env.CONTROL_PLANE_MYSQL_URL, databaseUrl);
   controlPlanePool = createControlPlanePool(process.env.CONTROL_PLANE_MYSQL_URL);
   controlPlaneRepositories = createControlPlaneRepositories(controlPlanePool);
-  controlPlaneService = createControlPlaneService({ pool: controlPlanePool, repositories: controlPlaneRepositories });
+  controlPlaneService = createControlPlaneService({
+    pool: controlPlanePool,
+    repositories: controlPlaneRepositories,
+  });
   authenticationService = createControlPlaneAuthenticationService({
     authenticationRepository: controlPlaneRepositories.authentication,
     integrationCredentialsRepository: controlPlaneRepositories.integrationCredentials,
@@ -88,11 +99,14 @@ if (authenticationConfiguration.mode === "session") {
     throttleMaxDelayMs: authenticationConfiguration.throttle.maxDelayMs,
     throttleLockoutMs: authenticationConfiguration.throttle.lockoutMs,
   });
-  const routeResolver = createControlPlaneDataPlaneRouteResolver({ repositories: controlPlaneRepositories });
+
+  const routeResolver = createControlPlaneDataPlaneRouteResolver({
+    repositories: controlPlaneRepositories,
+  });
   const legacySharedAdapter = createLegacySharedAdapter({
     databaseUrl,
     expectedEnvironment: process.env.DATA_PLANE_ENVIRONMENT || "legacy",
-    supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "13").split(",").map((value) => value.trim()).filter(Boolean),
+    supportedSchemaVersions: supportedDataPlaneSchemaVersions,
     connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
   });
   const connectionManager = createTenantConnectionManager({
@@ -100,7 +114,7 @@ if (authenticationConfiguration.mode === "session") {
       legacy_shared: legacySharedAdapter,
       private_database: createPrivateDatabaseAdapter({
         expectedEnvironment: process.env.DATA_PLANE_PRIVATE_ENVIRONMENT || "production",
-        supportedSchemaVersions: String(process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "13").split(",").map((value) => value.trim()).filter(Boolean),
+        supportedSchemaVersions: supportedDataPlaneSchemaVersions,
         connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
       }),
     },
@@ -115,13 +129,24 @@ if (authenticationConfiguration.mode === "session") {
     connectionManager,
     logger: logEvent,
     async checkReadiness() {
-      const checks = { controlPlaneReachable: false, legacySharedBaselineReachable: false, schemaCompatible: false };
-      try { await controlPlanePool.execute("SELECT 1"); checks.controlPlaneReachable = true; } catch { /* fail closed */ }
+      const checks = {
+        controlPlaneReachable: false,
+        legacySharedBaselineReachable: false,
+        schemaCompatible: false,
+      };
+      try {
+        await controlPlanePool.execute("SELECT 1");
+        checks.controlPlaneReachable = true;
+      } catch {
+        // Fail closed.
+      }
       try {
         const baseline = await legacySharedAdapter.checkBaseline();
         checks.legacySharedBaselineReachable = baseline.reachable;
         checks.schemaCompatible = baseline.schemaCompatible;
-      } catch { /* fail closed */ }
+      } catch {
+        // Fail closed.
+      }
       return { ready: Object.values(checks).every(Boolean), checks };
     },
   };
@@ -167,6 +192,7 @@ console.log(
     reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),
     authenticationMode: authenticationConfiguration.mode,
     explicitDataPlaneRouting: Boolean(dataPlaneRuntime),
+    supportedDataPlaneSchemaVersions,
   }),
 );
 

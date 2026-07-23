@@ -34,29 +34,50 @@ function splitSecretReferences(secretReference) {
     .filter(Boolean);
 }
 
+function normalizeSupportedSchemaVersions(values) {
+  const versions = [...new Set(
+    (Array.isArray(values) ? values : [values])
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean),
+  )];
+  if (!versions.length || versions.some((value) => !/^[1-9]\d*$/.test(value))) {
+    throw new TypeError("supportedSchemaVersions must contain canonical positive integers.");
+  }
+  return versions;
+}
+
+function expectedMigrationVersion(schemaVersion) {
+  const rendered = String(schemaVersion ?? "").trim();
+  if (!/^[1-9]\d*$/.test(rendered)) {
+    throw new Error("Private schema version is invalid.");
+  }
+  return Number(rendered);
+}
+
 export function createPrivateDatabaseAdapter({
-  supportedSchemaVersions = ["13"],
+  supportedSchemaVersions = ["14"],
   expectedEnvironment = "production",
-  expectedMigrationVersion = 13,
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),
   credential = null,
 } = {}) {
   const secretClients = new Map();
   const resolvedConnectionUrls = new Map();
+  const canonicalSupportedSchemaVersions = normalizeSupportedSchemaVersions(
+    supportedSchemaVersions,
+  );
 
   async function connectionUrlFor(context) {
     const key = `${context.organisationId}:${context.routeId}:${context.routeGeneration}`;
     if (resolvedConnectionUrls.has(key)) return resolvedConnectionUrls.get(key);
 
     const refs = splitSecretReferences(context.secretReference);
-    if (refs.length < 4) {
-      throw new Error("Private route secret reference must include username, password, host, and database secret URLs.");
+    if (refs.length !== 4) {
+      throw new Error(
+        "Private route secret reference must include exactly username, password, host, and database secret URLs.",
+      );
     }
-    const [
-      resolvedCredential,
-      { SecretClient },
-    ] = await Promise.all([
+    const [resolvedCredential, { SecretClient }] = await Promise.all([
       credential
         ? Promise.resolve(credential)
         : import("@azure/identity").then(
@@ -83,10 +104,12 @@ export function createPrivateDatabaseAdapter({
     if (metadata.database_mode !== "private_database") {
       throw new Error("Private route type verification failed.");
     }
-    if (!supportedSchemaVersions.includes(String(metadata.schema_version))) {
+
+    const schemaVersion = String(metadata.schema_version ?? "").trim();
+    if (!canonicalSupportedSchemaVersions.includes(schemaVersion)) {
       throw new Error("Private schema version is unsupported.");
     }
-    if (String(metadata.schema_version) !== String(context.schemaVersion)) {
+    if (schemaVersion !== String(context.schemaVersion)) {
       throw new Error("Private schema version does not match active route.");
     }
     if (metadata.environment_key !== expectedEnvironment) {
@@ -95,13 +118,23 @@ export function createPrivateDatabaseAdapter({
     if (metadata.logical_database_identifier !== context.logicalDatabaseIdentifier) {
       throw new Error("Private logical database identifier mismatch.");
     }
-    if (Number(metadata.migration_version) !== expectedMigrationVersion) {
+
+    const migrationVersion = Number(metadata.migration_version);
+    if (migrationVersion !== expectedMigrationVersion(schemaVersion)) {
       throw new Error("Private migration version verification failed.");
     }
+
+    return Object.freeze({
+      routeType: metadata.database_mode,
+      logicalDatabaseIdentifier: metadata.logical_database_identifier,
+      schemaVersion,
+      migrationVersion,
+    });
   }
 
   return Object.freeze({
     routeType: "private_database",
+
     async create(contextInput) {
       const context = requireOperationalDataPlaneContext(contextInput);
       if (context.routeType !== "private_database") {
@@ -110,21 +143,16 @@ export function createPrivateDatabaseAdapter({
       const url = await connectionUrlFor(context);
       return poolFactory({ ...buildConnectionOptions(url), connectionLimit });
     },
+
     async verify(pool, contextInput) {
       const context = requireOperationalDataPlaneContext(contextInput);
       const [rows] = await pool.execute(
         `SELECT database_mode, logical_database_identifier, schema_version, environment_key, migration_version
          FROM data_plane_metadata WHERE metadata_key = 'primary' LIMIT 1`,
       );
-      const metadata = rows?.[0];
-      verifyMetadata(metadata, context);
-      return Object.freeze({
-        routeType: metadata.database_mode,
-        logicalDatabaseIdentifier: metadata.logical_database_identifier,
-        schemaVersion: String(metadata.schema_version),
-        migrationVersion: Number(metadata.migration_version),
-      });
+      return verifyMetadata(rows?.[0], context);
     },
+
     async close(pool) {
       await pool.end();
     },
