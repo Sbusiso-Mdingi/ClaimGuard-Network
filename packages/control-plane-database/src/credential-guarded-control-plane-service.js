@@ -1,5 +1,11 @@
 import { createControlPlaneService as createBaseControlPlaneService } from "./control-plane-service.js";
-import { ControlPlaneConflictError } from "./errors.js";
+import {
+  ControlPlaneConflictError,
+  ControlPlaneNotFoundError,
+} from "./errors.js";
+import { withControlPlaneTransaction } from "./transaction.js";
+
+const CANONICAL_PRIVATE_SCHEMA_VERSION = "14";
 
 export function createSignupCredentialGuardedIdentityRepository(identity) {
   if (!identity || typeof identity !== "object") {
@@ -70,36 +76,194 @@ export function createSignupCredentialGuardedIdentityRepository(identity) {
   };
 }
 
+function createCredentialGatedActivation({ pool, repositories }) {
+  return async function activateOrganisation(organisationId, actor) {
+    return withControlPlaneTransaction(pool, async (executor) => {
+      const organisation = await repositories.organisations.getById(
+        organisationId,
+        { executor },
+      );
+
+      if (!organisation) {
+        throw new ControlPlaneNotFoundError(
+          "Organisation was not found.",
+          "ORGANISATION_NOT_FOUND",
+        );
+      }
+
+      if (
+        organisation.organisationType !== "medical_scheme"
+        || organisation.status !== "ready_for_activation"
+      ) {
+        throw new ControlPlaneConflictError(
+          "Only a ready medical-scheme organisation can be activated.",
+          "ORGANISATION_NOT_READY",
+        );
+      }
+
+      const route =
+        await repositories.routes.getInternalLatestReadyForOrganisation(
+          organisationId,
+          { executor },
+        );
+
+      if (
+        !route
+        || route.route_type !== "private_database"
+        || String(route.schema_version) !== CANONICAL_PRIVATE_SCHEMA_VERSION
+      ) {
+        throw new ControlPlaneConflictError(
+          `A schema-${CANONICAL_PRIVATE_SCHEMA_VERSION} private route is required.`,
+          "PRIVATE_ROUTE_NOT_READY",
+        );
+      }
+
+      const [gateRows] = await executor.execute(
+        `
+          SELECT
+            (
+              SELECT COUNT(*)
+              FROM organisation_schema_status
+              WHERE organisation_id = ?
+                AND route_id = ?
+                AND expected_schema_version = ?
+                AND observed_schema_version = ?
+                AND compatibility_status = 'compatible'
+            ) AS schema_ready,
+            (
+              SELECT COUNT(*)
+              FROM worker_routing_status
+              WHERE organisation_id = ?
+                AND worker_type = 'report-worker'
+                AND status = 'ready'
+            ) AS worker_ready,
+            (
+              SELECT COUNT(*)
+              FROM report_storage_partitions
+              WHERE organisation_id = ?
+                AND provisioning_status = 'ready'
+                AND retired_at IS NULL
+            ) AS storage_ready,
+            (
+              SELECT COUNT(*)
+              FROM organisation_memberships m
+              JOIN users u
+                ON u.user_id = m.user_id
+                AND u.status = 'active'
+              JOIN membership_roles mr
+                ON mr.membership_id = m.membership_id
+                AND mr.revoked_at IS NULL
+              JOIN roles r
+                ON r.role_id = mr.role_id
+              JOIN credential_identities c
+                ON c.user_id = m.user_id
+                AND c.organisation_id = m.organisation_id
+                AND c.authentication_provider = 'local_password'
+                AND c.status = 'active'
+                AND c.password_hash IS NOT NULL
+              WHERE m.organisation_id = ?
+                AND m.status = 'active'
+                AND r.role_key = 'scheme_administrator'
+            ) AS admin_ready
+        `,
+        [
+          organisationId,
+          route.route_id,
+          CANONICAL_PRIVATE_SCHEMA_VERSION,
+          CANONICAL_PRIVATE_SCHEMA_VERSION,
+          organisationId,
+          organisationId,
+          organisationId,
+        ],
+      );
+
+      const gates = gateRows?.[0] || {};
+      const allReady = [
+        gates.schema_ready,
+        gates.worker_ready,
+        gates.storage_ready,
+        gates.admin_ready,
+      ].every((value) => Number(value) > 0);
+
+      if (!allReady) {
+        throw new ControlPlaneConflictError(
+          "Schema, report worker, storage, and a usable initial administrator credential must pass before activation.",
+          "ACTIVATION_GATES_FAILED",
+        );
+      }
+
+      const activatedRoute = await repositories.routes.activate(
+        route.route_id,
+        organisationId,
+        { executor },
+      );
+
+      const activatedOrganisation = await repositories.organisations.updateStatus(
+        organisationId,
+        "active",
+        { executor },
+      );
+
+      await repositories.security.recordPlatformAudit(
+        {
+          actorType: actor?.type || "user",
+          actorId: actor?.id || null,
+          organisationScopeId: organisationId,
+          action: "organisation.activate",
+          targetType: "organisation",
+          targetId: organisationId,
+          beforeSummary: {
+            status: organisation.status,
+            routeId: route.route_id,
+          },
+          afterSummary: {
+            status: activatedOrganisation.status,
+            routeId: activatedRoute.routeId,
+          },
+          correlationId: actor?.correlationId || null,
+          outcome: "success",
+          source: actor?.source || "control-plane-service",
+        },
+        { executor },
+      );
+
+      return {
+        organisation: activatedOrganisation,
+        route: activatedRoute,
+      };
+    });
+  };
+}
+
 export function createControlPlaneService({ pool, repositories }) {
   const service = createBaseControlPlaneService({ pool, repositories });
   const identity = repositories?.identity;
 
-  // Some service operations intentionally use repository sets without an
-  // identity repository. They do not execute invitation signup, so preserve
-  // the base service instead of making unrelated construction fail.
-  if (!identity || typeof identity !== "object") {
-    return service;
+  let signupWithInvitation = service.signupWithInvitation;
+
+  if (identity && typeof identity === "object") {
+    const guardedIdentity =
+      createSignupCredentialGuardedIdentityRepository(identity);
+
+    if (guardedIdentity !== identity) {
+      const guardedSignupService = createBaseControlPlaneService({
+        pool,
+        repositories: {
+          ...repositories,
+          identity: guardedIdentity,
+        },
+      });
+
+      signupWithInvitation = guardedSignupService.signupWithInvitation;
+    }
   }
-
-  const guardedIdentity =
-    createSignupCredentialGuardedIdentityRepository(identity);
-
-  // Partial repository doubles that cannot create production credentials do
-  // not need a second service instance.
-  if (guardedIdentity === identity) {
-    return service;
-  }
-
-  const guardedSignupService = createBaseControlPlaneService({
-    pool,
-    repositories: {
-      ...repositories,
-      identity: guardedIdentity,
-    },
-  });
 
   return {
     ...service,
-    signupWithInvitation: guardedSignupService.signupWithInvitation,
+    activateOrganisation: createCredentialGatedActivation({
+      pool,
+      repositories,
+    }),
+    signupWithInvitation,
   };
 }
