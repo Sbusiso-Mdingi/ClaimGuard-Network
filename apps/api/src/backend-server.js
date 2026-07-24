@@ -100,9 +100,15 @@ if (authenticationConfiguration.mode === "session") {
     throttleLockoutMs: authenticationConfiguration.throttle.lockoutMs,
   });
 
-  const routeResolver = createControlPlaneDataPlaneRouteResolver({
-    repositories: controlPlaneRepositories,
-  });
+  const routeResolver =
+    createControlPlaneDataPlaneRouteResolver({
+      repositories:
+        controlPlaneRepositories,
+
+      supportedSchemaVersions:
+        supportedDataPlaneSchemaVersions,
+    });
+  
   const legacySharedAdapter = createLegacySharedAdapter({
     databaseUrl,
     expectedEnvironment: process.env.DATA_PLANE_ENVIRONMENT || "legacy",
