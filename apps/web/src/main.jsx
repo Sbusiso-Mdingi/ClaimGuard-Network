@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import * as Sentry from "@sentry/react";
 import App from "./AppRoot";
+import { scrubSentryBreadcrumb, scrubSentryEvent } from "./lib/sentryScrub";
 import "./styles.css";
 
 if (window.__CLAIMGUARD_WEB_SENTRY_READY__ !== true) {
@@ -12,6 +13,8 @@ if (window.__CLAIMGUARD_WEB_SENTRY_READY__ !== true) {
       dsn: window.__CLAIMGUARD_WEB_DSN__,
       environment: window.__CLAIMGUARD_WEB_ENV__ || "development",
       tracesSampleRate: 0,
+      beforeSend: scrubSentryEvent,
+      beforeBreadcrumb: scrubSentryBreadcrumb,
     });
   }
 }
