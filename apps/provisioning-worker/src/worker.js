@@ -481,56 +481,209 @@ function mysqlConnectionConfig(connectionUrl) {
 
 async function verifyIsolation(
   adminPool,
-  { tenantUsername, tenantPassword, databaseName, adminDatabaseUrl },
+  {
+    tenantUsername,
+    tenantPassword,
+    databaseName,
+    adminDatabaseUrl,
+  },
 ) {
-  const tenantConnection = await mysql.createConnection(
-    mysqlConnectionConfig(
-      tenantDatabaseUrl(adminDatabaseUrl, {
-        databaseName,
-        username: tenantUsername,
-        password: tenantPassword,
-      }),
-    ),
-  );
-  try {
-    await tenantConnection.query("SELECT 1");
-    const [otherRows] = await adminPool.execute(
-      `SELECT schema_name AS schema_name FROM information_schema.schemata
-       WHERE schema_name LIKE 'claimguard\\_tenant\\_%' AND schema_name <> ?
-       ORDER BY schema_name LIMIT 1`,
-      [databaseName],
+  const tenantConnection =
+    await mysql.createConnection(
+      mysqlConnectionConfig(
+        tenantDatabaseUrl(
+          adminDatabaseUrl,
+          {
+            databaseName,
+            username:
+              tenantUsername,
+            password:
+              tenantPassword,
+          },
+        ),
+      ),
     );
-    const otherDatabaseName = otherRows?.[0]?.schema_name || null;
-    if (!otherDatabaseName) {
-      throw new Error(
-        "A second tenant database is required for negative isolation verification.",
-      );
-    }
 
-    let crossDatabaseBlocked = false;
-    try {
+  try {
+    /*
+     * First prove that the generated principal can
+     * access its own operational database.
+     */
+    const [
+      ownMetadataRows,
+    ] =
       await tenantConnection.query(
-        `SELECT 1 FROM \`${String(otherDatabaseName).replace(/`/g, "``")}\`.data_plane_metadata LIMIT 1`,
+        `
+          SELECT COUNT(*) AS count
+          FROM data_plane_metadata
+          WHERE metadata_key =
+            'primary'
+        `,
       );
-    } catch {
-      crossDatabaseBlocked = true;
-    }
-    if (!crossDatabaseBlocked) {
-      throw new Error("Tenant principal unexpectedly has cross-database access.");
+
+    if (
+      Number(
+        ownMetadataRows
+          ?.[0]
+          ?.count
+        || 0,
+      ) !== 1
+    ) {
+      throw new Error(
+        "Tenant principal cannot access its own data-plane metadata.",
+      );
     }
 
-    const [grants] = await tenantConnection.query("SHOW GRANTS FOR CURRENT_USER()");
-    const grantStatements = (grants || []).flatMap((row) =>
-      Object.values(row).map(String));
+    /*
+     * Prefer a real neighbouring tenant or dedicated
+     * integration-isolation database for the negative
+     * access probe.
+     */
+    const [
+      otherRows,
+    ] =
+      await adminPool.execute(
+        `
+          SELECT
+            schema_name AS schema_name
+          FROM information_schema.schemata
+          WHERE schema_name <> ?
+            AND (
+              schema_name LIKE
+                'claimguard\\_tenant\\_%'
+              OR schema_name LIKE
+                'claimguard\\_isolation\\_%'
+            )
+          ORDER BY schema_name
+          LIMIT 1
+        `,
+        [
+          databaseName,
+        ],
+      );
+
+    const otherDatabaseName =
+      otherRows?.[0]?.schema_name
+      || null;
+
+    let crossDatabaseBlocked =
+      false;
+
+    try {
+      if (
+        otherDatabaseName
+      ) {
+        const escapedDatabaseName =
+          String(
+            otherDatabaseName,
+          ).replace(
+            /`/g,
+            "``",
+          );
+
+        await tenantConnection.query(
+          `
+            SELECT 1
+            FROM
+              \`${escapedDatabaseName}\`
+              .data_plane_metadata
+            LIMIT 1
+          `,
+        );
+      } else {
+        /*
+         * The first private tenant may have no
+         * neighbouring tenant database yet. The MySQL
+         * privilege database is a stable negative probe.
+         */
+        await tenantConnection.query(
+          `
+            SELECT User
+            FROM mysql.user
+            LIMIT 1
+          `,
+        );
+      }
+    } catch (
+      error
+    ) {
+      const accessDeniedCodes =
+        new Set([
+          "ER_DBACCESS_DENIED_ERROR",
+          "ER_TABLEACCESS_DENIED_ERROR",
+          "ER_ACCESS_DENIED_ERROR",
+          "ER_SPECIFIC_ACCESS_DENIED_ERROR",
+        ]);
+
+      if (
+        accessDeniedCodes.has(
+          error?.code,
+        )
+      ) {
+        crossDatabaseBlocked =
+          true;
+      } else {
+        throw error;
+      }
+    }
+
+    if (
+      !crossDatabaseBlocked
+    ) {
+      throw new Error(
+        "Tenant principal unexpectedly has cross-database access.",
+      );
+    }
+
+    const [
+      grants,
+    ] =
+      await tenantConnection.query(
+        "SHOW GRANTS FOR CURRENT_USER()",
+      );
+
+    const grantStatements =
+      (
+        grants
+        || []
+      ).flatMap(
+        (
+          row,
+        ) =>
+          Object.values(
+            row,
+          ).map(
+            String,
+          ),
+      );
+
     if (
       grantStatements.some(
-        (grant) => !/^GRANT USAGE ON \*\.\*/i.test(grant)
-          && / ON `?\*`?\.`?\*`? /i.test(grant),
+        (
+          grant,
+        ) =>
+          (
+            !/^GRANT USAGE ON \*\.\*/i
+              .test(
+                grant,
+              )
+            && / ON `?\*`?\.`?\*`? /i
+              .test(
+                grant,
+              )
+          ),
       )
     ) {
-      throw new Error("Tenant principal unexpectedly has server-wide grants.");
+      throw new Error(
+        "Tenant principal unexpectedly has server-wide grants.",
+      );
     }
-    return { otherDatabaseName, crossDatabaseBlocked: true };
+
+    return {
+      otherDatabaseName,
+      crossDatabaseBlocked:
+        true,
+    };
   } finally {
     await tenantConnection.end();
   }
