@@ -14,7 +14,7 @@ function actorFromContext(c) {
 
 export function registerSchemeAdminRoutes(app, { controlPlaneService }) {
   const requireSchemeUsersManage = createRequirePermissionMiddleware({
-    permission: CLAIMGUARD_PERMISSIONS.SCHEME_USERS_MANAGE,
+    permission: CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT,
   });
 
   app.get("/admin/scheme/users", requireSchemeUsersManage, async (c) => {
