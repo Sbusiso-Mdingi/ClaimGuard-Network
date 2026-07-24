@@ -252,6 +252,309 @@ test(
   },
 );
 
+test("invitation signup reuses an existing credential-less administrator", async () => {
+  const invitation = {
+    invitation_id:
+      "invitation-ubuntu",
+    organisation_id:
+      "org-ubuntu",
+    email:
+      "admin@ubuntu.example",
+    status:
+      "pending",
+    invited_by:
+      "platform-admin-1",
+    expires_at:
+      new Date(
+        Date.now()
+        + 60_000,
+      ),
+  };
+
+  let consumedInvitation =
+    null;
+
+  const connection = {
+    async beginTransaction() {},
+    async commit() {},
+    async rollback() {},
+    release() {},
+
+    async execute(
+      sql,
+      parameters,
+    ) {
+      const normalizedSql =
+        String(sql)
+          .replace(
+            /\s+/g,
+            " ",
+          )
+          .trim();
+
+      if (
+        normalizedSql
+          .startsWith(
+            "SELECT * FROM admin_invitations",
+          )
+      ) {
+        return [
+          [
+            invitation,
+          ],
+          [],
+        ];
+      }
+
+      if (
+        normalizedSql
+          .startsWith(
+            "UPDATE admin_invitations SET status = 'consumed'",
+          )
+      ) {
+        consumedInvitation = {
+          userId:
+            parameters[0],
+          invitationId:
+            parameters[1],
+        };
+
+        return [
+          {
+            affectedRows:
+              1,
+          },
+          [],
+        ];
+      }
+
+      throw new Error(
+        `Unexpected SQL: ${normalizedSql}`,
+      );
+    },
+  };
+
+  const pool = {
+    async getConnection() {
+      return connection;
+    },
+  };
+
+  const existingUser = {
+    userId:
+      "user-existing",
+    displayName:
+      "Ubuntu Administrator",
+    canonicalContact:
+      "admin@ubuntu.example",
+    status:
+      "active",
+  };
+
+  const existingMembership = {
+    membershipId:
+      "membership-existing",
+    userId:
+      "user-existing",
+    organisationId:
+      "org-ubuntu",
+    status:
+      "active",
+  };
+
+  let createdCredential =
+    null;
+
+  const auditEvents =
+    [];
+
+  const repositories = {
+    identity: {
+      async getSafeUserByCanonicalContact(
+        canonicalContact,
+        options,
+      ) {
+        assert.equal(
+          canonicalContact,
+          "admin@ubuntu.example",
+        );
+
+        assert.equal(
+          options.lockForUpdate,
+          true,
+        );
+
+        return existingUser;
+      },
+
+      async getMembershipForUserOrganisation(
+        input,
+        options,
+      ) {
+        assert.deepEqual(
+          input,
+          {
+            userId:
+              "user-existing",
+            organisationId:
+              "org-ubuntu",
+          },
+        );
+
+        assert.equal(
+          options.lockForUpdate,
+          true,
+        );
+
+        return existingMembership;
+      },
+
+      async createUser() {
+        throw new Error(
+          "createUser must not be called for an existing invitation user.",
+        );
+      },
+
+      async createMembership() {
+        throw new Error(
+          "createMembership must not be called for an existing membership.",
+        );
+      },
+
+      async createCredential(
+        input,
+      ) {
+        createdCredential =
+          input;
+
+        return {
+          credentialId:
+            "credential-ubuntu",
+          userId:
+            input.userId,
+          organisationId:
+            input.organisationId,
+          normalizedUsername:
+            input.username,
+          status:
+            input.status,
+        };
+      },
+
+      async resolveRole(
+        roleKey,
+      ) {
+        assert.equal(
+          roleKey,
+          "scheme_administrator",
+        );
+
+        return {
+          roleId:
+            "scheme_administrator",
+          roleKey:
+            "scheme_administrator",
+          organisationScope:
+            "medical_scheme",
+        };
+      },
+
+      async assignRole(
+        input,
+      ) {
+        return input;
+      },
+    },
+
+    security: {
+      async recordPlatformAudit(
+        event,
+      ) {
+        auditEvents.push(
+          event,
+        );
+      },
+    },
+  };
+
+  const service =
+    createControlPlaneService(
+      {
+        pool,
+        repositories,
+      },
+    );
+
+  const result =
+    await service
+      .signupWithInvitation(
+        {
+          token:
+            "ubuntu-invitation-token",
+          displayName:
+            "Ubuntu Administrator",
+          username:
+            "Ubuntu.Admin",
+          password:
+            "Strong-Ubuntu-Password-123",
+        },
+        {
+          correlationId:
+            "signup-correlation-1",
+        },
+      );
+
+  assert.equal(
+    result.user.userId,
+    "user-existing",
+  );
+
+  assert.equal(
+    result.membership.membershipId,
+    "membership-existing",
+  );
+
+  assert.equal(
+    createdCredential.userId,
+    "user-existing",
+  );
+
+  assert.equal(
+    createdCredential.organisationId,
+    "org-ubuntu",
+  );
+
+  assert.equal(
+    createdCredential.username,
+    "ubuntu.admin",
+  );
+
+  assert.match(
+    createdCredential.passwordHash,
+    /^\$argon2id\$/,
+  );
+
+  assert.deepEqual(
+    consumedInvitation,
+    {
+      userId:
+        "user-existing",
+      invitationId:
+        "invitation-ubuntu",
+    },
+  );
+
+  assert.equal(
+    auditEvents.length,
+    1,
+  );
+
+  assert.equal(
+    auditEvents[0].action,
+    "admin_invitation.consumed",
+  );
+});
+
 test("slug reservation and alias creation are explicit and audited", async () => {
   const { service, audit } = serviceFixture();
   const reserved = await service.reserveSlug({ slug: "Future-Scheme", slugType: "reserved" });

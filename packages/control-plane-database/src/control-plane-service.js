@@ -554,12 +554,37 @@ export function createControlPlaneService({ pool, repositories }) {
 
         const organisationId = invitation.organisation_id;
 
-        // Create user
-        const user = await repositories.identity.createUser({
-          displayName: displayName.trim(),
-          canonicalContact: invitation.email,
-          status: "active",
-        }, { executor });
+        // Draft onboarding may already have created the administrator's
+        // platform-level user identity. Reuse that identity instead of
+        // attempting to create a duplicate canonical contact.
+        let user =
+          await repositories.identity
+            .getSafeUserByCanonicalContact(
+              invitation.email,
+              {
+                executor,
+                lockForUpdate:
+                  true,
+              },
+            );
+
+        if (!user) {
+          user =
+            await repositories.identity
+              .createUser(
+                {
+                  displayName:
+                    displayName.trim(),
+                  canonicalContact:
+                    invitation.email,
+                  status:
+                    "active",
+                },
+                {
+                  executor,
+                },
+              );
+        }
 
         // Create credential
         const passwordHash = await hashPassword(password);
@@ -574,14 +599,44 @@ export function createControlPlaneService({ pool, repositories }) {
           passwordVersion: ARGON2ID_VERSION,
         }, { executor });
 
-        // Create membership
-        const membership = await repositories.identity.createMembership({
-          userId: user.userId,
-          organisationId,
-          status: "active",
-          validFrom: new Date(),
-          invitedBy: invitation.invited_by,
-        }, { executor });
+        // Reuse the onboarding membership when it already exists.
+        // Invitation-only users receive a membership in the invited
+        // organisation.
+        let membership =
+          await repositories.identity
+            .getMembershipForUserOrganisation(
+              {
+                userId:
+                  user.userId,
+                organisationId,
+              },
+              {
+                executor,
+                lockForUpdate:
+                  true,
+              },
+            );
+
+        if (!membership) {
+          membership =
+            await repositories.identity
+              .createMembership(
+                {
+                  userId:
+                    user.userId,
+                  organisationId,
+                  status:
+                    "active",
+                  validFrom:
+                    new Date(),
+                  invitedBy:
+                    invitation.invited_by,
+                },
+                {
+                  executor,
+                },
+              );
+        }
 
         // Assign scheme_administrator role
         const role = await repositories.identity.resolveRole("scheme_administrator", { executor });
