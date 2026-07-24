@@ -53,6 +53,205 @@ test("organisation lifecycle is explicit and audited", async () => {
   assert.equal(audit.length, 2);
 });
 
+test(
+  "organisation activation accepts the canonical schema-14 private route",
+  async () => {
+    const gateQueries =
+      [];
+
+    const connection = {
+      async beginTransaction() {},
+      async commit() {},
+      async rollback() {},
+      release() {},
+
+      async execute(
+        sql,
+        parameters,
+      ) {
+        gateQueries.push(
+          {
+            sql,
+            parameters,
+          },
+        );
+
+        return [
+          [
+            {
+              schema_ready: 1,
+              worker_ready: 1,
+              storage_ready: 1,
+              admin_ready: 1,
+            },
+          ],
+          [],
+        ];
+      },
+    };
+
+    const pool = {
+      async getConnection() {
+        return connection;
+      },
+    };
+
+    const auditEvents =
+      [];
+
+    const repositories = {
+      organisations: {
+        async getById() {
+          return {
+            organisationId:
+              "org-14",
+
+            organisationType:
+              "medical_scheme",
+
+            status:
+              "ready_for_activation",
+          };
+        },
+
+        async updateStatus(
+          organisationId,
+          status,
+        ) {
+          return {
+            organisationId,
+            organisationType:
+              "medical_scheme",
+            status,
+            activationState:
+              "activated",
+          };
+        },
+      },
+
+      routes: {
+        async getInternalLatestReadyForOrganisation() {
+          return {
+            route_id:
+              "route-14",
+
+            route_type:
+              "private_database",
+
+            schema_version:
+              "14",
+          };
+        },
+
+        async activate(
+          routeId,
+          organisationId,
+        ) {
+          return {
+            routeId,
+            organisationId,
+            routeType:
+              "private_database",
+
+            schemaVersion:
+              "14",
+
+            provisioningStatus:
+              "active",
+          };
+        },
+      },
+
+      security: {
+        async recordPlatformAudit(
+          event,
+        ) {
+          auditEvents.push(
+            event,
+          );
+        },
+      },
+    };
+
+    const service =
+      createControlPlaneService(
+        {
+          pool,
+          repositories,
+        },
+      );
+
+    const result =
+      await service
+        .activateOrganisation(
+          "org-14",
+          {
+            type:
+              "user",
+
+            id:
+              "platform-admin-1",
+
+            source:
+              "test",
+          },
+        );
+
+    assert.equal(
+      result
+        .organisation
+        .status,
+      "active",
+    );
+
+    assert.equal(
+      result
+        .route
+        .schemaVersion,
+      "14",
+    );
+
+    assert.equal(
+      gateQueries.length,
+      1,
+    );
+
+    assert.deepEqual(
+      gateQueries[0]
+        .parameters,
+      [
+        "org-14",
+        "route-14",
+        "14",
+        "14",
+        "org-14",
+        "org-14",
+        "org-14",
+      ],
+    );
+
+    assert.match(
+      gateQueries[0].sql,
+      /expected_schema_version\s*=\s*\?/,
+    );
+
+    assert.match(
+      gateQueries[0].sql,
+      /observed_schema_version\s*=\s*\?/,
+    );
+
+    assert.equal(
+      auditEvents.length,
+      1,
+    );
+
+    assert.equal(
+      auditEvents[0].action,
+      "organisation.activate",
+    );
+  },
+);
+
 test("slug reservation and alias creation are explicit and audited", async () => {
   const { service, audit } = serviceFixture();
   const reserved = await service.reserveSlug({ slug: "Future-Scheme", slugType: "reserved" });
