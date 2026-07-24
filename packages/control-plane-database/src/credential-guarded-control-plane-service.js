@@ -89,11 +89,7 @@ function createExpiredInvitationAwareSignup({ pool, delegate }) {
       pool,
       async (executor) => {
         const [rows] = await executor.execute(
-          `SELECT invitation_id, status, expires_at
-           FROM admin_invitations
-           WHERE token_hash = ?
-           LIMIT 1
-           FOR UPDATE`,
+          `SELECT * FROM admin_invitations WHERE token_hash = ? FOR UPDATE`,
           [tokenHash],
         );
 
