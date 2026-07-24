@@ -81,7 +81,7 @@ test(
 
     assert.match(
       worker,
-      /applyMigrations\(connection/,
+      /applyMigrations\(\s*connection/,
     );
 
     assert.match(
