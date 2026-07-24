@@ -1770,7 +1770,7 @@ test(
             "/detection/report",
           )
         ).status,
-        503,
+        403,
       );
 
       const createdInvestigationResponse =
