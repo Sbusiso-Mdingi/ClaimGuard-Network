@@ -61,7 +61,12 @@ export function SignupPage() {
     try {
       const result = await apiJson("/auth/signup", {
         method: "POST",
-        body: { token, displayName, username, password },
+        body: JSON.stringify({
+          token,
+          displayName,
+          username,
+          password,
+        }),
         skipUnauthorizedHandler: true,
       });
 
