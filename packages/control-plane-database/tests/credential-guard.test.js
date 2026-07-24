@@ -159,3 +159,18 @@ test("partial repository doubles remain compatible with the control-plane servic
     identity,
   );
 });
+
+test("identity repositories without credential creation remain unchanged", () => {
+  const identity = {
+    async createMembership() {
+      return {
+        membershipId: "membership-test",
+      };
+    },
+  };
+
+  assert.equal(
+    createSignupCredentialGuardedIdentityRepository(identity),
+    identity,
+  );
+});
