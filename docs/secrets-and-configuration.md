@@ -32,12 +32,34 @@ CI/CD:
 | internal worker tokens | service-to-service auth | Platform ops | internal | secret | service config | API and workers | env / secret reference | periodic | used by session-mode worker paths in code | revert token secret | unknown | yes |
 | report storage config | storage backend, container, pointer | Platform / reporting | prod-like | sensitive config | env + storage account | API, producer, workers | env / secret reference | change-driven | live config exists | revert storage pointer/config | yes | yes |
 | `REPORT_STORAGE_CONNECTION_STRING` | optional local report-storage access | reporting ops | local development only | secret | local approved secret provider | local producer | environment | periodic | Azure deployment uses managed identity instead | no | yes |
+| `APPROVED_MODEL_DEPLOYMENT_IDS` | allowlist of model deployments permitted for scoring | Platform ML operations | prod-like | config | approved deployment registry | API and report worker | environment | deployment-driven | required by model-selection validation | restore previous allowlist | yes | no |
+| `CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID` | currently promoted ClaimGuard-managed fraud model | Platform ML operations | prod-like | config | ClaimGuard model promotion process | API model-selection boundary | environment | model-promotion driven | schemes cannot override this value | restore previous promoted deployment | no | no |
+| `SCHEME_MODEL_DEPLOYMENTS_JSON` | maps operational tenant IDs to proprietary deployments registered for that scheme | Platform and scheme ML governance | prod-like | sensitive config | approved model ownership registry | API model-selection boundary | environment or generated config reference | registration-driven | fail-closed ownership enforcement | restore previous ownership map | no | replace with model registry |
 | `SENTRY_DSN_API` | API error telemetry | observability | prod-like | secret-ish | live App Service setting / future Doppler | API | env | rarely | live | revert DSN | yes | yes |
 | `SENTRY_DSN_WEB` | web error telemetry | observability | prod-like | secret-ish | live App Service setting / future Doppler | web | env | rarely | live | revert DSN | yes | yes |
 | `NEW_RELIC_LICENSE_KEY` | APM auth | observability | prod-like | secret | live App Service setting / future Doppler | API | env | periodically | live | revert key | yes | yes |
 | `NEW_RELIC_APP_NAME` | APM name | observability | prod-like | config | live App Service setting / future Doppler | API | env | rarely | live | revert name | yes | yes |
 | Application Insights connection | Azure telemetry | observability | prod-like | secret-ish | code/workflow config pending | API/web/worker | env/config | change-driven | referenced in docs/code, not fully inventoried live | revert connection string | unknown | yes |
 | `AZURE_CLIENT_ID` / tenant / subscription | OIDC deployment identity | CI | CI | identity metadata | workflow env | GitHub Actions | workflow env | change-driven | live values present in workflows | revert workflow env | yes | no |
+
+## Detection Model Selection
+
+Scheme administrators may choose only one of two ML-backed options:
+
+- **ClaimGuard managed:** the API resolves `CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID`. The scheme cannot submit or pin a different ClaimGuard deployment.
+- **Scheme managed:** the submitted deployment must be listed for the authenticated operational tenant in `SCHEME_MODEL_DEPLOYMENTS_JSON` and must also appear in `APPROVED_MODEL_DEPLOYMENT_IDS`.
+
+Example ownership-map shape, using non-secret identifiers only:
+
+```json
+{
+  "operational-tenant-id": [
+    "scheme-proprietary-model:production"
+  ]
+}
+```
+
+Model endpoints, credentials and authentication material must not be stored in this JSON value. They remain in the model-service registry and approved secret-delivery boundary.
 
 ## Current Live Settings by Name Only
 

@@ -1,19 +1,13 @@
 import { createBackendHealth, createBackendInfo } from "@claimguard/shared-schema";
-import { OPERATIONAL_ROUTE_IDS, CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
 import {
   createRequireOperationalRouteAuthorizationMiddleware,
 } from "../middleware/authorization-middleware.js";
-
-const DEPLOYMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-
-function approvedModelDeploymentIds() {
-  return new Set(
-    String(process.env.APPROVED_MODEL_DEPLOYMENT_IDS || "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
-  );
-}
+import {
+  DetectionModelSelectionError,
+  projectDetectionModelSelection,
+  resolveDetectionModelSelection,
+} from "../detection-model-selection.js";
 
 export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = null, detectionStrategyRepository = null, tenantRepository = null }) {
   const requireInternalDataPlaneHealth = createRequireOperationalRouteAuthorizationMiddleware({
@@ -36,9 +30,7 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
       .sort()
       .at(-1) || null;
     const lastFailureCategories = [...new Set(
-      pools
-        .map((entry) => entry?.lastFailureCategory || null)
-        .filter(Boolean),
+      pools.map((entry) => entry?.lastFailureCategory || null).filter(Boolean),
     )];
 
     return {
@@ -50,36 +42,31 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     };
   }
 
-  app.get("/live", (c) => {
-    return c.json({
-      status: "ok",
-      service: "api",
-      live: true,
-      timestamp: new Date().toISOString(),
-    });
-  });
+  app.get("/live", (c) => c.json({
+    status: "ok",
+    service: "api",
+    live: true,
+    timestamp: new Date().toISOString(),
+  }));
 
   app.get("/ready", async (c) => {
     const readiness = await reportService.checkReadiness();
-    const dataPlaneReadiness = dataPlaneRuntime?.checkReadiness ? await dataPlaneRuntime.checkReadiness() : { ready: true, checks: {} };
+    const dataPlaneReadiness = dataPlaneRuntime?.checkReadiness
+      ? await dataPlaneRuntime.checkReadiness()
+      : { ready: true, checks: {} };
     const ready = readiness.ready && dataPlaneReadiness.ready;
-    const statusCode = ready ? 200 : 503;
-    const status = ready ? (readiness.degraded ? "degraded" : "ok") : "degraded";
-
-    return c.json(
-      {
-        status,
-        service: "api",
-        ready,
-        checks: { ...readiness.checks, ...dataPlaneReadiness.checks },
-        timestamp: new Date().toISOString(),
-      },
-      statusCode,
-    );
+    return c.json({
+      status: ready ? (readiness.degraded ? "degraded" : "ok") : "degraded",
+      service: "api",
+      ready,
+      checks: { ...readiness.checks, ...dataPlaneReadiness.checks },
+      timestamp: new Date().toISOString(),
+    }, ready ? 200 : 503);
   });
 
   app.get("/health", (c) => c.json(createBackendHealth()));
   app.get("/meta", (c) => c.json(createBackendInfo()));
+
   app.get("/internal/data-plane/health", requireInternalDataPlaneHealth, async (c) => {
     const context = c.get("dataPlaneContext") || null;
     const readiness = dataPlaneRuntime?.checkReadiness
@@ -100,8 +87,11 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     }
 
     const pool = metrics.pools.find((entry) =>
-      entry.organisationId === context.organisationId && entry.routeId === context.routeId && entry.routeGeneration === context.routeGeneration,
+      entry.organisationId === context.organisationId
+      && entry.routeId === context.routeId
+      && entry.routeGeneration === context.routeGeneration,
     ) || null;
+
     return c.json({
       available: true,
       route: { type: context.routeType, schemaCompatible: true },
@@ -119,8 +109,10 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     if (!detectionStrategyRepository) {
       return c.json({ available: false, message: "Detection strategy repository not available" }, 503);
     }
+
     const tenantContext = c.get("tenantContext");
-    const strategy = await detectionStrategyRepository.getActiveStrategy(tenantContext);
+    const storedStrategy = await detectionStrategyRepository.getActiveStrategy(tenantContext);
+    const strategy = projectDetectionModelSelection(storedStrategy, tenantContext);
     return c.json({ available: true, strategy });
   });
 
@@ -128,15 +120,13 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     if (!detectionStrategyRepository) {
       return c.json({ available: false, message: "Detection strategy repository not available" }, 503);
     }
+
     const tenantContext = c.get("tenantContext");
     const payload = await c.req.json().catch(() => ({}));
-
     const permittedKeys = new Set(["strategyType", "modelDeploymentId", "changeReason"]);
+
     if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
       return c.json({ available: false, message: "The strategy payload contains unsupported fields." }, 400);
-    }
-    if (!["deterministic_rules", "approved_model"].includes(payload.strategyType)) {
-      return c.json({ available: false, message: "strategyType must be deterministic_rules or approved_model." }, 400);
     }
 
     const authContext = c.get("authContext");
@@ -144,28 +134,40 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     if (!actor) {
       return c.json({ available: false, message: "Authenticated actor identity is unavailable." }, 401);
     }
+
     const changeReason = String(payload.changeReason || "").trim();
     if (!changeReason || changeReason.length > 500) {
       return c.json({ available: false, message: "changeReason must contain 1–500 characters." }, 400);
     }
 
-    const modelDeploymentId = String(payload.modelDeploymentId || "").trim() || null;
-    if (payload.strategyType === "approved_model" && (
-      !modelDeploymentId
-      || !DEPLOYMENT_ID_PATTERN.test(modelDeploymentId)
-      || !approvedModelDeploymentIds().has(modelDeploymentId)
-    )) {
-      return c.json({ available: false, message: "modelDeploymentId is not approved in this environment." }, 400);
-    }
-    if (payload.strategyType === "deterministic_rules" && modelDeploymentId) {
-      return c.json({ available: false, message: "Deterministic strategy cannot select a model deployment." }, 400);
-    }
+    try {
+      const resolved = resolveDetectionModelSelection(payload, tenantContext);
+      const storedStrategy = await detectionStrategyRepository.setStrategy(
+        tenantContext,
+        {
+          ...resolved.repositoryChange,
+          actor,
+          changeReason,
+        },
+      );
 
-    const strategy = await detectionStrategyRepository.setStrategy(
-      tenantContext,
-      { strategyType: payload.strategyType, modelDeploymentId, actor, changeReason },
-    );
-
-    return c.json({ available: true, strategy });
+      return c.json({
+        available: true,
+        strategy: {
+          ...resolved.publicSelection,
+          strategyId: storedStrategy?.strategyId || null,
+          changed: storedStrategy?.changed,
+        },
+      });
+    } catch (error) {
+      if (error instanceof DetectionModelSelectionError) {
+        return c.json({
+          available: false,
+          code: error.code,
+          message: error.message,
+        }, error.status);
+      }
+      throw error;
+    }
   });
 }
