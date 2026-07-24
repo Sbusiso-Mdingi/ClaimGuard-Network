@@ -65,7 +65,18 @@ const TEST_TENANTS = [
 ];
 
 const ALPHA_NEW_CLAIM_ID =
-  `ALPHA-CLAIM-NEW-${randomUUID()}`;
+  (
+    "ALPHA-NEW-"
+    + randomUUID()
+      .replaceAll(
+        "-",
+        "",
+      )
+      .slice(
+        0,
+        16,
+      )
+  );
 
 
 function cookieFrom(
