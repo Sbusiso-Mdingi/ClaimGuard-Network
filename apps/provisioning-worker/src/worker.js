@@ -470,6 +470,7 @@ async function runProvisioningOperation({
   operation,
   adminPool,
   secretStore,
+  grantReportWorkerAccess,
 }) {
   const organisation = await repositories.organisations.getById(
     operation.organisationId,
@@ -631,14 +632,20 @@ async function runProvisioningOperation({
     }, { type: "system", id: "provisioning-worker", source: "provisioning-worker" });
   });
 
-  await runStep("grant_report_worker_secret_access", async () => {
-    await grantReportWorkerSecretAccess(policy, [
-      runtimeUsernameSecretName,
-      runtimePasswordSecretName,
-      runtimeHostSecretName,
-      runtimeDatabaseSecretName,
-    ]);
-  });
+  await runStep(
+    "grant_report_worker_secret_access",
+    async () => {
+      await grantReportWorkerAccess(
+        policy,
+        [
+          runtimeUsernameSecretName,
+          runtimePasswordSecretName,
+          runtimeHostSecretName,
+          runtimeDatabaseSecretName,
+        ],
+      );
+    },
+  );
 
   await runStep("record_schema_compatibility", async () => {
     const [rows] = await controlPool.execute(
@@ -788,6 +795,7 @@ async function runUpgradeOperation({
   operation,
   adminPool,
   secretStore,
+  grantReportWorkerAccess,
 }) {
   const organisation = await repositories.organisations.getById(
     operation.organisationId,
@@ -916,9 +924,15 @@ async function runUpgradeOperation({
     });
   });
 
-  await runStep("grant_report_worker_secret_access", async () => {
-    await grantReportWorkerSecretAccess(policy, secretNames);
-  });
+  await runStep(
+    "grant_report_worker_secret_access",
+    async () => {
+      await grantReportWorkerAccess(
+        policy,
+        secretNames,
+      );
+    },
+  );
 
   await runStep("register_canonical_schema_route", async () => {
     const [existingRows] = await controlPool.execute(
@@ -1010,42 +1024,129 @@ async function runUpgradeOperation({
   );
 }
 
-export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
-  const controlPlaneUrl = requireEnv("CONTROL_PLANE_MYSQL_URL");
-  const controlPool = createControlPlanePool(controlPlaneUrl);
-  const repositories = createControlPlaneRepositories(controlPool);
-  const service = createControlPlaneService({
-    pool: controlPool,
-    repositories,
-  });
-  const secretStore = await createSecretStore();
-  const adminPool = mysql.createPool(
-    mysqlConnectionConfig(requireEnv("MYSQL_SERVER_ADMIN_URL")),
-  );
-  const workerInstanceId = process.env.CONTAINER_APP_JOB_EXECUTION_NAME?.trim()
-    || `provisioning-worker-${crypto.randomUUID()}`;
+export async function runProvisioningBatch({
+  maxOperations = 1,
+
+  grantReportWorkerAccess =
+    grantReportWorkerSecretAccess,
+} = {}) {
+  if (
+    !Number.isInteger(
+      maxOperations,
+    )
+    || maxOperations < 1
+  ) {
+    throw new TypeError(
+      "maxOperations must be a positive integer.",
+    );
+  }
+
+  if (
+    typeof grantReportWorkerAccess
+      !== "function"
+  ) {
+    throw new TypeError(
+      "grantReportWorkerAccess must be a function.",
+    );
+  }
+
+  const controlPlaneUrl =
+    requireEnv(
+      "CONTROL_PLANE_MYSQL_URL",
+    );
+
+  const controlPool =
+    createControlPlanePool(
+      controlPlaneUrl,
+    );
+
+  const repositories =
+    createControlPlaneRepositories(
+      controlPool,
+    );
+
+  const service =
+    createControlPlaneService({
+      pool:
+        controlPool,
+
+      repositories,
+    });
+
+  const secretStore =
+    await createSecretStore();
+
+  const adminPool =
+    mysql.createPool(
+      mysqlConnectionConfig(
+        requireEnv(
+          "MYSQL_SERVER_ADMIN_URL",
+        ),
+      ),
+    );
+
+  const workerInstanceId =
+    process.env
+      .CONTAINER_APP_JOB_EXECUTION_NAME
+      ?.trim()
+    || (
+      "provisioning-worker-"
+      + crypto.randomUUID()
+    );
 
   let processed = 0;
-  try {
-    while (processed < maxOperations) {
-      const operation = await withControlPlaneTransaction(
-        controlPool,
-        (executor) => repositories.provisioning.leaseNextOperation({
-          leaseOwner: workerInstanceId,
-          leaseSeconds: 2100,
-          executor,
-        }),
-      );
-      if (!operation) break;
 
-      log("info", "provisioning_operation_leased", {
-        operationId: operation.operationId,
-        organisationId: operation.organisationId,
-      });
+  try {
+    while (
+      processed
+      < maxOperations
+    ) {
+      const operation =
+        await withControlPlaneTransaction(
+          controlPool,
+          (
+            executor,
+          ) =>
+            repositories
+              .provisioning
+              .leaseNextOperation({
+                leaseOwner:
+                  workerInstanceId,
+
+                leaseSeconds:
+                  2100,
+
+                executor,
+              }),
+        );
+
+      if (
+        !operation
+      ) {
+        break;
+      }
+
+      log(
+        "info",
+        "provisioning_operation_leased",
+        {
+          operationId:
+            operation
+              .operationId,
+
+          organisationId:
+            operation
+              .organisationId,
+        },
+      );
+
       try {
-        const runner = operation.operationType === "upgrade_private_database"
-          ? runUpgradeOperation
-          : runProvisioningOperation;
+        const runner =
+          operation.operationType
+            === "upgrade_private_database"
+            ? runUpgradeOperation
+            : runProvisioningOperation;
+
         await runner({
           controlPool,
           repositories,
@@ -1053,35 +1154,85 @@ export async function runProvisioningBatch({ maxOperations = 1 } = {}) {
           operation,
           adminPool,
           secretStore,
+          grantReportWorkerAccess,
         });
-        log("info", "provisioning_operation_completed", {
-          operationId: operation.operationId,
-          organisationId: operation.organisationId,
-        });
-      } catch (error) {
-        await withControlPlaneTransaction(controlPool, async (executor) => {
-          await repositories.provisioning.transitionOperation(
-            operation.operationId,
-            ["running", "pending", "compensating"],
-            "failed",
-            {
-              error,
-              executor,
-              leaseToken: operation.leaseToken,
-            },
-          );
-        }).catch(() => undefined);
-        log("error", "provisioning_operation_failed", {
-          operationId: operation.operationId,
-          organisationId: operation.organisationId,
-          failureType: error?.name || "Error",
-          failureCode: error?.code || "UNCLASSIFIED",
-        });
+
+        log(
+          "info",
+          "provisioning_operation_completed",
+          {
+            operationId:
+              operation
+                .operationId,
+
+            organisationId:
+              operation
+                .organisationId,
+          },
+        );
+      } catch (
+        error
+      ) {
+        await withControlPlaneTransaction(
+          controlPool,
+          async (
+            executor,
+          ) => {
+            await repositories
+              .provisioning
+              .transitionOperation(
+                operation
+                  .operationId,
+                [
+                  "running",
+                  "pending",
+                  "compensating",
+                ],
+                "failed",
+                {
+                  error,
+                  executor,
+
+                  leaseToken:
+                    operation
+                      .leaseToken,
+                },
+              );
+          },
+        ).catch(
+          () =>
+            undefined,
+        );
+
+        log(
+          "error",
+          "provisioning_operation_failed",
+          {
+            operationId:
+              operation
+                .operationId,
+
+            organisationId:
+              operation
+                .organisationId,
+
+            failureType:
+              error?.name
+              || "Error",
+
+            failureCode:
+              error?.code
+              || "UNCLASSIFIED",
+          },
+        );
       }
+
       processed += 1;
     }
 
-    return { processed };
+    return {
+      processed,
+    };
   } finally {
     await Promise.all([
       adminPool.end(),
