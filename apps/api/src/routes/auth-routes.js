@@ -78,11 +78,19 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
     return c.json({ authenticated: false });
   });
 
-  app.get("/auth/invitation/:token", async (c) => {
+  app.post("/auth/invitation/validate", async (c) => {
     if (!controlPlaneService) {
       return c.json({ available: false, code: "NOT_CONFIGURED", message: "Invitations are not configured." }, 404);
     }
-    const token = c.req.param("token");
+
+    let input;
+    try { input = await c.req.json(); } catch { input = {}; }
+    const token = input?.token;
+
+    if (!token || typeof token !== "string") {
+      return c.json({ available: false, code: "INVALID_INPUT", message: "An invitation token is required." }, 400);
+    }
+
     try {
       const invitation = await controlPlaneService.getInvitationByToken(token);
       if (!invitation) {
