@@ -31,6 +31,15 @@ function requireHash(value) {
   return value;
 }
 
+function activeRouteIsUsable(route) {
+  return Boolean(
+    route
+      && !route.retired_at
+      && route.provisioning_status === "active"
+      && !["suspended", "unreachable"].includes(route.health_status),
+  );
+}
+
 export function createIntegrationCredentialsRepository(defaultExecutor) {
   return {
     async create(input, { executor } = {}) {
@@ -81,30 +90,70 @@ export function createIntegrationCredentialsRepository(defaultExecutor) {
     },
 
     async resolveActiveByTokenHash(tokenHash, { executor } = {}) {
-      const [rows] = await executorOr(defaultExecutor, executor).execute(
+      const db = executorOr(defaultExecutor, executor);
+      const [credentialRows] = await db.execute(
         `SELECT c.*, o.status AS organisation_status, o.activation_state,
-                o.organisation_type, m.legacy_tenant_id, m.migration_status, m.verified_at
+                o.organisation_type, o.canonical_slug
          FROM organisation_integration_credentials c
          JOIN organisations o ON o.organisation_id = c.organisation_id
-         LEFT JOIN legacy_tenant_mappings m ON m.organisation_id = c.organisation_id
          WHERE c.token_hash = ? AND c.status = 'active'
            AND (c.expires_at IS NULL OR c.expires_at > UTC_TIMESTAMP(3))
          LIMIT 2`,
         [requireHash(tokenHash)],
       );
-      if (rows?.length !== 1) return null;
-      const row = rows[0];
-      if (row.organisation_type !== "medical_scheme"
-        || row.organisation_status !== "active"
-        || row.activation_state !== "activated"
-        || row.migration_status !== "verified"
-        || !row.verified_at
-        || !row.legacy_tenant_id) {
+      if ((credentialRows || []).length !== 1) return null;
+
+      const credential = credentialRows[0];
+      if (credential.organisation_type !== "medical_scheme"
+        || credential.organisation_status !== "active"
+        || credential.activation_state !== "activated") {
         return null;
       }
+
+      const [routeRows] = await db.execute(
+        `SELECT route_id, route_type, provisioning_status, health_status,
+                retired_at, active_at
+         FROM data_plane_routes
+         WHERE organisation_id = ?
+           AND active_route_slot = organisation_id
+         ORDER BY route_generation DESC
+         LIMIT 2`,
+        [credential.organisation_id],
+      );
+      if ((routeRows || []).length !== 1) return null;
+
+      const route = routeRows[0];
+      if (!activeRouteIsUsable(route)) return null;
+
+      let tenantId = null;
+      if (route.route_type === "private_database") {
+        if (!route.active_at || !credential.canonical_slug) return null;
+        tenantId = credential.organisation_id;
+      } else if (route.route_type === "legacy_shared") {
+        const [mappingRows] = await db.execute(
+          `SELECT legacy_tenant_id, migration_status, verified_at
+           FROM legacy_tenant_mappings
+           WHERE organisation_id = ?
+             AND route_id = ?
+           LIMIT 2`,
+          [credential.organisation_id, route.route_id],
+        );
+        if ((mappingRows || []).length !== 1) return null;
+
+        const mapping = mappingRows[0];
+        if (mapping.migration_status !== "verified"
+          || !mapping.verified_at
+          || !mapping.legacy_tenant_id) {
+          return null;
+        }
+        tenantId = mapping.legacy_tenant_id;
+      } else {
+        return null;
+      }
+
       return {
-        ...mapCredential(row),
-        tenantId: row.legacy_tenant_id,
+        ...mapCredential(credential),
+        tenantId,
       };
     },
 
