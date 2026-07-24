@@ -84,9 +84,15 @@ if (authenticationConfiguration.mode === "session") {
   assertDistinctDatabaseUrls(process.env.CONTROL_PLANE_MYSQL_URL, databaseUrl);
   controlPlanePool = createControlPlanePool(process.env.CONTROL_PLANE_MYSQL_URL);
   controlPlaneRepositories = createControlPlaneRepositories(controlPlanePool);
-  controlPlaneService = createControlPlaneService({
+  const baseControlPlaneService = createControlPlaneService({
     pool: controlPlanePool,
     repositories: controlPlaneRepositories,
+  });
+  controlPlaneService = Object.freeze({
+    ...baseControlPlaneService,
+    async listUsersByOrganisation(organisationId) {
+      return controlPlaneRepositories.identity.listUsersByOrganisation(organisationId);
+    },
   });
   authenticationService = createControlPlaneAuthenticationService({
     authenticationRepository: controlPlaneRepositories.authentication,
