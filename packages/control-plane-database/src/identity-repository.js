@@ -57,6 +57,46 @@ export function createIdentityRepository(defaultExecutor) {
       return projectSafeUser(rows?.[0]);
     },
 
+    async getSafeUserByCanonicalContact(
+      canonicalContact,
+      {
+        executor,
+        lockForUpdate = false,
+      } = {},
+    ) {
+      const normalizedContact =
+        String(canonicalContact || "")
+          .trim()
+          .toLowerCase();
+
+      if (!normalizedContact) {
+        return null;
+      }
+
+      const lockClause =
+        lockForUpdate
+          ? " FOR UPDATE"
+          : "";
+
+      const [rows] =
+        await executorOr(
+          defaultExecutor,
+          executor,
+        ).execute(
+          `SELECT *
+           FROM users
+           WHERE canonical_contact = ?
+           LIMIT 1${lockClause}`,
+          [
+            normalizedContact,
+          ],
+        );
+
+      return projectSafeUser(
+        rows?.[0],
+      );
+    },
+
     async createCredential(input, { executor } = {}) {
       assertNoPlaintextPassword(input);
       const credentialId = input.credentialId || crypto.randomUUID();
@@ -121,6 +161,42 @@ export function createIdentityRepository(defaultExecutor) {
         [membershipId],
       );
       return mapMembership(rows?.[0]);
+    },
+
+    async getMembershipForUserOrganisation(
+      {
+        userId,
+        organisationId,
+      },
+      {
+        executor,
+        lockForUpdate = false,
+      } = {},
+    ) {
+      const lockClause =
+        lockForUpdate
+          ? " FOR UPDATE"
+          : "";
+
+      const [rows] =
+        await executorOr(
+          defaultExecutor,
+          executor,
+        ).execute(
+          `SELECT *
+           FROM organisation_memberships
+           WHERE user_id = ?
+             AND organisation_id = ?
+           LIMIT 1${lockClause}`,
+          [
+            userId,
+            organisationId,
+          ],
+        );
+
+      return mapMembership(
+        rows?.[0],
+      );
     },
 
     async resolveRole(roleKey, { executor } = {}) {

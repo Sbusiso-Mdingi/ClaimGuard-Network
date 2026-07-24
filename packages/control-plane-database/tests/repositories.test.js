@@ -167,6 +167,109 @@ test("users are platform-level and one user can hold memberships in multiple org
   assert.notEqual(first.organisationId, second.organisationId);
 });
 
+test("identity repository resolves an existing invitation user and organisation membership", async () => {
+  const calls = [];
+
+  const db = executor(async (sql, params) => {
+    calls.push({ sql, params });
+
+    if (sql.startsWith("SELECT * FROM users WHERE canonical_contact")) {
+      return [[{
+        user_id: "user-existing",
+        display_name: "Ubuntu Administrator",
+        canonical_contact: "admin@ubuntu.example",
+        status: "active",
+        authentication_version: 1,
+      }], []];
+    }
+
+    if (sql.startsWith("SELECT * FROM organisation_memberships WHERE user_id")) {
+      return [[{
+        membership_id: "membership-existing",
+        user_id: "user-existing",
+        organisation_id: "org-ubuntu",
+        status: "active",
+      }], []];
+    }
+
+    throw new Error(`Unexpected SQL: ${sql}`);
+  });
+
+  const identity =
+    createControlPlaneRepositories(db)
+      .identity;
+
+  const user =
+    await identity
+      .getSafeUserByCanonicalContact(
+        " ADMIN@UBUNTU.EXAMPLE ",
+        {
+          lockForUpdate:
+            true,
+        },
+      );
+
+  const membership =
+    await identity
+      .getMembershipForUserOrganisation(
+        {
+          userId:
+            user.userId,
+          organisationId:
+            "org-ubuntu",
+        },
+        {
+          lockForUpdate:
+            true,
+        },
+      );
+
+  assert.equal(
+    user.userId,
+    "user-existing",
+  );
+
+  assert.equal(
+    user.canonicalContact,
+    "admin@ubuntu.example",
+  );
+
+  assert.equal(
+    membership.membershipId,
+    "membership-existing",
+  );
+
+  assert.equal(
+    membership.organisationId,
+    "org-ubuntu",
+  );
+
+  assert.deepEqual(
+    calls[0].params,
+    [
+      "admin@ubuntu.example",
+    ],
+  );
+
+  assert.deepEqual(
+    calls[1].params,
+    [
+      "user-existing",
+      "org-ubuntu",
+    ],
+  );
+
+  assert.match(
+    calls[0].sql,
+    /FOR UPDATE$/,
+  );
+
+  assert.match(
+    calls[1].sql,
+    /FOR UPDATE$/,
+  );
+});
+
 test("repository conflicts preserve typed duplicate slug and username errors", async () => {
   const duplicate = new Error("duplicate");
   duplicate.code = "ER_DUP_ENTRY";
