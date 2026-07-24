@@ -461,6 +461,1144 @@ async function insertBaselineClaim(
   );
 }
 
+
+async function seedOperationalFixtures(
+  pool,
+) {
+  /*
+   * Remove only prospective jobs left behind by an
+   * interrupted execution. Historical claim versions
+   * are not deleted.
+   */
+  await pool.execute(
+    `
+      DELETE FROM claim_processing_outbox
+      WHERE tenant_id IN (
+        'tenant_alpha',
+        'tenant_beta'
+      )
+        AND job_type =
+          'claim_detection'
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO tenants (
+        tenant_id,
+        tenant_slug,
+        tenant_name,
+        status
+      )
+      VALUES
+        (
+          'tenant_alpha',
+          'alpha',
+          'Tenant Alpha',
+          'active'
+        ),
+        (
+          'tenant_beta',
+          'beta',
+          'Tenant Beta',
+          'active'
+        )
+      ON DUPLICATE KEY UPDATE
+        tenant_slug =
+          VALUES(tenant_slug),
+        tenant_name =
+          VALUES(tenant_name),
+        status =
+          VALUES(status)
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO schemes (
+        scheme_id,
+        scheme_name,
+        tenant_id
+      )
+      VALUES
+        (
+          'ALPHA01',
+          'Alpha Scheme',
+          'tenant_alpha'
+        ),
+        (
+          'BETA01',
+          'Beta Scheme',
+          'tenant_beta'
+        )
+      ON DUPLICATE KEY UPDATE
+        scheme_name =
+          VALUES(scheme_name),
+        tenant_id =
+          VALUES(tenant_id)
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO medical_schemes (
+        tenant_id,
+        scheme_id,
+        scheme_name,
+        is_primary
+      )
+      VALUES
+        (
+          'tenant_alpha',
+          'ALPHA01',
+          'Alpha Scheme',
+          1
+        ),
+        (
+          'tenant_beta',
+          'BETA01',
+          'Beta Scheme',
+          1
+        )
+      ON DUPLICATE KEY UPDATE
+        scheme_name =
+          VALUES(scheme_name),
+        is_primary =
+          VALUES(is_primary)
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO members (
+        member_id,
+        scheme_id,
+        first_name,
+        last_name,
+        date_of_birth,
+        gender,
+        identity_number,
+        banking_detail,
+        home_region,
+        home_lat,
+        home_lon,
+        join_date,
+        tenant_id
+      )
+      VALUES
+        (
+          'ALPHA-MEMBER-1',
+          'ALPHA01',
+          'Alpha',
+          'Member',
+          '1980-01-01',
+          'F',
+          'ALPHA-ID',
+          'ALPHA-BANK',
+          'Alpha Region',
+          -26.1,
+          28.0,
+          '2020-01-01',
+          'tenant_alpha'
+        ),
+        (
+          'BETA-MEMBER-1',
+          'BETA01',
+          'Beta',
+          'Member',
+          '1981-01-01',
+          'M',
+          'BETA-ID',
+          'BETA-BANK',
+          'Beta Region',
+          -33.9,
+          18.4,
+          '2020-01-01',
+          'tenant_beta'
+        )
+      ON DUPLICATE KEY UPDATE
+        scheme_id =
+          VALUES(scheme_id),
+        first_name =
+          VALUES(first_name),
+        last_name =
+          VALUES(last_name),
+        tenant_id =
+          VALUES(tenant_id)
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO providers (
+        provider_id,
+        scheme_id,
+        practice_number,
+        specialty,
+        practice_name,
+        banking_detail,
+        practice_region,
+        practice_lat,
+        practice_lon,
+        provider_kind,
+        provider_category,
+        tenant_id
+      )
+      VALUES
+        (
+          'ALPHA-PROVIDER-1',
+          'ALPHA01',
+          'ALPHA-PRACTICE',
+          'GP',
+          'Alpha Practice',
+          'ALPHA-PBANK',
+          'Alpha Region',
+          -26.1,
+          28.0,
+          'INDIVIDUAL',
+          'GENERAL_PRACTITIONER',
+          'tenant_alpha'
+        ),
+        (
+          'BETA-PROVIDER-1',
+          'BETA01',
+          'BETA-PRACTICE',
+          'GP',
+          'Beta Practice',
+          'BETA-PBANK',
+          'Beta Region',
+          -33.9,
+          18.4,
+          'INDIVIDUAL',
+          'GENERAL_PRACTITIONER',
+          'tenant_beta'
+        )
+      ON DUPLICATE KEY UPDATE
+        scheme_id =
+          VALUES(scheme_id),
+        practice_name =
+          VALUES(practice_name),
+        tenant_id =
+          VALUES(tenant_id)
+    `,
+  );
+
+  /*
+   * The tenants above may be created after migration
+   * 0014, so give each tenant an explicit active
+   * prospective detection strategy.
+   */
+  await pool.execute(
+    `
+      UPDATE detection_strategies
+      SET
+        is_active = 0,
+        deactivated_at =
+          COALESCE(
+            deactivated_at,
+            UTC_TIMESTAMP(3)
+          )
+      WHERE tenant_id IN (
+        'tenant_alpha',
+        'tenant_beta'
+      )
+        AND is_active = 1
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO detection_strategies (
+        tenant_id,
+        strategy_type,
+        model_deployment_id,
+        is_active,
+        activated_at,
+        actor,
+        change_reason
+      )
+      VALUES
+        (
+          'tenant_alpha',
+          'deterministic_rules',
+          NULL,
+          1,
+          UTC_TIMESTAMP(3),
+          'integration:phase11d',
+          'Activate deterministic prospective integration strategy'
+        ),
+        (
+          'tenant_beta',
+          'deterministic_rules',
+          NULL,
+          1,
+          UTC_TIMESTAMP(3),
+          'integration:phase11d',
+          'Activate deterministic prospective integration strategy'
+        )
+    `,
+  );
+
+  const claims = [
+    baselineClaim({
+      claimId:
+        "ALPHA-CLAIM-1",
+
+      schemeId:
+        "ALPHA01",
+
+      memberId:
+        "ALPHA-MEMBER-1",
+
+      providerId:
+        "ALPHA-PROVIDER-1",
+
+      serviceDate:
+        "2026-07-01",
+
+      billingCode:
+        "GP01",
+
+      amount:
+        101,
+
+      tenantId:
+        "tenant_alpha",
+    }),
+
+    baselineClaim({
+      claimId:
+        "ALPHA-CLAIM-2",
+
+      schemeId:
+        "ALPHA01",
+
+      memberId:
+        "ALPHA-MEMBER-1",
+
+      providerId:
+        "ALPHA-PROVIDER-1",
+
+      serviceDate:
+        "2026-07-01",
+
+      billingCode:
+        "GP02",
+
+      amount:
+        102,
+
+      tenantId:
+        "tenant_alpha",
+    }),
+
+    baselineClaim({
+      claimId:
+        "BETA-CLAIM-1",
+
+      schemeId:
+        "BETA01",
+
+      memberId:
+        "BETA-MEMBER-1",
+
+      providerId:
+        "BETA-PROVIDER-1",
+
+      serviceDate:
+        "2026-07-01",
+
+      billingCode:
+        "GP01",
+
+      amount:
+        202,
+
+      tenantId:
+        "tenant_beta",
+    }),
+  ];
+
+  for (
+    const claim
+    of claims
+  ) {
+    await insertBaselineClaim(
+      pool,
+      claim,
+    );
+  }
+
+  await pool.execute(
+    `
+      INSERT INTO investigations (
+        investigation_id,
+        tenant_id,
+        claim_id,
+        assigned_investigator,
+        assigned_by,
+        status,
+        priority
+      )
+      VALUES
+        (
+          'ALPHA-INV-1',
+          'tenant_alpha',
+          'ALPHA-CLAIM-1',
+          'alpha-investigator',
+          'gate',
+          'OPEN',
+          'HIGH'
+        ),
+        (
+          'BETA-INV-1',
+          'tenant_beta',
+          'BETA-CLAIM-1',
+          'beta-investigator',
+          'gate',
+          'OPEN',
+          'HIGH'
+        )
+      ON DUPLICATE KEY UPDATE
+        status =
+          VALUES(status),
+        priority =
+          VALUES(priority)
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO ledger_entries (
+        sequence_number,
+        entry_type,
+        previous_hash,
+        entry_hash,
+        payload,
+        tenant_id
+      )
+      VALUES
+        (
+          101,
+          'GATE_ALPHA',
+          REPEAT('0', 64),
+          REPEAT('c', 64),
+          '{"marker":"ALPHA-LEDGER"}',
+          'tenant_alpha'
+        ),
+        (
+          102,
+          'GATE_BETA',
+          REPEAT('0', 64),
+          REPEAT('d', 64),
+          '{"marker":"BETA-LEDGER"}',
+          'tenant_beta'
+        )
+      ON DUPLICATE KEY UPDATE
+        payload =
+          VALUES(payload),
+        tenant_id =
+          VALUES(tenant_id)
+    `,
+  );
+
+  await pool.execute(
+    `
+      INSERT INTO ledger_chain_heads (
+        tenant_id,
+        last_sequence_number,
+        last_entry_hash
+      )
+      VALUES
+        (
+          'tenant_alpha',
+          101,
+          REPEAT('c', 64)
+        ),
+        (
+          'tenant_beta',
+          102,
+          REPEAT('d', 64)
+        )
+      ON DUPLICATE KEY UPDATE
+        last_sequence_number =
+          VALUES(last_sequence_number),
+        last_entry_hash =
+          VALUES(last_entry_hash)
+    `,
+  );
+}
+
+
+function createAuthenticationService(
+  repositories,
+  configuration,
+) {
+  return createControlPlaneAuthenticationService({
+    authenticationRepository:
+      repositories.authentication,
+
+    idleTimeoutMs:
+      configuration.idleTimeoutMs,
+
+    absoluteTimeoutMs:
+      configuration.absoluteTimeoutMs,
+
+    throttleWindowMs:
+      configuration
+        .throttle
+        .windowMs,
+
+    throttleMaxAttempts:
+      configuration
+        .throttle
+        .maxAttempts,
+
+    throttleBaseDelayMs:
+      1,
+
+    throttleMaxDelayMs:
+      2,
+
+    throttleLockoutMs:
+      configuration
+        .throttle
+        .lockoutMs,
+  });
+}
+
+
+test(
+  "Phase 11D real-MySQL gate enforces schema-14 tenant isolation and prospective claim-version scoring",
+  {
+    skip:
+      !enabled,
+  },
+  async () => {
+    assert.match(
+      new URL(
+        controlUrl,
+      ).pathname,
+      /cg11d|phase11d/i,
+    );
+
+    assert.match(
+      new URL(
+        operationalUrl,
+      ).pathname,
+      /cg11d|phase11d/i,
+    );
+
+    const controlPool =
+      createControlPlanePool(
+        controlUrl,
+      );
+
+    const operationalPool =
+      createMysqlConnection(
+        operationalUrl,
+      );
+
+    const logs = [];
+
+    let connectionManager;
+
+    try {
+      const controlFirst =
+        await applyControlPlaneMigrations(
+          controlPool,
+          {
+            applicationVersion:
+              "phase11d-gate",
+          },
+        );
+
+      const controlSecond =
+        await applyControlPlaneMigrations(
+          controlPool,
+          {
+            applicationVersion:
+              "phase11d-gate",
+          },
+        );
+
+      const operationalFirst =
+        await applyMigrations(
+          operationalPool,
+          undefined,
+          {
+            applicationVersion:
+              "phase11d-gate",
+          },
+        );
+
+      const operationalSecond =
+        await applyMigrations(
+          operationalPool,
+          undefined,
+          {
+            applicationVersion:
+              "phase11d-gate",
+          },
+        );
+
+      assert.equal(
+        controlSecond
+          .applied
+          .length,
+        0,
+      );
+
+      assert.equal(
+        operationalFirst
+          .applied
+          .some(
+            ({
+              id,
+            }) =>
+              id
+              === "0014_prospective_claim_detection",
+          )
+        || operationalFirst
+          .skipped
+          .includes(
+            "0014_prospective_claim_detection",
+          ),
+        true,
+      );
+
+      assert.equal(
+        operationalSecond
+          .applied
+          .length,
+        0,
+      );
+
+      assert.equal(
+        operationalSecond
+          .appliedStatements,
+        0,
+      );
+
+      assert.equal(
+        operationalSecond
+          .skipped
+          .includes(
+            "0014_prospective_claim_detection",
+          ),
+        true,
+      );
+
+      assert.equal(
+        (
+          await getControlPlaneMigrationStatus(
+            controlPool,
+          )
+        ).pending.length,
+        0,
+      );
+
+      assert.equal(
+        (
+          await getOperationalMigrationStatus(
+            operationalPool,
+          )
+        ).pending.length,
+        0,
+      );
+
+      const [
+        metadataRows,
+      ] =
+        await operationalPool.execute(
+          `
+            SELECT
+              database_mode,
+              logical_database_identifier,
+              schema_version,
+              environment_key,
+              migration_version
+            FROM data_plane_metadata
+            WHERE metadata_key =
+              'primary'
+          `,
+        );
+
+      assert.equal(
+        metadataRows.length,
+        1,
+      );
+
+      assert.deepEqual(
+        {
+          databaseMode:
+            metadataRows[0]
+              .database_mode,
+
+          logicalIdentifier:
+            metadataRows[0]
+              .logical_database_identifier,
+
+          schemaVersion:
+            String(
+              metadataRows[0]
+                .schema_version,
+            ),
+
+          environment:
+            metadataRows[0]
+              .environment_key,
+
+          migrationVersion:
+            Number(
+              metadataRows[0]
+                .migration_version,
+            ),
+        },
+        {
+          databaseMode:
+            "legacy_shared",
+
+          logicalIdentifier:
+            "legacy-operational-shared",
+
+          schemaVersion:
+            "14",
+
+          environment:
+            "legacy",
+
+          migrationVersion:
+            14,
+        },
+      );
+
+      await seedOperationalFixtures(
+        operationalPool,
+      );
+
+      const [
+        preIngestionJobs,
+      ] =
+        await operationalPool.execute(
+          `
+            SELECT COUNT(*) AS count
+            FROM claim_processing_outbox
+            WHERE tenant_id IN (
+              'tenant_alpha',
+              'tenant_beta'
+            )
+              AND job_type = ?
+          `,
+          [
+            CLAIM_PROCESSING_JOB_TYPE,
+          ],
+        );
+
+      assert.equal(
+        Number(
+          preIngestionJobs[0]
+            .count,
+        ),
+        0,
+      );
+
+      const controlRepositories =
+        createControlPlaneRepositories(
+          controlPool,
+        );
+
+      const controlService =
+        createControlPlaneService({
+          pool:
+            controlPool,
+
+          repositories:
+            controlRepositories,
+        });
+
+      const inventory =
+        (
+          await readLegacyTenantInventory(
+            operationalPool,
+          )
+        ).filter(
+          ({
+            tenantId,
+          }) =>
+            TEST_TENANTS.includes(
+              tenantId,
+            ),
+        );
+
+      const provisioned =
+        await provisionDemoAccounts({
+          tenants:
+            inventory,
+
+          repositories:
+            controlRepositories,
+
+          service:
+            controlService,
+
+          executor:
+            controlPool,
+
+          operationalDatabaseName:
+            new URL(
+              operationalUrl,
+            ).pathname.replace(
+              /^\//,
+              "",
+            ),
+        });
+
+      const organisations =
+        await controlRepositories
+          .organisations
+          .list();
+
+      const alphaOrganisation =
+        organisations.find(
+          ({
+            canonicalSlug,
+          }) =>
+            canonicalSlug
+            === "alpha",
+        );
+
+      const betaOrganisation =
+        organisations.find(
+          ({
+            canonicalSlug,
+          }) =>
+            canonicalSlug
+            === "beta",
+        );
+
+      const platformOrganisation =
+        organisations.find(
+          ({
+            canonicalSlug,
+          }) =>
+            canonicalSlug
+            === "claimguard",
+        );
+
+      assert.ok(
+        alphaOrganisation
+        && betaOrganisation
+        && platformOrganisation,
+      );
+
+      const routeResolver =
+        createControlPlaneDataPlaneRouteResolver({
+          repositories:
+            controlRepositories,
+        });
+
+      const alphaContext =
+        await routeResolver.resolve({
+          organisationId:
+            alphaOrganisation
+              .organisationId,
+
+          actorId:
+            "gate-alpha",
+        });
+
+      const betaContext =
+        await routeResolver.resolve({
+          organisationId:
+            betaOrganisation
+              .organisationId,
+
+          actorId:
+            "gate-beta",
+        });
+
+      const platformContext =
+        await routeResolver.resolve({
+          organisationId:
+            platformOrganisation
+              .organisationId,
+
+          actorId:
+            "gate-platform",
+        });
+
+      assert.equal(
+        alphaContext
+          .operationalTenantId,
+        "tenant_alpha",
+      );
+
+      assert.equal(
+        betaContext
+          .operationalTenantId,
+        "tenant_beta",
+      );
+
+      assert.equal(
+        alphaContext.schemaVersion,
+        "14",
+      );
+
+      assert.equal(
+        betaContext.schemaVersion,
+        "14",
+      );
+
+      assert.notEqual(
+        dataPlanePoolKey(
+          alphaContext,
+        ),
+        dataPlanePoolKey(
+          betaContext,
+        ),
+      );
+
+      assert.equal(
+        platformContext
+          .routeType,
+        "platform_none",
+      );
+
+      assert.equal(
+        platformContext
+          .operationalTenantId,
+        null,
+      );
+
+      const adapter =
+        createLegacySharedAdapter({
+          databaseUrl:
+            operationalUrl,
+        });
+
+      connectionManager =
+        createTenantConnectionManager({
+          adapters: {
+            legacy_shared:
+              adapter,
+          },
+
+          maxPools:
+            8,
+
+          logger(
+            level,
+            event,
+            details,
+          ) {
+            logs.push({
+              level,
+              event,
+              ...details,
+            });
+          },
+        });
+
+      const configuration =
+        resolveAuthenticationConfiguration({
+          AUTHENTICATION_MODE:
+            "session",
+
+          CONTROL_PLANE_MYSQL_URL:
+            controlUrl,
+
+          DEPLOYMENT_CLASS:
+            "demo",
+
+          SESSION_COOKIE_SECURE:
+            "false",
+
+          AUTH_ALLOWED_ORIGINS:
+            "http://localhost",
+        });
+
+      const authenticationService =
+        createAuthenticationService(
+          controlRepositories,
+          configuration,
+        );
+
+      const app =
+        createBackendApp({
+          authenticationConfiguration:
+            configuration,
+
+          authenticationService,
+
+          controlPlaneConfigurationRepository:
+            controlRepositories
+              .configuration,
+
+          reportStorage: {
+            async getLatestReport({
+              tenantContext,
+            }) {
+              const tenantId =
+                tenantContext
+                  .tenant_id;
+
+              return {
+                report:
+                  createCanonicalDetectionReport({
+                    tenantId,
+
+                    version:
+                      `${tenantId}-gate`,
+                  }),
+
+                metadata: {
+                  tenant:
+                    tenantId,
+
+                  version:
+                    `${tenantId}-gate`,
+                },
+              };
+            },
+
+            async checkReadiness() {
+              return {
+                reachable:
+                  true,
+
+                available:
+                  true,
+              };
+            },
+          },
+
+          dataPlaneRuntime: {
+            routeResolver,
+            connectionManager,
+          },
+        });
+
+      async function login(
+        slug,
+        role,
+      ) {
+        const credential =
+          provisioned
+            .oneTimeCredentials
+            .find(
+              (entry) => (
+                entry.organisation
+                  === slug
+                && entry.role
+                  === role
+              ),
+            );
+
+        assert.ok(
+          credential,
+          `Missing ${role} credential for ${slug}.`,
+        );
+
+        const response =
+          await app.request(
+            "http://localhost/auth/login",
+            {
+              method:
+                "POST",
+
+              headers: {
+                origin:
+                  "http://localhost",
+
+                "content-type":
+                  "application/json",
+              },
+
+              body:
+                JSON.stringify({
+                  organisationSlug:
+                    slug,
+
+                  username:
+                    credential.username,
+
+                  password:
+                    credential.password,
+                }),
+            },
+          );
+
+        const payload =
+          await response.json();
+
+        assert.equal(
+          response.status,
+          200,
+          JSON.stringify(
+            payload,
+          ),
+        );
+
+        return {
+          cookie:
+            cookieFrom(
+              response,
+            ),
+
+          csrf:
+            payload.csrfToken,
+
+          payload,
+        };
+      }
+
+      async function request(
+        session,
+        requestPath,
+        {
+          method = "GET",
+          body = undefined,
+          extraHeaders = {},
+        } = {},
+      ) {
+        return app.request(
+          `http://localhost${requestPath}`,
+          {
+            method,
+
+            headers: {
+              cookie:
+                session.cookie,
+
+              origin:
+                "http://localhost",
+
+              ...(
+                method !== "GET"
+                  ? {
+                      "x-csrf-token":
+                        session.csrf,
+
+                      "content-type":
+                        "application/json",
+                    }
+                  : {}
+              ),
+
+              ...extraHeaders,
+            },
+
+            body:
+              body === undefined
+                ? undefined
+                : JSON.stringify(
+                    body,
+                  ),
+          },
+        );
+      }
+
       const alpha =
         await login(
           "alpha",
