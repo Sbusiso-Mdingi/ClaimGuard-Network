@@ -75,7 +75,7 @@ function ModelChoice({
 
 export function DetectionEngineSettings({ tenantId }) {
   const [strategyType, setStrategyType] = useState("");
-  const [modelDeploymentId, setModelDeploymentId] = useState("");
+  const [proprietaryDeploymentId, setProprietaryDeploymentId] = useState("");
   const [savedSelection, setSavedSelection] = useState({
     strategyType: "",
     modelDeploymentId: "",
@@ -105,7 +105,11 @@ export function DetectionEngineSettings({ tenantId }) {
         if (!mounted) return;
 
         setStrategyType(selection.strategyType);
-        setModelDeploymentId(selection.modelDeploymentId);
+        setProprietaryDeploymentId(
+          selection.strategyType === "scheme_managed"
+            ? selection.modelDeploymentId
+            : "",
+        );
         setSavedSelection({
           strategyType: selection.strategyType,
           modelDeploymentId: selection.modelDeploymentId,
@@ -127,11 +131,11 @@ export function DetectionEngineSettings({ tenantId }) {
     };
   }, [tenantId]);
 
-  const canonicalDeploymentId = modelDeploymentId.trim();
+  const canonicalProprietaryDeploymentId = proprietaryDeploymentId.trim();
   const currentSelection = {
     strategyType,
     modelDeploymentId: strategyType === "scheme_managed"
-      ? canonicalDeploymentId
+      ? canonicalProprietaryDeploymentId
       : savedSelection.strategyType === "claimguard_managed"
         ? savedSelection.modelDeploymentId
         : "",
@@ -141,7 +145,8 @@ export function DetectionEngineSettings({ tenantId }) {
   const reason = changeReason.trim();
   const reasonValid = reason.length >= 1 && reason.length <= 500;
   const customDeploymentValid = strategyType !== "scheme_managed"
-    || (Boolean(canonicalDeploymentId) && DEPLOYMENT_ID_PATTERN.test(canonicalDeploymentId));
+    || (Boolean(canonicalProprietaryDeploymentId)
+      && DEPLOYMENT_ID_PATTERN.test(canonicalProprietaryDeploymentId));
   const canSave = !loading
     && !saving
     && MODEL_SELECTIONS.has(strategyType)
@@ -152,7 +157,13 @@ export function DetectionEngineSettings({ tenantId }) {
   function select(nextStrategyType) {
     if (saving || !MODEL_SELECTIONS.has(nextStrategyType)) return;
     setStrategyType(nextStrategyType);
-    if (nextStrategyType === "claimguard_managed") setModelDeploymentId("");
+    if (nextStrategyType === "claimguard_managed") {
+      setProprietaryDeploymentId("");
+    } else if (savedSelection.strategyType === "scheme_managed") {
+      setProprietaryDeploymentId(savedSelection.modelDeploymentId);
+    } else {
+      setProprietaryDeploymentId("");
+    }
     setError(null);
     setNotice(null);
   }
@@ -180,7 +191,9 @@ export function DetectionEngineSettings({ tenantId }) {
         method: "PUT",
         body: JSON.stringify({
           strategyType,
-          modelDeploymentId: strategyType === "scheme_managed" ? canonicalDeploymentId : null,
+          modelDeploymentId: strategyType === "scheme_managed"
+            ? canonicalProprietaryDeploymentId
+            : null,
           changeReason: reason,
         }),
       });
@@ -191,7 +204,11 @@ export function DetectionEngineSettings({ tenantId }) {
 
       const saved = normaliseSelection(data.strategy);
       setStrategyType(saved.strategyType);
-      setModelDeploymentId(saved.modelDeploymentId);
+      setProprietaryDeploymentId(
+        saved.strategyType === "scheme_managed"
+          ? saved.modelDeploymentId
+          : "",
+      );
       setSavedSelection({
         strategyType: saved.strategyType,
         modelDeploymentId: saved.modelDeploymentId,
@@ -268,13 +285,13 @@ export function DetectionEngineSettings({ tenantId }) {
             className="url-input"
             type="text"
             placeholder="ubuntu-fraud-model:production"
-            value={modelDeploymentId}
+            value={proprietaryDeploymentId}
             maxLength={128}
             autoComplete="off"
             spellCheck={false}
             disabled={saving}
             onChange={(event) => {
-              setModelDeploymentId(event.target.value);
+              setProprietaryDeploymentId(event.target.value);
               setError(null);
               setNotice(null);
             }}
