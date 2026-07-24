@@ -2667,17 +2667,23 @@ test(
               current_claim_version
             FROM claims
             WHERE claim_id IN (
-              'ALPHA-CLAIM-1',
-              'ALPHA-CLAIM-2',
-              'ALPHA-CLAIM-NEW',
-              'BETA-CLAIM-1'
+              ?,
+              ?,
+              ?,
+              ?
             )
             ORDER BY
               tenant_id,
               claim_id
           `,
+          [
+            "ALPHA-CLAIM-1",
+            "ALPHA-CLAIM-2",
+            ALPHA_NEW_CLAIM_ID,
+            "BETA-CLAIM-1",
+          ],
         );
-
+      
       assert.deepEqual(
         fixtureClaimRows.map(
           (row) => ({
@@ -2717,7 +2723,7 @@ test(
               "tenant_alpha",
 
             claimId:
-              "ALPHA-CLAIM-NEW",
+              ALPHA_NEW_CLAIM_ID,
 
             version: 2,
           },
