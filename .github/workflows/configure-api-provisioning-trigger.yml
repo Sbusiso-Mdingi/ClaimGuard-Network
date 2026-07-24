@@ -2,9 +2,6 @@ name: Configure API provisioning trigger
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: [ci]
-    types: [completed]
 
 permissions:
   contents: read
