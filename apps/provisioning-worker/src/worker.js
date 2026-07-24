@@ -803,11 +803,168 @@ async function runProvisioningOperation({
     { ...options, leaseToken: operation.leaseToken },
   );
 
-  await runStep("validate_request", async () => {
-    if (organisation.organisationType !== "medical_scheme") {
-      throw new Error("Only medical_scheme organisations can be provisioned.");
-    }
-  });
+  await runStep(
+    "register_canonical_schema_route",
+    async () => {
+      const [existingRows] =
+        await controlPool.execute(
+          `
+            SELECT
+              route_id,
+              active_route_slot
+            FROM data_plane_routes
+            WHERE organisation_id = ?
+              AND route_type =
+                'private_database'
+              AND schema_version = ?
+              AND retired_at IS NULL
+            ORDER BY route_generation DESC
+            LIMIT 1
+          `,
+          [
+            organisation.organisationId,
+            policy.schemaVersion,
+          ],
+        );
+  
+      const existingRoute =
+        existingRows?.[0] || null;
+  
+      if (existingRoute) {
+        if (
+          organisation.status === "active"
+          && existingRoute.active_route_slot
+            === organisation.organisationId
+        ) {
+          await controlPool.execute(
+            `
+              UPDATE data_plane_routes
+              SET
+                provisioning_status =
+                  'active',
+                health_status =
+                  'healthy'
+              WHERE route_id = ?
+                AND organisation_id = ?
+                AND retired_at IS NULL
+            `,
+            [
+              existingRoute.route_id,
+              organisation.organisationId,
+            ],
+          );
+  
+          upgradedRoute =
+            await repositories.routes.getSafeById(
+              existingRoute.route_id,
+            );
+  
+          return;
+        }
+  
+        const [
+          promotionResult,
+        ] =
+          await controlPool.execute(
+            `
+              UPDATE data_plane_routes
+              SET
+                provisioning_status =
+                  'ready',
+                health_status =
+                  'healthy'
+              WHERE route_id = ?
+                AND organisation_id = ?
+                AND retired_at IS NULL
+                AND active_route_slot IS NULL
+            `,
+            [
+              existingRoute.route_id,
+              organisation.organisationId,
+            ],
+          );
+  
+        if (
+          Number(
+            promotionResult?.affectedRows || 0,
+          ) !== 1
+        ) {
+          throw new Error(
+            `Existing schema-${policy.schemaVersion} route could not be promoted to ready.`,
+          );
+        }
+  
+        if (
+          organisation.status === "active"
+        ) {
+          upgradedRoute =
+            await repositories.routes.activate(
+              existingRoute.route_id,
+              organisation.organisationId,
+            );
+        } else {
+          upgradedRoute =
+            await repositories.routes.getSafeById(
+              existingRoute.route_id,
+            );
+        }
+  
+        return;
+      }
+  
+      upgradedRoute =
+        await service.registerRoute(
+          {
+            organisationId:
+              organisation.organisationId,
+  
+            routeType:
+              "private_database",
+  
+            logicalDatabaseIdentifier:
+              policy.logicalDatabaseIdentifier,
+  
+            azureResourceIdentifier:
+              sourceRoute
+                .azure_resource_identifier,
+  
+            databaseName:
+              policy.databaseName,
+  
+            secretReference:
+              sourceRoute.secret_reference,
+  
+            region:
+              policy.region,
+  
+            schemaVersion:
+              policy.schemaVersion,
+  
+            provisioningStatus:
+              organisation.status === "active"
+                ? "active"
+                : "ready",
+  
+            healthStatus:
+              "healthy",
+  
+            activate:
+              organisation.status === "active",
+          },
+          {
+            type:
+              "system",
+  
+            id:
+              "provisioning-worker",
+  
+            source:
+              "provisioning-worker",
+          },
+        );
+    },
+  );
+  
   await runStep("reserve_slug", async () => {});
   await runStep("create_organisation_record", async () => {
     if (organisation.status !== "provisioning") {
