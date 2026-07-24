@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { createControlPlaneService as createBaseControlPlaneService } from "./control-plane-service.js";
 import {
   ControlPlaneConflictError,
@@ -73,6 +75,80 @@ export function createSignupCredentialGuardedIdentityRepository(identity) {
 
       return identity.createCredential(input, options);
     },
+  };
+}
+
+function createExpiredInvitationAwareSignup({ pool, delegate }) {
+  return async function signupWithInvitation(input, actor) {
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(input.token)
+      .digest("hex");
+
+    const invitationState = await withControlPlaneTransaction(
+      pool,
+      async (executor) => {
+        const [rows] = await executor.execute(
+          `SELECT invitation_id, status, expires_at
+           FROM admin_invitations
+           WHERE token_hash = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [tokenHash],
+        );
+
+        const invitation = rows?.[0];
+
+        if (!invitation) {
+          throw new ControlPlaneNotFoundError(
+            "Invitation not found or invalid.",
+            "INVITATION_NOT_FOUND",
+          );
+        }
+
+        if (invitation.status === "expired") {
+          return {
+            expired: true,
+            invitationId: invitation.invitation_id,
+          };
+        }
+
+        if (invitation.status !== "pending") {
+          throw new ControlPlaneConflictError(
+            "This invitation has already been used or revoked.",
+            "INVITATION_CONSUMED",
+          );
+        }
+
+        if (new Date(invitation.expires_at) < new Date()) {
+          await executor.execute(
+            `UPDATE admin_invitations
+             SET status = 'expired'
+             WHERE invitation_id = ?
+               AND status = 'pending'`,
+            [invitation.invitation_id],
+          );
+
+          return {
+            expired: true,
+            invitationId: invitation.invitation_id,
+          };
+        }
+
+        return {
+          expired: false,
+        };
+      },
+    );
+
+    if (invitationState.expired) {
+      throw new ControlPlaneConflictError(
+        "This invitation has expired.",
+        "INVITATION_EXPIRED",
+      );
+    }
+
+    return delegate(input, actor);
   };
 }
 
@@ -257,6 +333,11 @@ export function createControlPlaneService({ pool, repositories }) {
       signupWithInvitation = guardedSignupService.signupWithInvitation;
     }
   }
+
+  signupWithInvitation = createExpiredInvitationAwareSignup({
+    pool,
+    delegate: signupWithInvitation,
+  });
 
   return {
     ...service,
