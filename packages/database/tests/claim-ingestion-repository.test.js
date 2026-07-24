@@ -73,17 +73,32 @@ function cloneMap(map) {
 
 function cloneReferenceMaps(references) {
   return {
-    schemes: cloneMap(references.schemes),
-    members: cloneMap(references.members),
-    providers: cloneMap(references.providers),
+    schemes: cloneMap(
+      references.schemes,
+    ),
+    members: cloneMap(
+      references.members,
+    ),
+    providers: cloneMap(
+      references.providers,
+    ),
   };
 }
 
 
-function replaceMap(target, source) {
+function replaceMap(
+  target,
+  source,
+) {
   target.clear();
 
-  for (const [key, value] of source) {
+  for (
+    const [
+      key,
+      value,
+    ]
+    of source
+  ) {
     target.set(
       key,
       value && typeof value === "object"
@@ -94,7 +109,10 @@ function replaceMap(target, source) {
 }
 
 
-function restoreReferences(target, source) {
+function restoreReferences(
+  target,
+  source,
+) {
   replaceMap(
     target.schemes,
     source.schemes,
@@ -114,13 +132,18 @@ function restoreReferences(target, source) {
 
 function createMemoryPool({
   tenantId = "tenant_default",
+
   seedReferences = true,
+
   activeStrategy = {
     id: 1,
-    strategy_type: "deterministic_rules",
+    strategy_type:
+      "deterministic_rules",
     model_deployment_id: null,
   },
+
   failClaimInsert = false,
+
   failOutboxInsert = false,
 } = {}) {
   const executions = [];
@@ -131,34 +154,49 @@ function createMemoryPool({
     providers: new Map(),
   };
 
+  const medicalSchemes =
+    new Map();
+
   if (seedReferences) {
     references.schemes.set(
       "scheme_a",
       {
-        tenant_id: tenantId,
+        tenant_id:
+          tenantId,
       },
     );
 
     references.members.set(
       "M-1",
       {
-        tenant_id: tenantId,
-        scheme_id: "scheme_a",
+        tenant_id:
+          tenantId,
+
+        scheme_id:
+          "scheme_a",
       },
     );
 
     references.providers.set(
       "P-1",
       {
-        tenant_id: tenantId,
-        scheme_id: "scheme_a",
+        tenant_id:
+          tenantId,
+
+        scheme_id:
+          "scheme_a",
       },
     );
   }
 
-  const claims = new Map();
-  const claimVersions = new Map();
-  const outbox = new Map();
+  const claims =
+    new Map();
+
+  const claimVersions =
+    new Map();
+
+  const outbox =
+    new Map();
 
   let rollbackCount = 0;
   let commitCount = 0;
@@ -185,12 +223,28 @@ function createMemoryPool({
     );
   }
 
-  function referenceMap(tableName) {
-    const map = references[tableName];
+  function medicalSchemeKey(
+    recordTenantId,
+    schemeId,
+  ) {
+    return (
+      `${recordTenantId}:`
+      + schemeId
+    );
+  }
+
+  function referenceMap(
+    tableName,
+  ) {
+    const map =
+      references[
+        tableName
+      ];
 
     if (!map) {
       throw new Error(
-        `Unsupported reference table ${tableName}.`,
+        "Unsupported reference "
+        + `table ${tableName}.`,
       );
     }
 
@@ -200,6 +254,7 @@ function createMemoryPool({
   const pool = {
     executions,
     references,
+    medicalSchemes,
     claims,
     claimVersions,
     outbox,
@@ -217,28 +272,38 @@ function createMemoryPool({
     ) {
       for (
         const row
-        of references.schemes.values()
+        of references
+          .schemes
+          .values()
       ) {
-        row.tenant_id = nextTenantId;
+        row.tenant_id =
+          nextTenantId;
       }
 
       for (
         const row
-        of references.members.values()
+        of references
+          .members
+          .values()
       ) {
-        row.tenant_id = nextTenantId;
+        row.tenant_id =
+          nextTenantId;
       }
 
       for (
         const row
-        of references.providers.values()
+        of references
+          .providers
+          .values()
       ) {
-        row.tenant_id = nextTenantId;
+        row.tenant_id =
+          nextTenantId;
       }
     },
 
     async getConnection() {
-      let transactionSnapshot = null;
+      let transactionSnapshot =
+        null;
 
       return {
         async beginTransaction() {
@@ -246,6 +311,11 @@ function createMemoryPool({
             references:
               cloneReferenceMaps(
                 references,
+              ),
+
+            medicalSchemes:
+              cloneMap(
+                medicalSchemes,
               ),
 
             claims:
@@ -270,13 +340,20 @@ function createMemoryPool({
           params = [],
         ) {
           const statement =
-            normalizeSql(sql);
+            normalizeSql(
+              sql,
+            );
 
           executions.push({
-            sql: statement,
+            sql:
+              statement,
+
             params,
           });
 
+          /*
+           * Active strategy lookup.
+           */
           if (
             statement.includes(
               "FROM detection_strategies",
@@ -293,6 +370,10 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Database-owned immutable
+           * context cutoff.
+           */
           if (
             statement.includes(
               "UTC_TIMESTAMP(3) AS context_cutoff_at",
@@ -308,6 +389,10 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Current claim and version
+           * lookup.
+           */
           if (
             statement.includes(
               "FROM claims c",
@@ -335,7 +420,8 @@ function createMemoryPool({
                 claimVersionKey(
                   claim.tenant_id,
                   claimId,
-                  claim.current_claim_version,
+                  claim
+                    .current_claim_version,
                 ),
               );
 
@@ -346,20 +432,27 @@ function createMemoryPool({
                     claim.tenant_id,
 
                   current_claim_version:
-                    claim.current_claim_version,
+                    claim
+                      .current_claim_version,
 
                   payload_hash:
-                    version?.payload_hash
+                    version
+                      ?.payload_hash
                     || null,
 
                   claim_payload:
-                    version?.claim_payload
+                    version
+                      ?.claim_payload
                     || null,
                 },
               ],
             ];
           }
 
+          /*
+           * Tenant-owned reference
+           * lookups.
+           */
           const referenceSelect =
             statement.match(
               /FROM (schemes|members|providers) WHERE/i,
@@ -388,6 +481,9 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Scheme insert.
+           */
           if (
             statement.startsWith(
               "INSERT INTO schemes",
@@ -399,11 +495,74 @@ function createMemoryPool({
               recordTenantId,
             ] = params;
 
-            references.schemes.set(
+            references
+              .schemes
+              .set(
+                schemeId,
+                {
+                  tenant_id:
+                    recordTenantId,
+                },
+              );
+
+            return [
+              {
+                affectedRows: 1,
+              },
+            ];
+          }
+
+          /*
+           * Canonical medical-scheme
+           * projection.
+           */
+          if (
+            statement.startsWith(
+              "INSERT INTO medical_schemes",
+            )
+          ) {
+            const [
+              recordTenantId,
               schemeId,
+              schemeName,
+            ] = params;
+
+            const scheme =
+              references
+                .schemes
+                .get(
+                  schemeId,
+                );
+
+            if (
+              !scheme
+              || scheme.tenant_id
+                !== recordTenantId
+            ) {
+              throw new Error(
+                "medical_schemes "
+                + "references an unknown "
+                + "tenant scheme",
+              );
+            }
+
+            medicalSchemes.set(
+              medicalSchemeKey(
+                recordTenantId,
+                schemeId,
+              ),
               {
                 tenant_id:
                   recordTenantId,
+
+                scheme_id:
+                  schemeId,
+
+                scheme_name:
+                  schemeName,
+
+                is_primary:
+                  1,
               },
             );
 
@@ -414,6 +573,9 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Member insert.
+           */
           if (
             statement.startsWith(
               "INSERT INTO members",
@@ -425,18 +587,22 @@ function createMemoryPool({
             ] = params;
 
             const recordTenantId =
-              params.at(-1);
+              params.at(
+                -1,
+              );
 
-            references.members.set(
-              memberId,
-              {
-                tenant_id:
-                  recordTenantId,
+            references
+              .members
+              .set(
+                memberId,
+                {
+                  tenant_id:
+                    recordTenantId,
 
-                scheme_id:
-                  schemeId,
-              },
-            );
+                  scheme_id:
+                    schemeId,
+                },
+              );
 
             return [
               {
@@ -445,6 +611,9 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Provider insert.
+           */
           if (
             statement.startsWith(
               "INSERT INTO providers",
@@ -456,18 +625,22 @@ function createMemoryPool({
             ] = params;
 
             const recordTenantId =
-              params.at(-1);
+              params.at(
+                -1,
+              );
 
-            references.providers.set(
-              providerId,
-              {
-                tenant_id:
-                  recordTenantId,
+            references
+              .providers
+              .set(
+                providerId,
+                {
+                  tenant_id:
+                    recordTenantId,
 
-                scheme_id:
-                  schemeId,
-              },
-            );
+                  scheme_id:
+                    schemeId,
+                },
+              );
 
             return [
               {
@@ -476,6 +649,10 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Existing reference-data
+           * updates.
+           */
           if (
             statement.startsWith(
               "UPDATE schemes",
@@ -494,6 +671,9 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Current claim insert.
+           */
           if (
             statement.startsWith(
               "INSERT INTO claims",
@@ -570,6 +750,7 @@ function createMemoryPool({
                   billingCode,
 
                 amount,
+
                 quantity,
 
                 benefit_option:
@@ -608,6 +789,10 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Immutable claim-version
+           * insert.
+           */
           if (
             statement.startsWith(
               "INSERT INTO claim_versions",
@@ -683,6 +868,10 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Legacy baseline hash
+           * normalisation.
+           */
           if (
             statement.startsWith(
               "UPDATE claim_versions SET payload_hash",
@@ -715,11 +904,17 @@ function createMemoryPool({
             return [
               {
                 affectedRows:
-                  existing ? 1 : 0,
+                  existing
+                    ? 1
+                    : 0,
               },
             ];
           }
 
+          /*
+           * Current-claim pointer and
+           * canonical projection update.
+           */
           if (
             statement.startsWith(
               "UPDATE claims SET current_claim_version",
@@ -752,7 +947,8 @@ function createMemoryPool({
               !existing
               || existing.tenant_id
                 !== claimTenantId
-              || existing.current_claim_version
+              || existing
+                .current_claim_version
                 !== expectedVersion
             ) {
               return [
@@ -808,6 +1004,7 @@ function createMemoryPool({
                   billingCode,
 
                 amount,
+
                 quantity,
 
                 benefit_option:
@@ -843,6 +1040,9 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Prospective outbox insert.
+           */
           if (
             statement.startsWith(
               "INSERT INTO claim_processing_outbox",
@@ -978,6 +1178,10 @@ function createMemoryPool({
             ];
           }
 
+          /*
+           * Existing outbox job lookup
+           * after an idempotent insert.
+           */
           if (
             statement.includes(
               "FROM claim_processing_outbox",
@@ -1017,34 +1221,47 @@ function createMemoryPool({
 
         async commit() {
           commitCount += 1;
-          transactionSnapshot = null;
+          transactionSnapshot =
+            null;
         },
 
         async rollback() {
           rollbackCount += 1;
 
-          if (!transactionSnapshot) {
+          if (
+            !transactionSnapshot
+          ) {
             return;
           }
 
           restoreReferences(
             references,
-            transactionSnapshot.references,
+            transactionSnapshot
+              .references,
+          );
+
+          replaceMap(
+            medicalSchemes,
+            transactionSnapshot
+              .medicalSchemes,
           );
 
           replaceMap(
             claims,
-            transactionSnapshot.claims,
+            transactionSnapshot
+              .claims,
           );
 
           replaceMap(
             claimVersions,
-            transactionSnapshot.claimVersions,
+            transactionSnapshot
+              .claimVersions,
           );
 
           replaceMap(
             outbox,
-            transactionSnapshot.outbox,
+            transactionSnapshot
+              .outbox,
           );
         },
 
@@ -1073,17 +1290,18 @@ test(
       );
 
     const result =
-      await repository.ingestClaims({
-        source:
-          "upstream-connector",
+      await repository
+        .ingestClaims({
+          source:
+            "upstream-connector",
 
-        correlationId:
-          "request-100",
+          correlationId:
+            "request-100",
 
-        claims: [
-          claimInput(),
-        ],
-      });
+          claims: [
+            claimInput(),
+          ],
+        });
 
     assert.equal(
       result.received,
@@ -1116,12 +1334,16 @@ test(
     );
 
     assert.equal(
-      result.processing.asynchronous,
+      result
+        .processing
+        .asynchronous,
       true,
     );
 
     assert.equal(
-      result.processing.reused,
+      result
+        .processing
+        .reused,
       false,
     );
 
@@ -1131,7 +1353,8 @@ test(
       );
 
     assert.equal(
-      claim.current_claim_version,
+      claim
+        .current_claim_version,
       1,
     );
 
@@ -1174,7 +1397,8 @@ test(
     );
 
     assert.equal(
-      job.detection_strategy_id,
+      job
+        .detection_strategy_id,
       1,
     );
 
@@ -1214,7 +1438,8 @@ test(
   async () => {
     const pool =
       createMemoryPool({
-        seedReferences: false,
+        seedReferences:
+          false,
       });
 
     const repository =
@@ -1227,104 +1452,105 @@ test(
       );
 
     const result =
-      await repository.ingestClaims({
-        source:
-          "medical-aid-desktop",
+      await repository
+        .ingestClaims({
+          source:
+            "medical-aid-desktop",
 
-        schemes: [
-          {
-            scheme_id:
-              "scheme_a",
+          schemes: [
+            {
+              scheme_id:
+                "scheme_a",
 
-            scheme_name:
-              "Scheme A",
-          },
-        ],
+              scheme_name:
+                "Scheme A",
+            },
+          ],
 
-        members: [
-          {
-            member_id:
-              "M-1",
+          members: [
+            {
+              member_id:
+                "M-1",
 
-            scheme_id:
-              "scheme_a",
+              scheme_id:
+                "scheme_a",
 
-            first_name:
-              "token:first",
+              first_name:
+                "token:first",
 
-            last_name:
-              "token:last",
+              last_name:
+                "token:last",
 
-            date_of_birth:
-              "1985-01-01",
+              date_of_birth:
+                "1985-01-01",
 
-            gender:
-              "unspecified",
+              gender:
+                "unspecified",
 
-            identity_number:
-              "token:identity",
+              identity_number:
+                "token:identity",
 
-            banking_detail:
-              "token:member-bank",
+              banking_detail:
+                "token:member-bank",
 
-            home_region:
-              "Gauteng",
+              home_region:
+                "Gauteng",
 
-            home_lat:
-              -26.2,
+              home_lat:
+                -26.2,
 
-            home_lon:
-              28,
+              home_lon:
+                28,
 
-            join_date:
-              "2020-01-01",
-          },
-        ],
+              join_date:
+                "2020-01-01",
+            },
+          ],
 
-        providers: [
-          {
-            provider_id:
-              "P-1",
+          providers: [
+            {
+              provider_id:
+                "P-1",
 
-            scheme_id:
-              "scheme_a",
+              scheme_id:
+                "scheme_a",
 
-            practice_number:
-              "practice-1",
+              practice_number:
+                "practice-1",
 
-            specialty:
-              "GP",
+              specialty:
+                "GP",
 
-            practice_name:
-              "Practice 1",
+              practice_name:
+                "Practice 1",
 
-            banking_detail:
-              "token:provider-bank",
+              banking_detail:
+                "token:provider-bank",
 
-            practice_region:
-              "Gauteng",
+              practice_region:
+                "Gauteng",
 
-            practice_lat:
-              -26.2,
+              practice_lat:
+                -26.2,
 
-            practice_lon:
-              28,
+              practice_lon:
+                28,
 
-            provider_kind:
-              "INDIVIDUAL",
+              provider_kind:
+                "INDIVIDUAL",
 
-            provider_category:
-              "GENERAL_PRACTITIONER",
-          },
-        ],
+              provider_category:
+                "GENERAL_PRACTITIONER",
+            },
+          ],
 
-        claims: [
-          claimInput({
-            claimId:
-              "C-REFERENCE",
-          }),
-        ],
-      });
+          claims: [
+            claimInput({
+              claimId:
+                "C-REFERENCE",
+            }),
+          ],
+        });
 
     assert.deepEqual(
       result.referenceData,
@@ -1360,10 +1586,40 @@ test(
     );
 
     assert.equal(
-      pool.references.schemes
-        .get("scheme_a")
+      pool
+        .references
+        .schemes
+        .get(
+          "scheme_a",
+        )
         .tenant_id,
       "tenant_default",
+    );
+
+    assert.deepEqual(
+      pool
+        .medicalSchemes
+        .get(
+          "tenant_default:scheme_a",
+        ),
+      {
+        tenant_id:
+          "tenant_default",
+
+        scheme_id:
+          "scheme_a",
+
+        scheme_name:
+          "Scheme A",
+
+        is_primary:
+          1,
+      },
+    );
+
+    assert.equal(
+      pool.commitCount,
+      1,
     );
   },
 );
@@ -1374,7 +1630,8 @@ test(
   async () => {
     const pool =
       createMemoryPool({
-        activeStrategy: null,
+        activeStrategy:
+          null,
       });
 
     const repository =
@@ -1484,21 +1741,22 @@ test(
               "tenant_alpha",
           },
           () =>
-            repository.ingestClaims({
-              schemes: [
-                {
-                  scheme_id:
-                    "scheme_a",
+            repository
+              .ingestClaims({
+                schemes: [
+                  {
+                    scheme_id:
+                      "scheme_a",
 
-                  scheme_name:
-                    "Scheme A",
-                },
-              ],
+                    scheme_name:
+                      "Scheme A",
+                  },
+                ],
 
-              claims: [
-                claimInput(),
-              ],
-            }),
+                claims: [
+                  claimInput(),
+                ],
+              }),
         ),
       ReferenceOwnershipConflictError,
     );
@@ -1541,20 +1799,21 @@ test(
             "tenant_alpha",
         },
         () =>
-          repository.ingestClaims({
-            source:
-              "api",
+          repository
+            .ingestClaims({
+              source:
+                "api",
 
-            correlationId:
-              "request-1",
+              correlationId:
+                "request-1",
 
-            claims: [
-              claimInput({
-                claimId:
-                  "C-IDEMPOTENT",
-              }),
-            ],
-          }),
+              claims: [
+                claimInput({
+                  claimId:
+                    "C-IDEMPOTENT",
+                }),
+              ],
+            }),
       );
 
     const retry =
@@ -1564,20 +1823,21 @@ test(
             "tenant_alpha",
         },
         () =>
-          repository.ingestClaims({
-            source:
-              "api",
+          repository
+            .ingestClaims({
+              source:
+                "api",
 
-            correlationId:
-              "request-2",
+              correlationId:
+                "request-2",
 
-            claims: [
-              claimInput({
-                claimId:
-                  "C-IDEMPOTENT",
-              }),
-            ],
-          }),
+              claims: [
+                claimInput({
+                  claimId:
+                    "C-IDEMPOTENT",
+                }),
+              ],
+            }),
       );
 
     assert.equal(
@@ -1693,17 +1953,18 @@ test(
             "tenant_alpha",
         },
         () =>
-          repository.ingestClaims({
-            claims: [
-              claimInput({
-                claimId:
-                  "C-AMENDMENT",
+          repository
+            .ingestClaims({
+              claims: [
+                claimInput({
+                  claimId:
+                    "C-AMENDMENT",
 
-                amount:
-                  125,
-              }),
-            ],
-          }),
+                  amount:
+                    125,
+                }),
+              ],
+            }),
       );
 
     assert.equal(
@@ -1728,16 +1989,20 @@ test(
 
     assert.equal(
       pool.claims
-        .get("C-AMENDMENT")
+        .get(
+          "C-AMENDMENT",
+        )
         .current_claim_version,
       2,
     );
 
     assert.equal(
       pool.claims
-        .get("C-AMENDMENT")
+        .get(
+          "C-AMENDMENT",
+        )
         .amount,
-      125,
+      "125.00",
     );
 
     assert.equal(
@@ -1760,7 +2025,9 @@ test(
     );
 
     const targets =
-      [...pool.outbox.values()]
+      [
+        ...pool.outbox.values(),
+      ]
         .map(
           (row) =>
             JSON.parse(
@@ -1768,7 +2035,10 @@ test(
             ).targets[0],
         )
         .sort(
-          (left, right) =>
+          (
+            left,
+            right,
+          ) =>
             left.claim_version
             - right.claim_version,
         );
@@ -1832,8 +2102,9 @@ test(
     );
 
     /*
-     * Isolate the claim-ownership assertion by
-     * simulating references valid for tenant_beta.
+     * Isolate the claim-ownership
+     * assertion by simulating reference
+     * records valid for tenant_beta.
      */
     pool.setReferenceTenant(
       "tenant_beta",
@@ -1847,33 +2118,38 @@ test(
               "tenant_beta",
           },
           () =>
-            repository.ingestClaims({
-              claims: [
-                claimInput({
-                  claimId:
-                    "C-OWNED",
+            repository
+              .ingestClaims({
+                claims: [
+                  claimInput({
+                    claimId:
+                      "C-OWNED",
 
-                  amount:
-                    999,
-                }),
-              ],
-            }),
+                    amount:
+                      999,
+                  }),
+                ],
+              }),
         ),
       ClaimOwnershipConflictError,
     );
 
     assert.equal(
       pool.claims
-        .get("C-OWNED")
+        .get(
+          "C-OWNED",
+        )
         .tenant_id,
       "tenant_alpha",
     );
 
     assert.equal(
       pool.claims
-        .get("C-OWNED")
+        .get(
+          "C-OWNED",
+        )
         .amount,
-      233.19,
+      "233.19",
     );
 
     assert.equal(
@@ -1918,11 +2194,12 @@ test(
               "tenant_alpha",
           },
           () =>
-            repository.ingestClaims({
-              claims: [
-                claimInput(),
-              ],
-            }),
+            repository
+              .ingestClaims({
+                claims: [
+                  claimInput(),
+                ],
+              }),
         ),
       /outbox insert failed/i,
     );
@@ -1979,11 +2256,12 @@ test(
               "tenant_alpha",
           },
           () =>
-            repository.ingestClaims({
-              claims: [
-                claimInput(),
-              ],
-            }),
+            repository
+              .ingestClaims({
+                claims: [
+                  claimInput(),
+                ],
+              }),
         ),
       /claim insert failed/i,
     );
@@ -2037,14 +2315,15 @@ test(
               "tenant_beta",
           },
           () =>
-            repository.ingestClaims({
-              claims: [
-                claimInput({
-                  claimId:
-                    "C-CROSS-TENANT",
-                }),
-              ],
-            }),
+            repository
+              .ingestClaims({
+                claims: [
+                  claimInput({
+                    claimId:
+                      "C-CROSS-TENANT",
+                  }),
+                ],
+              }),
         ),
       ClaimReferenceValidationError,
     );
