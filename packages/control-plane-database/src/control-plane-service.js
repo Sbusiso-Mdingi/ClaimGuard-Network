@@ -4,7 +4,7 @@ import { ControlPlaneConflictError, ControlPlaneNotFoundError, ControlPlaneValid
 import { hashPassword, passwordParametersRecord, ARGON2ID_VERSION } from "./password.js";
 import { normalizeUsername } from "./validation.js";
 import { withControlPlaneTransaction } from "./transaction.js";
-f
+
 const ORGANISATION_TRANSITIONS = Object.freeze({
   draft: ["provisioning", "failed", "archived"],
   provisioning: ["ready_for_activation", "failed"],
@@ -97,10 +97,7 @@ export function createControlPlaneService({ pool, repositories }) {
             "ORGANISATION_NOT_READY",
           );
         }
-        const route = await repositories.routes.getInternalLatestReadyForOrganisation(organisationId, { executor });
-        if (!route || route.route_type !== "private_database" || String(route.schema_version) !== "13") {
-          throw new ControlPlaneConflictError("A schema-13 private route is required.", "PRIVATE_ROUTE_NOT_READY");
-        }
+
         const route =
           await repositories.routes
             .getInternalLatestReadyForOrganisation(
