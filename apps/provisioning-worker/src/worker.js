@@ -246,43 +246,192 @@ async function createSecretStore() {
   };
 }
 
-async function ensurePrivateSchema(adminPool, databaseName, organisation, policy) {
-  const connection = await adminPool.getConnection();
+async function ensurePrivateSchema(
+  adminPool,
+  databaseName,
+  organisation,
+  policy,
+) {
+  const connection =
+    await adminPool.getConnection();
+
   try {
-    await connection.query(`USE \`${databaseName}\``);
-    await applyMigrations(connection, undefined, {
-      applicationVersion: `private-${policy.schemaVersion}`,
-    });
     await connection.query(
-      "DELETE FROM ledger_chain_heads WHERE tenant_id = 'tenant_default'",
+      `USE \`${databaseName}\``,
     );
-    await connection.query(
-      "DELETE FROM tenants WHERE tenant_id = 'tenant_default'",
+
+    await applyMigrations(
+      connection,
+      undefined,
+      {
+        applicationVersion:
+          `private-${policy.schemaVersion}`,
+      },
     );
-    await connection.query(
-      `INSERT INTO tenants (tenant_id, tenant_slug, tenant_name, status)
-       VALUES (?, ?, ?, 'active')
-       ON DUPLICATE KEY UPDATE
-         tenant_slug = VALUES(tenant_slug),
-         tenant_name = VALUES(tenant_name),
-         status = 'active'`,
-      [organisation.organisationId, organisation.canonicalSlug, organisation.displayName],
-    );
-    await connection.query(
-      `UPDATE data_plane_metadata
-       SET database_mode = 'private_database',
-         logical_database_identifier = ?,
-         schema_version = ?,
-         environment_key = ?,
-         migration_version = ?
-       WHERE metadata_key = 'primary'`,
-      [
-        policy.logicalDatabaseIdentifier,
-        policy.schemaVersion,
-        policy.environmentKey,
-        policy.migrationVersion,
-      ],
-    );
+
+    /*
+     * Canonical operational migrations create the
+     * tenant_default bootstrap tenant, its ledger head,
+     * and, from schema 14, an active detection strategy.
+     *
+     * Convert those bootstrap foundations into the
+     * organisation-scoped private tenant atomically.
+     */
+    await connection.beginTransaction();
+
+    try {
+      await connection.query(
+        `
+          INSERT INTO tenants (
+            tenant_id,
+            tenant_slug,
+            tenant_name,
+            status
+          )
+          VALUES (
+            ?,
+            ?,
+            ?,
+            'active'
+          )
+          ON DUPLICATE KEY UPDATE
+            tenant_slug =
+              VALUES(tenant_slug),
+            tenant_name =
+              VALUES(tenant_name),
+            status =
+              'active'
+        `,
+        [
+          organisation.organisationId,
+          organisation.canonicalSlug,
+          organisation.displayName,
+        ],
+      );
+
+      /*
+       * Every operational tenant requires a chain head.
+       * This is idempotent for provisioning retries.
+       */
+      await connection.query(
+        `
+          INSERT INTO ledger_chain_heads (
+            tenant_id,
+            last_sequence_number,
+            last_entry_hash
+          )
+          VALUES (
+            ?,
+            0,
+            REPEAT('0', 64)
+          )
+          ON DUPLICATE KEY UPDATE
+            tenant_id =
+              VALUES(tenant_id)
+        `,
+        [
+          organisation.organisationId,
+        ],
+      );
+
+      /*
+       * Schema 14 requires exactly one explicit active
+       * strategy. Create the private tenant's canonical
+       * strategy before removing the bootstrap strategy.
+       */
+      await connection.query(
+        `
+          INSERT INTO detection_strategies (
+            tenant_id,
+            strategy_type,
+            model_deployment_id,
+            is_active,
+            activated_at,
+            actor,
+            change_reason
+          )
+          SELECT
+            ?,
+            'deterministic_rules',
+            NULL,
+            1,
+            UTC_TIMESTAMP(3),
+            'provisioning-worker',
+            'Created canonical private-tenant prospective detection strategy'
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM detection_strategies
+            WHERE tenant_id = ?
+              AND is_active = 1
+          )
+        `,
+        [
+          organisation.organisationId,
+          organisation.organisationId,
+        ],
+      );
+
+      /*
+       * The default rows are migration bootstrap data,
+       * not a second tenant within the private database.
+       */
+      await connection.query(
+        `
+          DELETE FROM detection_strategies
+          WHERE tenant_id =
+            'tenant_default'
+        `,
+      );
+
+      await connection.query(
+        `
+          DELETE FROM ledger_chain_heads
+          WHERE tenant_id =
+            'tenant_default'
+        `,
+      );
+
+      await connection.query(
+        `
+          DELETE FROM tenants
+          WHERE tenant_id =
+            'tenant_default'
+        `,
+      );
+
+      await connection.query(
+        `
+          UPDATE data_plane_metadata
+          SET
+            database_mode =
+              'private_database',
+            logical_database_identifier =
+              ?,
+            schema_version =
+              ?,
+            environment_key =
+              ?,
+            migration_version =
+              ?
+          WHERE metadata_key =
+            'primary'
+        `,
+        [
+          policy.logicalDatabaseIdentifier,
+          policy.schemaVersion,
+          policy.environmentKey,
+          policy.migrationVersion,
+        ],
+      );
+
+      await connection.commit();
+    } catch (
+      error
+    ) {
+      await connection.rollback();
+
+      throw error;
+    }
   } finally {
     connection.release();
   }
