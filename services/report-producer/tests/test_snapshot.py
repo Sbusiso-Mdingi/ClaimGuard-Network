@@ -895,12 +895,14 @@ class SnapshotTests(
             target_sql,
         )
 
-        self.assertIn(
-            (
-                "(claim_id, claim_version) "
-                "IN ((%s, %s), (%s, %s))"
-            ),
+        self.assertRegex(
             target_sql,
+            (
+                r"\(\s*claim_id,\s*claim_version\s*\)"
+                r"\s+IN\s+"
+                r"\(\(%s,\s*%s\),\s*"
+                r"\(%s,\s*%s\)\)"
+            ),
         )
 
         self.assertEqual(
