@@ -4,7 +4,7 @@ import { ControlPlaneConflictError, ControlPlaneNotFoundError, ControlPlaneValid
 import { hashPassword, passwordParametersRecord, ARGON2ID_VERSION } from "./password.js";
 import { normalizeUsername } from "./validation.js";
 import { withControlPlaneTransaction } from "./transaction.js";
-
+f
 const ORGANISATION_TRANSITIONS = Object.freeze({
   draft: ["provisioning", "failed", "archived"],
   provisioning: ["ready_for_activation", "failed"],
@@ -24,6 +24,9 @@ const PROVISIONING_TRANSITIONS = Object.freeze({
   compensated: [],
   quarantined: ["compensating"],
 });
+
+const CANONICAL_PRIVATE_SCHEMA_VERSION =
+  "14";
 
 export function createControlPlaneService({ pool, repositories }) {
   if (!pool || !repositories) throw new TypeError("Control-plane pool and repositories are required.");
@@ -98,21 +101,94 @@ export function createControlPlaneService({ pool, repositories }) {
         if (!route || route.route_type !== "private_database" || String(route.schema_version) !== "13") {
           throw new ControlPlaneConflictError("A schema-13 private route is required.", "PRIVATE_ROUTE_NOT_READY");
         }
-        const [gateRows] = await executor.execute(
-          `SELECT
-             (SELECT COUNT(*) FROM organisation_schema_status
-               WHERE organisation_id = ? AND route_id = ? AND expected_schema_version = '13'
-                 AND observed_schema_version = '13' AND compatibility_status = 'compatible') AS schema_ready,
-             (SELECT COUNT(*) FROM worker_routing_status
-               WHERE organisation_id = ? AND worker_type = 'report-worker' AND status = 'ready') AS worker_ready,
-             (SELECT COUNT(*) FROM report_storage_partitions
-               WHERE organisation_id = ? AND provisioning_status = 'ready' AND retired_at IS NULL) AS storage_ready,
-             (SELECT COUNT(*) FROM organisation_memberships m
-               JOIN membership_roles mr ON mr.membership_id = m.membership_id AND mr.revoked_at IS NULL
-               JOIN roles r ON r.role_id = mr.role_id
-               WHERE m.organisation_id = ? AND m.status = 'active' AND r.role_key = 'scheme_administrator') AS admin_ready`,
-          [organisationId, route.route_id, organisationId, organisationId, organisationId],
-        );
+        const route =
+          await repositories.routes
+            .getInternalLatestReadyForOrganisation(
+              organisationId,
+              {
+                executor,
+              },
+            );
+
+        if (
+          !route
+          || route.route_type
+            !== "private_database"
+          || String(
+            route.schema_version,
+          )
+            !== CANONICAL_PRIVATE_SCHEMA_VERSION
+        ) {
+          throw new ControlPlaneConflictError(
+            `A schema-${CANONICAL_PRIVATE_SCHEMA_VERSION} private route is required.`,
+            "PRIVATE_ROUTE_NOT_READY",
+          );
+        }
+
+        const [
+          gateRows,
+        ] =
+          await executor.execute(
+    `
+              SELECT
+                (
+                  SELECT COUNT(*)
+                  FROM organisation_schema_status
+                  WHERE organisation_id = ?
+                    AND route_id = ?
+                    AND expected_schema_version = ?
+                    AND observed_schema_version = ?
+                    AND compatibility_status =
+                      'compatible'
+                ) AS schema_ready,
+
+                (
+                  SELECT COUNT(*)
+                  FROM worker_routing_status
+                  WHERE organisation_id = ?
+                    AND worker_type =
+                      'report-worker'
+                    AND status =
+                        'ready'
+                ) AS worker_ready,
+
+                (
+                  SELECT COUNT(*)
+                  FROM report_storage_partitions
+                  WHERE organisation_id = ?
+                    AND provisioning_status =
+                      'ready'
+                    AND retired_at IS NULL
+                ) AS storage_ready,
+
+                (
+                  SELECT COUNT(*)
+                  FROM organisation_memberships m
+                  JOIN membership_roles mr
+                    ON mr.membership_id =
+                      m.membership_id
+                    AND mr.revoked_at IS NULL
+                  JOIN roles r
+                    ON r.role_id =
+                      mr.role_id
+                  WHERE m.organisation_id = ?
+                    AND m.status =
+                      'active'
+                    AND r.role_key =
+                      'scheme_administrator'
+                ) AS admin_ready
+            `,
+            [
+              organisationId,
+              route.route_id,
+              CANONICAL_PRIVATE_SCHEMA_VERSION,
+              CANONICAL_PRIVATE_SCHEMA_VERSION,
+              organisationId,
+              organisationId,
+              organisationId,
+            ],
+          );
+        
         const gates = gateRows?.[0] || {};
         if (![gates.schema_ready, gates.worker_ready, gates.storage_ready, gates.admin_ready].every((value) => Number(value) > 0)) {
           throw new ControlPlaneConflictError(
