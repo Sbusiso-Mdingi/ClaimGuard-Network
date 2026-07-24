@@ -2,13 +2,21 @@ import { createControlPlaneService as createBaseControlPlaneService } from "./co
 import { ControlPlaneConflictError } from "./errors.js";
 
 export function createSignupCredentialGuardedIdentityRepository(identity) {
-  if (!identity || typeof identity.createCredential !== "function") {
-    throw new TypeError("An identity repository with createCredential() is required.");
+  if (!identity || typeof identity !== "object") {
+    throw new TypeError("An identity repository is required.");
   }
 
-  // Lightweight service tests use partial repository doubles. The production
-  // identity repository exposes getInternalCredentialByUsername(), which is
-  // used here only as a capability marker before issuing the locked query.
+  // Many control-plane service tests intentionally use partial repository
+  // doubles for operations that never create credentials. Leave those
+  // fixtures unchanged instead of making unrelated service construction fail.
+  if (typeof identity.createCredential !== "function") {
+    return identity;
+  }
+
+  // The production identity repository exposes
+  // getInternalCredentialByUsername(). Lightweight credential-specific tests
+  // may omit it, so use it only as a capability marker for the production
+  // repository before installing the transaction-scoped guard.
   if (typeof identity.getInternalCredentialByUsername !== "function") {
     return identity;
   }
