@@ -1,4 +1,4 @@
-name: Configure API provisioning trigger
+name: Verify API provisioning trigger
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: configure-api-provisioning-trigger
+  group: verify-api-provisioning-trigger
   cancel-in-progress: false
 
 env:
@@ -20,12 +20,9 @@ env:
   AZURE_PROVISIONING_JOB_NAME: ${{ vars.AZURE_PROVISIONING_JOB_NAME || 'claimguard-provisioning-worker' }}
 
 jobs:
-  configure:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+  verify:
     runs-on: ubuntu-latest
+
     steps:
       - name: Validate required configuration
         shell: bash
@@ -56,105 +53,161 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
           audience: api://AzureADTokenExchange
 
-      - name: Enable API managed identity and grant job-scoped start permission
+      - name: Resolve Azure resources
         shell: bash
         run: |
           set -euo pipefail
 
-          API_PRINCIPAL_ID="$(az webapp identity assign \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --query principalId \
-            --output tsv)"
+          API_PRINCIPAL_ID="$(
+            az webapp identity show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_API" \
+              --query principalId \
+              --output tsv
+          )"
 
           if [ -z "$API_PRINCIPAL_ID" ]; then
-            echo "Error: Azure did not return the API managed-identity principal ID."
+            echo "Error: claimguard-api does not have a system-assigned managed identity."
             exit 1
           fi
 
-          JOB_RESOURCE_ID="$(az containerapp job show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_PROVISIONING_JOB_NAME" \
-            --query id \
-            --output tsv)"
+          JOB_RESOURCE_ID="$(
+            az containerapp job show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_PROVISIONING_JOB_NAME" \
+              --query id \
+              --output tsv
+          )"
 
           if [ -z "$JOB_RESOURCE_ID" ]; then
             echo "Error: Azure did not return the provisioning-job resource ID."
             exit 1
           fi
 
-          set +e
-          ROLE_OUTPUT="$(az role assignment create \
-            --assignee-object-id "$API_PRINCIPAL_ID" \
-            --assignee-principal-type ServicePrincipal \
-            --role "Container Apps Jobs Operator" \
-            --scope "$JOB_RESOURCE_ID" \
-            --output json 2>&1)"
-          ROLE_STATUS=$?
-          set -e
-
-          if [ "$ROLE_STATUS" -ne 0 ]; then
-            if grep -qE 'RoleAssignmentExists|role assignment already exists' <<<"$ROLE_OUTPUT"; then
-              echo "The API already has the job-scoped Container Apps Jobs Operator assignment."
-            else
-              echo "$ROLE_OUTPUT"
-              exit "$ROLE_STATUS"
-            fi
-          else
-            echo "Created the job-scoped Container Apps Jobs Operator assignment."
-          fi
-
           echo "API_PRINCIPAL_ID=$API_PRINCIPAL_ID" >> "$GITHUB_ENV"
           echo "JOB_RESOURCE_ID=$JOB_RESOURCE_ID" >> "$GITHUB_ENV"
 
-      - name: Configure automatic provisioning-job trigger
+      - name: Verify job-scoped start permission
         shell: bash
         run: |
           set -euo pipefail
 
-          az webapp config appsettings set \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --settings \
-              AZURE_PROVISIONING_JOB_TRIGGER_ENABLED=true \
-              AZURE_PROVISIONING_JOB_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID" \
-              AZURE_PROVISIONING_JOB_RESOURCE_GROUP="$AZURE_RESOURCE_GROUP" \
-              AZURE_PROVISIONING_JOB_NAME="$AZURE_PROVISIONING_JOB_NAME" \
-              AZURE_PROVISIONING_JOB_API_VERSION=2025-07-01 \
-              PRIVATE_TENANT_SCHEMA_VERSION=14 \
-            --output none
+          ASSIGNMENT_COUNT="$(
+            az role assignment list \
+              --assignee-object-id "$API_PRINCIPAL_ID" \
+              --scope "$JOB_RESOURCE_ID" \
+              --query "[?roleDefinitionName=='Container Apps Jobs Operator'] | length(@)" \
+              --output tsv
+          )"
 
-          az webapp restart \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API"
+          if [ "$ASSIGNMENT_COUNT" != "1" ]; then
+            echo "Error: claimguard-api does not have Container Apps Jobs Operator on the provisioning job."
+            exit 1
+          fi
 
-      - name: Verify trigger configuration
+          echo "Verified API job-scoped Container Apps Jobs Operator assignment."
+
+      - name: Verify API trigger settings
         shell: bash
         run: |
           set -euo pipefail
 
-          ENABLED="$(az webapp config appsettings list \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --query "[?name=='AZURE_PROVISIONING_JOB_TRIGGER_ENABLED'].value | [0]" \
-            --output tsv)"
+          ENABLED="$(
+            az webapp config appsettings list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_API" \
+              --query "[?name=='AZURE_PROVISIONING_JOB_TRIGGER_ENABLED'].value | [0]" \
+              --output tsv
+          )"
 
-          CONFIGURED_JOB="$(az webapp config appsettings list \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --query "[?name=='AZURE_PROVISIONING_JOB_NAME'].value | [0]" \
-            --output tsv)"
+          CONFIGURED_SUBSCRIPTION="$(
+            az webapp config appsettings list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_API" \
+              --query "[?name=='AZURE_PROVISIONING_JOB_SUBSCRIPTION_ID'].value | [0]" \
+              --output tsv
+          )"
 
-          SCHEMA_VERSION="$(az webapp config appsettings list \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --query "[?name=='PRIVATE_TENANT_SCHEMA_VERSION'].value | [0]" \
-            --output tsv)"
+          CONFIGURED_RESOURCE_GROUP="$(
+            az webapp config appsettings list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_API" \
+              --query "[?name=='AZURE_PROVISIONING_JOB_RESOURCE_GROUP'].value | [0]" \
+              --output tsv
+          )"
+
+          CONFIGURED_JOB="$(
+            az webapp config appsettings list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_API" \
+              --query "[?name=='AZURE_PROVISIONING_JOB_NAME'].value | [0]" \
+              --output tsv
+          )"
+
+          API_VERSION="$(
+            az webapp config appsettings list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_API" \
+              --query "[?name=='AZURE_PROVISIONING_JOB_API_VERSION'].value | [0]" \
+              --output tsv
+          )"
+
+          SCHEMA_VERSION="$(
+            az webapp config appsettings list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_API" \
+              --query "[?name=='PRIVATE_TENANT_SCHEMA_VERSION'].value | [0]" \
+              --output tsv
+          )"
 
           test "$ENABLED" = "true"
+          test "$CONFIGURED_SUBSCRIPTION" = "$AZURE_SUBSCRIPTION_ID"
+          test "$CONFIGURED_RESOURCE_GROUP" = "$AZURE_RESOURCE_GROUP"
           test "$CONFIGURED_JOB" = "$AZURE_PROVISIONING_JOB_NAME"
+          test "$API_VERSION" = "2025-07-01"
           test "$SCHEMA_VERSION" = "14"
 
-          echo "Automatic API-triggered provisioning is configured for $CONFIGURED_JOB."
+          echo "Verified automatic API provisioning-trigger settings."
+
+      - name: Verify provisioning-worker configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORKER_IMAGE="$(
+            az containerapp job show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_PROVISIONING_JOB_NAME" \
+              --query "properties.template.containers[0].image" \
+              --output tsv
+          )"
+
+          WORKER_SCHEMA_VERSION="$(
+            az containerapp job show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_PROVISIONING_JOB_NAME" \
+              --query "properties.template.containers[0].env[?name=='PRIVATE_TENANT_SCHEMA_VERSION'].value | [0]" \
+              --output tsv
+          )"
+
+          if [ -z "$WORKER_IMAGE" ]; then
+            echo "Error: provisioning-worker image is not configured."
+            exit 1
+          fi
+
+          if [ "$WORKER_SCHEMA_VERSION" != "14" ]; then
+            echo "Error: provisioning-worker schema version is '$WORKER_SCHEMA_VERSION', expected '14'."
+            exit 1
+          fi
+
+          echo "Provisioning worker image: $WORKER_IMAGE"
+          echo "Provisioning worker schema: $WORKER_SCHEMA_VERSION"
+
+      - name: Verification summary
+        shell: bash
+        run: |
+          set -euo pipefail
+
           echo "API managed identity: $API_PRINCIPAL_ID"
-          echo "Job scope: $JOB_RESOURCE_ID"
+          echo "Provisioning-job scope: $JOB_RESOURCE_ID"
+          echo "Automatic API-triggered provisioning is correctly configured."
