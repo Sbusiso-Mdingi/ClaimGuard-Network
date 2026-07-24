@@ -45,7 +45,7 @@ function UserManagementPanel() {
     try {
       await apiJson("/admin/scheme/users", {
         method: "POST",
-        body: newUser,
+        body: JSON.stringify(newUser),
       });
       setNewUser({ displayName: "", username: "", password: "", roleKey: "claims_analyst" });
       await loadUsers();
