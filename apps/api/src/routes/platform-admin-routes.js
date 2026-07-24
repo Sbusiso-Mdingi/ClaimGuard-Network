@@ -426,25 +426,68 @@ app.post("/admin/platform/organisations/:organisationId/provision", requirePlatf
   }, 202);
 });
 
-  app.post("/admin/platform/organisations/:organisationId/upgrade", requirePlatformAdmin, async (c) => {
-    const actor = actorFromContext(c);
-    const organisationId = c.req.param("organisationId");
-    try {
-      const operation = await controlPlaneService.requestProvisioningOperation({
-        organisationId,
-        operationType: "upgrade_private_database",
-        requestedBy: actor.id || "platform-admin",
-        correlationId: actor.correlationId,
-      }, actor);
-      return c.json({
-        available: true,
-        operation: safeProvisioningProjection({ ...operation, steps: [] }),
-      }, 202);
-    } catch (error) {
-      const status = Number.isInteger(error?.status) ? error.status : 409;
-      return c.json({ available: false, code: error?.code || "UPGRADE_REQUEST_FAILED", message: error?.message || "Upgrade could not be requested." }, status);
-    }
-  });
+  app.post(
+    "/admin/platform/organisations/:organisationId/upgrade",
+    requirePlatformAdmin,
+    async (c) => {
+      const actor = actorFromContext(c);
+      const organisationId = c.req.param("organisationId");
+
+      try {
+        const operation =
+          await controlPlaneService.requestProvisioningOperation(
+            {
+              organisationId,
+              operationType: "upgrade_private_database",
+              requestedBy: actor.id || "platform-admin",
+              correlationId: actor.correlationId,
+            },
+            actor,
+          );
+
+        const workerTrigger =
+          await attemptProvisioningWorkerStart({
+            startProvisioningJob,
+            operation,
+            organisationId,
+          });
+
+        return c.json(
+          {
+            available: true,
+            operation: safeProvisioningProjection({
+              ...operation,
+              steps: [],
+            }),
+            workerTrigger,
+            message:
+              workerTrigger.status === "started"
+                ? "Schema upgrade queued and the Azure worker was started."
+                : "Schema upgrade was queued, but the Azure worker could not be started automatically.",
+          },
+          202,
+        );
+      } catch (error) {
+        const status =
+          Number.isInteger(error?.status)
+            ? error.status
+            : 409;
+
+        return c.json(
+          {
+            available: false,
+            code:
+              error?.code
+              || "UPGRADE_REQUEST_FAILED",
+            message:
+              error?.message
+              || "Upgrade could not be requested.",
+          },
+          status,
+        );
+      }
+    },
+  );
 
   app.get("/admin/platform/provisioning/:operationId", requirePlatformAdmin, async (c) => {
     const operationId = c.req.param("operationId");
