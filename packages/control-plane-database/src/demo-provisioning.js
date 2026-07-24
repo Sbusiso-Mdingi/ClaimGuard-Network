@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 
 import { hashPassword, passwordParametersRecord, ARGON2ID_VERSION } from "./password.js";
 
+const CANONICAL_OPERATIONAL_SCHEMA_VERSION = "14";
+
 const SCHEME_DEMO_ROLES = Object.freeze([
   ["claims_analyst", "claims.analyst.demo", "Claims Analyst"],
   ["fraud_analyst", "fraud.analyst.demo", "Fraud Analyst"],
@@ -35,25 +37,96 @@ async function ensureOrganisation({ repositories, service, displayName, slug, or
   return activateOrganisation(service, organisation);
 }
 
-async function ensureRoute({ repositories, service, organisation, routeType, databaseName = null }) {
-  const existing = await repositories.routes.getSafeActiveForOrganisation(organisation.organisationId);
+async function ensureRoute({
+  repositories,
+  service,
+  organisation,
+  routeType,
+  databaseName = null,
+}) {
+  const expectedSchemaVersion =
+    routeType === "platform_none"
+      ? null
+      : CANONICAL_OPERATIONAL_SCHEMA_VERSION;
+
+  const existing =
+    await repositories
+      .routes
+      .getSafeActiveForOrganisation(
+        organisation.organisationId,
+      );
+
   if (existing) {
-    if (existing.routeType !== routeType || existing.provisioningStatus !== "active") {
-      throw new Error(`Active route for ${organisation.canonicalSlug} is not an eligible ${routeType} route.`);
+    const schemaMatches =
+      routeType === "platform_none"
+        ? existing.schemaVersion == null
+        : String(
+          existing.schemaVersion
+          ?? "",
+        ) === expectedSchemaVersion;
+
+    if (
+      existing.routeType !== routeType
+      || existing.provisioningStatus !== "active"
+      || !schemaMatches
+    ) {
+      throw new Error(
+        (
+          `Active route for ${organisation.canonicalSlug} `
+          + `is not an eligible schema-${expectedSchemaVersion ?? "none"} `
+          + `${routeType} route.`
+        ),
+      );
     }
+
     return existing;
   }
-  return service.registerRoute({
-    organisationId: organisation.organisationId,
-    routeType,
-    logicalDatabaseIdentifier: routeType === "platform_none" ? "platform-control-plane" : "legacy-operational-shared",
-    databaseName: routeType === "platform_none" ? null : databaseName,
-    secretReference: routeType === "platform_none" ? null : "secret://runtime/MYSQL_URL",
-    schemaVersion: routeType === "platform_none" ? null : "13",
-    provisioningStatus: "active",
-    healthStatus: "unknown",
-    activate: true,
-  }, { type: "system", id: "demo-provisioner", source: "demo-provisioner" });
+
+  return service.registerRoute(
+    {
+      organisationId:
+        organisation.organisationId,
+
+      routeType,
+
+      logicalDatabaseIdentifier:
+        routeType === "platform_none"
+          ? "platform-control-plane"
+          : "legacy-operational-shared",
+
+      databaseName:
+        routeType === "platform_none"
+          ? null
+          : databaseName,
+
+      secretReference:
+        routeType === "platform_none"
+          ? null
+          : "secret://runtime/MYSQL_URL",
+
+      schemaVersion:
+        expectedSchemaVersion,
+
+      provisioningStatus:
+        "active",
+
+      healthStatus:
+        "unknown",
+
+      activate:
+        true,
+    },
+    {
+      type:
+        "system",
+
+      id:
+        "demo-provisioner",
+
+      source:
+        "demo-provisioner",
+    },
+  );
 }
 
 async function ensureVerifiedMapping({ executor, organisation, tenant, route }) {
