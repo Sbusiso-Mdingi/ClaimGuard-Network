@@ -177,6 +177,58 @@ function restoreEnvironment(
   }
 }
 
+async function verifyReportWorkerAccessGrant(
+  policy,
+  secretNames,
+) {
+  assert.equal(
+    policy.schemaVersion,
+    CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+  );
+
+  assert.equal(
+    policy.migrationVersion,
+    Number(
+      CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+    ),
+  );
+
+  assert.equal(
+    Array.isArray(
+      secretNames,
+    ),
+    true,
+  );
+
+  assert.equal(
+    secretNames.length,
+    4,
+  );
+
+  assert.equal(
+    new Set(
+      secretNames,
+    ).size,
+    4,
+  );
+
+  assert.equal(
+    secretNames.every(
+      (secretName) =>
+        typeof secretName === "string"
+        && secretName.startsWith(
+          "claimguard--tenant--",
+        ),
+    ),
+    true,
+  );
+
+  /*
+   * The integration gate verifies the inputs that
+   * would be sent to Azure RBAC. It deliberately does
+   * not contact Azure Resource Manager.
+   */
+}
 
 async function createOrganisation(
   service,
@@ -620,6 +672,9 @@ integration(
         await runProvisioningBatch({
           maxOperations:
             1,
+
+          grantReportWorkerAccess:
+            verifyReportWorkerAccessGrant,
         });
 
       assert.equal(
@@ -1030,10 +1085,14 @@ integration(
        * The second organisation intentionally has no
        * administrator, so provisioning fails safely.
        */
+      
       const secondRun =
         await runProvisioningBatch({
           maxOperations:
             1,
+
+          grantReportWorkerAccess:
+            verifyReportWorkerAccessGrant,
         });
 
       assert.equal(
@@ -1094,11 +1153,14 @@ integration(
         retried.status,
         "pending",
       );
-
+      
       const retryRun =
         await runProvisioningBatch({
           maxOperations:
             1,
+
+          grantReportWorkerAccess:
+            verifyReportWorkerAccessGrant,
         });
 
       assert.equal(
