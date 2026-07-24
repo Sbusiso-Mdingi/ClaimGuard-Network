@@ -72,17 +72,30 @@ export function createSignupCredentialGuardedIdentityRepository(identity) {
 
 export function createControlPlaneService({ pool, repositories }) {
   const service = createBaseControlPlaneService({ pool, repositories });
+  const identity = repositories?.identity;
 
-  const signupRepositories = {
-    ...repositories,
-    identity: createSignupCredentialGuardedIdentityRepository(
-      repositories.identity,
-    ),
-  };
+  // Some service operations intentionally use repository sets without an
+  // identity repository. They do not execute invitation signup, so preserve
+  // the base service instead of making unrelated construction fail.
+  if (!identity || typeof identity !== "object") {
+    return service;
+  }
+
+  const guardedIdentity =
+    createSignupCredentialGuardedIdentityRepository(identity);
+
+  // Partial repository doubles that cannot create production credentials do
+  // not need a second service instance.
+  if (guardedIdentity === identity) {
+    return service;
+  }
 
   const guardedSignupService = createBaseControlPlaneService({
     pool,
-    repositories: signupRepositories,
+    repositories: {
+      ...repositories,
+      identity: guardedIdentity,
+    },
   });
 
   return {
