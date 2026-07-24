@@ -7,6 +7,9 @@ export {
 } from "./config.js";
 export {
   createControlPlaneService,
+  createRequiredRoleIdentityRepository,
+} from "./role-required-control-plane-service.js";
+export {
   createSignupCredentialGuardedIdentityRepository,
 } from "./credential-guarded-control-plane-service.js";
 export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
