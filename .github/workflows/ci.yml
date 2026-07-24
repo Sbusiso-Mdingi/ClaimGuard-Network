@@ -214,9 +214,224 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  mysql-integration:
+    name: Real MySQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: claimguard_ci_root
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent -h 127.0.0.1 -uroot -pclaimguard_ci_root"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-start-period=20s
+          --health-retries=30
+
+    env:
+      MYSQL_ROOT_URL: "mysql://root:claimguard_ci_root@127.0.0.1:3306/mysql"
+
+      CONTROL_PLANE_TEST_MYSQL_URL: "mysql://root:claimguard_ci_root@127.0.0.1:3306/claimguard_control_integration"
+
+      OPERATIONAL_TEST_MYSQL_URL: "mysql://root:claimguard_ci_root@127.0.0.1:3306/claimguard_operational_integration"
+
+      PHASE11D_CONTROL_PLANE_MYSQL_URL: "mysql://root:claimguard_ci_root@127.0.0.1:3306/claimguard_phase11d_control"
+
+      PHASE11D_MYSQL_URL: "mysql://root:claimguard_ci_root@127.0.0.1:3306/claimguard_phase11d_operational"
+
+      PHASE11E_CONTROL_PLANE_MYSQL_URL: "mysql://root:claimguard_ci_root@127.0.0.1:3306/claimguard_phase11e_control"
+
+      PHASE11E_MYSQL_SERVER_ADMIN_URL: "mysql://root:claimguard_ci_root@127.0.0.1:3306/mysql"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create isolated integration databases
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pnpm --filter @claimguard/database exec \
+            node --input-type=module - <<'NODE'
+          import mysql from "mysql2/promise";
+
+          const rootUrl =
+            process.env.MYSQL_ROOT_URL;
+
+          if (!rootUrl) {
+            throw new Error(
+              "MYSQL_ROOT_URL is required.",
+            );
+          }
+
+          const databaseUrls = [
+            process.env
+              .CONTROL_PLANE_TEST_MYSQL_URL,
+
+            process.env
+              .OPERATIONAL_TEST_MYSQL_URL,
+
+            process.env
+              .PHASE11D_CONTROL_PLANE_MYSQL_URL,
+
+            process.env
+              .PHASE11D_MYSQL_URL,
+
+            process.env
+              .PHASE11E_CONTROL_PLANE_MYSQL_URL,
+          ];
+
+          const databaseNames =
+            [
+              ...new Set(
+                databaseUrls.map(
+                  (value) => {
+                    if (!value) {
+                      throw new Error(
+                        "An integration database URL is missing.",
+                      );
+                    }
+
+                    const name =
+                      new URL(value)
+                        .pathname
+                        .replace(
+                          /^\/+/,
+                          "",
+                        );
+
+                    if (
+                      !/^[a-zA-Z0-9_]+$/.test(
+                        name,
+                      )
+                    ) {
+                      throw new Error(
+                        `Unsafe integration database name: ${name}`,
+                      );
+                    }
+
+                    return name;
+                  },
+                ),
+              ),
+            ];
+
+          let connection;
+
+          for (
+            let attempt = 1;
+            attempt <= 30;
+            attempt += 1
+          ) {
+            try {
+              connection =
+                await mysql
+                  .createConnection(
+                    rootUrl,
+                  );
+
+              break;
+            } catch (
+              error
+            ) {
+              if (
+                attempt === 30
+              ) {
+                throw error;
+              }
+
+              await new Promise(
+                (resolve) =>
+                  setTimeout(
+                    resolve,
+                    1000,
+                  ),
+              );
+            }
+          }
+
+          try {
+            for (
+              const databaseName
+              of databaseNames
+            ) {
+              await connection.query(
+                `DROP DATABASE IF EXISTS \`${databaseName}\``,
+              );
+
+              await connection.query(
+                `CREATE DATABASE \`${databaseName}\``,
+              );
+            }
+          } finally {
+            await connection.end();
+          }
+          NODE
+
+      - name: Run control-plane MySQL migration gate
+        run: |
+          set -euo pipefail
+
+          pnpm \
+            --filter @claimguard/control-plane-database \
+            exec node \
+            --test tests/mysql.integration.test.js
+
+      - name: Run operational schema-14 MySQL gate
+        run: |
+          set -euo pipefail
+
+          pnpm \
+            --filter @claimguard/database \
+            exec node \
+            --test tests/mysql.integration.test.js
+
+      - name: Run Phase 11D routed API MySQL gate
+        run: |
+          set -euo pipefail
+
+          pnpm \
+            --filter @claimguard/api \
+            exec node \
+            --test tests/phase11d-mysql.integration.test.js
+
+      - name: Run private provisioning MySQL gate
+        run: |
+          set -euo pipefail
+
+          pnpm \
+            --filter @claimguard/provisioning-worker \
+            exec node \
+            --test tests/mysql.integration.test.js
+  
   deploy:
     runs-on: ubuntu-latest
-    needs: validate
+    needs:
+      - validate
+      - mysql-integration
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     concurrency:
       group: claimguard-production
