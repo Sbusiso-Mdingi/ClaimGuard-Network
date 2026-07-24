@@ -5,7 +5,10 @@ export {
   requireControlPlaneDatabaseUrl,
   requireOperationalDatabaseUrl,
 } from "./config.js";
-export { createControlPlaneService } from "./control-plane-service.js";
+export {
+  createControlPlaneService,
+  createSignupCredentialGuardedIdentityRepository,
+} from "./credential-guarded-control-plane-service.js";
 export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
 export { getShadowDiagnostics } from "./diagnostics.js";
 export { provisionDemoAccounts } from "./demo-provisioning.js";
