@@ -1,4 +1,8 @@
 import {
+  triggerProvisioningJob,
+} from "../azure-provisioning-job-trigger.js";
+
+import {
   createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
 import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
@@ -111,11 +115,81 @@ function integrationGuide(c, organisation) {
   };
 }
 
-export function registerPlatformAdminRoutes(app, {
-  controlPlaneRepositories,
-  controlPlaneService,
-  deploymentClass = "demo",
-} = {}) {
+async function attemptProvisioningWorkerStart(
+  {
+    startProvisioningJob,
+    operation,
+    organisationId,
+  },
+) {
+  try {
+    return await startProvisioningJob(
+      {
+        operationId:
+          operation.operationId,
+
+        organisationId,
+      },
+    );
+  } catch (
+    error
+  ) {
+    console.error(
+      JSON.stringify(
+        {
+          timestamp:
+            new Date().toISOString(),
+
+          level:
+            "error",
+
+          service:
+            "api",
+
+          event:
+            "provisioning_worker_trigger_failed",
+
+          operationId:
+            operation.operationId,
+
+          organisationId,
+
+          failureType:
+            error?.name
+            || "Error",
+
+          failureCode:
+            error?.code
+            || "PROVISIONING_JOB_TRIGGER_FAILED",
+
+          failureStatus:
+            error?.status
+            || null,
+        },
+      ),
+    );
+
+    return {
+      status:
+        "failed",
+
+      code:
+        error?.code
+        || "PROVISIONING_JOB_TRIGGER_FAILED",
+    };
+  }
+}
+
+export function registerPlatformAdminRoutes(
+  app,
+  {
+    controlPlaneRepositories,
+    controlPlaneService,
+    deploymentClass = "demo",
+    startProvisioningJob =
+      triggerProvisioningJob,
+  } = {},
+) {
   const requirePlatformAdmin = createRequirePermissionMiddleware({
     permission: CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
   });
@@ -316,31 +390,41 @@ export function registerPlatformAdminRoutes(app, {
     });
   });
 
-  app.post("/admin/platform/organisations/:organisationId/provision", requirePlatformAdmin, async (c) => {
-    const actor = actorFromContext(c);
-    const organisationId = c.req.param("organisationId");
-    const organisation = await controlPlaneRepositories.organisations.getById(organisationId);
-    if (!organisation) {
-      return c.json({ available: false, code: "ORGANISATION_NOT_FOUND", message: "Organisation was not found." }, 404);
-    }
+app.post("/admin/platform/organisations/:organisationId/provision", requirePlatformAdmin, async (c) => {
+  const actor = actorFromContext(c);
+  const organisationId = c.req.param("organisationId");
+  const organisation = await controlPlaneRepositories.organisations.getById(organisationId);
+  if (!organisation) {
+    return c.json({ available: false, code: "ORGANISATION_NOT_FOUND", message: "Organisation was not found." }, 404);
+  }
 
-    const operation = await controlPlaneService.requestProvisioningOperation({
-      organisationId,
-      operationType: "onboard_private_database",
-      requestedBy: actor.id || "platform-admin",
-      correlationId: actor.correlationId,
-    }, actor).catch((error) => {
-      const status = Number.isInteger(error?.status) ? error.status : 409;
-      return c.json({ available: false, code: error?.code || "PROVISIONING_REQUEST_FAILED", message: error?.message || "Provisioning could not be requested." }, status);
-    });
-
-    if (operation instanceof Response) return operation;
-
-    return c.json({
-      available: true,
-      operation: safeProvisioningProjection({ ...operation, steps: [] }),
-    }, 202);
+  const operation = await controlPlaneService.requestProvisioningOperation({
+    organisationId,
+    operationType: "onboard_private_database",
+    requestedBy: actor.id || "platform-admin",
+    correlationId: actor.correlationId,
+  }, actor).catch((error) => {
+    const status = Number.isInteger(error?.status) ? error.status : 409;
+    return c.json({ available: false, code: error?.code || "PROVISIONING_REQUEST_FAILED", message: error?.message || "Provisioning could not be requested." }, status);
   });
+
+  if (operation instanceof Response) return operation;
+
+  const workerTrigger = await attemptProvisioningWorkerStart({
+    startProvisioningJob,
+    operation,
+    organisationId,
+  });
+
+  return c.json({
+    available: true,
+    operation: safeProvisioningProjection({ ...operation, steps: [] }),
+    workerTrigger,
+    message: workerTrigger.status === "started"
+      ? "Provisioning queued and the Azure worker was started."
+      : "Provisioning was queued, but the Azure worker could not be started automatically.",
+  }, 202);
+});
 
   app.post("/admin/platform/organisations/:organisationId/upgrade", requirePlatformAdmin, async (c) => {
     const actor = actorFromContext(c);
