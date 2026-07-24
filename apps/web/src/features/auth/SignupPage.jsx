@@ -8,7 +8,7 @@ import { apiJson } from "../../lib/apiClient";
 export function SignupPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const token = searchParams.get("token") || "";
+  const [token] = useState(() => searchParams.get("token") || "");
 
   const [status, setStatus] = useState("loading"); // loading, ready, error, success
   const [errorMsg, setErrorMsg] = useState("");
@@ -22,13 +22,23 @@ export function SignupPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search) {
+      const cleanUrl = `${window.location.pathname}${window.location.hash || ""}`;
+      window.history.replaceState(window.history.state, "", cleanUrl);
+    }
+
     if (!token) {
       setStatus("error");
       setErrorMsg("No invitation token provided.");
       return;
     }
 
-    apiJson(`/auth/invitation/${token}`, { cache: "no-store", skipUnauthorizedHandler: true })
+    apiJson("/auth/invitation/validate", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+      cache: "no-store",
+      skipUnauthorizedHandler: true,
+    })
       .then((data) => {
         if (data.available) {
           setInvitation(data);
