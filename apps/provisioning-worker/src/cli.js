@@ -1,8 +1,15 @@
+import { promoteCompatiblePrivateRoutes } from "./route-promotion.js";
 import { runProvisioningBatch } from "./worker.js";
 
 function positiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function runBatch(maxOperations) {
+  const result = await runProvisioningBatch({ maxOperations });
+  const routePromotion = await promoteCompatiblePrivateRoutes();
+  return { ...result, routePromotion };
 }
 
 async function main() {
@@ -14,13 +21,13 @@ async function main() {
   }
 
   if (command === "run-once") {
-    const result = await runProvisioningBatch({ maxOperations });
+    const result = await runBatch(maxOperations);
     console.log(JSON.stringify({ event: "provisioning_worker_run_once_complete", ...result }));
     return;
   }
 
   for (;;) {
-    const result = await runProvisioningBatch({ maxOperations });
+    const result = await runBatch(maxOperations);
     console.log(JSON.stringify({ event: "provisioning_worker_drain_iteration", ...result }));
     if (!result.processed) break;
   }
