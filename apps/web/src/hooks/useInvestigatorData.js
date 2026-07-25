@@ -64,19 +64,35 @@ function createSnapshot(report, graph, risk, fetchedAt, claims) {
   };
 }
 
-function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = []) {
-  const claims = [];
-  const snapshot = createSnapshot(report, graph, risk, fetchedAt, claims);
+async function fetchAvailableResource(path, key, label) {
+  const response = await apiRequest(path, { cache: "no-store" });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.available !== true) {
+    throw new Error(payload?.message || `${label} unavailable (${response.status})`);
+  }
+  return payload[key];
+}
 
+async function fetchClaims() {
+  const response = await apiRequest("/claims", { cache: "no-store" });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.available !== true) {
+    throw new Error(payload?.message || `Claims unavailable (${response.status})`);
+  }
   return {
-    status: "ready",
-    report,
-    graph,
-    risk,
-    claims,
-    snapshots: [snapshot, ...(previousSnapshots || [])].slice(0, 25),
-    lastRefresh: fetchedAt,
-    error: null,
+    claims: (payload.claims || []).map(mapApiClaimToView).filter((claim) => Boolean(claim.claimId)),
+    pagination: payload.pagination || null,
+  };
+}
+
+function settledResource(result, previousValue) {
+  if (result.status === "fulfilled") {
+    return { value: result.value, status: "ready", error: null };
+  }
+  return {
+    value: previousValue,
+    status: "error",
+    error: result.reason instanceof Error ? result.reason.message : "Resource unavailable.",
   };
 }
 
@@ -85,8 +101,14 @@ export function useInvestigatorData({ enabled = true } = {}) {
   const [state, setState] = useState({
     status: "loading",
     report: null,
+    reportStatus: "loading",
+    reportError: null,
     graph: null,
+    graphStatus: "loading",
+    graphError: null,
     risk: null,
+    riskStatus: "loading",
+    riskError: null,
     claims: [],
     claimsStatus: "loading",
     claimsError: null,
@@ -100,60 +122,81 @@ export function useInvestigatorData({ enabled = true } = {}) {
   const load = useCallback(async () => {
     const fetchedAt = new Date().toISOString();
 
-    try {
-      const [reportRes, graphRes, riskRes, claimsRes] = await Promise.all([
-        apiRequest("/detection/report", { cache: "no-store" }),
-        apiRequest("/detection/graph", { cache: "no-store" }),
-        apiRequest("/detection/risk", { cache: "no-store" }),
-        apiRequest("/claims", { cache: "no-store" }),
-      ]);
+    setState((previous) => ({
+      ...previous,
+      status: previous.lastRefresh ? "ready" : "loading",
+      reportStatus: "loading",
+      reportError: null,
+      graphStatus: "loading",
+      graphError: null,
+      riskStatus: "loading",
+      riskError: null,
+      claimsStatus: "loading",
+      claimsError: null,
+      error: null,
+    }));
 
-      const [reportPayload, graphPayload, riskPayload, claimsPayload] = await Promise.all([
-        reportRes.json(),
-        graphRes.json(),
-        riskRes.json(),
-        claimsRes.json(),
-      ]);
+    const [reportResult, graphResult, riskResult, claimsResult] = await Promise.allSettled([
+      fetchAvailableResource("/detection/report", "report", "Report"),
+      fetchAvailableResource("/detection/graph", "graph", "Graph"),
+      fetchAvailableResource("/detection/risk", "risk", "Risk"),
+      fetchClaims(),
+    ]);
 
-      if (!reportRes.ok || !reportPayload.available) {
-        throw new Error(reportPayload.message || `Report unavailable (${reportRes.status})`);
-      }
-      if (!graphRes.ok || !graphPayload.available) {
-        throw new Error(graphPayload.message || `Graph unavailable (${graphRes.status})`);
-      }
-      if (!riskRes.ok || !riskPayload.available) {
-        throw new Error(riskPayload.message || `Risk unavailable (${riskRes.status})`);
-      }
+    setState((previous) => {
+      const reportResource = settledResource(reportResult, previous.report);
+      const graphResource = settledResource(graphResult, previous.graph);
+      const riskResource = settledResource(riskResult, previous.risk);
+      const claimsResource = settledResource(claimsResult, {
+        claims: previous.claims,
+        pagination: previous.claimsPagination,
+      });
+      const claims = claimsResource.value?.claims || [];
+      const pagination = claimsResource.value?.pagination || null;
+      const successfulResources = [reportResult, graphResult, riskResult, claimsResult]
+        .filter((result) => result.status === "fulfilled").length;
+      const report = reportResource.value;
+      const graph = graphResource.value;
+      const risk = riskResource.value;
+      const snapshots = reportResult.status === "fulfilled"
+        ? [createSnapshot(report, graph, risk, fetchedAt, claims), ...(previous.snapshots || [])].slice(0, 25)
+        : previous.snapshots;
 
-      const claimsReady = claimsRes.ok && claimsPayload?.available === true;
-      const claims = claimsReady
-        ? (claimsPayload.claims || []).map(mapApiClaimToView).filter((claim) => Boolean(claim.claimId))
-        : [];
-
-      setState((prev) => ({
-        ...buildReadyState(reportPayload.report, graphPayload.graph, riskPayload.risk, fetchedAt, prev.snapshots),
-        claims,
-        claimsStatus: claimsReady ? "ready" : "error",
-        claimsError: claimsReady
-          ? null
-          : claimsPayload?.message || `Claims unavailable (${claimsRes.status})`,
-        claimsPagination: claimsReady ? claimsPayload.pagination || null : null,
-        dataSource: "live",
-      }));
-    } catch (error) {
-      setState((previous) => ({
+      return {
         ...previous,
-        status: "error",
-        error: error instanceof Error ? error.message : "Failed to load investigator data.",
-        dataSource: "unavailable",
+        status: "ready",
+        report,
+        reportStatus: reportResource.status,
+        reportError: reportResource.error,
+        graph,
+        graphStatus: graphResource.status,
+        graphError: graphResource.error,
+        risk,
+        riskStatus: riskResource.status,
+        riskError: riskResource.error,
+        claims,
+        claimsStatus: claimsResource.status,
+        claimsError: claimsResource.error,
+        claimsPagination: pagination,
+        snapshots,
         lastRefresh: fetchedAt,
-      }));
-    }
+        error: successfulResources === 0 ? "All investigator data resources are unavailable." : null,
+        dataSource: successfulResources > 0 ? "live" : "unavailable",
+      };
+    });
   }, []);
 
   useEffect(() => {
     if (!enabled) {
-      setState((previous) => ({ ...previous, status: "ready", error: null }));
+      setState((previous) => ({
+        ...previous,
+        status: "ready",
+        reportStatus: "idle",
+        graphStatus: "idle",
+        riskStatus: "idle",
+        claimsStatus: "idle",
+        error: null,
+      }));
       return;
     }
     load();
@@ -183,10 +226,8 @@ export function useInvestigatorData({ enabled = true } = {}) {
     const recentDetections = claims
       .slice()
       .sort((a, b) => {
-        // 1. Risk score descending
         const riskDiff = (b.riskScore || 0) - (a.riskScore || 0);
         if (riskDiff !== 0) return riskDiff;
-        // 2. Detection or update date descending
         const dateA = a.detectionDate ? new Date(a.detectionDate).getTime() : 0;
         const dateB = b.detectionDate ? new Date(b.detectionDate).getTime() : 0;
         return dateB - dateA;
@@ -202,7 +243,7 @@ export function useInvestigatorData({ enabled = true } = {}) {
       allClaims: claims,
       ledgerStatus: isLedgerLinked(report?.ledgerReference) ? "Connected" : "Unavailable",
     };
-  }, [state.report, state.claims, state.risk]);
+  }, [state.report, state.claims]);
 
   return {
     ...state,
