@@ -1,149 +1,147 @@
-import React, { useMemo } from "react";
+import React from "react";
 import { Link } from "react-router-dom";
 import AlertTriangle from "lucide-react/dist/esm/icons/alert-triangle.mjs";
 import FileText from "lucide-react/dist/esm/icons/file-text.mjs";
 import Radar from "lucide-react/dist/esm/icons/radar.mjs";
 import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
 import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.mjs";
+import Inbox from "lucide-react/dist/esm/icons/inbox.mjs";
 import { Skeleton } from "../../components/ui/skeleton";
-import { PageFrame, SectionCard, StatCard, MetricPill, StatusIndicator, riskScoreTone, claimStatusTone } from "./InvestigatorUI";
+import {
+  DataTableShell,
+  EmptyState,
+  MetricPill,
+  PageFrame,
+  SectionCard,
+  StatCard,
+  StatusIndicator,
+  claimStatusTone,
+  formatEnumLabel,
+  riskScoreTone,
+} from "./InvestigatorUI";
 import { NetworkGraph } from "./NetworkGraph";
 
-function formatStatus(status) {
-  if (!status) return "Unknown";
-  if (status === "UNDER_INVESTIGATION") return "Under investigation";
-  if (status === "CONFIRMED_FRAUD") return "Confirmed fraud";
-  if (status === "DISMISSED") return "Dismissed";
-  if (status === "SUBMITTED") return "Submitted";
-  // Convert snake_case to Title case for any unexpected enums
-  return status.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2 border-b border-border/70 pb-5">
+        <Skeleton className="h-3 w-36" />
+        <Skeleton className="h-8 w-72" />
+        <Skeleton className="h-4 w-full max-w-xl" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="rounded-xl border border-border/70 bg-card p-4">
+            <Skeleton className="h-3 w-28" />
+            <Skeleton className="mt-4 h-8 w-24" />
+            <Skeleton className="mt-3 h-3 w-full" />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
+        <div className="rounded-xl border border-border/70 bg-card p-5"><Skeleton className="h-72 w-full" /></div>
+        <div className="rounded-xl border border-border/70 bg-card p-5"><Skeleton className="h-72 w-full" /></div>
+      </div>
+    </div>
+  );
 }
 
 export function DashboardPage({ metrics, graph, status, lastRefresh }) {
-  const totalClaims = Number.isFinite(metrics.totalClaims) ? metrics.totalClaims : "Unavailable";
-  const highRiskClaims = Number.isFinite(metrics.highRiskClaims) ? metrics.highRiskClaims : "Unavailable";
-  const averageRiskScore = Number.isFinite(metrics.averageRiskScore) ? metrics.averageRiskScore : "Unavailable";
-  const activeNetworks = Number.isFinite(metrics.activeFraudSchemes) ? metrics.activeFraudSchemes : "Unavailable";
+  if (status === "loading") return <DashboardSkeleton />;
 
-  if (status === "loading") {
-    return (
-      <div className="space-y-5">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, idx) => (
-          <div key={idx} className="investigator-surface p-5">
-            <Skeleton className="h-3 w-28" />
-            <Skeleton className="mt-4 h-8 w-24" />
-            <Skeleton className="mt-4 h-3 w-full" />
-          </div>
-        ))}
-        </div>
-        <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
-          <div className="investigator-surface p-5">
-            <Skeleton className="h-5 w-40" />
-            <Skeleton className="mt-4 h-64 w-full" />
-          </div>
-          <div className="investigator-surface p-5">
-            <Skeleton className="h-5 w-36" />
-            <Skeleton className="mt-4 h-64 w-full" />
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const recentDetections = Array.isArray(metrics?.recentDetections) ? metrics.recentDetections : [];
+  const totalClaims = Number.isFinite(metrics?.totalClaims) ? metrics.totalClaims : "Unavailable";
+  const highRiskClaims = Number.isFinite(metrics?.highRiskClaims) ? metrics.highRiskClaims : "Unavailable";
+  const averageRiskScore = Number.isFinite(metrics?.averageRiskScore) ? metrics.averageRiskScore : "Unavailable";
+  const activeNetworks = Number.isFinite(metrics?.activeFraudSchemes) ? metrics.activeFraudSchemes : "Unavailable";
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-border-soft pb-5 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-1.5">
-          <p className="font-data text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">Investigator Dashboard</p>
-          <h1 className="font-display text-[28px] font-semibold tracking-[-0.02em] text-foreground">Claims risk intelligence</h1>
-          <p className="max-w-2xl text-xs leading-6 text-muted-2">
-            Real-time fraud detection and operational monitoring across the scheme partition.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <MetricPill variant="console" key="ledger" label="Ledger" value={metrics.ledgerStatus} tone={metrics.ledgerStatus === "Connected" ? "success" : "warning"} />
-          <MetricPill variant="console" key="refresh" label="Refreshed" value={lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "waiting"} />
-        </div>
-      </header>
-
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard variant="console" title="Claims Screened" value={totalClaims} description="Total volume in current snapshot" icon={FileText} />
-        <StatCard variant="console" title="Priority Alerts" value={highRiskClaims} description="Claims exceeding risk threshold" icon={ShieldAlert} tone="danger" />
-        <StatCard variant="console" title="Avg Risk Score" value={averageRiskScore} description="Mean engine confidence" icon={AlertTriangle} tone={riskScoreTone(averageRiskScore)} />
-        <StatCard variant="console" title="Active Networks" value={activeNetworks} description="Suspicious clusters identified" icon={Radar} />
+    <PageFrame
+      eyebrow="Investigator workspace"
+      title="Claims risk intelligence"
+      description="Fraud detection, investigation prioritisation, and suspicious relationship monitoring for the active scheme partition."
+      actions={[
+        <MetricPill key="ledger" label="Ledger" value={metrics?.ledgerStatus || "Unknown"} tone={metrics?.ledgerStatus === "Connected" ? "success" : "warning"} />,
+        <MetricPill key="refresh" label="Refreshed" value={lastRefresh ? new Date(lastRefresh).toLocaleTimeString("en-GB") : "Waiting"} />,
+      ]}
+    >
+      <section aria-label="Detection summary" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard variant="console" title="Claims screened" value={totalClaims} description="Total volume represented by the current operational snapshot." icon={FileText} />
+        <StatCard variant="console" title="Priority alerts" value={highRiskClaims} description="Scored claims currently above the high-risk threshold." icon={ShieldAlert} tone="danger" />
+        <StatCard variant="console" title="Average risk score" value={averageRiskScore} description="Mean persisted detection score for the current snapshot." icon={AlertTriangle} tone={riskScoreTone(averageRiskScore)} />
+        <StatCard variant="console" title="Active networks" value={activeNetworks} description="Suspicious linked-entity clusters identified by the graph projection." icon={Radar} />
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[1fr_400px]">
-        <SectionCard variant="console" title="Priority claims queue" description="The most critical items flagged by the detection engine, sorted by descending risk severity.">
-          {metrics.recentDetections.length === 0 ? (
-            <div className="p-8 text-center">
-              <p className="text-sm text-muted">No priority claims available.</p>
-            </div>
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
+        <SectionCard
+          variant="console"
+          title="Priority claims queue"
+          description="Highest-risk scored claims, ordered by descending risk severity."
+          actions={<Link to="/claims" className="text-xs font-semibold text-primary hover:underline">Open all claims</Link>}
+        >
+          {recentDetections.length === 0 ? (
+            <EmptyState
+              compact
+              icon={Inbox}
+              title="No priority claims"
+              description="No scored claims currently meet the priority threshold. Claims still awaiting scoring are available in Claims Explorer."
+            />
           ) : (
-            <div className="overflow-x-auto investigator-scrollbar">
-              <table className="investigator-table w-full whitespace-nowrap">
-                <thead>
-                  <tr>
-                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Reference</th>
-                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Member ID</th>
-                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Provider ID</th>
-                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Risk / Sev</th>
-                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Investigation Status</th>
-                    <th className="font-sans text-[10px] text-muted-2 px-[18px] py-3 tracking-widest border-b border-border-soft">Updated</th>
-                    <th className="w-[40px] px-2 py-3 border-b border-border-soft"></th>
+            <DataTableShell ariaLabel="Priority claims queue" minWidth="820px">
+              <thead>
+                <tr>
+                  <th>Reference</th>
+                  <th>Member</th>
+                  <th>Provider</th>
+                  <th>Risk</th>
+                  <th>Investigation status</th>
+                  <th>Updated</th>
+                  <th><span className="sr-only">Open claim</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentDetections.map((item) => (
+                  <tr key={item.claimId}>
+                    <td><Link to={`/claims/${encodeURIComponent(item.claimId)}`} className="font-semibold text-primary hover:underline">{item.claimId}</Link></td>
+                    <td>{item.memberId || "Unknown"}</td>
+                    <td>{item.providerId || "Unknown"}</td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <span className="font-data font-semibold">{Number.isFinite(item.riskScore) ? item.riskScore : "—"}</span>
+                        <span className="text-xs text-muted-foreground">{item.severity || "Unknown"}</span>
+                      </div>
+                    </td>
+                    <td><StatusIndicator variant="badge" tone={claimStatusTone(item.status)}>{formatEnumLabel(item.status)}</StatusIndicator></td>
+                    <td className="text-muted-foreground">{item.detectionDate ? new Date(item.detectionDate).toLocaleDateString("en-GB") : "Not available"}</td>
+                    <td className="text-right">
+                      <Link
+                        to={`/claims/${encodeURIComponent(item.claimId)}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary focus:outline-none focus:ring-2 focus:ring-ring"
+                        aria-label={`View claim ${item.claimId}`}
+                      >
+                        <ArrowUpRight className="h-4 w-4" />
+                      </Link>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {metrics.recentDetections.map((item) => (
-                    <tr key={item.claimId} className="group hover:bg-white/[0.02] transition-colors border-b border-border-soft/50 last:border-0">
-                      <td className="px-[18px] py-[14px]">
-                        <Link to={`/claims/${encodeURIComponent(item.claimId)}`} className="text-primary hover:underline font-semibold text-[13px]">{item.claimId}</Link>
-                      </td>
-                      <td className="px-[18px] py-[14px] text-[13px] text-foreground">{item.memberId || "Unknown"}</td>
-                      <td className="px-[18px] py-[14px] text-[13px] text-foreground">{item.providerId || "Unknown"}</td>
-                      <td className="px-[18px] py-[14px]">
-                        <div className="flex items-center gap-2">
-                          <span className={`font-semibold text-[13px] ${item.riskScore >= 75 ? "text-[#ee716b]" : item.riskScore >= 40 ? "text-[#e6a74d]" : "text-[#62ce9b]"}`}>{item.riskScore}</span>
-                          <span className="text-[11px] text-muted-2 uppercase tracking-wider">{item.severity}</span>
-                        </div>
-                      </td>
-                      <td className="px-[18px] py-[14px]">
-                        <StatusIndicator variant="badge" tone={claimStatusTone(item.status)}>{formatStatus(item.status)}</StatusIndicator>
-                      </td>
-                      <td className="px-[18px] py-[14px] text-[12px] text-muted-2">
-                        {item.detectionDate ? new Date(item.detectionDate).toLocaleDateString() : "—"}
-                      </td>
-                      <td className="px-[18px] py-[14px] text-right">
-                        <Link to={`/claims/${encodeURIComponent(item.claimId)}`} className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-white/5 text-muted hover:bg-primary/20 hover:text-primary transition-colors focus:outline-none focus:ring-2 focus:ring-primary" aria-label={`View claim ${item.claimId}`}>
-                          <ArrowUpRight className="w-4 h-4" />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </DataTableShell>
           )}
         </SectionCard>
 
-        <SectionCard variant="console" title="Suspicious relationship network" description="Live graph of linked entities and known collusive structures.">
-          <div className="p-3">
-             <NetworkGraph 
-                graph={graph} 
-                height="360px"
-                compact={true}
-                showControls={false}
-                showMiniMap={false}
-              />
-              <div className="mt-4 px-2">
-                 <Link to="/network" className="text-[11px] font-semibold uppercase tracking-[0.15em] text-primary hover:underline flex items-center gap-1.5 w-fit">
-                    Open network intelligence <ArrowUpRight className="w-3.5 h-3.5" />
-                 </Link>
-              </div>
+        <SectionCard
+          variant="console"
+          title="Suspicious relationship network"
+          description="Linked members, providers, and shared attributes represented by the current graph projection."
+        >
+          <div className="p-4">
+            <NetworkGraph graph={graph} height="340px" compact showControls={false} showMiniMap={false} />
+            <Link to="/network" className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+              Open network intelligence <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
         </SectionCard>
       </section>
-    </div>
+    </PageFrame>
   );
 }
