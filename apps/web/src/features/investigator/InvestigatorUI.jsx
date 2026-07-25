@@ -5,6 +5,7 @@ export function formatEnumLabel(value, fallback = "Unknown") {
   const normalized = String(value || "").trim();
   if (!normalized) return fallback;
   return normalized
+    .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
