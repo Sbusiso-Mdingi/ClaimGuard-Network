@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
 
@@ -137,6 +137,10 @@ function mockFetchFailure() {
   });
 }
 
+function claimsNavigationLink() {
+  return within(screen.getByRole("complementary")).getByRole("link", { name: /Claims/i });
+}
+
 beforeEach(() => {
   window.history.pushState({}, "", "/");
   window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
@@ -162,7 +166,7 @@ test("renders dashboard and routes to claim details", async () => {
     expect(requestOptions.headers.get("x-claimguard-tenant")).toBe("tenant_alpha");
   }
 
-  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+  await user.click(claimsNavigationLink());
   expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
 
   expect(screen.getAllByText("82").length).toBeGreaterThan(0);
