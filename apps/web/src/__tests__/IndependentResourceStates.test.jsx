@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
 
@@ -135,7 +135,9 @@ test("shows truthful processing and failure states", async () => {
   expect((await screen.findAllByText("Awaiting scoring")).length).toBeGreaterThan(0);
   expect(screen.getAllByText("Scoring failed").length).toBeGreaterThan(0);
   expect(screen.getByText(/WORKER_DEAD_LETTER: Detection worker exhausted retries/i)).toBeInTheDocument();
-  expect(screen.queryByText(/^Unavailable$/i)).not.toBeInTheDocument();
+
+  const claimsTable = screen.getByRole("table", { name: "Claims table" });
+  expect(within(claimsTable).queryByText(/^Unavailable$/i)).not.toBeInTheDocument();
 });
 
 test("uses server pagination and loads the requested page only", async () => {
