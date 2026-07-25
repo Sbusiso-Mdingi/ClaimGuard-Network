@@ -442,7 +442,7 @@ test("unsupported detection report contract returns a typed unavailable response
   assert.equal(json.code, "REPORT_CONTRACT_UNSUPPORTED");
 });
 
-test("detection report endpoint is unavailable without configured report storage data", async () => {
+test("detection report endpoint is pending without configured report storage data", async () => {
   const app = createBackendApp({
     reportStorage: {
       async getLatestReport() {
@@ -456,8 +456,9 @@ test("detection report endpoint is unavailable without configured report storage
   });
   const json = await response.json();
 
-  assert.equal(response.status, 404);
+  assert.equal(response.status, 202);
   assert.equal(json.available, false);
+  assert.equal(json.code, "TENANT_REPORT_NOT_FOUND");
 });
 
 test("claims ingestion endpoint requires configured ingestion service", async () => {
@@ -839,6 +840,7 @@ test("claims ingestion commits an asynchronous outbox-backed processing request"
     headers: developmentAuthHeaders(),
   });
   const reportJson = await reportResponse.json();
-  assert.equal(reportResponse.status, 404);
+  assert.equal(reportResponse.status, 202);
   assert.equal(reportJson.available, false);
+  assert.equal(reportJson.code, "TENANT_REPORT_NOT_FOUND");
 });

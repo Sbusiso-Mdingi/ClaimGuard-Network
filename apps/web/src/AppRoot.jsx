@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Button } from "./components/ui/button";
 import { useInvestigatorData } from "./hooks/useInvestigatorData";
+import { useLedgerStatus } from "./hooks/useLedgerStatus";
 import { ErrorBoundary } from "./features/investigator/ErrorBoundary";
 import { InvestigatorLayout } from "./features/investigator/InvestigatorLayout";
 import { DashboardPage } from "./features/investigator/DashboardPage";
@@ -53,6 +54,12 @@ function InvestigatorRoutes() {
     "investigations.view",
   ]);
   const data = useInvestigatorData({ enabled: operationalWorkspaceEnabled });
+  const ledger = useLedgerStatus({ enabled: operationalWorkspaceEnabled });
+
+  function refreshWorkspace() {
+    data.refreshNow();
+    ledger.refresh();
+  }
 
   function renderResourceContent(readyElement, { status, error, loadingTitle, loadingDescription, errorTitle, errorDescription }) {
     if (status === "loading") {
@@ -86,9 +93,9 @@ function InvestigatorRoutes() {
           <InvestigatorLayout
             liveRefreshEnabled={data.liveRefreshEnabled}
             setLiveRefreshEnabled={data.setLiveRefreshEnabled}
-            refreshNow={data.refreshNow}
+            refreshNow={refreshWorkspace}
             lastRefresh={data.lastRefresh}
-            ledgerStatus={data.metrics.ledgerStatus}
+            ledgerStatus={ledger.status}
             dataSource={data.dataSource}
           />
         }

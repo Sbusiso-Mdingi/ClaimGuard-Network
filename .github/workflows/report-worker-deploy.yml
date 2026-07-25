@@ -1,0 +1,202 @@
+name: report-worker-deploy
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+concurrency:
+  group: claimguard-report-worker-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_WEBAPP_API: ${{ vars.AZURE_WEBAPP_API }}
+  AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME }}
+  CONTROL_PLANE_MYSQL_URL_SECRET_NAME: ${{ vars.CONTROL_PLANE_MYSQL_URL_SECRET_NAME }}
+  MYSQL_URL_SECRET_NAME: ${{ vars.MYSQL_URL_SECRET_NAME }}
+  REPORT_WORKER_ACR_NAME: ${{ vars.REPORT_WORKER_ACR_NAME || 'claimguardacr11e' }}
+  REPORT_WORKER_ENVIRONMENT_NAME: ${{ vars.REPORT_WORKER_ENVIRONMENT_NAME || 'claimguard-env-11e' }}
+  REPORT_WORKER_IDENTITY_NAME: ${{ vars.REPORT_WORKER_IDENTITY_NAME || 'claimguard-report-worker-identity' }}
+  REPORT_WORKER_JOB_NAME: ${{ vars.REPORT_WORKER_JOB_NAME || 'claimguard-report-producer' }}
+  REPORT_STORAGE_ACCOUNT_NAME: ${{ vars.REPORT_STORAGE_ACCOUNT_NAME || 'cgrpt0715sa' }}
+  REPORT_STORAGE_ACCOUNT_URL: ${{ vars.REPORT_STORAGE_ACCOUNT_URL || 'https://cgrpt0715sa.blob.core.windows.net' }}
+  REPORT_STORAGE_CONTAINER: ${{ vars.REPORT_STORAGE_CONTAINER || 'claimguard-reports' }}
+  MODEL_SERVICE_BASE_URL: ${{ vars.MODEL_SERVICE_BASE_URL || 'https://claimguard-ml-inference.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io' }}
+  MODEL_SERVICE_AUDIENCE: ${{ vars.MODEL_SERVICE_AUDIENCE }}
+  MODEL_DEPLOYMENT_ID: ${{ vars.MODEL_DEPLOYMENT_ID || 'claimguard-claim-fraud-ensemble:1.1.0' }}
+  MODEL_PSEUDONYM_SECRET_NAME: ${{ vars.MODEL_PSEUDONYM_SECRET_NAME || 'claimguard--report-worker--model-pseudonymization-key' }}
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout the validated main commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+
+      - name: Validate production worker configuration
+        shell: bash
+        env:
+          MODEL_PSEUDONYMIZATION_KEY: ${{ secrets.MODEL_SERVICE_PSEUDONYMIZATION_KEY }}
+        run: |
+          set -euo pipefail
+          required=(
+            AZURE_RESOURCE_GROUP AZURE_WEBAPP_API AZURE_KEYVAULT_NAME
+            CONTROL_PLANE_MYSQL_URL_SECRET_NAME MYSQL_URL_SECRET_NAME
+            REPORT_WORKER_ACR_NAME REPORT_WORKER_ENVIRONMENT_NAME
+            REPORT_WORKER_IDENTITY_NAME REPORT_WORKER_JOB_NAME
+            REPORT_STORAGE_ACCOUNT_NAME REPORT_STORAGE_ACCOUNT_URL
+            REPORT_STORAGE_CONTAINER MODEL_SERVICE_BASE_URL
+            MODEL_SERVICE_AUDIENCE MODEL_DEPLOYMENT_ID
+            MODEL_PSEUDONYM_SECRET_NAME MODEL_PSEUDONYMIZATION_KEY
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required production worker setting: $name"
+              exit 1
+            fi
+          done
+
+      - name: Ensure report-worker managed identity and pseudonym key
+        shell: bash
+        env:
+          MODEL_PSEUDONYMIZATION_KEY: ${{ secrets.MODEL_SERVICE_PSEUDONYMIZATION_KEY }}
+        run: |
+          set -euo pipefail
+          if ! az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_IDENTITY_NAME" >/dev/null 2>&1; then
+            az identity create --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_IDENTITY_NAME" >/dev/null
+          fi
+          az keyvault secret set \
+            --vault-name "$AZURE_KEYVAULT_NAME" \
+            --name "$MODEL_PSEUDONYM_SECRET_NAME" \
+            --value "$MODEL_PSEUDONYMIZATION_KEY" \
+            --content-type application/vnd.claimguard.model-pseudonymization-key \
+            >/dev/null
+
+      - name: Build immutable report-worker image in ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_REPOSITORY="claimguard/report-producer"
+          az acr build \
+            --registry "$REPORT_WORKER_ACR_NAME" \
+            --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            --file services/report-producer/Dockerfile \
+            .
+          LOGIN_SERVER="$(az acr show --name "$REPORT_WORKER_ACR_NAME" --query loginServer -o tsv)"
+          echo "REPORT_WORKER_IMAGE=${LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+      - name: Deploy scheduled claim-scoring worker
+        shell: bash
+        env:
+          MODEL_PSEUDONYMIZATION_KEY: ${{ secrets.MODEL_SERVICE_PSEUDONYMIZATION_KEY }}
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "report-worker-${GITHUB_SHA::12}" \
+            --template-file infra/report-worker.bicep \
+            --parameters \
+              containerAppsEnvironmentName="$REPORT_WORKER_ENVIRONMENT_NAME" \
+              containerRegistryName="$REPORT_WORKER_ACR_NAME" \
+              workerIdentityName="$REPORT_WORKER_IDENTITY_NAME" \
+              keyVaultName="$AZURE_KEYVAULT_NAME" \
+              controlPlaneSecretName="$CONTROL_PLANE_MYSQL_URL_SECRET_NAME" \
+              operationalSecretName="$MYSQL_URL_SECRET_NAME" \
+              modelPseudonymSecretName="$MODEL_PSEUDONYM_SECRET_NAME" \
+              modelPseudonymizationKey="$MODEL_PSEUDONYMIZATION_KEY" \
+              reportWorkerImage="$REPORT_WORKER_IMAGE" \
+              modelServiceBaseUrl="$MODEL_SERVICE_BASE_URL" \
+              modelServiceAudience="$MODEL_SERVICE_AUDIENCE" \
+              modelDeploymentId="$MODEL_DEPLOYMENT_ID" \
+              reportStorageAccountUrl="$REPORT_STORAGE_ACCOUNT_URL" \
+              reportStorageContainerName="$REPORT_STORAGE_CONTAINER" \
+              reportWorkerJobName="$REPORT_WORKER_JOB_NAME" \
+            --only-show-errors
+
+      - name: Configure API report storage and blob-reader access
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_PRINCIPAL_ID="$(az webapp identity assign \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --query principalId -o tsv)"
+
+          CONTAINER_SCOPE="$(az storage account show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_STORAGE_ACCOUNT_NAME" \
+            --query id -o tsv)/blobServices/default/containers/${REPORT_STORAGE_CONTAINER}"
+
+          EXISTING_ASSIGNMENT="$(az role assignment list \
+            --assignee-object-id "$API_PRINCIPAL_ID" \
+            --scope "$CONTAINER_SCOPE" \
+            --role 'Storage Blob Data Reader' \
+            --query '[0].id' -o tsv)"
+          if [ -z "$EXISTING_ASSIGNMENT" ]; then
+            az role assignment create \
+              --assignee-object-id "$API_PRINCIPAL_ID" \
+              --assignee-principal-type ServicePrincipal \
+              --scope "$CONTAINER_SCOPE" \
+              --role 'Storage Blob Data Reader' \
+              >/dev/null
+          fi
+
+          az webapp config appsettings set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --settings \
+              REPORT_STORAGE_BACKEND=azure_blob \
+              REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
+              REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+            >/dev/null
+          az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API"
+
+      - name: Start an immediate queue drain
+        shell: bash
+        run: |
+          set -euo pipefail
+          az containerapp job start \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            >/dev/null
+
+      - name: Verify worker and API report-storage configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          az containerapp job show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            --query '{name:name,trigger:properties.configuration.triggerType,schedule:properties.configuration.scheduleTriggerConfig.cronExpression,image:properties.template.containers[0].image}' \
+            --output table
+
+          SETTINGS="$(az webapp config appsettings list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --query "[?name=='REPORT_STORAGE_BACKEND' || name=='REPORT_STORAGE_ACCOUNT_URL' || name=='REPORT_STORAGE_CONTAINER'].{name:name,value:value}" \
+            --output json)"
+          echo "$SETTINGS"
+          test "$(echo "$SETTINGS" | jq length)" -eq 3

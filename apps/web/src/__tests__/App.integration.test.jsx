@@ -188,24 +188,38 @@ test("live refresh polls claims without refetching aggregate resources", async (
     await Promise.resolve();
   });
 
+  const requestCount = (path) =>
+    global.fetch.mock.calls.filter(([url]) => String(url).includes(path)).length;
+
   expect(screen.getByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
-  expect(global.fetch).toHaveBeenCalledTimes(4);
+  expect(requestCount("/api/detection/report")).toBe(1);
+  expect(requestCount("/api/detection/graph")).toBe(1);
+  expect(requestCount("/api/detection/risk")).toBe(1);
+  expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(1);
 
   await act(async () => {
-    vi.advanceTimersByTime(15000);
+    vi.advanceTimersByTime(30000);
     await Promise.resolve();
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(5);
-  expect(String(global.fetch.mock.calls[4][0])).toContain("/api/claims?page=1&pageSize=25");
+
+  expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(3);
+  expect(requestCount("/api/detection/report")).toBe(1);
+  expect(requestCount("/api/detection/graph")).toBe(1);
+  expect(requestCount("/api/detection/risk")).toBe(1);
 
   fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
 
   await act(async () => {
     vi.advanceTimersByTime(30000);
     await Promise.resolve();
+    await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(5);
+
+  expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(3);
+  expect(requestCount("/api/detection/report")).toBe(1);
+  expect(requestCount("/api/detection/graph")).toBe(1);
+  expect(requestCount("/api/detection/risk")).toBe(1);
 }, 10000);
 
 test("shows unavailable state without substituting demo analytics when backend APIs fail", async () => {
