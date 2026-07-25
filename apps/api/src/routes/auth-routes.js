@@ -11,6 +11,22 @@ function serializeCookie(configuration, value, { maxAgeSeconds = null, expires =
   return parts.join("; ");
 }
 
+function operationalTenant(actor) {
+  if (actor?.legacyTenant?.tenantId) {
+    return {
+      tenantId: actor.legacyTenant.tenantId,
+      tenantSlug: actor.legacyTenant.tenantSlug || null,
+    };
+  }
+  if (actor?.organisation?.organisationType === "medical_scheme") {
+    return {
+      tenantId: actor.organisation.organisationId,
+      tenantSlug: actor.organisation.canonicalSlug || null,
+    };
+  }
+  return null;
+}
+
 function safeSessionResponse(result, configuration) {
   const { actor, session } = result;
   return {
@@ -18,7 +34,8 @@ function safeSessionResponse(result, configuration) {
     user: actor.user,
     organisation: actor.organisation,
     roles: [...actor.roles],
-    clientCapabilities: operationalPermissions(actor.permissions),
+    clientCapabilities: operationalPermissions(actor.permissions, actor.roles),
+    operationalTenant: operationalTenant(actor),
     expires: {
       idleAt: session.idleExpiresAt,
       absoluteAt: session.absoluteExpiresAt,
@@ -145,7 +162,14 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
       return c.json({ available: false, code: "NOT_FOUND", message: "Not found." }, 404);
     }
     const catalogue = await configurationRepository.listSafeEnabledDemoCatalogueAll();
-    const secrets = new Map(configuration.demoCredentials.map((entry) => [`${entry.organisationSlug}:${entry.username}`, entry.password]));
+    const secrets = new Map(
+      configuration.demoCredentials
+        .map((entry) => {
+          const username = entry.usernameDisplayValue || entry.username || null;
+          return username ? [`${entry.organisationSlug}:${username}`, entry.password] : null;
+        })
+        .filter(Boolean),
+    );
     const accounts = catalogue
       .map((entry) => ({ ...entry, password: secrets.get(`${entry.organisationSlug}:${entry.usernameDisplayValue}`) || null }))
       .filter((entry) => entry.password);

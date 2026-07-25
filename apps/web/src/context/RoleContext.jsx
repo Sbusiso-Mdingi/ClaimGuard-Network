@@ -5,12 +5,45 @@ import { CLAIMGUARD_ROLES } from "../lib/claimguardRoles";
 const STORAGE_KEY = "claimguard-dev-identity";
 const authenticationMode = () => window.__CLAIMGUARD_AUTHENTICATION_MODE__ || "session";
 
+const DEMO_CAPABILITIES = Object.freeze({
+  [CLAIMGUARD_ROLES.FRAUD_ANALYST]: Object.freeze([
+    "claims.view_own", "reports.view_own", "investigations.create", "investigations.view",
+    "investigations.add_note", "investigations.change_priority", "fraud_registry.search",
+    "fraud_registry.view", "fraud_registry.review_history",
+  ]),
+  [CLAIMGUARD_ROLES.INVESTIGATOR]: Object.freeze([
+    "claims.view_own", "reports.view_own", "investigations.create", "investigations.view",
+    "investigations.update_status", "investigations.add_note", "investigations.open",
+    "investigations.complete", "investigations.upload_evidence", "investigations.submit_findings",
+    "investigations.confirm_fraud", "fraud_registry.search", "fraud_registry.view",
+    "fraud_registry.review_history",
+  ]),
+  [CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER]: Object.freeze([
+    "fraud_registry.search", "fraud_registry.view", "fraud_registry.review_history",
+  ]),
+  [CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR]: Object.freeze([
+    "claims.view_own", "reports.view_own", "investigations.view",
+    "users.manage_tenant", "tenant_status.view",
+  ]),
+  [CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR]: Object.freeze([
+    "tenants.manage", "platform_health.view", "telemetry.view",
+  ]),
+});
+
+function demoIdentity(identity) {
+  return Object.freeze({
+    ...identity,
+    roles: Object.freeze([identity.role]),
+    capabilities: DEMO_CAPABILITIES[identity.role] || Object.freeze([]),
+  });
+}
+
 export const DEMO_IDENTITIES = [
-  { id: "analyst-alpha", label: "Fraud Analyst — Bonitas", userId: "analyst-alpha", role: CLAIMGUARD_ROLES.FRAUD_ANALYST, tenantId: "tenant_alpha", tenantLabel: "Bonitas" },
-  { id: "investigator-alpha", label: "Fraud Investigator — Bonitas", userId: "investigator-alpha", role: CLAIMGUARD_ROLES.INVESTIGATOR, tenantId: "tenant_alpha", tenantLabel: "Bonitas" },
-  { id: "committee-alpha", label: "Applications Committee — Bonitas", userId: "committee-alpha", role: CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER, tenantId: "tenant_alpha", tenantLabel: "Bonitas" },
-  { id: "scheme-admin-alpha", label: "Scheme Administrator — Bonitas", userId: "scheme-admin-alpha", role: CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR, tenantId: "tenant_alpha", tenantLabel: "Bonitas" },
-  { id: "platform-admin", label: "Platform Administrator — rollback mode", userId: "platform-admin", role: CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR, tenantId: "tenant_default", tenantLabel: "Platform" },
+  demoIdentity({ id: "analyst-alpha", label: "Fraud Analyst — Bonitas", userId: "analyst-alpha", role: CLAIMGUARD_ROLES.FRAUD_ANALYST, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
+  demoIdentity({ id: "investigator-alpha", label: "Fraud Investigator — Bonitas", userId: "investigator-alpha", role: CLAIMGUARD_ROLES.INVESTIGATOR, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
+  demoIdentity({ id: "committee-alpha", label: "Applications Committee — Bonitas", userId: "committee-alpha", role: CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
+  demoIdentity({ id: "scheme-admin-alpha", label: "Scheme Administrator — Bonitas", userId: "scheme-admin-alpha", role: CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
+  demoIdentity({ id: "platform-admin", label: "Platform Administrator — rollback mode", userId: "platform-admin", role: CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR, tenantId: "tenant_default", tenantLabel: "Platform", organisationType: "platform" }),
 ];
 
 const RoleContext = createContext(null);
@@ -24,7 +57,8 @@ function sessionIdentity(session) {
     role: roles[0] || null,
     roles,
     capabilities: session.clientCapabilities || [],
-    tenantId: null,
+    tenantId: session.operationalTenant?.tenantId || null,
+    tenantSlug: session.operationalTenant?.tenantSlug || null,
     tenantLabel: session.organisation.displayName,
     organisationId: session.organisation.organisationId,
     organisationSlug: session.organisation.canonicalSlug,
@@ -39,16 +73,14 @@ export function RoleProvider({ children }) {
     if (mode !== "demo_headers") return null;
     try { return window.localStorage.getItem(STORAGE_KEY) || DEMO_IDENTITIES[0].id; } catch { return DEMO_IDENTITIES[0].id; }
   });
-  const demoIdentity = DEMO_IDENTITIES.find((item) => item.id === identityId) || DEMO_IDENTITIES[0];
+  const selectedDemoIdentity = DEMO_IDENTITIES.find((item) => item.id === identityId) || DEMO_IDENTITIES[0];
 
-  // Rollback mode must establish its isolated demo authority before descendant
-  // effects issue their first request. Session mode never enters this branch.
   if (mode === "demo_headers") {
     setDemoAuthorityHeaders({
-      "x-claimguard-user": demoIdentity.userId,
-      "x-claimguard-role": demoIdentity.role,
-      "x-claimguard-user-tenant": demoIdentity.tenantId,
-      "x-claimguard-tenant": demoIdentity.tenantId,
+      "x-claimguard-user": selectedDemoIdentity.userId,
+      "x-claimguard-role": selectedDemoIdentity.role,
+      "x-claimguard-user-tenant": selectedDemoIdentity.tenantId,
+      "x-claimguard-tenant": selectedDemoIdentity.tenantId,
     });
   }
 
@@ -73,13 +105,13 @@ export function RoleProvider({ children }) {
   useEffect(() => {
     setUnauthorizedHandler(clearSession);
     if (mode === "demo_headers") {
-      try { window.localStorage.setItem(STORAGE_KEY, demoIdentity.id); } catch { /* isolated rollback mode only */ }
+      try { window.localStorage.setItem(STORAGE_KEY, selectedDemoIdentity.id); } catch { /* isolated rollback mode only */ }
     } else {
       setDemoAuthorityHeaders(null);
       loadSession();
     }
     return () => setUnauthorizedHandler(null);
-  }, [clearSession, demoIdentity.id, loadSession, mode]);
+  }, [clearSession, selectedDemoIdentity.id, loadSession, mode]);
 
   const login = useCallback(async (credentials) => {
     setState({ status: "loading", session: null, error: null });
@@ -103,7 +135,7 @@ export function RoleProvider({ children }) {
     clearSession();
   }, [clearSession]);
 
-  const identity = state.session ? sessionIdentity(state.session) : (mode === "demo_headers" ? demoIdentity : null);
+  const identity = state.session ? sessionIdentity(state.session) : (mode === "demo_headers" ? selectedDemoIdentity : null);
   const value = useMemo(() => ({
     ...state,
     mode,

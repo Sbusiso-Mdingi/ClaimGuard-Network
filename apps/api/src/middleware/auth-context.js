@@ -24,6 +24,28 @@ export function createAnonymousAuthContext({ source = "anonymous" } = {}) {
   });
 }
 
+const ROLE_OPERATIONAL_PERMISSION_OVERLAYS = Object.freeze({
+  fraud_analyst: Object.freeze(["claims.view_own"]),
+  investigator: Object.freeze(["claims.view_own"]),
+  scheme_administrator: Object.freeze([
+    "claims.view_own",
+    "reports.view_own",
+    "investigations.view",
+  ]),
+});
+
+function roleOperationalPermissions(roles) {
+  return (roles || []).flatMap((role) => ROLE_OPERATIONAL_PERMISSION_OVERLAYS[role] || []);
+}
+
+function actorOperationalTenantId(actor) {
+  if (actor?.legacyTenant?.tenantId) return actor.legacyTenant.tenantId;
+  if (actor?.organisation?.organisationType === "medical_scheme") {
+    return actor.organisation.organisationId || null;
+  }
+  return null;
+}
+
 export function createAuthenticatedAuthContext({
   userId, roles, permissions = null, tenantId, organisationId = null, membershipId = null,
   displayName = null, organisation = null, source = "session",
@@ -73,6 +95,7 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "claims.ingest_own": ["claims.ingest"],
   "claims.view_flagged": ["claims.view_flagged"],
   "reports.view_own": ["reports.view_own"],
+  "investigations.view_own": ["investigations.view"],
   "investigations.create": ["investigations.create"],
   "investigations.manage": ["investigations.view", "investigations.update_status", "investigations.add_note", "investigations.change_priority", "investigations.open", "investigations.complete", "investigations.upload_evidence", "investigations.submit_findings"],
   "investigations.confirm": ["investigations.confirm_fraud"],
@@ -86,8 +109,11 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "platform_health.view": ["platform_health.view"],
 });
 
-export function operationalPermissions(controlPermissions) {
-  return [...new Set((controlPermissions || []).flatMap((permission) => CONTROL_PERMISSION_TO_OPERATIONAL[permission] || []))];
+export function operationalPermissions(controlPermissions, roles = []) {
+  return [...new Set([
+    ...(controlPermissions || []).flatMap((permission) => CONTROL_PERMISSION_TO_OPERATIONAL[permission] || []),
+    ...roleOperationalPermissions(roles),
+  ])];
 }
 
 function requestMetadata(request, { trustProxy = false } = {}) {
@@ -172,8 +198,8 @@ export function createSessionAuthenticationProvider({ authenticationService, con
             userId: actor.user.userId,
             displayName: actor.user.displayName,
             roles: actor.roles,
-            permissions: operationalPermissions(actor.permissions),
-            tenantId: actor.legacyTenant?.tenantId || null,
+            permissions: operationalPermissions(actor.permissions, actor.roles),
+            tenantId: actorOperationalTenantId(actor),
             organisationId: actor.organisation.organisationId,
             membershipId: actor.membership.membershipId,
             organisation: actor.organisation,

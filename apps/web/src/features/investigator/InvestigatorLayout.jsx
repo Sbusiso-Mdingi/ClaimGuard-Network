@@ -8,7 +8,7 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { useRole } from "../../context/RoleContext";
-import { NAV_GROUPS } from "../../lib/roleNav";
+import { canAccessNavItem, NAV_GROUPS } from "../../lib/roleNav";
 import { RoleSwitcher } from "./RoleSwitcher";
 
 function formatRole(role) {
@@ -44,10 +44,10 @@ export function InvestigatorLayout({
       NAV_GROUPS
         .map((group) => ({
           ...group,
-          items: group.items.filter((item) => item.roles.includes(identity.role)),
+          items: group.items.filter((item) => canAccessNavItem(identity, item)),
         }))
         .filter((group) => group.items.length > 0),
-    [identity.role],
+    [identity],
   );
   const showLiveControls = isLiveDetectionRoute(location.pathname);
 
@@ -81,7 +81,7 @@ export function InvestigatorLayout({
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary border border-border-soft">
             <Activity className="h-4 w-4" />
           </span>
-          <p className="font-data text-xs uppercase tracking-[0.2em] text-muted">Investigator console</p>
+          <p className="font-data text-xs uppercase tracking-[0.2em] text-muted">ClaimGuard workspace</p>
         </div>
         <Button
           variant="ghost"
@@ -117,7 +117,7 @@ export function InvestigatorLayout({
               </span>
               <div>
                 <p className="font-display text-[15px] font-semibold tracking-tight leading-none text-foreground">ClaimGuard</p>
-                <p className="font-data text-[9px] uppercase tracking-[0.2em] text-muted-2 mt-1">Investigator console</p>
+                <p className="font-data text-[9px] uppercase tracking-[0.2em] text-muted-2 mt-1">Scheme workspace</p>
               </div>
             </Link>
             <div className="flex items-center gap-1">

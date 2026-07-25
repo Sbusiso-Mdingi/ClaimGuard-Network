@@ -12,6 +12,6 @@ test("blocks a navKey the active demo identity does not have access to", () => {
     </RoleProvider>,
   );
 
-  expect(screen.getByText(/Not available for this role/i)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Access unavailable" })).toBeInTheDocument();
   expect(screen.queryByText("platform content")).not.toBeInTheDocument();
 });

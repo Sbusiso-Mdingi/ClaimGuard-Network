@@ -11,8 +11,6 @@ import { ClaimDetailsPage } from "./features/investigator/ClaimDetailsPage";
 import { NetworkPage } from "./features/investigator/NetworkPage";
 import { RiskPage } from "./features/investigator/RiskPage";
 import { HistoryPage } from "./features/investigator/HistoryPage";
-
-// 1. Added top-level context and page imports
 import { RoleProvider, useRole } from "./context/RoleContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { SignupPage } from "./features/auth/SignupPage";
@@ -41,29 +39,27 @@ function StatusScreen({ title, description, actionLabel, onAction }) {
   );
 }
 
+function hasAnyCapability(identity, capabilities) {
+  const granted = new Set(identity?.capabilities || []);
+  return capabilities.some((capability) => granted.has(capability));
+}
+
 function InvestigatorRoutes() {
   const { identity } = useRole();
   const platformOnly = identity.organisationType === "platform";
-  
-  const investigatorRoles = [
-    "claims_analyst",
-    "scheme_user",
-    "fraud_analyst",
-    "investigator"
-  ];
-  
-  const hasInvestigatorRole = identity.roles
-    ? identity.roles.some((r) => investigatorRoles.includes(r))
-    : investigatorRoles.includes(identity.role);
-    
-  const data = useInvestigatorData({ enabled: hasInvestigatorRole && !platformOnly });
+  const operationalWorkspaceEnabled = !platformOnly && hasAnyCapability(identity, [
+    "claims.view_own",
+    "reports.view_own",
+    "investigations.view",
+  ]);
+  const data = useInvestigatorData({ enabled: operationalWorkspaceEnabled });
 
   function renderPageContent(readyElement, options = {}) {
     if (data.status === "loading") {
       return (
         <StatusScreen
-          title={options.loadingTitle || "Loading Investigator Workspace"}
-          description={options.loadingDescription || "Fetching detection report, graph, and risk APIs..."}
+          title={options.loadingTitle || "Loading Scheme Workspace"}
+          description={options.loadingDescription || "Fetching tenant-scoped operational data..."}
         />
       );
     }
@@ -71,7 +67,7 @@ function InvestigatorRoutes() {
     if (data.status === "error") {
       return (
         <StatusScreen
-          title={options.errorTitle || "Unable to Load Investigator Data"}
+          title={options.errorTitle || "Unable to Load Workspace Data"}
           description={data.error || options.errorDescription || "The API responses were unavailable."}
           actionLabel="Retry"
           onAction={data.refreshNow}
@@ -100,15 +96,17 @@ function InvestigatorRoutes() {
         <Route
           index
           element={
-            platformOnly ? <Navigate to="/admin/platform" replace /> : <RequireRoleAccess navKey="dashboard">
-              {renderPageContent(
-                <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />,
-                {
-                  loadingTitle: "Loading Dashboard",
-                  errorTitle: "Dashboard Unavailable",
-                },
-              )}
-            </RequireRoleAccess>
+            platformOnly ? <Navigate to="/admin/platform" replace /> : (
+              <RequireRoleAccess navKey="dashboard">
+                {renderPageContent(
+                  <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />,
+                  {
+                    loadingTitle: "Loading Dashboard",
+                    errorTitle: "Dashboard Unavailable",
+                  },
+                )}
+              </RequireRoleAccess>
+            )
           }
         />
         <Route
@@ -167,7 +165,6 @@ function InvestigatorRoutes() {
           }
         />
 
-        {/* 2. Added new role-protected workflow and administration routing paths here */}
         <Route path="investigations" element={<RequireRoleAccess navKey="investigations"><InvestigationsPage /></RequireRoleAccess>} />
         <Route path="investigations/:investigationId" element={<RequireRoleAccess navKey="investigations"><InvestigationWorkspacePage /></RequireRoleAccess>} />
         <Route path="committee" element={<RequireRoleAccess navKey="committee"><CommitteeRegistryPage /></RequireRoleAccess>} />
@@ -192,7 +189,6 @@ function AuthenticationBoundary() {
 export default function AppRoot() {
   return (
     <ErrorBoundary>
-      {/* 3. Wrapped the router with the RoleProvider state element wrapper */}
       <RoleProvider>
         <BrowserRouter>
           <Routes>
