@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../lib/apiClient";
 
-const POLL_INTERVAL_MS = 15000;
+const CLAIMS_POLL_INTERVAL_MS = 15000;
+const CLAIMS_PAGE_SIZE = 25;
 
 function isLedgerLinked(ledgerReference) {
   if (!ledgerReference || typeof ledgerReference !== "object") {
@@ -23,6 +24,11 @@ function isLedgerLinked(ledgerReference) {
   return false;
 }
 
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function severityFromScore(riskScore) {
   if (!Number.isFinite(riskScore)) return "Unknown";
   if (riskScore >= 75) return "High";
@@ -32,19 +38,35 @@ function severityFromScore(riskScore) {
 
 function mapApiClaimToView(claim) {
   const score = Number.isFinite(claim?.riskScore) ? claim.riskScore : null;
+  const processingStatus = claim?.processingStatus || claim?.processing?.status || (score === null ? "not_scored" : "scored");
+  const processing = {
+    ...(claim?.processing || {}),
+    status: processingStatus,
+  };
   const status = claim?.investigation?.status || claim?.status || "SUBMITTED";
+
   return {
     claimId: claim?.claimId,
+    currentClaimVersion: claim?.currentClaimVersion || null,
     schemeId: claim?.schemeId || null,
     memberId: claim?.memberId || null,
     providerId: claim?.providerId || null,
     policyHolder: claim?.memberId || "Unknown",
+    billedAmount: Number.isFinite(claim?.billedAmount) ? claim.billedAmount : null,
+    billingCode: claim?.billingCode || null,
+    submittedAt: claim?.submittedAt || null,
+    updatedAt: claim?.updatedAt || null,
     status,
-    detectionDate: claim?.updatedAt || claim?.submittedAt || null,
+    processingStatus,
+    processing,
+    detectionDate: claim?.detection?.scoredAt || null,
+    scoringUpdatedAt: processing.updatedAt || claim?.detection?.scoredAt || claim?.updatedAt || claim?.submittedAt || null,
     riskScore: score,
     severity: claim?.riskLevel || severityFromScore(score),
     triggeredRules: Array.isArray(claim?.triggeredRules) ? claim.triggeredRules : [],
     evidence: Array.isArray(claim?.evidence) ? claim.evidence : [],
+    detection: claim?.detection || null,
+    investigation: claim?.investigation || null,
   };
 }
 
@@ -64,35 +86,71 @@ function createSnapshot(report, graph, risk, fetchedAt, claims) {
   };
 }
 
-function buildReadyState(report, graph, risk, fetchedAt, previousSnapshots = []) {
-  const claims = [];
-  const snapshot = createSnapshot(report, graph, risk, fetchedAt, claims);
+async function fetchAvailableResource(path, key, label) {
+  const response = await apiRequest(path, { cache: "no-store" });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.available !== true) {
+    throw new Error(payload?.message || `${label} unavailable (${response.status})`);
+  }
+  return payload[key];
+}
 
+async function fetchClaims({ page = 1, pageSize = CLAIMS_PAGE_SIZE } = {}) {
+  const requestedPage = positiveInteger(page, 1);
+  const requestedPageSize = positiveInteger(pageSize, CLAIMS_PAGE_SIZE);
+  const response = await apiRequest(`/claims?page=${requestedPage}&pageSize=${requestedPageSize}`, { cache: "no-store" });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.available !== true) {
+    throw new Error(payload?.message || `Claims unavailable (${response.status})`);
+  }
   return {
-    status: "ready",
-    report,
-    graph,
-    risk,
-    claims,
-    snapshots: [snapshot, ...(previousSnapshots || [])].slice(0, 25),
-    lastRefresh: fetchedAt,
-    error: null,
+    claims: (payload.claims || []).map(mapApiClaimToView).filter((claim) => Boolean(claim.claimId)),
+    pagination: payload.pagination || {
+      page: requestedPage,
+      pageSize: requestedPageSize,
+      total: (payload.claims || []).length,
+      totalPages: 1,
+      hasNextPage: false,
+    },
   };
 }
 
+function settledResource(result, previousValue, hasPreviousValue = Boolean(previousValue)) {
+  if (result.status === "fulfilled") {
+    return { value: result.value, status: "ready", error: null };
+  }
+  return {
+    value: previousValue,
+    status: hasPreviousValue ? "stale" : "error",
+    error: result.reason instanceof Error ? result.reason.message : "Resource unavailable.",
+  };
+}
+
+function resourceError(error, fallback) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function useInvestigatorData({ enabled = true } = {}) {
+  const claimsPageRef = useRef(1);
   const [liveRefreshEnabled, setLiveRefreshEnabled] = useState(true);
   const [state, setState] = useState({
     status: "loading",
     report: null,
+    reportStatus: "loading",
+    reportError: null,
     graph: null,
+    graphStatus: "loading",
+    graphError: null,
     risk: null,
+    riskStatus: "loading",
+    riskError: null,
     claims: [],
     claimsStatus: "loading",
     claimsError: null,
     claimsPagination: null,
     snapshots: [],
     lastRefresh: null,
+    lastClaimsRefresh: null,
     error: null,
     dataSource: "live",
   });
@@ -100,60 +158,121 @@ export function useInvestigatorData({ enabled = true } = {}) {
   const load = useCallback(async () => {
     const fetchedAt = new Date().toISOString();
 
-    try {
-      const [reportRes, graphRes, riskRes, claimsRes] = await Promise.all([
-        apiRequest("/detection/report", { cache: "no-store" }),
-        apiRequest("/detection/graph", { cache: "no-store" }),
-        apiRequest("/detection/risk", { cache: "no-store" }),
-        apiRequest("/claims", { cache: "no-store" }),
-      ]);
+    setState((previous) => ({
+      ...previous,
+      status: previous.lastRefresh ? "ready" : "loading",
+      reportStatus: previous.report ? "refreshing" : "loading",
+      reportError: null,
+      graphStatus: previous.graph ? "refreshing" : "loading",
+      graphError: null,
+      riskStatus: previous.risk ? "refreshing" : "loading",
+      riskError: null,
+      claimsStatus: previous.claims.length > 0 ? "refreshing" : "loading",
+      claimsError: null,
+      error: null,
+    }));
 
-      const [reportPayload, graphPayload, riskPayload, claimsPayload] = await Promise.all([
-        reportRes.json(),
-        graphRes.json(),
-        riskRes.json(),
-        claimsRes.json(),
-      ]);
+    const [reportResult, graphResult, riskResult, claimsResult] = await Promise.allSettled([
+      fetchAvailableResource("/detection/report", "report", "Report"),
+      fetchAvailableResource("/detection/graph", "graph", "Graph"),
+      fetchAvailableResource("/detection/risk", "risk", "Risk"),
+      fetchClaims({ page: claimsPageRef.current }),
+    ]);
 
-      if (!reportRes.ok || !reportPayload.available) {
-        throw new Error(reportPayload.message || `Report unavailable (${reportRes.status})`);
-      }
-      if (!graphRes.ok || !graphPayload.available) {
-        throw new Error(graphPayload.message || `Graph unavailable (${graphRes.status})`);
-      }
-      if (!riskRes.ok || !riskPayload.available) {
-        throw new Error(riskPayload.message || `Risk unavailable (${riskRes.status})`);
-      }
+    if (claimsResult.status === "fulfilled") {
+      claimsPageRef.current = positiveInteger(claimsResult.value.pagination?.page, claimsPageRef.current);
+    }
 
-      const claimsReady = claimsRes.ok && claimsPayload?.available === true;
-      const claims = claimsReady
-        ? (claimsPayload.claims || []).map(mapApiClaimToView).filter((claim) => Boolean(claim.claimId))
-        : [];
+    setState((previous) => {
+      const reportResource = settledResource(reportResult, previous.report, Boolean(previous.report));
+      const graphResource = settledResource(graphResult, previous.graph, Boolean(previous.graph));
+      const riskResource = settledResource(riskResult, previous.risk, Boolean(previous.risk));
+      const claimsResource = settledResource(claimsResult, {
+        claims: previous.claims,
+        pagination: previous.claimsPagination,
+      }, previous.claims.length > 0);
+      const claims = claimsResource.value?.claims || [];
+      const pagination = claimsResource.value?.pagination || null;
+      const successfulResources = [reportResult, graphResult, riskResult, claimsResult]
+        .filter((result) => result.status === "fulfilled").length;
+      const hadPreviousData = Boolean(previous.report || previous.graph || previous.risk || previous.claims.length > 0);
+      const report = reportResource.value;
+      const graph = graphResource.value;
+      const risk = riskResource.value;
+      const snapshots = reportResult.status === "fulfilled"
+        ? [createSnapshot(report, graph, risk, fetchedAt, claims), ...(previous.snapshots || [])].slice(0, 25)
+        : previous.snapshots;
 
-      setState((prev) => ({
-        ...buildReadyState(reportPayload.report, graphPayload.graph, riskPayload.risk, fetchedAt, prev.snapshots),
+      return {
+        ...previous,
+        status: "ready",
+        report,
+        reportStatus: reportResource.status,
+        reportError: reportResource.error,
+        graph,
+        graphStatus: graphResource.status,
+        graphError: graphResource.error,
+        risk,
+        riskStatus: riskResource.status,
+        riskError: riskResource.error,
         claims,
-        claimsStatus: claimsReady ? "ready" : "error",
-        claimsError: claimsReady
-          ? null
-          : claimsPayload?.message || `Claims unavailable (${claimsRes.status})`,
-        claimsPagination: claimsReady ? claimsPayload.pagination || null : null,
+        claimsStatus: claimsResource.status,
+        claimsError: claimsResource.error,
+        claimsPagination: pagination,
+        snapshots,
+        lastRefresh: successfulResources > 0 ? fetchedAt : previous.lastRefresh,
+        lastClaimsRefresh: claimsResult.status === "fulfilled" ? fetchedAt : previous.lastClaimsRefresh,
+        error: successfulResources === 0 && !hadPreviousData ? "All investigator data resources are unavailable." : null,
+        dataSource: successfulResources > 0 ? "live" : hadPreviousData ? "stale" : "unavailable",
+      };
+    });
+  }, []);
+
+  const refreshClaims = useCallback(async (page = claimsPageRef.current) => {
+    const requestedPage = positiveInteger(page, claimsPageRef.current);
+    const fetchedAt = new Date().toISOString();
+    claimsPageRef.current = requestedPage;
+
+    setState((previous) => ({
+      ...previous,
+      claimsStatus: previous.claims.length > 0 ? "refreshing" : "loading",
+      claimsError: null,
+    }));
+
+    try {
+      const result = await fetchClaims({ page: requestedPage });
+      claimsPageRef.current = positiveInteger(result.pagination?.page, requestedPage);
+      setState((previous) => ({
+        ...previous,
+        claims: result.claims,
+        claimsPagination: result.pagination,
+        claimsStatus: "ready",
+        claimsError: null,
+        lastClaimsRefresh: fetchedAt,
+        lastRefresh: fetchedAt,
         dataSource: "live",
       }));
     } catch (error) {
       setState((previous) => ({
         ...previous,
-        status: "error",
-        error: error instanceof Error ? error.message : "Failed to load investigator data.",
-        dataSource: "unavailable",
-        lastRefresh: fetchedAt,
+        claimsStatus: previous.claims.length > 0 ? "stale" : "error",
+        claimsError: resourceError(error, "Failed to refresh claims."),
+        dataSource: previous.claims.length > 0 ? "stale" : previous.dataSource,
       }));
     }
   }, []);
 
   useEffect(() => {
     if (!enabled) {
-      setState((previous) => ({ ...previous, status: "ready", error: null }));
+      setState((previous) => ({
+        ...previous,
+        status: "ready",
+        reportStatus: "idle",
+        graphStatus: "idle",
+        riskStatus: "idle",
+        claimsStatus: "idle",
+        error: null,
+      }));
       return;
     }
     load();
@@ -162,13 +281,13 @@ export function useInvestigatorData({ enabled = true } = {}) {
   useEffect(() => {
     if (!enabled || !liveRefreshEnabled) return undefined;
     const id = window.setInterval(() => {
-      load();
-    }, POLL_INTERVAL_MS);
+      refreshClaims();
+    }, CLAIMS_POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [enabled, liveRefreshEnabled, load]);
+  }, [enabled, liveRefreshEnabled, refreshClaims]);
 
   const metrics = useMemo(() => {
-    const { report, claims } = state;
+    const { report, claims, claimsPagination } = state;
     const highRisk = Number.isFinite(report?.summary?.highRiskClaims)
       ? report.summary.highRiskClaims
       : "Unavailable";
@@ -181,12 +300,11 @@ export function useInvestigatorData({ enabled = true } = {}) {
       : "Unavailable";
 
     const recentDetections = claims
+      .filter((claim) => Number.isFinite(claim.riskScore))
       .slice()
       .sort((a, b) => {
-        // 1. Risk score descending
-        const riskDiff = (b.riskScore || 0) - (a.riskScore || 0);
+        const riskDiff = b.riskScore - a.riskScore;
         if (riskDiff !== 0) return riskDiff;
-        // 2. Detection or update date descending
         const dateA = a.detectionDate ? new Date(a.detectionDate).getTime() : 0;
         const dateB = b.detectionDate ? new Date(b.detectionDate).getTime() : 0;
         return dateB - dateA;
@@ -194,7 +312,9 @@ export function useInvestigatorData({ enabled = true } = {}) {
       .slice(0, 8);
 
     return {
-      totalClaims: Number.isFinite(report?.summary?.totalClaims) ? report.summary.totalClaims : "Unavailable",
+      totalClaims: Number.isFinite(report?.summary?.totalClaims)
+        ? report.summary.totalClaims
+        : Number.isFinite(claimsPagination?.total) ? claimsPagination.total : "Unavailable",
       highRiskClaims: highRisk,
       averageRiskScore: avgRisk,
       activeFraudSchemes,
@@ -202,7 +322,7 @@ export function useInvestigatorData({ enabled = true } = {}) {
       allClaims: claims,
       ledgerStatus: isLedgerLinked(report?.ledgerReference) ? "Connected" : "Unavailable",
     };
-  }, [state.report, state.claims, state.risk]);
+  }, [state.report, state.claims, state.claimsPagination]);
 
   return {
     ...state,
@@ -210,8 +330,10 @@ export function useInvestigatorData({ enabled = true } = {}) {
     liveRefreshEnabled,
     setLiveRefreshEnabled,
     metrics,
-    pollingIntervalMs: POLL_INTERVAL_MS,
+    pollingIntervalMs: CLAIMS_POLL_INTERVAL_MS,
     setMode: (mode) => setLiveRefreshEnabled(mode === "live"),
     refreshNow: load,
+    refreshClaims,
+    loadClaimsPage: refreshClaims,
   };
 }
