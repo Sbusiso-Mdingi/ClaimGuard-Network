@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
 
@@ -13,23 +13,71 @@ const riskPayload = {
   risk: { riskScore: 82, severity: "High", reasons: ["High-confidence anomaly"] },
 };
 
-const claimsPayload = {
+const pageOneClaims = {
   available: true,
   claims: [
     {
-      claimId: "C-PARTIAL-1",
+      claimId: "C-QUEUED-1",
       schemeId: "S1",
-      memberId: "Member One",
+      memberId: "Member Queued",
       providerId: "P-1",
-      status: "SUBMITTED",
-      riskScore: 82,
-      riskLevel: "High",
+      status: "AWAITING_SCORING",
+      processingStatus: "queued",
+      processing: { status: "queued", updatedAt: "2026-07-25T08:00:00.000Z" },
+      riskScore: null,
+      riskLevel: null,
       updatedAt: "2026-07-25T08:00:00.000Z",
-      triggeredRules: ["Duplicate billing"],
+      triggeredRules: [],
+      evidence: [],
+    },
+    {
+      claimId: "C-FAILED-1",
+      schemeId: "S1",
+      memberId: "Member Failed",
+      providerId: "P-2",
+      status: "PROCESSING_FAILED",
+      processingStatus: "failed",
+      processing: {
+        status: "failed",
+        failureCode: "WORKER_DEAD_LETTER",
+        lastError: "Detection worker exhausted retries.",
+        updatedAt: "2026-07-25T08:05:00.000Z",
+      },
+      riskScore: null,
+      riskLevel: null,
+      updatedAt: "2026-07-25T08:05:00.000Z",
+      triggeredRules: [],
       evidence: [],
     },
   ],
-  pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1, hasNextPage: false },
+  pagination: { page: 1, pageSize: 2, total: 3, totalPages: 2, hasNextPage: true },
+};
+
+const pageTwoClaims = {
+  available: true,
+  claims: [
+    {
+      claimId: "C-RETRY-1",
+      schemeId: "S1",
+      memberId: "Member Retrying",
+      providerId: "P-3",
+      status: "AWAITING_SCORING",
+      processingStatus: "retrying",
+      processing: {
+        status: "retrying",
+        attemptCount: 2,
+        maxAttempts: 5,
+        lastError: "Temporary model endpoint failure.",
+        updatedAt: "2026-07-25T08:10:00.000Z",
+      },
+      riskScore: null,
+      riskLevel: null,
+      updatedAt: "2026-07-25T08:10:00.000Z",
+      triggeredRules: [],
+      evidence: [],
+    },
+  ],
+  pagination: { page: 2, pageSize: 2, total: 3, totalPages: 2, hasNextPage: false },
 };
 
 beforeEach(() => {
@@ -50,8 +98,11 @@ beforeEach(() => {
     if (requestUrl.includes("/api/detection/risk")) {
       return Promise.resolve({ ok: true, status: 200, json: async () => riskPayload });
     }
+    if (requestUrl.includes("/api/claims?page=2")) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => pageTwoClaims });
+    }
     if (requestUrl.includes("/api/claims")) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => claimsPayload });
+      return Promise.resolve({ ok: true, status: 200, json: async () => pageOneClaims });
     }
     return Promise.resolve({
       ok: false,
@@ -71,5 +122,61 @@ test("keeps claims and other healthy resources usable when the report request fa
   await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
 
   expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "C-PARTIAL-1" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "C-QUEUED-1" })).toBeInTheDocument();
+});
+
+test("shows truthful processing and failure states", async () => {
+  const user = userEvent.setup();
+  render(<AppRoot />);
+
+  await screen.findByRole("heading", { name: /Claims risk intelligence/i });
+  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+
+  expect(await screen.findByText("Awaiting scoring")).toBeInTheDocument();
+  expect(screen.getAllByText("Scoring failed").length).toBeGreaterThan(0);
+  expect(screen.getByText(/WORKER_DEAD_LETTER: Detection worker exhausted retries/i)).toBeInTheDocument();
+  expect(screen.queryByText(/^Unavailable$/i)).not.toBeInTheDocument();
+});
+
+test("uses server pagination and loads the requested page only", async () => {
+  const user = userEvent.setup();
+  render(<AppRoot />);
+
+  await screen.findByRole("heading", { name: /Claims risk intelligence/i });
+  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+
+  expect(await screen.findByText(/Page 1 \/ 2/i)).toBeInTheDocument();
+  expect(screen.getByText(/Showing server records 1–2 of 3/i)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: /Next/i }));
+
+  expect(await screen.findByRole("link", { name: "C-RETRY-1" })).toBeInTheDocument();
+  expect(screen.getByText("Retrying")).toBeInTheDocument();
+  expect(screen.getByText(/Attempt 2 of 5/i)).toBeInTheDocument();
+  expect(screen.getByText(/Showing server records 3–3 of 3/i)).toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes("/api/claims?page=2&pageSize=25"))).toBe(true);
+  });
+});
+
+test("manual claims refresh does not refetch report, graph or aggregate risk", async () => {
+  const user = userEvent.setup();
+  render(<AppRoot />);
+
+  await screen.findByRole("heading", { name: /Claims risk intelligence/i });
+  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+  await screen.findByRole("heading", { name: /Claims review table/i });
+
+  const aggregateCallsBefore = global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/detection/")).length;
+  const claimsCallsBefore = global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/claims")).length;
+
+  await user.click(screen.getByRole("button", { name: /Refresh claims/i }));
+
+  await waitFor(() => {
+    const claimsCallsAfter = global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/claims")).length;
+    expect(claimsCallsAfter).toBe(claimsCallsBefore + 1);
+  });
+  const aggregateCallsAfter = global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/detection/")).length;
+  expect(aggregateCallsAfter).toBe(aggregateCallsBefore);
 });
