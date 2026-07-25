@@ -59,9 +59,27 @@ function percentage(value) {
   return parsed === null ? null : Math.round(parsed * 10_000) / 100;
 }
 
+function componentRiskIndex(probabilityValue, thresholdValue) {
+  const probabilityScore = probability(probabilityValue);
+  const threshold = probability(thresholdValue);
+  if (probabilityScore === null || threshold === null) return null;
+  if (threshold === 0) return 100;
+  return Math.min(100, 70 * probabilityScore / threshold);
+}
+
+function approvedModelRiskIndex(score) {
+  const components = [
+    componentRiskIndex(score?.baselineFraudProbability, score?.baselineThreshold),
+    componentRiskIndex(score?.ringProbability, score?.ringThreshold),
+    componentRiskIndex(score?.phantomProbability, score?.phantomThreshold),
+  ].filter((value) => value !== null);
+  if (components.length === 0) return null;
+  return Math.round(Math.max(...components) * 1_000) / 1_000;
+}
+
 function riskLevelFromScore(score) {
   if (!Number.isFinite(score)) return null;
-  if (score >= 75) return "High";
+  if (score >= 70) return "High";
   if (score >= 40) return "Medium";
   return "Low";
 }
@@ -123,34 +141,29 @@ function mapDetectionRow(row) {
     : {};
   const strategyType = row.strategy_type || payload?.strategy?.strategyType || null;
 
-  let riskProbability = null;
+  let riskScore = null;
+  let riskScoreBasis = null;
   let reviewRecommended = false;
   let triggeredRules = [];
 
   if (strategyType === "deterministic_rules") {
-    riskProbability = probability(score.riskScore);
+    riskScore = percentage(score.riskScore);
+    riskScoreBasis = "DETERMINISTIC_RULE_SCORE";
     reviewRecommended = score.reviewRecommended === true;
     triggeredRules = uniqueStrings(Array.isArray(score.ruleHits) ? score.ruleHits : []);
   } else if (strategyType === "approved_model") {
-    const probabilities = [
-      probability(score.baselineFraudProbability),
-      probability(score.ringProbability),
-      probability(score.phantomProbability),
-    ].filter((value) => value !== null);
-    riskProbability = probabilities.length > 0 ? Math.max(...probabilities) : null;
+    riskScore = approvedModelRiskIndex(score);
+    riskScoreBasis = "THRESHOLD_NORMALIZED_MAX_COMPONENT";
     reviewRecommended = score.compositeReviewRecommended === true;
     triggeredRules = modelTriggeredRules(score);
   }
-
-  const riskScore = riskProbability === null
-    ? null
-    : Math.round(riskProbability * 10_000) / 100;
 
   return {
     status: "scored",
     claimVersion: Number(row.claim_version),
     scoredAt: row.scored_at || null,
     riskScore,
+    riskScoreBasis,
     riskLevel: riskLevelFromScore(riskScore),
     reviewRecommended,
     triggeredRules,
