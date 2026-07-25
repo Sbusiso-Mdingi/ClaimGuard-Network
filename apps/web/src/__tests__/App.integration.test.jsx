@@ -66,10 +66,13 @@ const claimsPayload = {
       schemeId: "S1",
       memberId: "Alex",
       providerId: "P-100",
-      status: "SUBMITTED",
+      status: "SCORED",
+      processingStatus: "scored",
+      processing: { status: "scored", updatedAt: "2026-07-16T00:00:00.000Z" },
       riskScore: 82,
       riskLevel: "High",
       updatedAt: "2026-07-16T00:00:00.000Z",
+      detection: { scoredAt: "2026-07-16T00:00:00.000Z" },
       triggeredRules: ["Suspicious repeat billing"],
       evidence: [],
     },
@@ -79,9 +82,12 @@ const claimsPayload = {
       memberId: "Blair",
       providerId: "P-200",
       status: "UNDER_INVESTIGATION",
+      processingStatus: "scored",
+      processing: { status: "scored", updatedAt: "2026-07-16T00:00:00.000Z" },
       riskScore: 74,
       riskLevel: "High",
       updatedAt: "2026-07-16T00:00:00.000Z",
+      detection: { scoredAt: "2026-07-16T00:00:00.000Z" },
       triggeredRules: ["Rapid provider hopping"],
       evidence: [],
     },
@@ -169,7 +175,7 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
 });
 
-test("live refresh toggle controls browser polling", async () => {
+test("live refresh polls claims without refetching aggregate resources", async () => {
   vi.useFakeTimers();
   render(<AppRoot />);
 
@@ -184,8 +190,10 @@ test("live refresh toggle controls browser polling", async () => {
   await act(async () => {
     vi.advanceTimersByTime(15000);
     await Promise.resolve();
+    await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(8);
+  expect(global.fetch).toHaveBeenCalledTimes(5);
+  expect(String(global.fetch.mock.calls[4][0])).toContain("/api/claims?page=1&pageSize=25");
 
   fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
 
@@ -193,7 +201,7 @@ test("live refresh toggle controls browser polling", async () => {
     vi.advanceTimersByTime(30000);
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(8);
+  expect(global.fetch).toHaveBeenCalledTimes(5);
 }, 10000);
 
 test("shows unavailable state without substituting demo analytics when backend APIs fail", async () => {
@@ -205,4 +213,3 @@ test("shows unavailable state without substituting demo analytics when backend A
   expect(screen.getByText("ClaimGuard")).toBeInTheDocument();
   expect(screen.queryByText(/Claims Screened/i)).not.toBeInTheDocument();
 });
-
