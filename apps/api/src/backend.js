@@ -131,6 +131,7 @@ export function createBackendApp({
     claimsReadRepository: services.claimReadRepository,
     ledgerRepository,
     tenantRepository,
+    detectionStrategyRepository: null,
     generationRepository,
   };
 
@@ -244,6 +245,8 @@ export function createBackendApp({
     });
     registerSchemeAdminRoutes(app, {
       controlPlaneService,
+      claimsReadRepository: dependencies.claimsReadRepository,
+      detectionStrategyRepository: dependencies.detectionStrategyRepository,
     });
   }
 
