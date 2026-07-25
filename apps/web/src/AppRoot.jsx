@@ -119,7 +119,9 @@ function InvestigatorRoutes() {
                 claims={data.claims}
                 claimsStatus={data.claimsStatus}
                 claimsError={data.claimsError}
-                onRetryClaims={data.refreshNow}
+                claimsPagination={data.claimsPagination}
+                onRetryClaims={data.refreshClaims}
+                onPageChange={data.loadClaimsPage}
               />
             </RequireRoleAccess>
           }
