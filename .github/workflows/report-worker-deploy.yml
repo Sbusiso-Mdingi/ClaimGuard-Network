@@ -41,8 +41,6 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
-    # Do not attach a GitHub environment here. The Azure application is federated
-    # to the repository's main-branch OIDC subject, not an environment subject.
     steps:
       - name: Checkout the validated main commit
         uses: actions/checkout@v5
@@ -97,30 +95,46 @@ jobs:
             --content-type application/vnd.claimguard.model-pseudonymization-key \
             >/dev/null
 
+      - name: Verify pre-provisioned runtime RBAC
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKER_PRINCIPAL_ID="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_IDENTITY_NAME" --query principalId -o tsv)"
+          API_PRINCIPAL_ID="$(az webapp identity assign --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API" --query principalId -o tsv)"
+          ACR_ID="$(az acr show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_ACR_NAME" --query id -o tsv)"
+          KEY_VAULT_ID="$(az keyvault show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_KEYVAULT_NAME" --query id -o tsv)"
+          STORAGE_ID="$(az storage account show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_STORAGE_ACCOUNT_NAME" --query id -o tsv)"
+          CONTAINER_SCOPE="${STORAGE_ID}/blobServices/default/containers/${REPORT_STORAGE_CONTAINER}"
+
+          require_role() {
+            local principal_id="$1"
+            local role="$2"
+            local scope="$3"
+            local count
+            count="$(az role assignment list --assignee-object-id "$principal_id" --scope "$scope" --query "[?roleDefinitionName=='${role}'] | length(@)" -o tsv)"
+            if [ "$count" = "0" ]; then
+              echo "Missing bootstrap role: $role on $scope for $principal_id"
+              echo "Run infra/bootstrap-report-worker-rbac.sh as the subscription owner."
+              exit 1
+            fi
+          }
+
+          require_role "$WORKER_PRINCIPAL_ID" "AcrPull" "$ACR_ID"
+          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${CONTROL_PLANE_MYSQL_URL_SECRET_NAME}"
+          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${MYSQL_URL_SECRET_NAME}"
+          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${MODEL_PSEUDONYM_SECRET_NAME}"
+          require_role "$WORKER_PRINCIPAL_ID" "Storage Blob Data Contributor" "$CONTAINER_SCOPE"
+          require_role "$API_PRINCIPAL_ID" "Storage Blob Data Reader" "$CONTAINER_SCOPE"
+
       - name: Build and push immutable report-worker image
         shell: bash
         run: |
           set -euo pipefail
           IMAGE_REPOSITORY="claimguard/report-producer"
-          LOGIN_SERVER="$(az acr show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_WORKER_ACR_NAME" \
-            --query loginServer \
-            --output tsv)"
-          ROLE_ASSIGNMENT_MODE="$(az acr show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_WORKER_ACR_NAME" \
-            --query roleAssignmentMode \
-            --output tsv)"
+          LOGIN_SERVER="$(az acr show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_ACR_NAME" --query loginServer -o tsv)"
           REPORT_WORKER_IMAGE="${LOGIN_SERVER}/${IMAGE_REPOSITORY}:${VALIDATED_MAIN_SHA}"
-
-          echo "ACR role-assignment mode: ${ROLE_ASSIGNMENT_MODE:-rbac}"
           az acr login --name "$REPORT_WORKER_ACR_NAME"
-          docker build \
-            --pull \
-            --file services/report-producer/Dockerfile \
-            --tag "$REPORT_WORKER_IMAGE" \
-            .
+          docker build --pull --file services/report-producer/Dockerfile --tag "$REPORT_WORKER_IMAGE" .
           docker push "$REPORT_WORKER_IMAGE"
           echo "REPORT_WORKER_IMAGE=$REPORT_WORKER_IMAGE" >> "$GITHUB_ENV"
 
@@ -150,36 +164,13 @@ jobs:
               reportStorageAccountUrl="$REPORT_STORAGE_ACCOUNT_URL" \
               reportStorageContainerName="$REPORT_STORAGE_CONTAINER" \
               reportWorkerJobName="$REPORT_WORKER_JOB_NAME" \
+              manageRoleAssignments=false \
             --only-show-errors
 
-      - name: Configure API report storage and blob-reader access
+      - name: Configure API report storage
         shell: bash
         run: |
           set -euo pipefail
-          API_PRINCIPAL_ID="$(az webapp identity assign \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --query principalId -o tsv)"
-
-          CONTAINER_SCOPE="$(az storage account show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_STORAGE_ACCOUNT_NAME" \
-            --query id -o tsv)/blobServices/default/containers/${REPORT_STORAGE_CONTAINER}"
-
-          EXISTING_ASSIGNMENT="$(az role assignment list \
-            --assignee-object-id "$API_PRINCIPAL_ID" \
-            --scope "$CONTAINER_SCOPE" \
-            --role 'Storage Blob Data Reader' \
-            --query '[0].id' -o tsv)"
-          if [ -z "$EXISTING_ASSIGNMENT" ]; then
-            az role assignment create \
-              --assignee-object-id "$API_PRINCIPAL_ID" \
-              --assignee-principal-type ServicePrincipal \
-              --scope "$CONTAINER_SCOPE" \
-              --role 'Storage Blob Data Reader' \
-              >/dev/null
-          fi
-
           az webapp config appsettings set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_WEBAPP_API" \
@@ -194,10 +185,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          az containerapp job start \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_WORKER_JOB_NAME" \
-            >/dev/null
+          az containerapp job start --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_JOB_NAME" >/dev/null
 
       - name: Verify worker and API report-storage configuration
         shell: bash
