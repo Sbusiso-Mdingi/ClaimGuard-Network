@@ -56,7 +56,7 @@ describe("SchemeAdminPage", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => cleanup());
 
-  test("renders authoritative scheme operations metrics", async () => {
+  test("renders authoritative scheme operations metrics and normalised labels", async () => {
     apiJson.mockImplementation((path) => {
       if (path === "/admin/scheme/overview") return Promise.resolve(overviewResponse);
       if (path === "/admin/scheme/users") return Promise.resolve({ available: true, users: [] });
@@ -67,9 +67,12 @@ describe("SchemeAdminPage", () => {
 
     expect(await screen.findByText("12")).toBeInTheDocument();
     expect(screen.getByText("66.67% of all claims have a persisted score.")).toBeInTheDocument();
+    expect(screen.getByText("Approved Model")).toBeInTheDocument();
+    expect(screen.getByText("Under Review")).toBeInTheDocument();
     expect(screen.getByText("deployment-1")).toBeInTheDocument();
     expect(screen.getByText("Integration credentials")).toBeInTheDocument();
     expect(screen.getAllByText("API required").length).toBe(2);
+    expect(screen.getByText("No users found.")).toBeInTheDocument();
   });
 
   test("serializes the complete new-user payload as JSON", async () => {
@@ -103,5 +106,21 @@ describe("SchemeAdminPage", () => {
         }),
       });
     });
+
+    expect(await screen.findByText("User created successfully.")).toBeInTheDocument();
+  });
+
+  test("shows an actionable overview error without hiding user administration", async () => {
+    apiJson.mockImplementation((path) => {
+      if (path === "/admin/scheme/overview") return Promise.reject(new Error("Overview unavailable"));
+      if (path === "/admin/scheme/users") return Promise.resolve({ available: true, users: [] });
+      return Promise.reject(new Error("Unexpected request"));
+    });
+
+    render(<SchemeAdminPage />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Overview unavailable");
+    expect(screen.getByRole("button", { name: /Retry overview/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Users and roles/i })).toBeInTheDocument();
   });
 });
