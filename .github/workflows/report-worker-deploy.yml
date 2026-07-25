@@ -97,19 +97,32 @@ jobs:
             --content-type application/vnd.claimguard.model-pseudonymization-key \
             >/dev/null
 
-      - name: Build immutable report-worker image in ACR
+      - name: Build and push immutable report-worker image
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE_TAG="$VALIDATED_MAIN_SHA"
           IMAGE_REPOSITORY="claimguard/report-producer"
-          az acr build \
-            --registry "$REPORT_WORKER_ACR_NAME" \
-            --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+          LOGIN_SERVER="$(az acr show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_ACR_NAME" \
+            --query loginServer \
+            --output tsv)"
+          ROLE_ASSIGNMENT_MODE="$(az acr show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_ACR_NAME" \
+            --query roleAssignmentMode \
+            --output tsv)"
+          REPORT_WORKER_IMAGE="${LOGIN_SERVER}/${IMAGE_REPOSITORY}:${VALIDATED_MAIN_SHA}"
+
+          echo "ACR role-assignment mode: ${ROLE_ASSIGNMENT_MODE:-rbac}"
+          az acr login --name "$REPORT_WORKER_ACR_NAME"
+          docker build \
+            --pull \
             --file services/report-producer/Dockerfile \
+            --tag "$REPORT_WORKER_IMAGE" \
             .
-          LOGIN_SERVER="$(az acr show --name "$REPORT_WORKER_ACR_NAME" --query loginServer -o tsv)"
-          echo "REPORT_WORKER_IMAGE=${LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+          docker push "$REPORT_WORKER_IMAGE"
+          echo "REPORT_WORKER_IMAGE=$REPORT_WORKER_IMAGE" >> "$GITHUB_ENV"
 
       - name: Deploy scheduled claim-scoring worker
         shell: bash
