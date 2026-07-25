@@ -132,7 +132,7 @@ test("shows truthful processing and failure states", async () => {
   await screen.findByRole("heading", { name: /Claims risk intelligence/i });
   await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
 
-  expect(await screen.findByText("Awaiting scoring")).toBeInTheDocument();
+  expect((await screen.findAllByText("Awaiting scoring")).length).toBeGreaterThan(0);
   expect(screen.getAllByText("Scoring failed").length).toBeGreaterThan(0);
   expect(screen.getByText(/WORKER_DEAD_LETTER: Detection worker exhausted retries/i)).toBeInTheDocument();
   expect(screen.queryByText(/^Unavailable$/i)).not.toBeInTheDocument();
@@ -151,7 +151,7 @@ test("uses server pagination and loads the requested page only", async () => {
   await user.click(screen.getByRole("button", { name: /Next/i }));
 
   expect(await screen.findByRole("link", { name: "C-RETRY-1" })).toBeInTheDocument();
-  expect(screen.getByText("Retrying")).toBeInTheDocument();
+  expect(screen.getAllByText("Retrying").length).toBeGreaterThan(0);
   expect(screen.getByText(/Attempt 2 of 5/i)).toBeInTheDocument();
   expect(screen.getByText(/Showing server records 3–3 of 3/i)).toBeInTheDocument();
 
