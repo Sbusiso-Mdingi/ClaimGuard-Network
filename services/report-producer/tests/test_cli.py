@@ -1,5 +1,7 @@
 import io
 import json
+import runpy
+import sys
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
@@ -36,6 +38,35 @@ class WorkerCliTests(TestCase):
 
         for worker in workers:
             worker.run_until_empty.assert_called_once_with()
+
+    @patch("claimguard_report_producer.worker.create_discovered_workers_from_environment")
+    def test_module_execution_invokes_the_worker_command(self, create_workers) -> None:
+        worker = Mock()
+        create_workers.return_value = [worker]
+        stdout = io.StringIO()
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "claimguard_report_producer.cli",
+                    "worker",
+                    "drain-all",
+                ],
+            ),
+            patch("sys.stdout", stdout),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            runpy.run_module(
+                "claimguard_report_producer.cli",
+                run_name="__main__",
+            )
+
+        self.assertEqual(exit_context.exception.code, 0)
+        worker.run_until_empty.assert_called_once_with()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["event"], "producer_run_completed")
 
     @patch("claimguard_report_producer.cli.run_worker_command")
     def test_runtime_failure_is_reported_without_sensitive_error_text(self, run_worker) -> None:
