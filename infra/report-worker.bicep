@@ -49,6 +49,9 @@ param reportStorageContainerName string = 'claimguard-reports'
 @description('Name of the scheduled report-producer job.')
 param reportWorkerJobName string = 'claimguard-report-producer'
 
+@description('Allow this deployment to create Azure RBAC role assignments. Keep false for recurring CI and bootstrap access separately.')
+param manageRoleAssignments bool = false
+
 var acrPullRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
@@ -101,7 +104,7 @@ resource modelPseudonymSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageRoleAssignments) {
   name: guid(containerRegistry.id, workerIdentity.id, acrPullRoleDefinitionId)
   scope: containerRegistry
   properties: {
@@ -112,7 +115,7 @@ resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource workerModelPseudonymSecretRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource workerModelPseudonymSecretRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageRoleAssignments) {
   name: guid(modelPseudonymSecret.id, workerIdentity.id, keyVaultSecretsUserRoleDefinitionId)
   scope: modelPseudonymSecret
   properties: {
@@ -304,8 +307,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
   dependsOn: [
     controlPlaneSecret
     operationalSecret
-    workerAcrPull
-    workerModelPseudonymSecretRead
+    modelPseudonymSecret
   ]
 }
 
