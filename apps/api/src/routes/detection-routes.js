@@ -4,6 +4,11 @@ import {
   createRequireTenantAccessMiddleware,
 } from "../middleware/authorization-middleware.js";
 
+function detectionResponse(c, result) {
+  const status = result.status === 404 ? 202 : result.status;
+  return c.json(result.body, status);
+}
+
 export function registerDetectionRoutes(app, { reportService, tenantRepository = null }) {
   const requireDetectionReport = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.DETECTION_REPORT,
@@ -21,17 +26,17 @@ export function registerDetectionRoutes(app, { reportService, tenantRepository =
 
   app.get("/detection/report", requireDetectionReport, requireTenantAccess, async (c) => {
     const result = await reportService.getDetectionReport(c.get("tenantContext"));
-    return c.json(result.body, result.status);
+    return detectionResponse(c, result);
   });
 
   app.get("/detection/graph", requireDetectionGraph, requireTenantAccess, async (c) => {
     const result = await reportService.getDetectionGraph(c.get("tenantContext"));
-    return c.json(result.body, result.status);
+    return detectionResponse(c, result);
   });
 
   app.get("/detection/risk", requireDetectionRisk, requireTenantAccess, async (c) => {
     const result = await reportService.getDetectionRisk(c.get("tenantContext"));
-    return c.json(result.body, result.status);
+    return detectionResponse(c, result);
   });
 
   app.get("/detection/status", requireDetectionStatus, requireTenantAccess, async (c) => {
@@ -39,3 +44,5 @@ export function registerDetectionRoutes(app, { reportService, tenantRepository =
     return c.json(result.body, result.status);
   });
 }
+
+export { detectionResponse };
