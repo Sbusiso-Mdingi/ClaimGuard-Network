@@ -45,6 +45,7 @@ test("scheme administrator sessions receive read-only operational visibility", (
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN), true);
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW), true);
+  assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY), true);
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST), false);
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE), false);
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS), false);
@@ -63,6 +64,7 @@ test("session capability translation applies role overlays during migration roll
     "claims.view_own",
     "reports.view_own",
     "investigations.view",
+    "fraud_registry.review_history",
   ]));
 });
 

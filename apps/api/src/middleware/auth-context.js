@@ -31,6 +31,7 @@ const ROLE_OPERATIONAL_PERMISSION_OVERLAYS = Object.freeze({
     "claims.view_own",
     "reports.view_own",
     "investigations.view",
+    "fraud_registry.review_history",
   ]),
 });
 
