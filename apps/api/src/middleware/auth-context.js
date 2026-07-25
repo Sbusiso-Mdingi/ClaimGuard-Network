@@ -51,14 +51,12 @@ export function createAuthenticatedAuthContext({
   displayName = null, organisation = null, source = "session",
 } = {}) {
   const normalizedRoles = Object.freeze([...(roles || [])]);
-  const resolvedPermissions = permissions ? new Set(permissions) : getPermissionsForRoles(normalizedRoles);
-  for (const permission of roleOperationalPermissions(normalizedRoles)) resolvedPermissions.add(permission);
   return Object.freeze({
     is_authenticated: true,
     user_id: userId,
     display_name: displayName,
     roles: normalizedRoles,
-    permissions: resolvedPermissions,
+    permissions: permissions ? new Set(permissions) : getPermissionsForRoles(normalizedRoles),
     tenant_id: tenantId || null,
     organisation_id: organisationId,
     membership_id: membershipId,
