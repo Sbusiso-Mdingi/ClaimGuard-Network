@@ -180,7 +180,8 @@ test("claims read repository returns current-version model detection and investi
   assert.equal(claim.detection.strategyType, "approved_model");
   assert.equal(claim.detection.modelDeploymentId, "claimguard-claim-fraud-ensemble:1.1.0");
   assert.equal(claim.detection.reviewRecommended, true);
-  assert.equal(claim.riskScore, 91);
+  assert.equal(claim.detection.riskScoreBasis, "THRESHOLD_NORMALIZED_MAX_COMPONENT");
+  assert.equal(claim.riskScore, 100);
   assert.equal(claim.riskLevel, "High");
   assert.deepEqual(claim.triggeredRules, [
     "BASELINE_FRAUD",
@@ -192,6 +193,39 @@ test("claims read repository returns current-version model detection and investi
 
   const tenantParams = pool.calls.map((call) => call.params).flat().filter((value) => value === "tenant_alpha");
   assert.equal(tenantParams.length >= 4, true);
+});
+
+test("claims read repository uses the report producer threshold-normalised risk formula", async () => {
+  const result = approvedModelResult();
+  const payload = JSON.parse(result.result_payload);
+  payload.score = {
+    baselineFraudProbability: 0.05,
+    baselinePredictedClass: "LEGITIMATE",
+    baselineThreshold: 0.1,
+    ringProbability: 0.03,
+    ringReviewHit: false,
+    ringThreshold: 0.1,
+    phantomProbability: 0.02,
+    phantomReviewHit: false,
+    phantomThreshold: 0.1,
+    compositeReviewRecommended: false,
+  };
+  result.result_payload = JSON.stringify(payload);
+
+  const pool = createPoolStub({
+    detectionResults: [result],
+    investigations: [],
+  });
+  const repository = createClaimsReadRepository(pool, {
+    dataPlaneContext: context(),
+    allowLegacyTenantContext: false,
+  });
+
+  const claim = await repository.getClaimById("C-3");
+
+  assert.equal(claim.riskScore, 35);
+  assert.equal(claim.riskLevel, "Low");
+  assert.equal(claim.status, "SCORED");
 });
 
 test("claims read repository reports a queued current claim before scoring", async () => {
