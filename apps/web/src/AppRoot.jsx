@@ -54,21 +54,21 @@ function InvestigatorRoutes() {
   ]);
   const data = useInvestigatorData({ enabled: operationalWorkspaceEnabled });
 
-  function renderPageContent(readyElement, options = {}) {
-    if (data.status === "loading") {
+  function renderResourceContent(readyElement, { status, error, loadingTitle, loadingDescription, errorTitle, errorDescription }) {
+    if (status === "loading") {
       return (
         <StatusScreen
-          title={options.loadingTitle || "Loading Scheme Workspace"}
-          description={options.loadingDescription || "Fetching tenant-scoped operational data..."}
+          title={loadingTitle}
+          description={loadingDescription || "Fetching tenant-scoped operational data..."}
         />
       );
     }
 
-    if (data.status === "error") {
+    if (status === "error") {
       return (
         <StatusScreen
-          title={options.errorTitle || "Unable to Load Workspace Data"}
-          description={data.error || options.errorDescription || "The API responses were unavailable."}
+          title={errorTitle}
+          description={error || errorDescription || "The requested API resource is unavailable."}
           actionLabel="Retry"
           onAction={data.refreshNow}
         />
@@ -98,13 +98,7 @@ function InvestigatorRoutes() {
           element={
             platformOnly ? <Navigate to="/admin/platform" replace /> : (
               <RequireRoleAccess navKey="dashboard">
-                {renderPageContent(
-                  <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />,
-                  {
-                    loadingTitle: "Loading Dashboard",
-                    errorTitle: "Dashboard Unavailable",
-                  },
-                )}
+                <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />
               </RequireRoleAccess>
             )
           }
@@ -113,10 +107,12 @@ function InvestigatorRoutes() {
           path="claims"
           element={
             <RequireRoleAccess navKey="claims">
-              {renderPageContent(<ClaimsExplorerPage claims={data.claims} claimsStatus={data.claimsStatus} claimsError={data.claimsError} onRetryClaims={data.refreshNow} />, {
-                loadingTitle: "Loading Claims Explorer",
-                errorTitle: "Claims Explorer Unavailable",
-              })}
+              <ClaimsExplorerPage
+                claims={data.claims}
+                claimsStatus={data.claimsStatus}
+                claimsError={data.claimsError}
+                onRetryClaims={data.refreshNow}
+              />
             </RequireRoleAccess>
           }
         />
@@ -124,10 +120,7 @@ function InvestigatorRoutes() {
           path="claims/:claimId"
           element={
             <RequireRoleAccess navKey="claims">
-              {renderPageContent(<ClaimDetailsPage report={data.report} graph={data.graph} risk={data.risk} />, {
-                loadingTitle: "Loading Claim Details",
-                errorTitle: "Claim Details Unavailable",
-              })}
+              <ClaimDetailsPage report={data.report} graph={data.graph} risk={data.risk} />
             </RequireRoleAccess>
           }
         />
@@ -135,7 +128,9 @@ function InvestigatorRoutes() {
           path="network"
           element={
             <RequireRoleAccess navKey="network">
-              {renderPageContent(<NetworkPage graph={data.graph} />, {
+              {renderResourceContent(<NetworkPage graph={data.graph} />, {
+                status: data.graphStatus,
+                error: data.graphError,
                 loadingTitle: "Loading Network Graph",
                 errorTitle: "Network Graph Unavailable",
               })}
@@ -146,7 +141,9 @@ function InvestigatorRoutes() {
           path="risk"
           element={
             <RequireRoleAccess navKey="risk">
-              {renderPageContent(<RiskPage risk={data.risk} report={data.report} />, {
+              {renderResourceContent(<RiskPage risk={data.risk} report={data.report} />, {
+                status: data.riskStatus,
+                error: data.riskError,
                 loadingTitle: "Loading Risk Panel",
                 errorTitle: "Risk Panel Unavailable",
               })}
@@ -157,7 +154,9 @@ function InvestigatorRoutes() {
           path="history"
           element={
             <RequireRoleAccess navKey="history">
-              {renderPageContent(<HistoryPage snapshots={data.snapshots} />, {
+              {renderResourceContent(<HistoryPage snapshots={data.snapshots} />, {
+                status: data.reportStatus,
+                error: data.reportError,
                 loadingTitle: "Loading Detection History",
                 errorTitle: "Detection History Unavailable",
               })}
