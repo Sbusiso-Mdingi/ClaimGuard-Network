@@ -38,6 +38,14 @@ function roleOperationalPermissions(roles) {
   return (roles || []).flatMap((role) => ROLE_OPERATIONAL_PERMISSION_OVERLAYS[role] || []);
 }
 
+function actorOperationalTenantId(actor) {
+  if (actor?.legacyTenant?.tenantId) return actor.legacyTenant.tenantId;
+  if (actor?.organisation?.organisationType === "medical_scheme") {
+    return actor.organisation.organisationId || null;
+  }
+  return null;
+}
+
 export function createAuthenticatedAuthContext({
   userId, roles, permissions = null, tenantId, organisationId = null, membershipId = null,
   displayName = null, organisation = null, source = "session",
@@ -193,7 +201,7 @@ export function createSessionAuthenticationProvider({ authenticationService, con
             displayName: actor.user.displayName,
             roles: actor.roles,
             permissions: operationalPermissions(actor.permissions, actor.roles),
-            tenantId: actor.legacyTenant?.tenantId || null,
+            tenantId: actorOperationalTenantId(actor),
             organisationId: actor.organisation.organisationId,
             membershipId: actor.membership.membershipId,
             organisation: actor.organisation,
