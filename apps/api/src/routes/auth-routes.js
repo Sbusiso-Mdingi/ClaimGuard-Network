@@ -57,6 +57,8 @@ async function loginHandler(c, { authenticationService, configuration }) {
       organisationSlug: input.organisationSlug || pathSlug,
       username: input.username,
       password: input.password,
+      // A non-ID sentinel guarantees that an unknown path organisation cannot
+      // match while still exercising ordinary password timing/throttling.
       requiredOrganisationId: pathSlug ? pathOrganisation?.organisationId || "path-organisation-unresolved" : null,
     }, c.get("authenticationMetadata") || {});
     const previous = c.get("resolvedSession") || null;
@@ -94,35 +96,64 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
   });
 
   app.post("/auth/invitation/validate", async (c) => {
-    if (!controlPlaneService) return c.json({ available: false, code: "NOT_CONFIGURED", message: "Invitations are not configured." }, 404);
+    if (!controlPlaneService) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Invitations are not configured." }, 404);
+    }
+
     let input;
     try { input = await c.req.json(); } catch { input = {}; }
     const token = input?.token;
-    if (!token || typeof token !== "string") return c.json({ available: false, code: "INVALID_INPUT", message: "An invitation token is required." }, 400);
+
+    if (!token || typeof token !== "string") {
+      return c.json({ available: false, code: "INVALID_INPUT", message: "An invitation token is required." }, 400);
+    }
+
     try {
       const invitation = await controlPlaneService.getInvitationByToken(token);
-      if (!invitation) return c.json({ available: false, code: "INVITATION_NOT_FOUND", message: "This invitation link is invalid." }, 404);
-      if (invitation.status !== "pending") return c.json({ available: false, code: "INVITATION_CONSUMED", message: "This invitation has already been used." }, 410);
-      if (new Date(invitation.expiresAt) < new Date()) return c.json({ available: false, code: "INVITATION_EXPIRED", message: "This invitation has expired." }, 410);
-      return c.json({ available: true, organisationName: invitation.organisationName, canonicalSlug: invitation.canonicalSlug, email: invitation.email });
+      if (!invitation) {
+        return c.json({ available: false, code: "INVITATION_NOT_FOUND", message: "This invitation link is invalid." }, 404);
+      }
+      if (invitation.status !== "pending") {
+        return c.json({ available: false, code: "INVITATION_CONSUMED", message: "This invitation has already been used." }, 410);
+      }
+      if (new Date(invitation.expiresAt) < new Date()) {
+        return c.json({ available: false, code: "INVITATION_EXPIRED", message: "This invitation has expired." }, 410);
+      }
+      return c.json({
+        available: true,
+        organisationName: invitation.organisationName,
+        canonicalSlug: invitation.canonicalSlug,
+        email: invitation.email,
+      });
     } catch {
       return c.json({ available: false, code: "INVITATION_ERROR", message: "Could not validate invitation." }, 400);
     }
   });
 
   app.post("/auth/signup", async (c) => {
-    if (!controlPlaneService) return c.json({ available: false, code: "NOT_CONFIGURED", message: "Signup is not configured." }, 404);
+    if (!controlPlaneService) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Signup is not configured." }, 404);
+    }
     let input;
     try { input = await c.req.json(); } catch { input = {}; }
     const { token, displayName, username, password } = input;
-    if (!token || !displayName || !username || !password) return c.json({ available: false, code: "INVALID_INPUT", message: "token, displayName, username, and password are required." }, 400);
-    if (password.length < 8) return c.json({ available: false, code: "WEAK_PASSWORD", message: "Password must be at least 8 characters." }, 400);
+    if (!token || !displayName || !username || !password) {
+      return c.json({ available: false, code: "INVALID_INPUT", message: "token, displayName, username, and password are required." }, 400);
+    }
+    if (password.length < 8) {
+      return c.json({ available: false, code: "WEAK_PASSWORD", message: "Password must be at least 8 characters." }, 400);
+    }
     try {
       const result = await controlPlaneService.signupWithInvitation({ token, displayName, username, password }, {});
-      return c.json({ available: true, message: "Account created successfully. You can now sign in.", user: { userId: result.user.userId, displayName: result.user.displayName } }, 201);
+      return c.json({
+        available: true,
+        message: "Account created successfully. You can now sign in.",
+        user: { userId: result.user.userId, displayName: result.user.displayName },
+      }, 201);
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 400;
-      return c.json({ available: false, code: error?.code || "SIGNUP_FAILED", message: error?.message || "Signup failed." }, status);
+      const code = error?.code || "SIGNUP_FAILED";
+      return c.json({ available: false, code, message: error?.message || "Signup failed." }, status);
     }
   });
 
@@ -135,9 +166,7 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
       configuration.demoCredentials
         .map((entry) => {
           const username = entry.usernameDisplayValue || entry.username || null;
-          return username
-            ? [`${entry.organisationSlug}:${username}`, entry.password]
-            : null;
+          return username ? [`${entry.organisationSlug}:${username}`, entry.password] : null;
         })
         .filter(Boolean),
     );
