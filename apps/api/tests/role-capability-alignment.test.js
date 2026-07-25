@@ -20,15 +20,27 @@ function headerContext(role) {
   });
 }
 
-test("fraud analysts and investigators can read tenant claims", () => {
+function sessionContext(role, controlPermissions = []) {
+  return createAuthenticatedAuthContext({
+    userId: `${role}-user`,
+    roles: [role],
+    permissions: operationalPermissions(controlPermissions, [role]),
+    tenantId: "tenant-alpha",
+  });
+}
+
+test("session fraud analysts and investigators can read tenant claims", () => {
   for (const role of ["fraud_analyst", "investigator"]) {
-    const context = headerContext(role);
+    const context = sessionContext(role);
     assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
   }
 });
 
-test("scheme administrators receive read-only operational visibility", () => {
-  const context = headerContext("scheme_administrator");
+test("scheme administrator sessions receive read-only operational visibility", () => {
+  const context = sessionContext("scheme_administrator", [
+    "scheme_users.manage",
+    "scheme_health.view",
+  ]);
 
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
   assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN), true);
@@ -52,12 +64,12 @@ test("session capability translation applies role overlays during migration roll
     "reports.view_own",
     "investigations.view",
   ]));
+});
 
-  const context = createAuthenticatedAuthContext({
-    userId: "scheme-admin-1",
-    roles: ["scheme_administrator"],
-    permissions: capabilities,
-    tenantId: "tenant-alpha",
-  });
-  assert.equal(hasPermission(context, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
+test("demo-header rollback authority remains governed by the legacy role map", () => {
+  const investigator = headerContext("investigator");
+  const schemeAdministrator = headerContext("scheme_administrator");
+
+  assert.equal(hasPermission(investigator, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), false);
+  assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN), false);
 });
