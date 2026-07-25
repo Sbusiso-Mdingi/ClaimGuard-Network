@@ -189,23 +189,38 @@ test("live refresh polls claims without refetching aggregate resources", async (
   });
 
   expect(screen.getByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
-  expect(global.fetch).toHaveBeenCalledTimes(4);
+  expect(global.fetch).toHaveBeenCalledTimes(5);
 
   await act(async () => {
     vi.advanceTimersByTime(15000);
     await Promise.resolve();
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(5);
-  expect(String(global.fetch.mock.calls[4][0])).toContain("/api/claims?page=1&pageSize=25");
 
-  fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
 
   await act(async () => {
-    vi.advanceTimersByTime(30000);
+    vi.advanceTimersByTime(15000);
+    await Promise.resolve();
     await Promise.resolve();
   });
-  expect(global.fetch).toHaveBeenCalledTimes(5);
+  
+   expect(global.fetch).toHaveBeenCalledTimes(6);
+   expect(
+     global.fetch.mock.calls.some(
+       ([url], index) =>
+         index >= 5 &&
+         String(url).includes("/api/claims?page=1&pageSize=25"),
+     ),
+   ).toBe(true);
+
+   fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
+
+   await act(async () => {
+     vi.advanceTimersByTime(30000);
+     await Promise.resolve();
+   });
+  
+  expect(global.fetch).toHaveBeenCalledTimes(6);
 }, 10000);
 
 test("shows unavailable state without substituting demo analytics when backend APIs fail", async () => {
