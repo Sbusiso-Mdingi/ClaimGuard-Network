@@ -11,8 +11,6 @@ import { ClaimDetailsPage } from "./features/investigator/ClaimDetailsPage";
 import { NetworkPage } from "./features/investigator/NetworkPage";
 import { RiskPage } from "./features/investigator/RiskPage";
 import { HistoryPage } from "./features/investigator/HistoryPage";
-
-// 1. Added top-level context and page imports
 import { RoleProvider, useRole } from "./context/RoleContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { SignupPage } from "./features/auth/SignupPage";
@@ -31,94 +29,53 @@ function StatusScreen({ title, description, actionLabel, onAction }) {
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
-        {actionLabel ? (
-          <CardContent>
-            <Button onClick={onAction}>{actionLabel}</Button>
-          </CardContent>
-        ) : null}
+        {actionLabel ? <CardContent><Button onClick={onAction}>{actionLabel}</Button></CardContent> : null}
       </Card>
     </div>
   );
 }
 
+function hasAnyCapability(identity, capabilities) {
+  const granted = new Set(identity?.capabilities || []);
+  return capabilities.some((capability) => granted.has(capability));
+}
+
 function InvestigatorRoutes() {
   const { identity } = useRole();
   const platformOnly = identity.organisationType === "platform";
-  
-  const investigatorRoles = [
-    "claims_analyst",
-    "scheme_user",
-    "fraud_analyst",
-    "investigator"
-  ];
-  
-  const hasInvestigatorRole = identity.roles
-    ? identity.roles.some((r) => investigatorRoles.includes(r))
-    : investigatorRoles.includes(identity.role);
-    
-  const data = useInvestigatorData({ enabled: hasInvestigatorRole && !platformOnly });
+  const operationalWorkspaceEnabled = !platformOnly && hasAnyCapability(identity, [
+    "claims.view_own",
+    "reports.view_own",
+    "investigations.view",
+  ]);
+  const data = useInvestigatorData({ enabled: operationalWorkspaceEnabled });
 
   function renderPageContent(readyElement, options = {}) {
     if (data.status === "loading") {
-      return (
-        <StatusScreen
-          title={options.loadingTitle || "Loading Investigator Workspace"}
-          description={options.loadingDescription || "Fetching detection report, graph, and risk APIs..."}
-        />
-      );
+      return <StatusScreen title={options.loadingTitle || "Loading Scheme Workspace"} description={options.loadingDescription || "Fetching tenant-scoped operational data..."} />;
     }
-
     if (data.status === "error") {
-      return (
-        <StatusScreen
-          title={options.errorTitle || "Unable to Load Investigator Data"}
-          description={data.error || options.errorDescription || "The API responses were unavailable."}
-          actionLabel="Retry"
-          onAction={data.refreshNow}
-        />
-      );
+      return <StatusScreen title={options.errorTitle || "Unable to Load Workspace Data"} description={data.error || options.errorDescription || "The API responses were unavailable."} actionLabel="Retry" onAction={data.refreshNow} />;
     }
-
     return readyElement;
   }
 
   return (
     <Routes>
-      <Route
-        path="/"
-        element={
-          <InvestigatorLayout
-            liveRefreshEnabled={data.liveRefreshEnabled}
-            setLiveRefreshEnabled={data.setLiveRefreshEnabled}
-            refreshNow={data.refreshNow}
-            lastRefresh={data.lastRefresh}
-            ledgerStatus={data.metrics.ledgerStatus}
-            dataSource={data.dataSource}
-          />
-        }
-      >
+      <Route path="/" element={<InvestigatorLayout liveRefreshEnabled={data.liveRefreshEnabled} setLiveRefreshEnabled={data.setLiveRefreshEnabled} refreshNow={data.refreshNow} lastRefresh={data.lastRefresh} ledgerStatus={data.metrics.ledgerStatus} dataSource={data.dataSource} />}>
         <Route
           index
-          element={
-            platformOnly ? <Navigate to="/admin/platform" replace /> : <RequireRoleAccess navKey="dashboard">
-              {renderPageContent(
-                <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />,
-                {
-                  loadingTitle: "Loading Dashboard",
-                  errorTitle: "Dashboard Unavailable",
-                },
-              )}
+          element={platformOnly ? <Navigate to="/admin/platform" replace /> : (
+            <RequireRoleAccess navKey="dashboard">
+              {renderPageContent(<DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />, { loadingTitle: "Loading Dashboard", errorTitle: "Dashboard Unavailable" })}
             </RequireRoleAccess>
-          }
+          )}
         />
         <Route
           path="claims"
           element={
             <RequireRoleAccess navKey="claims">
-              {renderPageContent(<ClaimsExplorerPage claims={data.claims} claimsStatus={data.claimsStatus} claimsError={data.claimsError} onRetryClaims={data.refreshNow} />, {
-                loadingTitle: "Loading Claims Explorer",
-                errorTitle: "Claims Explorer Unavailable",
-              })}
+              {renderPageContent(<ClaimsExplorerPage claims={data.claims} claimsStatus={data.claimsStatus} claimsError={data.claimsError} onRetryClaims={data.refreshNow} />, { loadingTitle: "Loading Claims Explorer", errorTitle: "Claims Explorer Unavailable" })}
             </RequireRoleAccess>
           }
         />
@@ -126,54 +83,18 @@ function InvestigatorRoutes() {
           path="claims/:claimId"
           element={
             <RequireRoleAccess navKey="claims">
-              {renderPageContent(<ClaimDetailsPage report={data.report} graph={data.graph} risk={data.risk} />, {
-                loadingTitle: "Loading Claim Details",
-                errorTitle: "Claim Details Unavailable",
-              })}
+              {renderPageContent(<ClaimDetailsPage report={data.report} graph={data.graph} risk={data.risk} />, { loadingTitle: "Loading Claim Details", errorTitle: "Claim Details Unavailable" })}
             </RequireRoleAccess>
           }
         />
-        <Route
-          path="network"
-          element={
-            <RequireRoleAccess navKey="network">
-              {renderPageContent(<NetworkPage graph={data.graph} />, {
-                loadingTitle: "Loading Network Graph",
-                errorTitle: "Network Graph Unavailable",
-              })}
-            </RequireRoleAccess>
-          }
-        />
-        <Route
-          path="risk"
-          element={
-            <RequireRoleAccess navKey="risk">
-              {renderPageContent(<RiskPage risk={data.risk} report={data.report} />, {
-                loadingTitle: "Loading Risk Panel",
-                errorTitle: "Risk Panel Unavailable",
-              })}
-            </RequireRoleAccess>
-          }
-        />
-        <Route
-          path="history"
-          element={
-            <RequireRoleAccess navKey="history">
-              {renderPageContent(<HistoryPage snapshots={data.snapshots} />, {
-                loadingTitle: "Loading Detection History",
-                errorTitle: "Detection History Unavailable",
-              })}
-            </RequireRoleAccess>
-          }
-        />
-
-        {/* 2. Added new role-protected workflow and administration routing paths here */}
+        <Route path="network" element={<RequireRoleAccess navKey="network">{renderPageContent(<NetworkPage graph={data.graph} />, { loadingTitle: "Loading Network Graph", errorTitle: "Network Graph Unavailable" })}</RequireRoleAccess>} />
+        <Route path="risk" element={<RequireRoleAccess navKey="risk">{renderPageContent(<RiskPage risk={data.risk} report={data.report} />, { loadingTitle: "Loading Risk Panel", errorTitle: "Risk Panel Unavailable" })}</RequireRoleAccess>} />
+        <Route path="history" element={<RequireRoleAccess navKey="history">{renderPageContent(<HistoryPage snapshots={data.snapshots} />, { loadingTitle: "Loading Detection History", errorTitle: "Detection History Unavailable" })}</RequireRoleAccess>} />
         <Route path="investigations" element={<RequireRoleAccess navKey="investigations"><InvestigationsPage /></RequireRoleAccess>} />
         <Route path="investigations/:investigationId" element={<RequireRoleAccess navKey="investigations"><InvestigationWorkspacePage /></RequireRoleAccess>} />
         <Route path="committee" element={<RequireRoleAccess navKey="committee"><CommitteeRegistryPage /></RequireRoleAccess>} />
         <Route path="admin/scheme" element={<RequireRoleAccess navKey="scheme-admin"><SchemeAdminPage /></RequireRoleAccess>} />
         <Route path="admin/platform" element={<RequireRoleAccess navKey="platform-admin"><PlatformAdminPage /></RequireRoleAccess>} />
-
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -182,9 +103,7 @@ function InvestigatorRoutes() {
 
 function AuthenticationBoundary() {
   const { status, authenticated, mode } = useRole();
-  if (status === "loading") {
-    return <StatusScreen title="Checking your session" description="Verifying the secure server-side session…" />;
-  }
+  if (status === "loading") return <StatusScreen title="Checking your session" description="Verifying the secure server-side session…" />;
   if (!authenticated && mode === "session") return <LoginPage />;
   return <InvestigatorRoutes />;
 }
@@ -192,7 +111,6 @@ function AuthenticationBoundary() {
 export default function AppRoot() {
   return (
     <ErrorBoundary>
-      {/* 3. Wrapped the router with the RoleProvider state element wrapper */}
       <RoleProvider>
         <BrowserRouter>
           <Routes>
