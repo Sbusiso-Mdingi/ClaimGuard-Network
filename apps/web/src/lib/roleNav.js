@@ -1,5 +1,3 @@
-import { CLAIMGUARD_ROLES } from "./claimguardRoles";
-
 export const NAV_GROUPS = [
   {
     key: "your-scheme",
@@ -10,37 +8,38 @@ export const NAV_GROUPS = [
         key: "dashboard",
         to: "/",
         label: "Dashboard",
-        roles: [CLAIMGUARD_ROLES.SCHEME_USER, CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR],
+        capabilities: ["reports.view_own", "claims.view_own"],
+        capabilityMode: "any",
       },
       {
         key: "claims",
         to: "/claims",
         label: "Claims",
-        roles: [CLAIMGUARD_ROLES.SCHEME_USER, CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR],
+        capabilities: ["claims.view_own"],
       },
       {
         key: "investigations",
         to: "/investigations",
         label: "Investigations",
-        roles: [CLAIMGUARD_ROLES.INVESTIGATOR, CLAIMGUARD_ROLES.FRAUD_ANALYST],
+        capabilities: ["investigations.view"],
       },
       {
         key: "network",
         to: "/network",
         label: "Network",
-        roles: [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR],
+        capabilities: ["reports.view_own"],
       },
       {
         key: "risk",
         to: "/risk",
         label: "Risk",
-        roles: [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR],
+        capabilities: ["reports.view_own"],
       },
       {
         key: "history",
         to: "/history",
         label: "History",
-        roles: [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR],
+        capabilities: ["reports.view_own"],
       },
     ],
   },
@@ -53,12 +52,8 @@ export const NAV_GROUPS = [
         key: "committee",
         to: "/committee",
         label: "Shared Fraud Registry",
-        roles: [
-          CLAIMGUARD_ROLES.NEW_APPLICATIONS_OFFICER,
-          CLAIMGUARD_ROLES.INVESTIGATOR,
-          CLAIMGUARD_ROLES.FRAUD_ANALYST,
-          CLAIMGUARD_ROLES.SCHEME_USER,
-        ],
+        capabilities: ["fraud_registry.search", "fraud_registry.view"],
+        capabilityMode: "any",
       },
     ],
   },
@@ -71,16 +66,27 @@ export const NAV_GROUPS = [
         key: "scheme-admin",
         to: "/admin/scheme",
         label: "Scheme Administration",
-        roles: [CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR],
+        capabilities: ["users.manage_tenant", "tenant_status.view"],
+        capabilityMode: "any",
       },
       {
         key: "platform-admin",
         to: "/admin/platform",
         label: "Platform Administration",
-        roles: [CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR],
+        capabilities: ["tenants.manage", "platform_health.view"],
+        capabilityMode: "any",
       },
     ],
   },
 ];
 
 export const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
+
+export function canAccessNavItem(identity, item) {
+  if (!item) return true;
+  const granted = new Set(identity?.capabilities || []);
+  const required = item.capabilities || [];
+  if (required.length === 0) return true;
+  if (item.capabilityMode === "any") return required.some((capability) => granted.has(capability));
+  return required.every((capability) => granted.has(capability));
+}
