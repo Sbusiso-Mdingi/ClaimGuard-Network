@@ -33,6 +33,7 @@ env:
   MODEL_SERVICE_AUDIENCE: ${{ vars.MODEL_SERVICE_AUDIENCE }}
   MODEL_DEPLOYMENT_ID: ${{ vars.MODEL_DEPLOYMENT_ID || 'claimguard-claim-fraud-ensemble:1.1.0' }}
   MODEL_PSEUDONYM_SECRET_NAME: ${{ vars.MODEL_PSEUDONYM_SECRET_NAME || 'claimguard--report-worker--model-pseudonymization-key' }}
+  VALIDATED_MAIN_SHA: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
   deploy:
@@ -40,12 +41,13 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
-    environment: production
+    # Do not attach a GitHub environment here. The Azure application is federated
+    # to the repository's main-branch OIDC subject, not an environment subject.
     steps:
       - name: Checkout the validated main commit
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.VALIDATED_MAIN_SHA }}
 
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -70,6 +72,7 @@ jobs:
             REPORT_STORAGE_CONTAINER MODEL_SERVICE_BASE_URL
             MODEL_SERVICE_AUDIENCE MODEL_DEPLOYMENT_ID
             MODEL_PSEUDONYM_SECRET_NAME MODEL_PSEUDONYMIZATION_KEY
+            VALIDATED_MAIN_SHA
           )
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then
@@ -98,7 +101,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_TAG="$VALIDATED_MAIN_SHA"
           IMAGE_REPOSITORY="claimguard/report-producer"
           az acr build \
             --registry "$REPORT_WORKER_ACR_NAME" \
@@ -116,7 +119,7 @@ jobs:
           set -euo pipefail
           az deployment group create \
             --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "report-worker-${GITHUB_SHA::12}" \
+            --name "report-worker-${VALIDATED_MAIN_SHA::12}" \
             --template-file infra/report-worker.bicep \
             --parameters \
               containerAppsEnvironmentName="$REPORT_WORKER_ENVIRONMENT_NAME" \
