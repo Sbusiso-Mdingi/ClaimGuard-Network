@@ -297,6 +297,7 @@ test("detection status distinguishes a stale report after model failure", async 
           status: "retry",
           attemptCount: 2,
           maxAttempts: 5,
+          failureCode: "MODEL_SERVICE_UNAVAILABLE",
           failedWatermark: "new-window",
           coveredReportId: null,
           coveredWatermark: null,
