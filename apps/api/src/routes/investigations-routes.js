@@ -96,6 +96,31 @@ export function registerInvestigationsRoutes(
   );
 
   app.get(
+    "/investigations/queue",
+    requireInvestigationsView,
+    async (c) => {
+      if (!investigationService.hasMethod("listInvestigations")) {
+        return investigationRepositoryUnavailable(c);
+      }
+
+      try {
+        const result = await investigationService.listInvestigations({
+          page: c.req.query("page"),
+          pageSize: c.req.query("pageSize"),
+          status: c.req.query("status") || null,
+          priority: c.req.query("priority") || null,
+          search: c.req.query("search") || null,
+          assignment: c.req.query("assignment") || "all",
+          actorId: c.get("authContext")?.user_id || null,
+        });
+        return c.json({ available: true, ...result }, 200);
+      } catch (error) {
+        return investigationErrorResponse(c, error);
+      }
+    },
+  );
+
+  app.get(
     "/investigations/:id",
     requireInvestigationsView,
     async (c) => {

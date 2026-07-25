@@ -4,6 +4,7 @@ import { createClaimProcessingOutboxRepository } from "./claim-processing-outbox
 import { createDatabaseFromPool } from "./client.js";
 import { requireOperationalDataPlaneContext } from "./data-plane-context.js";
 import { createFraudWorkflowRepository } from "./fraud-workflow-repository.js";
+import { createInvestigationQueueRepository } from "./investigation-queue-repository.js";
 import { createInvestigationRepository } from "./investigation-repository.js";
 import { createLedgerRepository } from "./ledger-repository.js";
 import { createSharedFraudRegistryRepository } from "./shared-fraud-registry-repository.js";
@@ -17,6 +18,10 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
   const db = createDatabaseFromPool(pool);
   const options = { dataPlaneContext: context, allowLegacyTenantContext: false };
   const scopedReads = createScopedReadRepositories(context, pool);
+  const investigations = Object.freeze({
+    ...createInvestigationRepository(pool, options),
+    ...createInvestigationQueueRepository(pool, options),
+  });
   return Object.freeze({
     dataPlaneContext: context,
     claims: createClaimIngestionRepository(pool, options),
@@ -24,7 +29,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     members: scopedReads.members,
     providers: scopedReads.providers,
     claimProcessingOutbox: createClaimProcessingOutboxRepository(pool, options),
-    investigations: createInvestigationRepository(pool, options),
+    investigations,
     ledger: createLedgerRepository(db, pool, options),
     registry: createSharedFraudRegistryRepository(pool, options),
     fraudWorkflow: createFraudWorkflowRepository(pool, options),
