@@ -6,6 +6,10 @@ export function createInvestigationService({ investigationRepository = null } = 
   return {
     hasMethod,
 
+    async listInvestigations(filters = {}) {
+      return investigationRepository.listInvestigations(filters);
+    },
+
     async createInvestigation({ claimId, assignedInvestigator = null, assignedBy, priority }) {
       return investigationRepository.createInvestigation({
         claimId,
