@@ -164,35 +164,33 @@ export function InvestigationsPage() {
         ) : investigations.length === 0 && status !== "error" ? (
           <EmptyState icon={Search} title="No investigations found" description={activeFilterCount > 0 ? "No cases match the current filters." : "Escalated claims will appear here automatically."} compact />
         ) : (
-          <DataTableShell label="Investigation queue">
-            <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="border-b border-border/70 text-xs uppercase tracking-wider text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3">Investigation</th>
-                  <th className="px-4 py-3">Claim</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Priority</th>
-                  <th className="px-4 py-3">Assignment</th>
-                  <th className="px-4 py-3">Case material</th>
-                  <th className="px-4 py-3">Updated</th>
-                  <th className="px-4 py-3"><span className="sr-only">Action</span></th>
+          <DataTableShell ariaLabel="Investigation queue" minWidth="900px">
+            <thead className="border-b border-border/70 text-xs uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3">Investigation</th>
+                <th className="px-4 py-3">Claim</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Priority</th>
+                <th className="px-4 py-3">Assignment</th>
+                <th className="px-4 py-3">Case material</th>
+                <th className="px-4 py-3">Updated</th>
+                <th className="px-4 py-3"><span className="sr-only">Action</span></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/70">
+              {investigations.map((investigation) => (
+                <tr key={investigation.investigationId}>
+                  <td className="px-4 py-4 font-data text-xs">{investigation.investigationId}</td>
+                  <td className="px-4 py-4 font-data text-xs">{investigation.claimId}</td>
+                  <td className="px-4 py-4"><StatusIndicator variant="badge">{formatEnumLabel(investigation.status)}</StatusIndicator></td>
+                  <td className="px-4 py-4"><StatusIndicator variant="badge" tone={priorityTone(investigation.priority)}>{formatEnumLabel(investigation.priority)}</StatusIndicator></td>
+                  <td className="px-4 py-4">{investigation.assignedInvestigator || "Unassigned"}</td>
+                  <td className="px-4 py-4 text-muted-foreground">{investigation.noteCount} notes · {investigation.evidenceCount} evidence</td>
+                  <td className="px-4 py-4 text-muted-foreground">{formatDate(investigation.updatedAt)}</td>
+                  <td className="px-4 py-4 text-right"><Link to={`/investigations/${encodeURIComponent(investigation.investigationId)}`} className="font-medium text-primary hover:underline">Open workspace</Link></td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-border/70">
-                {investigations.map((investigation) => (
-                  <tr key={investigation.investigationId}>
-                    <td className="px-4 py-4 font-data text-xs">{investigation.investigationId}</td>
-                    <td className="px-4 py-4 font-data text-xs">{investigation.claimId}</td>
-                    <td className="px-4 py-4"><StatusIndicator variant="badge">{formatEnumLabel(investigation.status)}</StatusIndicator></td>
-                    <td className="px-4 py-4"><StatusIndicator variant="badge" tone={priorityTone(investigation.priority)}>{formatEnumLabel(investigation.priority)}</StatusIndicator></td>
-                    <td className="px-4 py-4">{investigation.assignedInvestigator || "Unassigned"}</td>
-                    <td className="px-4 py-4 text-muted-foreground">{investigation.noteCount} notes · {investigation.evidenceCount} evidence</td>
-                    <td className="px-4 py-4 text-muted-foreground">{formatDate(investigation.updatedAt)}</td>
-                    <td className="px-4 py-4 text-right"><Link to={`/investigations/${encodeURIComponent(investigation.investigationId)}`} className="font-medium text-primary hover:underline">Open workspace</Link></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              ))}
+            </tbody>
           </DataTableShell>
         )}
 
