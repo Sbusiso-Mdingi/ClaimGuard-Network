@@ -98,7 +98,15 @@ function InvestigatorRoutes() {
           element={
             platformOnly ? <Navigate to="/admin/platform" replace /> : (
               <RequireRoleAccess navKey="dashboard">
-                <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />
+                {renderResourceContent(
+                  <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />,
+                  {
+                    status: data.error ? "error" : data.status,
+                    error: data.error,
+                    loadingTitle: "Loading Dashboard",
+                    errorTitle: "Dashboard Unavailable",
+                  },
+                )}
               </RequireRoleAccess>
             )
           }
