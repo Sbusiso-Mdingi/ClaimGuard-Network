@@ -34,12 +34,14 @@ function renderLayout() {
   );
 }
 
-test("default demo identity (Claims Analyst) does not see Scheme Administration nav", () => {
+test("fraud analyst sees operational navigation but not scheme administration", () => {
   renderLayout();
+  expect(screen.getByRole("link", { name: /Claims/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Investigations/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();
 });
 
-test("switching the dev role switcher to Scheme Administrator reveals admin nav and hides analyst nav", async () => {
+test("scheme administrator sees read-only operational navigation and administration", async () => {
   const user = userEvent.setup();
   renderLayout();
 
@@ -47,5 +49,8 @@ test("switching the dev role switcher to Scheme Administrator reveals admin nav 
   await user.selectOptions(identitySelect, "scheme-admin-alpha");
 
   expect(await screen.findByRole("link", { name: /Scheme Administration/i })).toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: /Claims Explorer/i })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Claims/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Investigations/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Shared Fraud Registry/i })).not.toBeInTheDocument();
 });
