@@ -8,6 +8,7 @@ import time
 
 from .worker import create_discovered_workers_from_environment, create_worker_from_environment
 
+
 def build_worker_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the ClaimGuard durable report-producer worker")
     parser.add_argument(
@@ -87,3 +88,7 @@ def main(argv: list[str] | None = None) -> int:
             "error_type": type(error).__name__,
         }, sort_keys=True), file=sys.stderr)
         return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
