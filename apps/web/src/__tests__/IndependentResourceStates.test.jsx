@@ -80,6 +80,10 @@ const pageTwoClaims = {
   pagination: { page: 2, pageSize: 2, total: 3, totalPages: 2, hasNextPage: false },
 };
 
+function claimsNavigationLink() {
+  return within(screen.getByRole("complementary")).getByRole("link", { name: /Claims/i });
+}
+
 beforeEach(() => {
   window.history.pushState({}, "", "/");
   window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
@@ -119,7 +123,7 @@ test("keeps claims and other healthy resources usable when the report request fa
   expect(await screen.findByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
   expect(screen.queryByText(/Dashboard Unavailable/i)).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+  await user.click(claimsNavigationLink());
 
   expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "C-QUEUED-1" })).toBeInTheDocument();
@@ -130,7 +134,7 @@ test("shows truthful processing and failure states", async () => {
   render(<AppRoot />);
 
   await screen.findByRole("heading", { name: /Claims risk intelligence/i });
-  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+  await user.click(claimsNavigationLink());
 
   expect((await screen.findAllByText("Awaiting scoring")).length).toBeGreaterThan(0);
   expect(screen.getAllByText("Scoring failed").length).toBeGreaterThan(0);
@@ -145,7 +149,7 @@ test("uses server pagination and loads the requested page only", async () => {
   render(<AppRoot />);
 
   await screen.findByRole("heading", { name: /Claims risk intelligence/i });
-  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+  await user.click(claimsNavigationLink());
 
   expect(await screen.findByText(/Page 1 \/ 2/i)).toBeInTheDocument();
   expect(screen.getByText(/Showing server records 1–2 of 3/i)).toBeInTheDocument();
@@ -167,7 +171,7 @@ test("manual claims refresh does not refetch report, graph or aggregate risk", a
   render(<AppRoot />);
 
   await screen.findByRole("heading", { name: /Claims risk intelligence/i });
-  await user.click(screen.getByRole("link", { name: /Claims(?: Explorer| Review Table)?/i }));
+  await user.click(claimsNavigationLink());
   await screen.findByRole("heading", { name: /Claims review table/i });
 
   const aggregateCallsBefore = global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/detection/")).length;
