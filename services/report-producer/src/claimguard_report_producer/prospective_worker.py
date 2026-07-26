@@ -3,11 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from .contract import ReportContractError, validate_detection_report
+from .ordered_prospective_model_service import ProspectiveModelServiceClient
 from .outbox import OutboxContractError, OutboxJob
-from .prospective_model_service import (
-    ProspectiveModelContractError,
-    ProspectiveModelServiceClient,
-)
+from .prospective_model_service import ProspectiveModelContractError
 from .prospective_report import build_prospective_detection_report
 from .prospective_results import load_or_score_prospective_result
 from .prospective_snapshot import ProspectiveBaselineSnapshotRepository
@@ -22,7 +20,7 @@ from .worker import (
 
 
 class ProspectiveAwareReportProducerWorker(ReportProducerWorker):
-    """Uses the v3 baseline path only for approved-model jobs."""
+    """Uses the v3 trained-ML path only for approved-model jobs."""
 
     def __init__(self, *args, prospective_client=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
