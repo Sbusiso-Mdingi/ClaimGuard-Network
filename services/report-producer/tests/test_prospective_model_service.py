@@ -4,13 +4,15 @@ import json
 from unittest import TestCase
 
 from claimguard_report_producer.model_service import ModelHttpResponse
+from claimguard_report_producer.ordered_prospective_model_service import (
+    ProspectiveModelServiceClient,
+)
 from claimguard_report_producer.prospective_model_service import (
     ANALYSIS_MODE,
     FEATURE_SCHEMA_VERSION,
     MODEL_ID,
     MODEL_VERSION,
     ProspectiveModelContractError,
-    ProspectiveModelServiceClient,
 )
 from claimguard_report_producer.prospective_snapshot import PREDICTOR_NAMES
 from claimguard_report_producer.snapshot import ProspectiveScoringSnapshot
