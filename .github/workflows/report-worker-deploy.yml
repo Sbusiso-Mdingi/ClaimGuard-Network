@@ -188,7 +188,7 @@ jobs:
               MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD="$MODEL_EXPECTED_BASELINE_THRESHOLD" \
             --only-show-errors
 
-      - name: Configure API report storage
+      - name: Configure API report storage and prospective model selection
         shell: bash
         run: |
           set -euo pipefail
@@ -199,10 +199,12 @@ jobs:
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+              APPROVED_MODEL_DEPLOYMENT_IDS="$MODEL_DEPLOYMENT_ID" \
+              CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID="$MODEL_DEPLOYMENT_ID" \
             >/dev/null
           az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API"
 
-      - name: Verify parked worker and API report-storage configuration
+      - name: Verify parked worker and API prospective configuration
         shell: bash
         run: |
           set -euo pipefail
@@ -217,7 +219,12 @@ jobs:
           SETTINGS="$(az webapp config appsettings list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_WEBAPP_API" \
-            --query "[?name=='REPORT_STORAGE_BACKEND' || name=='REPORT_STORAGE_ACCOUNT_URL' || name=='REPORT_STORAGE_CONTAINER'].{name:name,value:value}" \
+            --query "[?name=='REPORT_STORAGE_BACKEND' || name=='REPORT_STORAGE_ACCOUNT_URL' || name=='REPORT_STORAGE_CONTAINER' || name=='APPROVED_MODEL_DEPLOYMENT_IDS' || name=='CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID'].{name:name,value:value}" \
             --output json)"
           echo "$SETTINGS"
-          test "$(echo "$SETTINGS" | jq length)" -eq 3
+          test "$(echo "$SETTINGS" | jq length)" -eq 5
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "REPORT_STORAGE_BACKEND") | .value')" = "azure_blob"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "REPORT_STORAGE_ACCOUNT_URL") | .value')" = "$REPORT_STORAGE_ACCOUNT_URL"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "REPORT_STORAGE_CONTAINER") | .value')" = "$REPORT_STORAGE_CONTAINER"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
