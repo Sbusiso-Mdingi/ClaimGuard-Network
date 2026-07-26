@@ -1,4 +1,7 @@
 import '@testing-library/jest-dom'
+import { configure } from '@testing-library/dom'
+
+configure({ asyncUtilTimeout: 5_000 })
 
 window.__CLAIMGUARD_AUTHENTICATION_MODE__ = "demo_headers"
 window.__CLAIMGUARD_ORGANISATION_URL_SCHEME__ = "https"

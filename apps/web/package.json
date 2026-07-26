@@ -23,6 +23,7 @@
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.4.3",
+    "@vitest/coverage-v8": "2.1.9",
     "autoprefixer": "^10.4.20",
     "jsdom": "^22.1.0",
     "postcss": "^8.4.45",
@@ -35,6 +36,7 @@
     "build": "cd src && vite build --outDir ../dist --emptyOutDir",
     "lint": "node --check src/server.js && node --check src/sentry-smoke.js",
     "serve": "doppler run -- node src/server.js",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "test:coverage": "vitest --run --coverage"
   }
 }
