@@ -29,10 +29,13 @@ env:
   REPORT_STORAGE_ACCOUNT_NAME: ${{ vars.REPORT_STORAGE_ACCOUNT_NAME || 'cgrpt0715sa' }}
   REPORT_STORAGE_ACCOUNT_URL: ${{ vars.REPORT_STORAGE_ACCOUNT_URL || 'https://cgrpt0715sa.blob.core.windows.net' }}
   REPORT_STORAGE_CONTAINER: ${{ vars.REPORT_STORAGE_CONTAINER || 'claimguard-reports' }}
-  MODEL_SERVICE_BASE_URL: ${{ vars.MODEL_SERVICE_BASE_URL || 'https://claimguard-ml-inference.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io' }}
+  MODEL_SERVICE_BASE_URL: ${{ vars.PROSPECTIVE_MODEL_SERVICE_BASE_URL }}
   MODEL_SERVICE_AUDIENCE: ${{ vars.MODEL_SERVICE_AUDIENCE }}
-  MODEL_DEPLOYMENT_ID: ${{ vars.MODEL_DEPLOYMENT_ID || 'claimguard-claim-fraud-ensemble:1.1.0' }}
+  MODEL_SERVICE_ENDPOINT_PATH: /v3/claim-screening
+  MODEL_DEPLOYMENT_ID: claimguard-claim-fraud-baseline:1.0.0
+  MODEL_EXPECTED_BASELINE_THRESHOLD: '0.08760971001434723'
   MODEL_PSEUDONYM_SECRET_NAME: ${{ vars.MODEL_PSEUDONYM_SECRET_NAME || 'claimguard--report-worker--model-pseudonymization-key' }}
+  PARKED_WORKER_CRON: '0 0 1 1 *'
   VALIDATED_MAIN_SHA: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
@@ -68,9 +71,10 @@ jobs:
             REPORT_WORKER_IDENTITY_NAME REPORT_WORKER_JOB_NAME
             REPORT_STORAGE_ACCOUNT_NAME REPORT_STORAGE_ACCOUNT_URL
             REPORT_STORAGE_CONTAINER MODEL_SERVICE_BASE_URL
-            MODEL_SERVICE_AUDIENCE MODEL_DEPLOYMENT_ID
+            MODEL_SERVICE_AUDIENCE MODEL_SERVICE_ENDPOINT_PATH
+            MODEL_DEPLOYMENT_ID MODEL_EXPECTED_BASELINE_THRESHOLD
             MODEL_PSEUDONYM_SECRET_NAME MODEL_PSEUDONYMIZATION_KEY
-            VALIDATED_MAIN_SHA
+            PARKED_WORKER_CRON VALIDATED_MAIN_SHA
           )
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then
@@ -78,6 +82,13 @@ jobs:
               exit 1
             fi
           done
+
+          case "$MODEL_SERVICE_BASE_URL" in
+            https://*) ;;
+            *) echo "PROSPECTIVE_MODEL_SERVICE_BASE_URL must be an HTTPS origin"; exit 1 ;;
+          esac
+          test "$MODEL_SERVICE_ENDPOINT_PATH" = "/v3/claim-screening"
+          test "$MODEL_DEPLOYMENT_ID" = "claimguard-claim-fraud-baseline:1.0.0"
 
       - name: Ensure report-worker managed identity and pseudonym key
         shell: bash
@@ -138,7 +149,7 @@ jobs:
           docker push "$REPORT_WORKER_IMAGE"
           echo "REPORT_WORKER_IMAGE=$REPORT_WORKER_IMAGE" >> "$GITHUB_ENV"
 
-      - name: Deploy scheduled claim-scoring worker
+      - name: Deploy parked prospective claim-scoring worker
         shell: bash
         env:
           MODEL_PSEUDONYMIZATION_KEY: ${{ secrets.MODEL_SERVICE_PSEUDONYMIZATION_KEY }}
@@ -167,6 +178,16 @@ jobs:
               manageRoleAssignments=false \
             --only-show-errors
 
+          az containerapp job update \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            --cron-expression "$PARKED_WORKER_CRON" \
+            --set-env-vars \
+              MODEL_SERVICE_ENDPOINT_PATH="$MODEL_SERVICE_ENDPOINT_PATH" \
+              MODEL_SERVICE_DEPLOYMENT_ID="$MODEL_DEPLOYMENT_ID" \
+              MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD="$MODEL_EXPECTED_BASELINE_THRESHOLD" \
+            --only-show-errors
+
       - name: Configure API report storage
         shell: bash
         run: |
@@ -181,21 +202,17 @@ jobs:
             >/dev/null
           az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API"
 
-      - name: Start an immediate queue drain
+      - name: Verify parked worker and API report-storage configuration
         shell: bash
         run: |
           set -euo pipefail
-          az containerapp job start --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_JOB_NAME" >/dev/null
-
-      - name: Verify worker and API report-storage configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          az containerapp job show \
+          WORKER="$(az containerapp job show \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$REPORT_WORKER_JOB_NAME" \
-            --query '{name:name,trigger:properties.configuration.triggerType,schedule:properties.configuration.scheduleTriggerConfig.cronExpression,image:properties.template.containers[0].image}' \
-            --output table
+            --output json)"
+          test "$(echo "$WORKER" | jq -r '.properties.configuration.scheduleTriggerConfig.cronExpression')" = "$PARKED_WORKER_CRON"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_ENDPOINT_PATH") | .value')" = "$MODEL_SERVICE_ENDPOINT_PATH"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
 
           SETTINGS="$(az webapp config appsettings list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
