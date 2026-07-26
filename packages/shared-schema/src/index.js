@@ -177,7 +177,6 @@ export function createClaimIngestionBatchSchema({ maxBatchSize = 500, maxReferen
 export function parseClaimIngestionBatch(payload, options) {
   return createClaimIngestionBatchSchema(options).parse(payload);
 }
-
 const forbiddenReportFieldNames = new Set([
   "firstname",
   "lastname",
@@ -369,10 +368,20 @@ export const detectionReportSchema = z.object({
   if (!report.metadata.model && report.claims.some((claim) => claim.modelReview)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Deterministic reports cannot contain modelReview results." });
   }
-  if (report.metadata.model?.analysisMode === "PROSPECTIVE_CLAIM_SCREENING" && report.claims.some((claim) => !("fraudProbability" in claim.modelReview))) {
+  if (
+    report.metadata.model?.analysisMode === "PROSPECTIVE_CLAIM_SCREENING"
+    && report.claims.some((claim) => (
+      !claim.modelReview || !("fraudProbability" in claim.modelReview)
+    ))
+  ) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Prospective reports require prospective ML result fields." });
   }
-  if (report.metadata.model?.analysisMode === "RETROSPECTIVE_CLOSED_WINDOW_REVIEW" && report.claims.some((claim) => !("baselineFraudProbability" in claim.modelReview))) {
+  if (
+    report.metadata.model?.analysisMode === "RETROSPECTIVE_CLOSED_WINDOW_REVIEW"
+    && report.claims.some((claim) => (
+      !claim.modelReview || !("baselineFraudProbability" in claim.modelReview)
+    ))
+  ) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Retrospective reports require ensemble result fields." });
   }
 });
