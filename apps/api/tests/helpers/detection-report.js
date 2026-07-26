@@ -65,6 +65,7 @@ export function createCanonicalModelDetectionReport({
       target_entity_id: "provider:P-1",
       relationship_type: "submitted_to",
       claim_id: "C-1",
+      claim_version: 1,
     }],
   });
   report.metadata.model = {
@@ -80,6 +81,7 @@ export function createCanonicalModelDetectionReport({
   report.metadata.includedDateRange = { from: "2026-07-20", to: "2026-07-20" };
   report.claims = [{
     claimId: "C-1",
+    claimVersion: 1,
     providerId: "P-1",
     memberId: "M-1",
     schemeId: "scheme_a",
