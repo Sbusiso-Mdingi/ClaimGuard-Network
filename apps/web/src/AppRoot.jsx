@@ -1,4 +1,4 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Button } from "./components/ui/button";
@@ -6,21 +6,66 @@ import { useInvestigatorData } from "./hooks/useInvestigatorData";
 import { useLedgerStatus } from "./hooks/useLedgerStatus";
 import { ErrorBoundary } from "./features/investigator/ErrorBoundary";
 import { InvestigatorLayout } from "./features/investigator/InvestigatorLayout";
-import { DashboardPage } from "./features/investigator/DashboardPage";
-import { ClaimsExplorerPage } from "./features/investigator/ClaimsExplorerPage";
-import { ClaimDetailsPage } from "./features/investigator/ClaimDetailsPage";
-import { NetworkPage } from "./features/investigator/NetworkPage";
-import { RiskPage } from "./features/investigator/RiskPage";
-import { HistoryPage } from "./features/investigator/HistoryPage";
 import { RoleProvider, useRole } from "./context/RoleContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { SignupPage } from "./features/auth/SignupPage";
-import { InvestigationsPage } from "./features/investigator/InvestigationsPage";
-import { InvestigationWorkspacePage } from "./features/investigator/InvestigationWorkspacePage";
-import { CommitteeRegistryPage } from "./features/investigator/CommitteeRegistryPage";
-import { SchemeAdminPage } from "./features/investigator/SchemeAdminPage";
-import { PlatformAdminPage } from "./features/investigator/PlatformAdminPage";
 import { RequireRoleAccess } from "./features/investigator/RequireRoleAccess";
+import {
+  defaultRouteForIdentity,
+  hasAnyCapability,
+} from "./lib/capabilities";
+
+function lazyNamed(importer, exportName) {
+  return lazy(async () => {
+    const module = await importer();
+    return { default: module[exportName] };
+  });
+}
+
+const DashboardPage = lazyNamed(
+  () => import("./features/investigator/DashboardPage"),
+  "DashboardPage",
+);
+const ClaimsExplorerPage = lazyNamed(
+  () => import("./features/investigator/ClaimsExplorerPage"),
+  "ClaimsExplorerPage",
+);
+const ClaimDetailsPage = lazyNamed(
+  () => import("./features/investigator/ClaimDetailsPage"),
+  "ClaimDetailsPage",
+);
+const NetworkPage = lazyNamed(
+  () => import("./features/investigator/NetworkPage"),
+  "NetworkPage",
+);
+const RiskPage = lazyNamed(
+  () => import("./features/investigator/RiskPage"),
+  "RiskPage",
+);
+const HistoryPage = lazyNamed(
+  () => import("./features/investigator/HistoryPage"),
+  "HistoryPage",
+);
+const InvestigationsPage = lazyNamed(
+  () => import("./features/investigator/InvestigationsPage"),
+  "InvestigationsPage",
+);
+const InvestigationWorkspacePage = lazyNamed(
+  () => import("./features/investigator/InvestigationWorkspacePage"),
+  "InvestigationWorkspacePage",
+);
+const CommitteeRegistryPage = lazyNamed(
+  () => import("./features/investigator/CommitteeRegistryPage"),
+  "CommitteeRegistryPage",
+);
+const SchemeAdminPage = lazyNamed(
+  () => import("./features/investigator/SchemeAdminPage"),
+  "SchemeAdminPage",
+);
+const PlatformAdminPage = lazyNamed(
+  () => import("./features/investigator/PlatformAdminPage"),
+  "PlatformAdminPage",
+);
 
 function StatusScreen({ title, description, actionLabel, onAction }) {
   return (
@@ -40,15 +85,14 @@ function StatusScreen({ title, description, actionLabel, onAction }) {
   );
 }
 
-function hasAnyCapability(identity, capabilities) {
-  const granted = new Set(identity?.capabilities || []);
-  return capabilities.some((capability) => granted.has(capability));
+function RoleLanding() {
+  const { identity } = useRole();
+  return <Navigate to={defaultRouteForIdentity(identity)} replace />;
 }
 
 function InvestigatorRoutes() {
   const { identity } = useRole();
-  const platformOnly = identity.organisationType === "platform";
-  const operationalWorkspaceEnabled = !platformOnly && hasAnyCapability(identity, [
+  const operationalWorkspaceEnabled = identity.organisationType !== "platform" && hasAnyCapability(identity, [
     "claims.view_own",
     "reports.view_own",
     "investigations.view",
@@ -86,36 +130,39 @@ function InvestigatorRoutes() {
   }
 
   return (
-    <Routes>
-      <Route
-        path="/"
-        element={
-          <InvestigatorLayout
-            liveRefreshEnabled={data.liveRefreshEnabled}
-            setLiveRefreshEnabled={data.setLiveRefreshEnabled}
-            refreshNow={refreshWorkspace}
-            lastRefresh={data.lastRefresh}
-            ledgerStatus={ledger.status}
-            dataSource={data.dataSource}
-          />
-        }
-      >
+    <Suspense fallback={<StatusScreen title="Opening workspace" description="Loading the authorised ClaimGuard view…" />}>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <InvestigatorLayout
+              liveRefreshEnabled={data.liveRefreshEnabled}
+              setLiveRefreshEnabled={data.setLiveRefreshEnabled}
+              refreshNow={refreshWorkspace}
+              lastRefresh={data.lastRefresh}
+              ledgerStatus={ledger.status}
+              dataSource={data.dataSource}
+            />
+          }
+        >
         <Route
           index
+          element={<RoleLanding />}
+        />
+        <Route
+          path="dashboard"
           element={
-            platformOnly ? <Navigate to="/admin/platform" replace /> : (
-              <RequireRoleAccess navKey="dashboard">
-                {renderResourceContent(
-                  <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />,
-                  {
-                    status: data.error ? "error" : data.status,
-                    error: data.error,
-                    loadingTitle: "Loading Dashboard",
-                    errorTitle: "Dashboard Unavailable",
-                  },
-                )}
-              </RequireRoleAccess>
-            )
+            <RequireRoleAccess navKey="dashboard">
+              {renderResourceContent(
+                <DashboardPage metrics={data.metrics} graph={data.graph} status={data.status} lastRefresh={data.lastRefresh} />,
+                {
+                  status: data.error ? "error" : data.status,
+                  error: data.error,
+                  loadingTitle: "Loading Dashboard",
+                  errorTitle: "Dashboard Unavailable",
+                },
+              )}
+            </RequireRoleAccess>
           }
         />
         <Route
@@ -186,10 +233,12 @@ function InvestigatorRoutes() {
         <Route path="committee" element={<RequireRoleAccess navKey="committee"><CommitteeRegistryPage /></RequireRoleAccess>} />
         <Route path="admin/scheme" element={<RequireRoleAccess navKey="scheme-admin"><SchemeAdminPage /></RequireRoleAccess>} />
         <Route path="admin/platform" element={<RequireRoleAccess navKey="platform-admin"><PlatformAdminPage /></RequireRoleAccess>} />
+        <Route path="access" element={<StatusScreen title="No workspace access" description="This account is authenticated but has no ClaimGuard workspace capabilities. Ask an administrator to review its organisation membership and roles." />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+        </Route>
+      </Routes>
+    </Suspense>
   );
 }
 

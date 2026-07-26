@@ -9,6 +9,7 @@ import {
   FormField,
   PageFrame,
   SectionCard,
+  StatCard,
   StatusIndicator,
   WorkspaceNotice,
   formatEnumLabel,
@@ -107,6 +108,10 @@ export function InvestigationsPage() {
     () => [appliedFilters.search, appliedFilters.status, appliedFilters.priority, appliedFilters.assignment !== "all"].filter(Boolean).length,
     [appliedFilters],
   );
+  const visibleQueueSummary = useMemo(() => ({
+    unassigned: investigations.filter((item) => !item.assignedInvestigator).length,
+    urgent: investigations.filter((item) => item.priority === "HIGH" || item.priority === "CRITICAL").length,
+  }), [investigations]);
 
   return (
     <PageFrame
@@ -156,6 +161,14 @@ export function InvestigationsPage() {
         <WorkspaceNotice title="Investigation queue unavailable" tone="danger" actions={<Button variant="outline" onClick={() => loadQueue(1)}>Retry</Button>}>
           {error}
         </WorkspaceNotice>
+      ) : null}
+
+      {status !== "loading" && status !== "error" ? (
+        <section aria-label="Visible investigation queue summary" className="grid gap-3 sm:grid-cols-3">
+          <StatCard title="Visible cases" value={investigations.length} description="Cases returned on the current page." />
+          <StatCard title="High or critical" value={visibleQueueSummary.urgent} description="Visible cases requiring priority attention." tone={visibleQueueSummary.urgent > 0 ? "warning" : "success"} />
+          <StatCard title="Unassigned" value={visibleQueueSummary.unassigned} description="Visible cases waiting for an investigator." tone={visibleQueueSummary.unassigned > 0 ? "warning" : "success"} />
+        </section>
       ) : null}
 
       <SectionCard title="Tenant cases" description="Cases are read directly from the active operational tenant, not browser storage.">

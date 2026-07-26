@@ -3,7 +3,13 @@ import { apiJson, setCsrfToken, setDemoAuthorityHeaders, setUnauthorizedHandler 
 import { CLAIMGUARD_ROLES } from "../lib/claimguardRoles";
 
 const STORAGE_KEY = "claimguard-dev-identity";
-const authenticationMode = () => window.__CLAIMGUARD_AUTHENTICATION_MODE__ || "session";
+const authenticationMode = () => {
+  const runtimeMode = String(window.__CLAIMGUARD_AUTHENTICATION_MODE__ || "").trim();
+  if (runtimeMode === "session" || runtimeMode === "demo_headers") return runtimeMode;
+
+  const developmentMode = String(import.meta.env?.VITE_AUTHENTICATION_MODE || "").trim();
+  return developmentMode === "demo_headers" ? "demo_headers" : "session";
+};
 
 const DEMO_CAPABILITIES = Object.freeze({
   [CLAIMGUARD_ROLES.FRAUD_ANALYST]: Object.freeze([

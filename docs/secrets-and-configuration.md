@@ -49,6 +49,20 @@ Scheme administrators may choose only one of two ML-backed options:
 - **ClaimGuard managed:** the API resolves `CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID`. The scheme cannot submit or pin a different ClaimGuard deployment.
 - **Scheme managed:** the submitted deployment must be listed for the authenticated operational tenant in `SCHEME_MODEL_DEPLOYMENTS_JSON` and must also appear in `APPROVED_MODEL_DEPLOYMENT_IDS`.
 
+When ClaimGuard promotes a newer managed deployment, an active approved
+deployment that is not owned by any scheme remains classified as
+ClaimGuard-managed. The API reports the promoted deployment as an available
+update, and an authorised scheme administrator can create the audited strategy
+transition. The transition is prospective: existing claim versions, detection
+results, and historical outbox jobs remain pinned to their original strategy
+and deployment.
+
+The model-promotion process must retain an earlier managed deployment in
+`APPROVED_MODEL_DEPLOYMENT_IDS` until every scheme still using it has completed
+or explicitly deferred the rollout. Removing it sooner correctly blocks new
+claim ingestion for that stale strategy instead of silently choosing another
+model.
+
 Example ownership-map shape, using non-secret identifiers only:
 
 ```json

@@ -68,3 +68,33 @@ test("investigation queue requires investigation view authority", async () => {
   const response = await app.request("/investigations/queue", { headers: headers("claims_analyst") });
   assert.equal(response.status, 403);
 });
+
+test("investigation queue hides unexpected database details and returns a request ID", async () => {
+  const databaseError = Object.assign(
+    new Error("Incorrect arguments to mysqld_stmt_execute"),
+    { code: "ER_WRONG_ARGUMENTS", errno: 1210 },
+  );
+  const app = createBackendApp({
+    tenantRepository: tenantRepository(),
+    investigationRepository: {
+      async listInvestigations() {
+        throw databaseError;
+      },
+    },
+  });
+
+  const response = await app.request("/investigations/queue", {
+    headers: {
+      ...headers(),
+      "x-request-id": "queue-safe-error-test",
+    },
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.available, false);
+  assert.equal(payload.code, "INVESTIGATION_OPERATION_FAILED");
+  assert.equal(payload.requestId, "queue-safe-error-test");
+  assert.equal(payload.message, "The investigation service is currently unavailable.");
+  assert.equal(JSON.stringify(payload).includes("mysqld_stmt_execute"), false);
+});

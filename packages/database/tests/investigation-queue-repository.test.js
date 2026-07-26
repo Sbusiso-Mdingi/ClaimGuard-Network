@@ -58,7 +58,15 @@ test("investigation queue pins every query to the active tenant and applies filt
     assert.match(call.statement, /i\.tenant_id = \?/);
     assert.equal(call.params[0], "tenant-alpha");
   }
-  assert.deepEqual(pool.calls[1].params.slice(-2), [10, 10]);
+  assert.deepEqual(pool.calls[1].params, [
+    "tenant-alpha",
+    "UNDER_REVIEW",
+    "HIGH",
+    "%CLAIM-2%",
+    "%CLAIM-2%",
+    "investigator-alpha",
+  ]);
+  assert.match(pool.calls[1].statement, /LIMIT 10 OFFSET 10$/);
 });
 
 test("mine filter requires an authenticated actor", async () => {

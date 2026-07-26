@@ -142,7 +142,7 @@ function claimsNavigationLink() {
 }
 
 beforeEach(() => {
-  window.history.pushState({}, "", "/");
+  window.history.pushState({}, "", "/dashboard");
   window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
   vi.useRealTimers();
   mockFetch();
@@ -156,7 +156,9 @@ test("renders dashboard and routes to claim details", async () => {
   const user = userEvent.setup();
   render(<AppRoot />);
 
-  expect(await screen.findByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("heading", { name: /Claims risk intelligence/i }, { timeout: 5_000 })
+  ).toBeInTheDocument();
   expect(screen.getByText(/Claims Screened/i)).toBeInTheDocument();
 
   for (const [, requestOptions] of global.fetch.mock.calls.slice(0, 3)) {

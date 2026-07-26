@@ -47,6 +47,9 @@ export function registerInvestigationsRoutes(
     logger,
   } = {},
 ) {
+  const respondToInvestigationError = (c, error, event) =>
+    investigationErrorResponse(c, error, { logger, event });
+
   const requireInvestigationsCreate = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CREATE,
   });
@@ -90,7 +93,7 @@ export function registerInvestigationsRoutes(
 
         return c.json({ available: true, investigation }, 201);
       } catch (error) {
-        return investigationErrorResponse(c, error);
+        return respondToInvestigationError(c, error, "investigation_create_failed");
       }
     },
   );
@@ -115,7 +118,7 @@ export function registerInvestigationsRoutes(
         });
         return c.json({ available: true, ...result }, 200);
       } catch (error) {
-        return investigationErrorResponse(c, error);
+        return respondToInvestigationError(c, error, "investigation_queue_list_failed");
       }
     },
   );
@@ -142,7 +145,7 @@ export function registerInvestigationsRoutes(
 
         return c.json({ available: true, investigation }, 200);
       } catch (error) {
-        return investigationErrorResponse(c, error);
+        return respondToInvestigationError(c, error, "investigation_detail_failed");
       }
     },
   );
@@ -175,7 +178,7 @@ export function registerInvestigationsRoutes(
 
       return c.json({ available: true, investigation }, 200);
     } catch (error) {
-      return investigationErrorResponse(c, error);
+      return respondToInvestigationError(c, error, "investigation_update_failed");
     }
   });
 
@@ -204,7 +207,7 @@ export function registerInvestigationsRoutes(
 
         return c.json({ available: true, note }, 201);
       } catch (error) {
-        return investigationErrorResponse(c, error);
+        return respondToInvestigationError(c, error, "investigation_note_create_failed");
       }
     },
   );
@@ -235,7 +238,7 @@ export function registerInvestigationsRoutes(
 
         return c.json({ available: true, evidence }, 201);
       } catch (error) {
-        return investigationErrorResponse(c, error);
+        return respondToInvestigationError(c, error, "investigation_evidence_create_failed");
       }
     },
   );

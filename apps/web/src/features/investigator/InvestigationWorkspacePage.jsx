@@ -1,21 +1,29 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useRole } from "../../context/RoleContext";
 import { apiRequest } from "../../lib/apiClient";
-import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
-import { PageFrame, SectionCard, MetricPill, StatusIndicator } from "./InvestigatorUI";
+import { hasCapability } from "../../lib/capabilities";
+import {
+  FormField,
+  PageFrame,
+  SectionCard,
+  MetricPill,
+  StatusIndicator,
+  WorkspaceNotice,
+  formatEnumLabel,
+} from "./InvestigatorUI";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 
-const STATUS_OPTIONS = ["OPEN", "UNDER_REVIEW", "AWAITING_EVIDENCE", "CONFIRMED_FRAUD", "NO_FRAUD_FOUND", "CLOSED"];
-
-// UI-only convenience gating. The API independently enforces every one of
-// these actions via authorization-policy.js and will 401/403 regardless.
-const canConfirmOrReverse = (role) => role === CLAIMGUARD_ROLES.INVESTIGATOR;
-const canUpdateStatus = (role) => role === CLAIMGUARD_ROLES.INVESTIGATOR;
-const canChangePriority = (role) => role === CLAIMGUARD_ROLES.INVESTIGATOR || role === CLAIMGUARD_ROLES.FRAUD_ANALYST;
-const canAddNote = (role) => role === CLAIMGUARD_ROLES.INVESTIGATOR || role === CLAIMGUARD_ROLES.FRAUD_ANALYST;
-const canUploadEvidence = (role) => role === CLAIMGUARD_ROLES.INVESTIGATOR;
+const NEXT_STATUS_OPTIONS = Object.freeze({
+  OPEN: ["UNDER_REVIEW", "AWAITING_EVIDENCE", "CLOSED"],
+  UNDER_REVIEW: ["AWAITING_EVIDENCE", "CONFIRMED_FRAUD", "NO_FRAUD_FOUND", "CLOSED"],
+  AWAITING_EVIDENCE: ["UNDER_REVIEW", "CLOSED"],
+  CONFIRMED_FRAUD: ["CLOSED"],
+  REVERSED: ["CLOSED"],
+  NO_FRAUD_FOUND: ["CLOSED"],
+  CLOSED: [],
+});
 
 export function InvestigationWorkspacePage() {
   const { investigationId } = useParams();
@@ -23,6 +31,7 @@ export function InvestigationWorkspacePage() {
   const [state, setState] = useState({ status: "loading", investigation: null, error: null });
   const [noteText, setNoteText] = useState("");
   const [evidenceForm, setEvidenceForm] = useState({ filename: "", description: "", evidenceType: "" });
+  const [decisionReason, setDecisionReason] = useState("");
   const [actionMessage, setActionMessage] = useState(null);
 
   const load = useCallback(async () => {
@@ -57,7 +66,7 @@ export function InvestigationWorkspacePage() {
         setActionMessage({ tone: "error", text: json.message || "Action failed." });
         return false;
       }
-      setActionMessage({ tone: "success", text: "Updated." });
+      setActionMessage({ tone: "success", text: "The investigation was updated." });
       await load();
       return true;
     } catch (error) {
@@ -79,22 +88,40 @@ export function InvestigationWorkspacePage() {
   }
 
   const investigation = state.investigation;
+  const canUpdateStatus = hasCapability(identity, "investigations.update_status");
+  const canChangePriority = hasCapability(identity, "investigations.change_priority");
+  const canAddNote = hasCapability(identity, "investigations.add_note");
+  const canUploadEvidence = hasCapability(identity, "investigations.upload_evidence");
+  const canConfirmFraud = hasCapability(identity, "investigations.confirm_fraud")
+    && investigation.status === "CONFIRMED_FRAUD"
+    && !investigation.fraudConfirmedAt;
+  const canReverseFraud = hasCapability(identity, "investigations.confirm_fraud")
+    && Boolean(investigation.fraudConfirmedAt)
+    && !investigation.reversedAt;
+  const nextStatuses = NEXT_STATUS_OPTIONS[investigation.status] || [];
+  const tenantLabel = identity.tenantLabel || identity.tenantId || "active scheme";
+  const canonicalDecisionReason = decisionReason.trim();
 
   return (
     <PageFrame
       eyebrow="Investigation Workspace"
       title={investigation.investigationId}
-      description={`Claim ${investigation.claimId} · tenant ${investigation.tenantId}`}
+      description={`Claim ${investigation.claimId} · ${tenantLabel}`}
       actions={[
+        hasCapability(identity, "claims.view_own") ? (
+          <Link key="claim" to={`/claims/${encodeURIComponent(investigation.claimId)}`} className="text-sm font-semibold text-primary hover:underline">
+            Open claim
+          </Link>
+        ) : null,
         <MetricPill key="status" label="Status" value={investigation.status} />,
         <MetricPill key="priority" label="Priority" value={investigation.priority} />,
-      ]}
+      ].filter(Boolean)}
     >
-      {actionMessage && (
-        <div className={`rounded-xl border px-4 py-3 text-sm ${actionMessage.tone === "error" ? "border-destructive/40 text-destructive" : "border-emerald-500/40 text-emerald-600"}`}>
+      {actionMessage ? (
+        <WorkspaceNotice title={actionMessage.tone === "error" ? "Action failed" : "Investigation updated"} tone={actionMessage.tone === "error" ? "danger" : "success"}>
           {actionMessage.text}
-        </div>
-      )}
+        </WorkspaceNotice>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
         <SectionCard title="Case details" description="Assignment, status, and priority for this investigation.">
@@ -105,29 +132,29 @@ export function InvestigationWorkspacePage() {
             </div>
             <div className="rounded-xl border border-border/70 px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Assigned by</p>
-              <p className="mt-1 text-sm font-semibold">{investigation.assignedBy}</p>
+              <p className="mt-1 text-sm font-semibold">{investigation.assignedBy || "Not recorded"}</p>
             </div>
           </div>
 
-          {canUpdateStatus(identity.role) && (
+          {canUpdateStatus && nextStatuses.length > 0 && (
             <div className="mt-4 rounded-xl border border-border/70 p-4">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Update status</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {STATUS_OPTIONS.map((option) => (
+                {nextStatuses.map((option) => (
                   <Button
                     key={option}
                     size="sm"
-                    variant={option === investigation.status ? "default" : "outline"}
+                    variant="outline"
                     onClick={() => callAction(`/investigations/${investigation.investigationId}`, { status: option }, "PATCH")}
                   >
-                    {option.replace(/_/g, " ")}
+                    {formatEnumLabel(option)}
                   </Button>
                 ))}
               </div>
             </div>
           )}
 
-          {canChangePriority(identity.role) && (
+          {canChangePriority && (
             <div className="mt-4 rounded-xl border border-border/70 p-4">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Change priority</p>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -136,43 +163,64 @@ export function InvestigationWorkspacePage() {
                     key={option}
                     size="sm"
                     variant={option === investigation.priority ? "default" : "outline"}
+                    disabled={option === investigation.priority}
                     onClick={() => callAction(`/investigations/${investigation.investigationId}`, { priority: option }, "PATCH")}
                   >
-                    {option}
+                    {formatEnumLabel(option)}
                   </Button>
                 ))}
               </div>
             </div>
           )}
 
-          {canConfirmOrReverse(identity.role) && (
-            <div className="mt-4 flex flex-wrap gap-3">
-              <Button
-                variant="destructive"
-                onClick={() =>
-                  callAction("/investigations/confirm-fraud", {
-                    investigationId: investigation.investigationId,
-                    claimId: investigation.claimId,
-                    reason: "Confirmed via investigator workspace.",
-                  })
-                }
+          {(canConfirmFraud || canReverseFraud) ? (
+            <div className="mt-4 space-y-3 rounded-xl border border-rose-500/25 bg-rose-500/5 p-4">
+              <FormField
+                label={canReverseFraud ? "Reason for reversal" : "Reason for fraud decision"}
+                htmlFor="fraud-decision-reason"
+                hint="Required for the immutable audit trail. Use specific, non-sensitive case reasoning."
               >
-                Confirm fraud
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  callAction("/investigations/reverse-fraud", {
-                    investigationId: investigation.investigationId,
-                    claimId: investigation.claimId,
-                    reason: "Reversed via investigator workspace.",
-                  })
-                }
-              >
-                Reverse fraud finding
-              </Button>
+                <textarea
+                  id="fraud-decision-reason"
+                  value={decisionReason}
+                  maxLength={500}
+                  onChange={(event) => setDecisionReason(event.target.value)}
+                  className="min-h-[96px] rounded-md border border-border bg-background p-3 text-sm"
+                  placeholder={canReverseFraud ? "Explain why the confirmed finding must be reversed." : "Summarise the evidence supporting the confirmed fraud decision."}
+                />
+              </FormField>
+              <div className="flex flex-wrap gap-3">
+                {canConfirmFraud ? <Button
+                  variant="destructive"
+                  disabled={!canonicalDecisionReason}
+                  onClick={async () => {
+                    const updated = await callAction("/investigations/confirm-fraud", {
+                      investigationId: investigation.investigationId,
+                      claimId: investigation.claimId,
+                      reason: canonicalDecisionReason,
+                    });
+                    if (updated) setDecisionReason("");
+                  }}
+                >
+                  Confirm fraud
+                </Button> : null}
+                {canReverseFraud ? <Button
+                  variant="outline"
+                  disabled={!canonicalDecisionReason}
+                  onClick={async () => {
+                    const updated = await callAction("/investigations/reverse-fraud", {
+                      investigationId: investigation.investigationId,
+                      claimId: investigation.claimId,
+                      reason: canonicalDecisionReason,
+                    });
+                    if (updated) setDecisionReason("");
+                  }}
+                >
+                  Reverse fraud finding
+                </Button> : null}
+              </div>
             </div>
-          )}
+          ) : null}
         </SectionCard>
 
         <SectionCard title="Timeline" description="Notes and evidence recorded against this investigation.">
@@ -208,15 +256,18 @@ export function InvestigationWorkspacePage() {
         </SectionCard>
       </div>
 
-      {canAddNote(identity.role) && (
-        <SectionCard title="Add note" description="Attach an investigation note.">
+      {canAddNote && (
+        <SectionCard title="Add note" description="Attach an internal note to the tenant-scoped investigation history.">
           <div className="flex flex-col gap-3">
-            <textarea
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              className="min-h-[90px] rounded-md border border-border bg-background p-3 text-sm"
-              placeholder="Describe the finding..."
-            />
+            <FormField label="Investigation note" htmlFor="investigation-note">
+              <textarea
+                id="investigation-note"
+                value={noteText}
+                onChange={(event) => setNoteText(event.target.value)}
+                className="min-h-[90px] rounded-md border border-border bg-background p-3 text-sm"
+                placeholder="Describe the finding..."
+              />
+            </FormField>
             <Button
               className="self-start"
               disabled={!noteText.trim()}
@@ -234,12 +285,28 @@ export function InvestigationWorkspacePage() {
         </SectionCard>
       )}
 
-      {canUploadEvidence(identity.role) && (
-        <SectionCard title="Register evidence" description="Record evidence metadata (no file upload — filename and description only).">
+      {canUploadEvidence && (
+        <SectionCard title="Register evidence reference" description="Record evidence metadata. The current workflow does not upload or store the file itself.">
           <div className="grid gap-3 md:grid-cols-3">
-            <Input placeholder="filename.pdf" value={evidenceForm.filename} onChange={(e) => setEvidenceForm((prev) => ({ ...prev, filename: e.target.value }))} />
-            <Input placeholder="description" value={evidenceForm.description} onChange={(e) => setEvidenceForm((prev) => ({ ...prev, description: e.target.value }))} />
-            <Input placeholder="evidence type" value={evidenceForm.evidenceType} onChange={(e) => setEvidenceForm((prev) => ({ ...prev, evidenceType: e.target.value }))} />
+            <FormField label="Filename or reference" htmlFor="evidence-filename">
+              <Input id="evidence-filename" placeholder="claim-review.pdf" value={evidenceForm.filename} onChange={(event) => setEvidenceForm((previous) => ({ ...previous, filename: event.target.value }))} />
+            </FormField>
+            <FormField label="Description" htmlFor="evidence-description">
+              <Input id="evidence-description" placeholder="What this evidence establishes" value={evidenceForm.description} onChange={(event) => setEvidenceForm((previous) => ({ ...previous, description: event.target.value }))} />
+            </FormField>
+            <FormField label="Evidence type" htmlFor="evidence-type">
+              <select
+                id="evidence-type"
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={evidenceForm.evidenceType}
+                onChange={(event) => setEvidenceForm((previous) => ({ ...previous, evidenceType: event.target.value }))}
+              >
+                <option value="">Choose a type</option>
+                {["CLAIM_RECORD", "PROVIDER_RECORD", "MEMBER_STATEMENT", "MEDICAL_REVIEW", "IMAGE", "OTHER"].map((type) => (
+                  <option key={type} value={type}>{formatEnumLabel(type)}</option>
+                ))}
+              </select>
+            </FormField>
           </div>
           <Button
             className="mt-3"
@@ -253,7 +320,7 @@ export function InvestigationWorkspacePage() {
               if (ok) setEvidenceForm({ filename: "", description: "", evidenceType: "" });
             }}
           >
-            Register evidence
+            Register evidence reference
           </Button>
         </SectionCard>
       )}

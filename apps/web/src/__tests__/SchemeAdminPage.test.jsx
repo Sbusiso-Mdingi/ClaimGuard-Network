@@ -9,6 +9,7 @@ vi.mock("../context/RoleContext", () => ({
     identity: {
       tenantId: "tenant-ubuntu",
       tenantLabel: "Ubuntu Medical Scheme",
+      capabilities: ["tenant_status.view", "users.manage_tenant"],
     },
   }),
 }));
@@ -122,5 +123,43 @@ describe("SchemeAdminPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Overview unavailable");
     expect(screen.getByRole("button", { name: /Retry overview/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Users and roles/i })).toBeInTheDocument();
+  });
+
+  test("requires inline confirmation before disabling a tenant user", async () => {
+    let disabled = false;
+    apiJson.mockImplementation((path, options) => {
+      if (path === "/admin/scheme/overview") return Promise.resolve(overviewResponse);
+      if (path === "/admin/scheme/users/user-1" && options?.method === "DELETE") {
+        disabled = true;
+        return Promise.resolve({ available: true });
+      }
+      if (path === "/admin/scheme/users") {
+        return Promise.resolve({
+          available: true,
+          users: [{
+            userId: "user-1",
+            displayName: "Ubuntu Investigator",
+            username: "investigator@ubuntu.example",
+            userStatus: disabled ? "disabled" : "active",
+            roles: ["investigator"],
+          }],
+        });
+      }
+      return Promise.reject(new Error("Unexpected request"));
+    });
+
+    render(<SchemeAdminPage />);
+    const user = userEvent.setup();
+
+    const disableButton = await screen.findByRole("button", { name: "Disable user" });
+    await user.click(disableButton);
+
+    expect(apiJson).not.toHaveBeenCalledWith("/admin/scheme/users/user-1", { method: "DELETE" });
+    await user.click(screen.getByRole("button", { name: "Confirm disable" }));
+
+    await waitFor(() => {
+      expect(apiJson).toHaveBeenCalledWith("/admin/scheme/users/user-1", { method: "DELETE" });
+    });
+    expect(await screen.findByText("User disabled successfully.")).toBeInTheDocument();
   });
 });

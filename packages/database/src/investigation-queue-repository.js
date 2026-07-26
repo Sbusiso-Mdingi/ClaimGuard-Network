@@ -151,9 +151,9 @@ export function createInvestigationQueueRepository(
           FROM investigations i
           WHERE ${whereClause}
           ORDER BY i.updated_at DESC, i.investigation_id DESC
-          LIMIT ? OFFSET ?
+          LIMIT ${canonicalPageSize} OFFSET ${offset}
         `,
-        [...parameters, canonicalPageSize, offset],
+        parameters,
       );
 
       return {

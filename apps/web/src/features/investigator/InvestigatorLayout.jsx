@@ -1,33 +1,50 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import Activity from "lucide-react/dist/esm/icons/activity.mjs";
+import Building2 from "lucide-react/dist/esm/icons/building-2.mjs";
+import FileClock from "lucide-react/dist/esm/icons/file-clock.mjs";
+import FileText from "lucide-react/dist/esm/icons/file-text.mjs";
+import LayoutDashboard from "lucide-react/dist/esm/icons/layout-dashboard.mjs";
 import Menu from "lucide-react/dist/esm/icons/menu.mjs";
 import Moon from "lucide-react/dist/esm/icons/moon.mjs";
+import Network from "lucide-react/dist/esm/icons/network.mjs";
+import SearchCheck from "lucide-react/dist/esm/icons/search-check.mjs";
+import Settings from "lucide-react/dist/esm/icons/settings.mjs";
+import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { useRole } from "../../context/RoleContext";
 import { canAccessNavItem, NAV_GROUPS } from "../../lib/roleNav";
+import {
+  defaultRouteForIdentity,
+  formatIdentityRoles,
+} from "../../lib/capabilities";
 import { RoleSwitcher } from "./RoleSwitcher";
-
-function formatRole(role) {
-  if (!role) return "Unknown";
-  return role
-    .split("_")
-    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
-}
 
 function isLiveDetectionRoute(pathname) {
   return (
     pathname === "/" ||
+    pathname === "/dashboard" ||
     pathname.startsWith("/claims") ||
     pathname === "/network" ||
     pathname === "/risk" ||
     pathname === "/history"
   );
 }
+
+const NAV_ICONS = Object.freeze({
+  dashboard: LayoutDashboard,
+  claims: FileText,
+  investigations: SearchCheck,
+  network: Network,
+  risk: ShieldAlert,
+  history: FileClock,
+  committee: SearchCheck,
+  "scheme-admin": Building2,
+  "platform-admin": Settings,
+});
 
 export function InvestigatorLayout({
   liveRefreshEnabled,
@@ -53,6 +70,10 @@ export function InvestigatorLayout({
 
   const [theme, setTheme] = useState(() => window.localStorage.getItem("claimguard-theme") || "dark");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(
+    () => window.matchMedia?.("(min-width: 1024px)").matches ?? true,
+  );
+  const closeNavigationButtonRef = useRef(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -65,8 +86,38 @@ export function InvestigatorLayout({
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    const media = window.matchMedia?.("(min-width: 1024px)");
+    if (!media) return undefined;
+    const update = () => setIsDesktop(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop && sidebarOpen) {
+      closeNavigationButtonRef.current?.focus();
+    }
+  }, [isDesktop, sidebarOpen]);
+
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [sidebarOpen]);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <a
+        href="#main-content"
+        className="fixed left-4 top-3 z-[60] -translate-y-20 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-lg transition-transform focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        Skip to main content
+      </a>
       <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border-soft bg-surface-elevated px-4 py-3 lg:hidden">
         <div className="flex items-center gap-3">
           <Button
@@ -104,6 +155,11 @@ export function InvestigatorLayout({
 
       <div className="mx-auto grid min-h-screen w-full max-w-[1680px] grid-cols-1 lg:grid-cols-[260px_1fr]">
         <aside
+          aria-label="Workspace navigation"
+          aria-hidden={!isDesktop && !sidebarOpen}
+          aria-modal={!isDesktop && sidebarOpen ? "true" : undefined}
+          role={!isDesktop && sidebarOpen ? "dialog" : undefined}
+          inert={!isDesktop && !sidebarOpen ? "" : undefined}
           className={[
             "fixed inset-y-0 left-0 z-40 flex h-screen w-[260px] flex-col overflow-y-auto border-r border-border-soft bg-surface-elevated px-4 py-5 transition-transform duration-200 investigator-scrollbar",
             sidebarOpen ? "translate-x-0" : "-translate-x-full",
@@ -111,7 +167,7 @@ export function InvestigatorLayout({
           ].join(" ")}
         >
           <div className="mb-6 flex items-center justify-between gap-3">
-            <Link to="/" className="flex items-center gap-3">
+            <Link to={defaultRouteForIdentity(identity)} className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-border-soft shadow-inner">
                 <Activity className="h-5 w-5" />
               </span>
@@ -124,7 +180,7 @@ export function InvestigatorLayout({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 w-8 rounded-full hidden lg:inline-flex text-muted-2 hover:text-foreground hover:bg-white/5"
+                className="h-8 w-8 rounded-full hidden lg:inline-flex text-muted-2 hover:text-foreground hover:bg-secondary/70"
                 onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
                 aria-label="Toggle theme"
               >
@@ -133,9 +189,10 @@ export function InvestigatorLayout({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 w-8 rounded-full lg:hidden text-muted-2 hover:text-foreground"
+                className="h-8 w-8 rounded-full lg:hidden text-muted-2 hover:bg-secondary/70 hover:text-foreground"
                 onClick={() => setSidebarOpen(false)}
                 aria-label="Close navigation"
+                ref={closeNavigationButtonRef}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -153,26 +210,33 @@ export function InvestigatorLayout({
                   <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">{group.title}</p>
                 </div>
                 <div className="space-y-1">
-                  {group.items.map((item, itemIndex) => (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      end={item.to === "/"}
-                      className={({ isActive }) =>
-                        [
-                          "group flex items-center gap-3 rounded-[10px] px-2 py-2 text-[13px] font-medium transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                          isActive
-                            ? "bg-primary/10 text-primary shadow-[inset_2px_0_0_0_currentColor]"
-                            : "text-muted hover:bg-white/5 hover:text-foreground",
-                        ].join(" ")
-                      }
-                    >
-                      <span className="font-data flex h-7 w-7 items-center justify-center rounded-lg bg-black/20 text-[10px] text-muted group-[.active]:text-primary group-[.active]:bg-primary/20">
-                        {String(itemIndex + 1).padStart(2, "0")}
-                      </span>
-                      <span className="flex-1">{item.label}</span>
-                    </NavLink>
-                  ))}
+                  {group.items.map((item) => {
+                    const Icon = NAV_ICONS[item.key] || Activity;
+                    return (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        end={item.to === "/dashboard"}
+                        className={({ isActive }) =>
+                          [
+                            "group flex items-center gap-3 rounded-[10px] px-2 py-2 text-[13px] font-medium transition-all outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                            isActive
+                              ? "bg-primary/10 text-primary shadow-[inset_2px_0_0_0_currentColor]"
+                              : "text-muted hover:bg-secondary/60 hover:text-foreground",
+                          ].join(" ")
+                        }
+                      >
+                        {({ isActive }) => (
+                          <>
+                            <span className={`flex h-7 w-7 items-center justify-center rounded-lg border ${isActive ? "border-primary/25 bg-primary/15 text-primary" : "border-border-soft bg-black/20 text-muted"}`}>
+                              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                            </span>
+                            <span className="flex-1">{item.label}</span>
+                          </>
+                        )}
+                      </NavLink>
+                    );
+                  })}
                 </div>
               </section>
             ))}
@@ -184,26 +248,26 @@ export function InvestigatorLayout({
               <div className="rounded-[12px] border border-border-soft bg-surface-card p-3 shadow-sm">
                 <p className="text-[13px] font-semibold text-foreground">{identity.label}</p>
                 <p className="text-[11px] text-muted-2 mt-0.5">{identity.tenantLabel}</p>
-                <Button type="button" variant="outline" size="sm" className="mt-3 w-full h-8 text-xs border-border-soft bg-white/5 hover:bg-white/10 hover:text-foreground text-muted" onClick={logout}>Sign out</Button>
+                <Button type="button" variant="outline" size="sm" className="mt-3 h-8 w-full border-border-soft bg-background/50 text-xs text-muted hover:bg-secondary/70 hover:text-foreground" onClick={logout}>Sign out</Button>
               </div>
             ) : null}
           </div>
         </aside>
 
-        <main className="min-w-0 p-4 md:p-6 xl:p-8">
+        <main id="main-content" tabIndex={-1} className="min-w-0 p-4 outline-none md:p-6 xl:p-8">
           <header className="mb-6 flex flex-col gap-4 rounded-[14px] border border-border-soft bg-surface-elevated px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2.5">
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#71a8d9]" aria-hidden="true" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Tenant:</span>
                 <span className="text-[11px] font-semibold text-foreground">{identity.tenantLabel || identity.tenantId}</span>
               </div>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Role:</span>
-                <span className="text-[11px] font-semibold text-foreground">{formatRole(identity.role)}</span>
+                <span className="text-[11px] font-semibold text-foreground">{formatIdentityRoles(identity)}</span>
               </div>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1">
                 <Activity className="h-3 w-3 text-[#62ce9b]" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
                   {mode === "session" ? "Authenticated" : "Demo Mode"}
@@ -212,12 +276,12 @@ export function InvestigatorLayout({
             </div>
             {showLiveControls ? (
               <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
-                <div className={`inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-black/20 px-3 py-1 ${ledgerStatus === "Connected" ? "text-[#62ce9b]" : "text-[#e6a74d]"}`}>
+                <div className={`inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1 ${ledgerStatus === "Connected" ? "text-emerald-600 dark:text-[#62ce9b]" : "text-amber-700 dark:text-[#e6a74d]"}`}>
                   <span className={`h-1.5 w-1.5 rounded-full ${ledgerStatus === "Connected" ? "bg-[#62ce9b]" : "bg-[#e6a74d]"}`} aria-hidden="true" />
                   <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Ledger:</span>
                   <span className="text-[11px] font-semibold">{ledgerStatus}</span>
                 </div>
-                <div className="inline-flex rounded-full border border-border-soft bg-black/20 p-0.5">
+                <div className="inline-flex rounded-full border border-border-soft bg-background/55 p-0.5">
                   <Button
                     size="sm"
                     variant="ghost"
@@ -232,12 +296,12 @@ export function InvestigatorLayout({
                     variant="ghost"
                     onClick={() => setLiveRefreshEnabled(false)}
                     aria-label="Disable live refresh"
-                    className={`h-7 rounded-full px-3 text-[11px] font-semibold hover:bg-transparent ${!liveRefreshEnabled ? "bg-white/10 text-foreground border border-border-soft" : "text-muted hover:text-foreground"}`}
+                    className={`h-7 rounded-full px-3 text-[11px] font-semibold hover:bg-transparent ${!liveRefreshEnabled ? "border border-border-soft bg-secondary/70 text-foreground" : "text-muted hover:text-foreground"}`}
                   >
                     Paused
                   </Button>
                 </div>
-                <Button size="sm" variant="outline" onClick={refreshNow} className="h-8 rounded-full px-4 text-xs border-border-soft bg-white/5 hover:bg-white/10 text-foreground">
+                <Button size="sm" variant="outline" onClick={refreshNow} className="h-8 rounded-full border-border-soft bg-background/50 px-4 text-xs text-foreground hover:bg-secondary/70">
                   Refresh
                 </Button>
               </div>

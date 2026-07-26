@@ -27,6 +27,12 @@
     --input: 40 14% 80%;
     --ring: 33 57% 41%;
 
+    --surface-sunken: 40 22% 92%;
+    --surface-elevated: 40 30% 97%;
+    --surface-card: 40 26% 95%;
+    --border-soft: 40 14% 80%;
+    --text-muted-2: 40 10% 40%;
+
     --stamp-danger: 5 55% 38%;
     --stamp-warning: 33 60% 36%;
     --stamp-success: 154 35% 30%;

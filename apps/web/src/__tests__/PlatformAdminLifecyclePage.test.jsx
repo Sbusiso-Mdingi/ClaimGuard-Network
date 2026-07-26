@@ -22,7 +22,15 @@ const organisations = [{
 function configureApi() {
   apiJson.mockImplementation((path, options = {}) => {
     if (path === "/admin/platform/global-detection-engine") {
-      return Promise.resolve({ strategy: { modelDeploymentId: "deployment-1" } });
+      return Promise.resolve({
+        strategy: {
+          modelDeploymentId: "deployment-1",
+          approved: true,
+          configurationSource: "deployment_environment",
+          writable: false,
+          activationMode: "audited_prospective_transition",
+        },
+      });
     }
     if (path === "/health") return Promise.resolve({ status: "ok" });
     if (path === "/ready") return Promise.resolve({ status: "ready", ready: true });
@@ -99,5 +107,14 @@ describe("PlatformAdminLifecyclePage", () => {
     expect(screen.getByRole("button", { name: /Activate organisation/i })).toBeDisabled();
     expect(screen.getByText("/api/claims")).toBeInTheDocument();
     expect(screen.getByText(/No integration credentials/i)).toBeInTheDocument();
+  });
+
+  test("shows the deployment-authoritative managed model without an unsafe save action", async () => {
+    render(<PlatformAdminPage />);
+
+    expect(await screen.findByText("deployment-1")).toBeInTheDocument();
+    expect(screen.getByText("Approved deployment")).toBeInTheDocument();
+    expect(screen.getByText("Deployment controlled")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save configuration/i })).not.toBeInTheDocument();
   });
 });

@@ -6,7 +6,15 @@ import Radar from "lucide-react/dist/esm/icons/radar.mjs";
 import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
 import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.mjs";
 import Inbox from "lucide-react/dist/esm/icons/inbox.mjs";
+import ListChecks from "lucide-react/dist/esm/icons/list-checks.mjs";
+import SearchCheck from "lucide-react/dist/esm/icons/search-check.mjs";
+import Settings from "lucide-react/dist/esm/icons/settings.mjs";
 import { Skeleton } from "../../components/ui/skeleton";
+import { useRole } from "../../context/RoleContext";
+import {
+  formatIdentityRoles,
+  hasCapability,
+} from "../../lib/capabilities";
 import {
   DataTableShell,
   EmptyState,
@@ -47,6 +55,8 @@ function DashboardSkeleton() {
 }
 
 export function DashboardPage({ metrics, graph, status, lastRefresh }) {
+  const { identity } = useRole();
+
   if (status === "loading") return <DashboardSkeleton />;
 
   const recentDetections = Array.isArray(metrics?.recentDetections) ? metrics.recentDetections : [];
@@ -54,6 +64,32 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
   const highRiskClaims = Number.isFinite(metrics?.highRiskClaims) ? metrics.highRiskClaims : "Unavailable";
   const averageRiskScore = Number.isFinite(metrics?.averageRiskScore) ? metrics.averageRiskScore : "Unavailable";
   const activeNetworks = Number.isFinite(metrics?.activeFraudSchemes) ? metrics.activeFraudSchemes : "Unavailable";
+  const roleTasks = [
+    hasCapability(identity, "claims.view_own") ? {
+      label: "Review scheme claims",
+      description: "Search claims, inspect persisted scores, and open claim evidence.",
+      to: "/claims",
+      icon: FileText,
+    } : null,
+    hasCapability(identity, "investigations.view") ? {
+      label: "Work investigations",
+      description: "Prioritise tenant cases and continue authorised investigation actions.",
+      to: "/investigations",
+      icon: ListChecks,
+    } : null,
+    hasCapability(identity, "fraud_registry.search") ? {
+      label: "Search shared registry",
+      description: "Check authorised member or provider tokens against confirmed records.",
+      to: "/committee",
+      icon: SearchCheck,
+    } : null,
+    hasCapability(identity, "users.manage_tenant") ? {
+      label: "Manage scheme",
+      description: "Review processing health, model policy, users, and tenant settings.",
+      to: "/admin/scheme",
+      icon: Settings,
+    } : null,
+  ].filter(Boolean);
 
   return (
     <PageFrame
@@ -71,6 +107,36 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
         <StatCard variant="console" title="Average risk score" value={averageRiskScore} description="Mean persisted detection score for the current snapshot." icon={AlertTriangle} tone={riskScoreTone(averageRiskScore)} />
         <StatCard variant="console" title="Active networks" value={activeNetworks} description="Suspicious linked-entity clusters identified by the graph projection." icon={Radar} />
       </section>
+
+      {roleTasks.length > 0 ? (
+        <SectionCard
+          variant="console"
+          title="Your authorised work"
+          description={`Available to ${formatIdentityRoles(identity)} in the active scheme. Actions are derived from session capabilities, including multi-role assignments.`}
+        >
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {roleTasks.map((task) => {
+              const Icon = task.icon;
+              return (
+                <Link
+                  key={task.to}
+                  to={task.to}
+                  className="group rounded-xl border border-border/70 bg-background/35 p-4 transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-border/70 bg-card text-primary">
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="mt-3 flex items-center justify-between gap-3 font-semibold">
+                    {task.label}
+                    <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-primary" aria-hidden="true" />
+                  </span>
+                  <span className="mt-1 block text-sm leading-6 text-muted-foreground">{task.description}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </SectionCard>
+      ) : null}
 
       <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
         <SectionCard

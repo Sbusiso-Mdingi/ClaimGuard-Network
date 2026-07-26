@@ -21,7 +21,7 @@ function response(strategy) {
 async function renderLoaded(strategy) {
   apiJson.mockResolvedValueOnce(response(strategy));
   render(<DetectionEngineSettings tenantId="tenant-alpha" />);
-  await screen.findByRole("heading", { name: "Detection Model" });
+  await screen.findByRole("heading", { name: "Model update policy" });
   return userEvent.setup();
 }
 
@@ -38,10 +38,10 @@ describe("DetectionEngineSettings", () => {
     });
 
     expect(screen.getByText(/Deterministic scoring is no longer selectable/i)).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /ClaimGuard Managed Model/i })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByRole("radio", { name: /Custom Proprietary Model/i })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: /ClaimGuard-managed updates/i })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: /Scheme-owned model pin/i })).toHaveAttribute("aria-checked", "false");
     expect(screen.queryByRole("radio", { name: /rules/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save Model Selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save Model Policy" })).toBeDisabled();
   });
 
   test("selects the ClaimGuard-managed model without accepting a deployment ID", async () => {
@@ -56,9 +56,9 @@ describe("DetectionEngineSettings", () => {
       modelDeploymentId: "claimguard-fraud-model:1.2.0",
     }));
 
-    await user.click(screen.getByRole("radio", { name: /ClaimGuard Managed Model/i }));
+    await user.click(screen.getByRole("radio", { name: /ClaimGuard-managed updates/i }));
     await user.type(screen.getByLabelText("Reason for change"), "Use the managed production model.");
-    await user.click(screen.getByRole("button", { name: "Save Model Selection" }));
+    await user.click(screen.getByRole("button", { name: "Save Model Policy" }));
 
     expect(apiJson).toHaveBeenLastCalledWith("/detection/strategy", {
       method: "PUT",
@@ -82,13 +82,13 @@ describe("DetectionEngineSettings", () => {
       modelDeploymentId: "ubuntu-fraud-model:production",
     }));
 
-    await user.click(screen.getByRole("radio", { name: /Custom Proprietary Model/i }));
+    await user.click(screen.getByRole("radio", { name: /Scheme-owned model pin/i }));
     await user.type(
       screen.getByLabelText("Registered proprietary model deployment ID"),
       "ubuntu-fraud-model:production",
     );
     await user.type(screen.getByLabelText("Reason for change"), "Activate Ubuntu's validated proprietary model.");
-    await user.click(screen.getByRole("button", { name: "Save Model Selection" }));
+    await user.click(screen.getByRole("button", { name: "Save Model Policy" }));
 
     expect(apiJson).toHaveBeenLastCalledWith("/detection/strategy", {
       method: "PUT",
@@ -107,9 +107,53 @@ describe("DetectionEngineSettings", () => {
       modelDeploymentId: "claimguard-fraud-model:1.2.0",
     });
 
-    await user.click(screen.getByRole("radio", { name: /Custom Proprietary Model/i }));
+    await user.click(screen.getByRole("radio", { name: /Scheme-owned model pin/i }));
     await user.type(screen.getByLabelText("Reason for change"), "Switch model.");
 
-    expect(screen.getByRole("button", { name: "Save Model Selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save Model Policy" })).toBeDisabled();
+  });
+
+  test("explains prospective pinning and managed rollout behaviour", async () => {
+    await renderLoaded({
+      strategyType: "claimguard_managed",
+      modelDeploymentId: "claimguard-fraud-model:1.2.0",
+    });
+
+    expect(screen.getByText("ClaimGuard managed")).toBeInTheDocument();
+    expect(screen.getAllByText("claimguard-fraud-model:1.2.0")).toHaveLength(2);
+    expect(screen.getByText(/Eligible for audited ClaimGuard model rollouts/i)).toBeInTheDocument();
+    expect(screen.getByText(/existing claims and historical outbox work are never rewritten/i)).toBeInTheDocument();
+  });
+
+  test("offers an audited activation when a newer managed deployment is available", async () => {
+    const user = await renderLoaded({
+      strategyType: "claimguard_managed",
+      modelDeploymentId: "claimguard-fraud-model:1.1.0",
+      updateAvailable: true,
+      recommendedModelDeploymentId: "claimguard-fraud-model:1.2.0",
+    });
+    apiJson.mockResolvedValueOnce(response({
+      strategyType: "claimguard_managed",
+      modelDeploymentId: "claimguard-fraud-model:1.2.0",
+      updateAvailable: false,
+      recommendedModelDeploymentId: "claimguard-fraud-model:1.2.0",
+    }));
+
+    expect(screen.getByText("Managed model update available")).toBeInTheDocument();
+    const applyButton = screen.getByRole("button", { name: "Apply Managed Model Update" });
+    expect(applyButton).toBeDisabled();
+
+    await user.type(screen.getByLabelText("Reason for change"), "Apply the validated fleet model update.");
+    await user.click(applyButton);
+
+    expect(apiJson).toHaveBeenLastCalledWith("/detection/strategy", {
+      method: "PUT",
+      body: JSON.stringify({
+        strategyType: "claimguard_managed",
+        modelDeploymentId: null,
+        changeReason: "Apply the validated fleet model update.",
+        expectedActiveStrategyId: 7,
+      }),
+    });
   });
 });

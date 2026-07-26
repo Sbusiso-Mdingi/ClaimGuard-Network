@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   applyMigrations,
+  createInvestigationQueueRepository,
   createMysqlConnection,
   getOperationalMigrationStatus,
+  runWithTenantContext,
 } from "../src/index.js";
 
 
@@ -670,6 +672,103 @@ test(
           "claim_id",
           "claim_version",
         ],
+      );
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+
+test(
+  "real MySQL investigation queue supports bounded prepared pagination",
+  {
+    skip:
+      !databaseUrl,
+  },
+  async () => {
+    const pool =
+      createMysqlConnection(
+        databaseUrl,
+      );
+
+    try {
+      await applyMigrations(
+        pool,
+      );
+
+      const repository =
+        createInvestigationQueueRepository(
+          pool,
+          {
+            allowLegacyTenantContext:
+              true,
+          },
+        );
+
+      const result =
+        await runWithTenantContext(
+          {
+            tenant_id:
+              "investigation-queue-integration",
+
+            tenant_slug:
+              "investigation-queue-integration",
+
+            scheme_id:
+              "INVESTIGATION_QUEUE_INTEGRATION",
+
+            source:
+              "integration-test",
+          },
+          () =>
+            repository
+              .listInvestigations(
+                {
+                  page:
+                    1,
+
+                  pageSize:
+                    25,
+
+                  assignment:
+                    "all",
+                },
+              ),
+        );
+
+      assert.deepEqual(
+        result.investigations,
+        [],
+      );
+
+      assert.deepEqual(
+        result.pagination,
+        {
+          page:
+            1,
+
+          pageSize:
+            25,
+
+          requestedPageSize:
+            25,
+
+          maxPageSize:
+            100,
+
+          total:
+            0,
+
+          totalPages:
+            0,
+
+          hasNextPage:
+            false,
+
+          hasPreviousPage:
+            false,
+        },
       );
     } finally {
       await pool.end();
