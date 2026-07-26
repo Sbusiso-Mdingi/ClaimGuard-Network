@@ -9,7 +9,7 @@ from .prospective_model_service import (
     ProspectiveModelServiceClient,
 )
 from .prospective_report import build_prospective_detection_report
-from .prospective_results import load_or_score_prospective
+from .prospective_results import load_or_score_prospective_result
 from .prospective_snapshot import ProspectiveBaselineSnapshotRepository
 from .worker import (
     ReportProducerWorker,
@@ -59,7 +59,7 @@ class ProspectiveAwareReportProducerWorker(ReportProducerWorker):
                 raise SnapshotIdentityError(str(error)) from error
 
             self._validate_snapshot(job, snapshot)
-            result = load_or_score_prospective(
+            result = load_or_score_prospective_result(
                 snapshot=snapshot,
                 client=client,
                 repository=self.results_repository,
