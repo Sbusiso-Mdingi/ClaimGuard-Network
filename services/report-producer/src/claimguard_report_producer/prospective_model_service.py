@@ -48,6 +48,63 @@ class ProspectiveClaimScore:
 
 
 @dataclass(frozen=True)
+class ProspectiveModelServiceExpectations:
+    deployment_id: str
+    model_id: str
+    model_version: str
+    feature_schema_version: str
+    analysis_mode: str
+    threshold: float
+
+    def __post_init__(self) -> None:
+        for field in (
+            "deployment_id",
+            "model_id",
+            "model_version",
+            "feature_schema_version",
+            "analysis_mode",
+        ):
+            value = str(getattr(self, field) or "").strip()
+            if not value or len(value) > 128:
+                raise ValueError(
+                    f"Prospective model expectation {field} is invalid."
+                )
+            object.__setattr__(self, field, value)
+
+        if self.feature_schema_version != FEATURE_SCHEMA_VERSION:
+            raise ValueError(
+                "The prospective feature builder does not support the configured "
+                "feature schema."
+            )
+        if self.analysis_mode != ANALYSIS_MODE:
+            raise ValueError(
+                "The prospective worker does not support the configured analysis mode."
+            )
+        if (
+            isinstance(self.threshold, bool)
+            or not math.isfinite(self.threshold)
+            or not 0 <= self.threshold <= 1
+        ):
+            raise ValueError("The expected prospective threshold is invalid.")
+
+    @classmethod
+    def baseline(
+        cls,
+        deployment_id: str,
+        *,
+        threshold: float = 0.08760971001434723,
+    ) -> "ProspectiveModelServiceExpectations":
+        return cls(
+            deployment_id=deployment_id,
+            model_id=MODEL_ID,
+            model_version=MODEL_VERSION,
+            feature_schema_version=FEATURE_SCHEMA_VERSION,
+            analysis_mode=ANALYSIS_MODE,
+            threshold=threshold,
+        )
+
+
+@dataclass(frozen=True)
 class ProspectiveScreeningResult:
     deployment_id: str
     model_id: str
@@ -112,12 +169,11 @@ class ProspectiveModelServiceClient:
         base_url: str,
         audience: str,
         pseudonymization_key: str,
-        deployment_id: str,
+        expectations: ProspectiveModelServiceExpectations,
         token_provider: TokenProvider,
         transport: ModelTransport,
         timeout_seconds: float = 120,
         endpoint_path: str = DEFAULT_ENDPOINT_PATH,
-        expected_threshold: float = 0.08760971001434723,
     ) -> None:
         parsed = urlparse(base_url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.path not in {"", "/"}:
@@ -126,34 +182,58 @@ class ProspectiveModelServiceClient:
             raise ValueError("MODEL_SERVICE_PSEUDONYMIZATION_KEY must contain at least 32 bytes.")
         if not endpoint_path.startswith("/") or endpoint_path.endswith("/"):
             raise ValueError("MODEL_SERVICE_ENDPOINT_PATH is invalid.")
-        if not 0 <= expected_threshold <= 1:
-            raise ValueError("The expected prospective threshold is invalid.")
+        if not isinstance(expectations, ProspectiveModelServiceExpectations):
+            raise ValueError("Prospective model-service expectations are required.")
         self.endpoint_url = f"{base_url.rstrip('/')}{endpoint_path}"
         self.audience = audience.strip()
         self.pseudonymization_key = pseudonymization_key.encode("utf-8")
-        self.deployment_id = deployment_id.strip()
+        self.expectations = expectations
+        self.deployment_id = expectations.deployment_id
         self.token_provider = token_provider
         self.transport = transport
         self.timeout_seconds = timeout_seconds
-        self.expected_threshold = expected_threshold
+        self.expected_threshold = expectations.threshold
 
     @classmethod
     def from_environment(cls) -> "ProspectiveModelServiceClient":
+        deployment_id = _required_environment("MODEL_SERVICE_DEPLOYMENT_ID")
+        threshold = float(
+            os.environ.get(
+                "MODEL_SERVICE_EXPECTED_THRESHOLD",
+                os.environ.get(
+                    "MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD",
+                    "0.08760971001434723",
+                ),
+            )
+        )
         return cls(
             base_url=_required_environment("MODEL_SERVICE_BASE_URL"),
             audience=_required_environment("MODEL_SERVICE_AUDIENCE"),
             pseudonymization_key=_required_environment("MODEL_SERVICE_PSEUDONYMIZATION_KEY"),
-            deployment_id=_required_environment("MODEL_SERVICE_DEPLOYMENT_ID"),
+            expectations=ProspectiveModelServiceExpectations(
+                deployment_id=deployment_id,
+                model_id=os.environ.get(
+                    "MODEL_SERVICE_EXPECTED_MODEL_ID",
+                    MODEL_ID,
+                ),
+                model_version=os.environ.get(
+                    "MODEL_SERVICE_EXPECTED_MODEL_VERSION",
+                    MODEL_VERSION,
+                ),
+                feature_schema_version=os.environ.get(
+                    "MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION",
+                    FEATURE_SCHEMA_VERSION,
+                ),
+                analysis_mode=os.environ.get(
+                    "MODEL_SERVICE_EXPECTED_ANALYSIS_MODE",
+                    ANALYSIS_MODE,
+                ),
+                threshold=threshold,
+            ),
             token_provider=AzureTokenProvider(),
             transport=UrllibModelTransport(),
             timeout_seconds=float(os.environ.get("MODEL_SERVICE_TIMEOUT_SECONDS", "120")),
             endpoint_path=os.environ.get("MODEL_SERVICE_ENDPOINT_PATH", DEFAULT_ENDPOINT_PATH),
-            expected_threshold=float(
-                os.environ.get(
-                    "MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD",
-                    "0.08760971001434723",
-                )
-            ),
         )
 
     def _token(self, tenant_id: str, kind: str, value: object, watermark: str) -> str:
@@ -247,10 +327,10 @@ class ProspectiveModelServiceClient:
             )
         request_without_id: dict[str, object] = {
             "schemaVersion": REQUEST_SCHEMA_VERSION,
-            "featureSchemaVersion": FEATURE_SCHEMA_VERSION,
+            "featureSchemaVersion": self.expectations.feature_schema_version,
             "deploymentId": self.deployment_id,
             "tenantId": self._token(snapshot.tenant_id, "tenant", snapshot.tenant_id, watermark),
-            "analysisMode": ANALYSIS_MODE,
+            "analysisMode": self.expectations.analysis_mode,
             "window": {
                 "capturedAt": snapshot.captured_at,
                 "contextCutoffAt": snapshot.context_cutoff_at,
@@ -258,7 +338,7 @@ class ProspectiveModelServiceClient:
             },
             "targetClaims": targets,
             "contextFeatures": {
-                "schemaVersion": FEATURE_SCHEMA_VERSION,
+                "schemaVersion": self.expectations.feature_schema_version,
                 "targets": contexts,
             },
         }
@@ -299,11 +379,11 @@ class ProspectiveModelServiceClient:
             raise ProspectiveModelContractError("The model response is not valid JSON.", watermark=watermark) from error
         expected = {
             "schemaVersion": RESPONSE_SCHEMA_VERSION,
-            "featureSchemaVersion": FEATURE_SCHEMA_VERSION,
+            "featureSchemaVersion": self.expectations.feature_schema_version,
             "deploymentId": self.deployment_id,
-            "modelId": MODEL_ID,
-            "modelVersion": MODEL_VERSION,
-            "analysisMode": ANALYSIS_MODE,
+            "modelId": self.expectations.model_id,
+            "modelVersion": self.expectations.model_version,
+            "analysisMode": self.expectations.analysis_mode,
             "tenantId": request["tenantId"],
             "requestId": request_id,
             "windowWatermark": watermark,
@@ -351,10 +431,10 @@ class ProspectiveModelServiceClient:
             raise ProspectiveModelContractError("Model response ordering is incompatible.", watermark=watermark)
         return ProspectiveScreeningResult(
             deployment_id=self.deployment_id,
-            model_id=MODEL_ID,
-            model_version=MODEL_VERSION,
-            feature_schema_version=FEATURE_SCHEMA_VERSION,
-            analysis_mode=ANALYSIS_MODE,
+            model_id=self.expectations.model_id,
+            model_version=self.expectations.model_version,
+            feature_schema_version=self.expectations.feature_schema_version,
+            analysis_mode=self.expectations.analysis_mode,
             request_id=request_id,
             watermark=watermark,
             scores=tuple(scores),

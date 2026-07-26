@@ -32,6 +32,39 @@ function configureApi() {
         },
       });
     }
+    if (
+      path === "/admin/platform/model-deployments"
+      && options.method === "POST"
+    ) {
+      return Promise.resolve({
+        available: true,
+        model: {
+          deploymentId: "claimguard-ensemble:2.0.0",
+          lifecycleStatus: "candidate",
+        },
+        auditEventId: "audit-1",
+      });
+    }
+    if (path === "/admin/platform/model-deployments") {
+      return Promise.resolve({
+        available: true,
+        models: [{
+          deploymentId: "deployment-1",
+          modelId: "claimguard-baseline",
+          modelVersion: "1.0.0",
+          displayName: "ClaimGuard baseline",
+          ownerType: "claimguard",
+          ownerOrganisationId: null,
+          lifecycleStatus: "active",
+          featureSchemaVersion: "claim-feature-schema-2026.2",
+          decisionThreshold: 0.1,
+          artifactSha256: null,
+          containerImageDigest: null,
+          runtimeApproved: true,
+          fleetManaged: true,
+        }],
+      });
+    }
     if (path === "/health") return Promise.resolve({ status: "ok" });
     if (path === "/ready") return Promise.resolve({ status: "ready", ready: true });
     if (path === "/admin/platform/organisations" && options.method === "POST") {
@@ -112,9 +145,59 @@ describe("PlatformAdminLifecyclePage", () => {
   test("shows the deployment-authoritative managed model without an unsafe save action", async () => {
     render(<PlatformAdminPage />);
 
-    expect(await screen.findByText("deployment-1")).toBeInTheDocument();
+    expect((await screen.findAllByText("deployment-1")).length).toBeGreaterThan(0);
+    expect(screen.getByText("ClaimGuard baseline")).toBeInTheDocument();
     expect(screen.getByText("Approved deployment")).toBeInTheDocument();
     expect(screen.getByText("Deployment controlled")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Save configuration/i })).not.toBeInTheDocument();
+  });
+
+  test("registers a checksum-pinned inactive model candidate", async () => {
+    render(<PlatformAdminPage />);
+    const user = userEvent.setup();
+
+    await screen.findByText("ClaimGuard baseline");
+    await user.click(screen.getByText("Register an immutable model candidate"));
+    await user.type(screen.getByLabelText("Display name"), "ClaimGuard ensemble 2");
+    await user.type(screen.getByLabelText("Deployment ID"), "claimguard-ensemble:2.0.0");
+    await user.type(screen.getByLabelText("Model ID"), "claimguard-ensemble");
+    await user.type(screen.getByLabelText("Model version"), "2.0.0");
+    await user.type(screen.getByLabelText("Decision threshold"), "0.19");
+    await user.type(screen.getByLabelText("Artifact SHA-256"), "a".repeat(64));
+    await user.type(
+      screen.getByLabelText("Immutable container digest"),
+      `registry/model@sha256:${"b".repeat(64)}`,
+    );
+    await user.click(screen.getByRole("button", { name: "Register candidate" }));
+
+    await waitFor(() => {
+      expect(apiJson).toHaveBeenCalledWith(
+        "/admin/platform/model-deployments",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            deploymentId: "claimguard-ensemble:2.0.0",
+            modelId: "claimguard-ensemble",
+            modelVersion: "2.0.0",
+            displayName: "ClaimGuard ensemble 2",
+            ownerType: "claimguard",
+            ownerOrganisationId: null,
+            requestSchemaVersion: "claimguard.claim-screening-request.v3",
+            responseSchemaVersion: "claimguard.claim-screening-response.v3",
+            featureSchemaVersion: "claim-feature-schema-2026.2",
+            analysisMode: "PROSPECTIVE_CLAIM_SCREENING",
+            decisionThreshold: 0.19,
+            artifactSha256: "a".repeat(64),
+            containerImageDigest: `registry/model@sha256:${"b".repeat(64)}`,
+            capabilities: {
+              prospectiveClaimScreening: true,
+              networkEnrichment: false,
+            },
+            automaticAdverseAction: false,
+          }),
+        },
+      );
+    });
+    expect(await screen.findByText("Candidate recorded")).toBeInTheDocument();
   });
 });

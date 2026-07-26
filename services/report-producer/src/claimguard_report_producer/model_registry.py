@@ -18,6 +18,16 @@ from .model_service import (
     ModelServiceExpectations,
     UrllibModelTransport,
 )
+from .ordered_prospective_model_service import (
+    ProspectiveModelServiceClient,
+)
+from .prospective_model_service import (
+    ANALYSIS_MODE as PROSPECTIVE_ANALYSIS_MODE,
+    FEATURE_SCHEMA_VERSION as PROSPECTIVE_FEATURE_SCHEMA_VERSION,
+    MODEL_ID as PROSPECTIVE_MODEL_ID,
+    MODEL_VERSION as PROSPECTIVE_MODEL_VERSION,
+    ProspectiveModelServiceExpectations,
+)
 
 
 APPROVED_DEPLOYMENTS_ENV = (
@@ -729,4 +739,228 @@ class ModelDeploymentRegistry:
                 canonical
             ] = client
 
+            return client
+
+
+class ProspectiveModelDeploymentRegistry:
+    """
+    Creates one v3 prospective client for each explicitly approved immutable
+    deployment.
+
+    The current global environment variables remain valid for the primary
+    deployment. Additional deployments use the collision-resistant suffix
+    returned by ``deployment_environment_prefix``.
+    """
+
+    def __init__(
+        self,
+        *,
+        approved_deployment_ids: Iterable[str] | None = None,
+        environment: Mapping[str, str] | None = None,
+        token_provider_factory: Callable[[], object] = AzureTokenProvider,
+        transport_factory: Callable[[], object] = UrllibModelTransport,
+        client_factory: Callable[..., ProspectiveModelServiceClient] = (
+            ProspectiveModelServiceClient
+        ),
+    ) -> None:
+        for factory, field in (
+            (token_provider_factory, "token_provider_factory"),
+            (transport_factory, "transport_factory"),
+            (client_factory, "client_factory"),
+        ):
+            if not callable(factory):
+                raise ValueError(f"{field} must be callable.")
+
+        self._environment = dict(
+            os.environ if environment is None else environment
+        )
+        self._approved_deployment_ids = (
+            _normalise_approved_deployments(approved_deployment_ids)
+            if approved_deployment_ids is not None
+            else _approved_from_environment(self._environment)
+        )
+        self._approved_deployment_set = frozenset(
+            self._approved_deployment_ids
+        )
+        self._token_provider_factory = token_provider_factory
+        self._transport_factory = transport_factory
+        self._client_factory = client_factory
+        self._cache: dict[str, ProspectiveModelServiceClient] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def approved_deployment_ids(self) -> tuple[str, ...]:
+        return self._approved_deployment_ids
+
+    def _approved_deployment(self, deployment_id: object) -> str:
+        canonical = _deployment_id(
+            deployment_id,
+            error_type=ModelDeploymentNotApprovedError,
+        )
+        if canonical not in self._approved_deployment_set:
+            raise ModelDeploymentNotApprovedError(
+                "The pinned prospective model deployment "
+                f"{canonical} is not approved for this worker."
+            )
+        return canonical
+
+    def _threshold(self, deployment_id: str) -> float:
+        configured = _deployment_value(
+            self._environment,
+            deployment_id,
+            "MODEL_SERVICE_EXPECTED_THRESHOLD",
+            default="",
+        )
+        if configured:
+            try:
+                threshold = float(configured)
+            except (TypeError, ValueError) as error:
+                raise ModelRegistryConfigurationError(
+                    "MODEL_SERVICE_EXPECTED_THRESHOLD must be numeric for "
+                    f"deployment {deployment_id}."
+                ) from error
+            if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+                raise ModelRegistryConfigurationError(
+                    "MODEL_SERVICE_EXPECTED_THRESHOLD must be between 0 and 1 "
+                    f"for deployment {deployment_id}."
+                )
+            return threshold
+
+        return _deployment_float(
+            self._environment,
+            deployment_id,
+            "MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD",
+            default="0.08760971001434723",
+            minimum=0,
+            maximum=1,
+        )
+
+    def _build_client(
+        self,
+        deployment_id: str,
+    ) -> ProspectiveModelServiceClient:
+        try:
+            expectations = ProspectiveModelServiceExpectations(
+                deployment_id=deployment_id,
+                model_id=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_MODEL_ID",
+                    default=PROSPECTIVE_MODEL_ID,
+                ),
+                model_version=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_MODEL_VERSION",
+                    default=PROSPECTIVE_MODEL_VERSION,
+                ),
+                feature_schema_version=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION",
+                    default=PROSPECTIVE_FEATURE_SCHEMA_VERSION,
+                ),
+                analysis_mode=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_EXPECTED_ANALYSIS_MODE",
+                    default=PROSPECTIVE_ANALYSIS_MODE,
+                ),
+                threshold=self._threshold(deployment_id),
+            )
+        except ModelRegistryConfigurationError:
+            raise
+        except ValueError as error:
+            raise ModelRegistryConfigurationError(
+                "Prospective model expectations are invalid for deployment "
+                f"{deployment_id}: {error}"
+            ) from error
+        timeout_seconds = _deployment_float(
+            self._environment,
+            deployment_id,
+            "MODEL_SERVICE_TIMEOUT_SECONDS",
+            default="120",
+            minimum=1,
+            maximum=240,
+        )
+
+        try:
+            token_provider = self._token_provider_factory()
+        except Exception as error:
+            raise ModelRegistryConfigurationError(
+                "The prospective model-service token provider could not be "
+                "initialized."
+            ) from error
+
+        try:
+            transport = self._transport_factory()
+        except Exception as error:
+            raise ModelRegistryConfigurationError(
+                "The prospective model-service transport could not be initialized."
+            ) from error
+
+        try:
+            client = self._client_factory(
+                base_url=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_BASE_URL",
+                    required=True,
+                ),
+                audience=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_AUDIENCE",
+                    required=True,
+                ),
+                pseudonymization_key=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_PSEUDONYMIZATION_KEY",
+                    required=True,
+                ),
+                expectations=expectations,
+                token_provider=token_provider,
+                transport=transport,
+                timeout_seconds=timeout_seconds,
+                endpoint_path=_deployment_value(
+                    self._environment,
+                    deployment_id,
+                    "MODEL_SERVICE_ENDPOINT_PATH",
+                    default="/v3/claim-screening",
+                ),
+            )
+        except (
+            ModelDeploymentNotApprovedError,
+            ModelRegistryConfigurationError,
+        ):
+            raise
+        except Exception as error:
+            raise ModelRegistryConfigurationError(
+                "Prospective model-service configuration is invalid for "
+                f"deployment {deployment_id}: {error}"
+            ) from error
+
+        if not isinstance(client, ProspectiveModelServiceClient):
+            raise ModelRegistryConfigurationError(
+                "client_factory returned an unsupported prospective model client."
+            )
+        if client.expectations != expectations:
+            raise ModelRegistryConfigurationError(
+                "The prospective model client does not match its approved "
+                "deployment metadata."
+            )
+        return client
+
+    def client_for(
+        self,
+        deployment_id: str,
+    ) -> ProspectiveModelServiceClient:
+        canonical = self._approved_deployment(deployment_id)
+        with self._lock:
+            existing = self._cache.get(canonical)
+            if existing is not None:
+                return existing
+            client = self._build_client(canonical)
+            self._cache[canonical] = client
             return client

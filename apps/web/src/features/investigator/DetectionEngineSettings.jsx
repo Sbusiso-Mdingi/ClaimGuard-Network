@@ -56,6 +56,29 @@ function sameSelection(left, right) {
     && left.modelDeploymentId === right.modelDeploymentId;
 }
 
+function normaliseSchemeOwnedModels(catalogue) {
+  const values = catalogue?.schemeOwned;
+  if (!Array.isArray(values)) return [];
+
+  const seen = new Set();
+  return values.map((model) => {
+    const deploymentId = String(model?.deploymentId || "").trim();
+    if (
+      !DEPLOYMENT_ID_PATTERN.test(deploymentId)
+      || model?.ownership !== "scheme"
+      || seen.has(deploymentId)
+    ) {
+      throw new Error("The API returned an invalid scheme-owned model catalogue.");
+    }
+    seen.add(deploymentId);
+    return {
+      deploymentId,
+      displayName: String(model?.displayName || deploymentId).trim()
+        || deploymentId,
+    };
+  });
+}
+
 function ModelChoice({
   title,
   description,
@@ -88,6 +111,7 @@ function ModelChoice({
 export function DetectionEngineSettings({ tenantId }) {
   const [strategyType, setStrategyType] = useState("");
   const [proprietaryDeploymentId, setProprietaryDeploymentId] = useState("");
+  const [schemeOwnedModels, setSchemeOwnedModels] = useState([]);
   const [savedSelection, setSavedSelection] = useState({
     strategyId: null,
     strategyType: "",
@@ -117,8 +141,12 @@ export function DetectionEngineSettings({ tenantId }) {
         }
 
         const selection = normaliseSelection(data.strategy);
+        const registeredModels = normaliseSchemeOwnedModels(
+          data.modelCatalogue,
+        );
         if (!mounted) return;
 
+        setSchemeOwnedModels(registeredModels);
         setStrategyType(selection.strategyType);
         setProprietaryDeploymentId(
           selection.strategyType === "scheme_managed"
@@ -162,9 +190,12 @@ export function DetectionEngineSettings({ tenantId }) {
   const configurationChanged = !sameSelection(currentSelection, savedSelection);
   const reason = changeReason.trim();
   const reasonValid = reason.length >= 1 && reason.length <= 500;
+  const registeredSchemeDeploymentIds = new Set(
+    schemeOwnedModels.map((model) => model.deploymentId),
+  );
   const customDeploymentValid = strategyType !== "scheme_managed"
     || (Boolean(canonicalProprietaryDeploymentId)
-      && DEPLOYMENT_ID_PATTERN.test(canonicalProprietaryDeploymentId));
+      && registeredSchemeDeploymentIds.has(canonicalProprietaryDeploymentId));
   const canSave = !loading
     && !saving
     && MODEL_SELECTIONS.has(strategyType)
@@ -210,7 +241,7 @@ export function DetectionEngineSettings({ tenantId }) {
       return;
     }
     if (!customDeploymentValid) {
-      setError("Enter a valid registered proprietary model deployment ID.");
+      setError("Select a registered proprietary model deployment.");
       return;
     }
     if (!reasonValid) {
@@ -313,7 +344,7 @@ export function DetectionEngineSettings({ tenantId }) {
       <div className="strategy-toggle-group" role="radiogroup" aria-label="Model update policy">
         <ModelChoice
           title="ClaimGuard-managed updates"
-          description="Use ClaimGuard's approved baseline. Validated version changes are applied through audited rollout operations, with monitoring and rollback."
+          description="Use ClaimGuard's current approved detection model. Validated version changes are applied through audited rollout operations, with monitoring and rollback."
           badge="Managed by ClaimGuard"
           selected={strategyType === "claimguard_managed"}
           disabled={saving}
@@ -340,24 +371,34 @@ export function DetectionEngineSettings({ tenantId }) {
       {strategyType === "scheme_managed" ? (
         <div className="url-input-container">
           <label className="url-input-label" htmlFor="model-deployment-id">
-            Registered proprietary model deployment ID
+            Registered proprietary model
           </label>
-          <input
+          <select
             id="model-deployment-id"
             className="url-input"
-            type="text"
-            placeholder="scheme-model-name:version"
             value={proprietaryDeploymentId}
-            maxLength={128}
-            autoComplete="off"
-            spellCheck={false}
-            disabled={saving}
+            disabled={saving || schemeOwnedModels.length === 0}
             onChange={(event) => {
               setProprietaryDeploymentId(event.target.value);
               setError(null);
               setNotice(null);
             }}
-          />
+          >
+            <option value="">Choose a registered deployment</option>
+            {schemeOwnedModels.map((model) => (
+              <option
+                key={model.deploymentId}
+                value={model.deploymentId}
+              >
+                {model.displayName}
+              </option>
+            ))}
+          </select>
+          {schemeOwnedModels.length === 0 ? (
+            <p className="strategy-desc">
+              No proprietary model has been registered and approved for this scheme.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

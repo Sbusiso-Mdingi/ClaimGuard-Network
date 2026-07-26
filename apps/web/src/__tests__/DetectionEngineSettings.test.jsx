@@ -8,12 +8,22 @@ vi.mock("../lib/apiClient", () => ({ apiJson: vi.fn() }));
 import { apiJson } from "../lib/apiClient";
 import { DetectionEngineSettings } from "../features/investigator/DetectionEngineSettings";
 
-function response(strategy) {
+function response(
+  strategy,
+  schemeOwned = ["ubuntu-fraud-model:production"],
+) {
   return {
     available: true,
     strategy: {
       strategyId: 7,
       ...strategy,
+    },
+    modelCatalogue: {
+      schemeOwned: schemeOwned.map((deploymentId) => ({
+        deploymentId,
+        displayName: deploymentId,
+        ownership: "scheme",
+      })),
     },
   };
 }
@@ -83,8 +93,8 @@ describe("DetectionEngineSettings", () => {
     }));
 
     await user.click(screen.getByRole("radio", { name: /Scheme-owned model pin/i }));
-    await user.type(
-      screen.getByLabelText("Registered proprietary model deployment ID"),
+    await user.selectOptions(
+      screen.getByLabelText("Registered proprietary model"),
       "ubuntu-fraud-model:production",
     );
     await user.type(screen.getByLabelText("Reason for change"), "Activate Ubuntu's validated proprietary model.");
@@ -111,6 +121,20 @@ describe("DetectionEngineSettings", () => {
     await user.type(screen.getByLabelText("Reason for change"), "Switch model.");
 
     expect(screen.getByRole("button", { name: "Save Model Policy" })).toBeDisabled();
+  });
+
+  test("does not allow a scheme administrator to type an unregistered deployment", async () => {
+    const user = await renderLoaded({
+      strategyType: "claimguard_managed",
+      modelDeploymentId: "claimguard-fraud-model:1.2.0",
+    });
+
+    await user.click(screen.getByRole("radio", { name: /Scheme-owned model pin/i }));
+
+    const selector = screen.getByLabelText("Registered proprietary model");
+    expect(selector).toHaveRole("combobox");
+    expect(selector).toHaveTextContent("ubuntu-fraud-model:production");
+    expect(selector).not.toHaveTextContent("beta-fraud-model:production");
   });
 
   test("explains prospective pinning and managed rollout behaviour", async () => {

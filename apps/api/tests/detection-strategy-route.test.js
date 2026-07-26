@@ -28,7 +28,11 @@ const NON_ADMIN = Object.freeze({
   permissions: new Set(),
 });
 
-function appFor({ repository = null, authContext = ADMIN } = {}) {
+function appFor({
+  repository = null,
+  authContext = ADMIN,
+  modelDeploymentRepository = null,
+} = {}) {
   const app = new Hono();
   app.use("*", async (context, next) => {
     context.set("authContext", authContext);
@@ -42,6 +46,7 @@ function appFor({ repository = null, authContext = ADMIN } = {}) {
       },
     },
     detectionStrategyRepository: repository,
+    modelDeploymentRepository,
   });
   return app;
 }
@@ -87,6 +92,14 @@ test("GET projects a legacy deterministic strategy as selection required", async
   assert.equal(body.strategy.strategyType, "selection_required");
   assert.equal(body.strategy.requiresSelection, true);
   assert.match(body.strategy.message, /Deterministic scoring is no longer selectable/);
+  assert.deepEqual(body.modelCatalogue.schemeOwned, [{
+    deploymentId: "alpha-proprietary-model:production",
+    displayName: "alpha-proprietary-model:production",
+    modelId: null,
+    modelVersion: null,
+    featureSchemaVersion: null,
+    ownership: "scheme",
+  }]);
 });
 
 test("GET preserves a managed scheme posture when a newer fleet deployment is promoted", async () => {
@@ -133,6 +146,10 @@ test("GET does not misclassify another scheme's proprietary deployment as fleet-
   assert.equal(response.status, 200);
   assert.equal(body.strategy.strategyType, "selection_required");
   assert.equal(body.strategy.requiresSelection, true);
+  assert.deepEqual(
+    body.modelCatalogue.schemeOwned.map((model) => model.deploymentId),
+    ["alpha-proprietary-model:production"],
+  );
 });
 
 test("PUT ClaimGuard-managed selection resolves the platform deployment and stores an approved model", async () => {
@@ -280,6 +297,87 @@ test("PUT scheme-managed selection requires a tenant-owned approved deployment",
 
   assert.equal(rejected.status, 400);
   assert.equal(rejectedBody.code, "SCHEME_MODEL_DEPLOYMENT_NOT_APPROVED");
+  assert.equal(calls.length, 1);
+});
+
+test("registered catalogue dynamically gates and labels scheme-owned selection", async () => {
+  configureModels();
+  process.env.SCHEME_MODEL_DEPLOYMENTS_JSON = "{}";
+  const calls = [];
+  const registered = [{
+    deploymentId: "alpha-proprietary-model:production",
+    modelId: "alpha-fraud-model",
+    modelVersion: "3.0.0",
+    displayName: "Alpha proprietary fraud model",
+    ownerType: "scheme",
+    ownerOrganisationId: "org-alpha",
+    lifecycleStatus: "active",
+    featureSchemaVersion: "claim-feature-schema-2026.2",
+  }];
+  const app = appFor({
+    authContext: {
+      ...ADMIN,
+      organisation_id: "org-alpha",
+    },
+    repository: {
+      async getActiveStrategy() {
+        return {
+          strategyId: 7,
+          strategyType: "approved_model",
+          modelDeploymentId: "claimguard-fraud-model:1.2.0",
+        };
+      },
+      async setStrategy(tenantContext, change) {
+        calls.push({ tenantContext, change });
+        return { strategyId: 8, changed: true };
+      },
+    },
+    modelDeploymentRepository: {
+      async listSelectableForOrganisation(organisationId) {
+        assert.equal(organisationId, "org-alpha");
+        return registered;
+      },
+    },
+  });
+
+  const listed = await app.request("/detection/strategy");
+  const listedBody = await listed.json();
+  assert.equal(
+    listedBody.modelCatalogue.schemeOwned[0].displayName,
+    "Alpha proprietary fraud model",
+  );
+
+  const accepted = await app.request("/detection/strategy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      strategyType: "scheme_managed",
+      modelDeploymentId: "alpha-proprietary-model:production",
+      changeReason: "Use the scheme-scoped durable catalogue entry.",
+      expectedActiveStrategyId: 7,
+    }),
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(calls.length, 1);
+
+  registered.length = 0;
+  const rejected = await app.request("/detection/strategy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      strategyType: "scheme_managed",
+      modelDeploymentId: "alpha-proprietary-model:production",
+      changeReason: "Attempt an unregistered runtime selection.",
+      expectedActiveStrategyId: 7,
+    }),
+  });
+  const rejectedBody = await rejected.json();
+
+  assert.equal(rejected.status, 400);
+  assert.equal(
+    rejectedBody.code,
+    "SCHEME_MODEL_DEPLOYMENT_NOT_APPROVED",
+  );
   assert.equal(calls.length, 1);
 });
 

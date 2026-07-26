@@ -38,7 +38,25 @@ param modelServiceBaseUrl string
 param modelServiceAudience string
 
 @description('Approved immutable model deployment identifier.')
-param modelDeploymentId string = 'claimguard-claim-fraud-ensemble:1.1.0'
+param modelDeploymentId string = 'claimguard-claim-fraud-baseline:1.0.0'
+
+@description('Comma-separated immutable deployments the prospective worker may route.')
+param approvedModelDeploymentIds string = modelDeploymentId
+
+@description('Expected model identity returned by the prospective service.')
+param prospectiveModelId string = 'claimguard-claim-fraud-baseline'
+
+@description('Expected model version returned by the prospective service.')
+param prospectiveModelVersion string = '1.0.0'
+
+@description('Feature schema supported by the prospective snapshot builder.')
+param prospectiveFeatureSchemaVersion string = 'claim-feature-schema-2026.2'
+
+@description('Analysis mode supported by the prospective worker.')
+param prospectiveAnalysisMode string = 'PROSPECTIVE_CLAIM_SCREENING'
+
+@description('Decision threshold registered for the prospective deployment.')
+param prospectiveThreshold string = '0.08760971001434723'
 
 @description('Azure Storage account URL used for report publication.')
 param reportStorageAccountUrl string
@@ -48,6 +66,9 @@ param reportStorageContainerName string = 'claimguard-reports'
 
 @description('Name of the scheduled report-producer job.')
 param reportWorkerJobName string = 'claimguard-report-producer'
+
+@description('Recurring worker schedule. Production remains parked unless an explicitly approved deployment supplies another value.')
+param workerScheduleCron string = '0 0 1 1 *'
 
 @description('Allow this deployment to create Azure RBAC role assignments. Keep false for recurring CI and bootstrap access separately.')
 param manageRoleAssignments bool = false
@@ -146,7 +167,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
     configuration: {
       triggerType: 'Schedule'
       scheduleTriggerConfig: {
-        cronExpression: '*/5 * * * *'
+        cronExpression: workerScheduleCron
         parallelism: 1
         replicaCompletionCount: 1
       }
@@ -218,6 +239,30 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'MODEL_SERVICE_DEPLOYMENT_ID'
               value: modelDeploymentId
+            }
+            {
+              name: 'MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS'
+              value: approvedModelDeploymentIds
+            }
+            {
+              name: 'MODEL_SERVICE_EXPECTED_MODEL_ID'
+              value: prospectiveModelId
+            }
+            {
+              name: 'MODEL_SERVICE_EXPECTED_MODEL_VERSION'
+              value: prospectiveModelVersion
+            }
+            {
+              name: 'MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION'
+              value: prospectiveFeatureSchemaVersion
+            }
+            {
+              name: 'MODEL_SERVICE_EXPECTED_ANALYSIS_MODE'
+              value: prospectiveAnalysisMode
+            }
+            {
+              name: 'MODEL_SERVICE_EXPECTED_THRESHOLD'
+              value: prospectiveThreshold
             }
             {
               name: 'MODEL_SERVICE_EXPECTED_ENSEMBLE_ID'

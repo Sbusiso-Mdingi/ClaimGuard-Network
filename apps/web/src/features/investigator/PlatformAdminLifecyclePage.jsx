@@ -213,7 +213,7 @@ export function PlatformAdminLifecyclePage() {
       )}
 
       <SectionCard title="Global ClaimGuard engine" description="Review the fleet-managed model promoted by the validated API deployment. Managed schemes adopt updates through an audited prospective transition.">
-        <GlobalDetectionEngineSettings />
+        <GlobalDetectionEngineSettings organisations={organisations} />
       </SectionCard>
     </PageFrame>
   );

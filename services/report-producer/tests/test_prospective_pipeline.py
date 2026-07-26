@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest import TestCase
 
 from claimguard_report_producer.contract import validate_detection_report
@@ -9,6 +10,7 @@ from claimguard_report_producer.prospective_model_service import (
     MODEL_ID,
     MODEL_VERSION,
     ProspectiveClaimScore,
+    ProspectiveModelServiceExpectations,
     ProspectiveScreeningResult,
 )
 from claimguard_report_producer.prospective_report import (
@@ -21,8 +23,19 @@ from claimguard_report_producer.snapshot import ProspectiveScoringSnapshot
 
 
 class StaticClient:
-    def __init__(self, result: ProspectiveScreeningResult) -> None:
+    def __init__(
+        self,
+        result: ProspectiveScreeningResult,
+        expectations: ProspectiveModelServiceExpectations | None = None,
+    ) -> None:
         self.result = result
+        self.expectations = (
+            expectations
+            or ProspectiveModelServiceExpectations.baseline(
+                result.deployment_id,
+                threshold=result.scores[0].threshold,
+            )
+        )
         self.calls = 0
 
     def screen(self, _snapshot: ProspectiveScoringSnapshot) -> ProspectiveScreeningResult:
@@ -187,3 +200,49 @@ class ProspectivePipelineTests(TestCase):
         )
         self.assertEqual(client.calls, 1)
         self.assertEqual(stored_again, stored_result)
+
+    def test_registered_non_baseline_result_is_persisted_and_reloaded(
+        self,
+    ) -> None:
+        expectations = ProspectiveModelServiceExpectations(
+            deployment_id="claimguard-claim-fraud-ensemble:2.0.0",
+            model_id="claimguard-claim-fraud-ensemble",
+            model_version="2.0.0",
+            feature_schema_version=FEATURE_SCHEMA_VERSION,
+            analysis_mode=ANALYSIS_MODE,
+            threshold=0.19,
+        )
+        scoring_snapshot = replace(
+            snapshot(),
+            model_deployment_id=expectations.deployment_id,
+        )
+        candidate_result = replace(
+            result(),
+            deployment_id=expectations.deployment_id,
+            model_id=expectations.model_id,
+            model_version=expectations.model_version,
+            scores=(
+                replace(
+                    result().scores[0],
+                    threshold=expectations.threshold,
+                ),
+            ),
+        )
+        repository = MemoryResultsRepository()
+        client = StaticClient(candidate_result, expectations)
+
+        stored_result = load_or_score_prospective_result(
+            snapshot=scoring_snapshot,
+            client=client,
+            repository=repository,
+        )
+        stored_again = load_or_score_prospective_result(
+            snapshot=scoring_snapshot,
+            client=client,
+            repository=repository,
+        )
+
+        self.assertEqual(stored_result.model_id, expectations.model_id)
+        self.assertEqual(stored_result.model_version, expectations.model_version)
+        self.assertEqual(stored_again, stored_result)
+        self.assertEqual(client.calls, 1)

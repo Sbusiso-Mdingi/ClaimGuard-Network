@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .contract import ReportContractError, validate_detection_report
+from .model_registry import ProspectiveModelDeploymentRegistry
 from .ordered_prospective_model_service import ProspectiveModelServiceClient
 from .outbox import OutboxContractError, OutboxJob
 from .prospective_model_service import ProspectiveModelContractError
@@ -22,9 +23,16 @@ from .worker import (
 class ProspectiveAwareReportProducerWorker(ReportProducerWorker):
     """Uses the v3 trained-ML path only for approved-model jobs."""
 
-    def __init__(self, *args, prospective_client=None, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        prospective_client=None,
+        prospective_registry=None,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.prospective_client = prospective_client
+        self.prospective_registry = prospective_registry
 
     def _prospective_client_for(self, job: OutboxJob) -> ProspectiveModelServiceClient:
         if not job.model_deployment_id:
@@ -32,14 +40,18 @@ class ProspectiveAwareReportProducerWorker(ReportProducerWorker):
                 "Approved-model jobs require a pinned prospective deployment."
             )
         client = self.prospective_client
-        if client is None:
-            client = ProspectiveModelServiceClient.from_environment()
-            self.prospective_client = client
-        if client.deployment_id != job.model_deployment_id:
+        if client is not None and client.deployment_id != job.model_deployment_id:
             raise WorkerConfigurationError(
                 "The prospective client does not match the job's pinned deployment."
             )
-        return client
+        if client is not None:
+            return client
+
+        registry = self.prospective_registry
+        if registry is None:
+            registry = ProspectiveModelDeploymentRegistry()
+            self.prospective_registry = registry
+        return registry.client_for(job.model_deployment_id)
 
     def _process_job(self, job: OutboxJob) -> None:
         if job.strategy_type != "approved_model":

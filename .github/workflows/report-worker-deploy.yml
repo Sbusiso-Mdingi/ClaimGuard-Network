@@ -33,6 +33,10 @@ env:
   MODEL_SERVICE_AUDIENCE: ${{ vars.MODEL_SERVICE_AUDIENCE }}
   MODEL_SERVICE_ENDPOINT_PATH: /v3/claim-screening
   MODEL_DEPLOYMENT_ID: claimguard-claim-fraud-baseline:1.0.0
+  MODEL_EXPECTED_ID: claimguard-claim-fraud-baseline
+  MODEL_EXPECTED_VERSION: 1.0.0
+  MODEL_EXPECTED_FEATURE_SCHEMA: claim-feature-schema-2026.2
+  MODEL_EXPECTED_ANALYSIS_MODE: PROSPECTIVE_CLAIM_SCREENING
   MODEL_EXPECTED_BASELINE_THRESHOLD: '0.08760971001434723'
   MODEL_PSEUDONYM_SECRET_NAME: ${{ vars.MODEL_PSEUDONYM_SECRET_NAME || 'claimguard--report-worker--model-pseudonymization-key' }}
   PARKED_WORKER_CRON: '0 0 1 1 *'
@@ -72,7 +76,9 @@ jobs:
             REPORT_STORAGE_ACCOUNT_NAME REPORT_STORAGE_ACCOUNT_URL
             REPORT_STORAGE_CONTAINER MODEL_SERVICE_BASE_URL
             MODEL_SERVICE_AUDIENCE MODEL_SERVICE_ENDPOINT_PATH
-            MODEL_DEPLOYMENT_ID MODEL_EXPECTED_BASELINE_THRESHOLD
+            MODEL_DEPLOYMENT_ID MODEL_EXPECTED_ID MODEL_EXPECTED_VERSION
+            MODEL_EXPECTED_FEATURE_SCHEMA MODEL_EXPECTED_ANALYSIS_MODE
+            MODEL_EXPECTED_BASELINE_THRESHOLD
             MODEL_PSEUDONYM_SECRET_NAME MODEL_PSEUDONYMIZATION_KEY
             PARKED_WORKER_CRON VALIDATED_MAIN_SHA
           )
@@ -172,9 +178,16 @@ jobs:
               modelServiceBaseUrl="$MODEL_SERVICE_BASE_URL" \
               modelServiceAudience="$MODEL_SERVICE_AUDIENCE" \
               modelDeploymentId="$MODEL_DEPLOYMENT_ID" \
+              approvedModelDeploymentIds="$MODEL_DEPLOYMENT_ID" \
+              prospectiveModelId="$MODEL_EXPECTED_ID" \
+              prospectiveModelVersion="$MODEL_EXPECTED_VERSION" \
+              prospectiveFeatureSchemaVersion="$MODEL_EXPECTED_FEATURE_SCHEMA" \
+              prospectiveAnalysisMode="$MODEL_EXPECTED_ANALYSIS_MODE" \
+              prospectiveThreshold="$MODEL_EXPECTED_BASELINE_THRESHOLD" \
               reportStorageAccountUrl="$REPORT_STORAGE_ACCOUNT_URL" \
               reportStorageContainerName="$REPORT_STORAGE_CONTAINER" \
               reportWorkerJobName="$REPORT_WORKER_JOB_NAME" \
+              workerScheduleCron="$PARKED_WORKER_CRON" \
               manageRoleAssignments=false \
             --only-show-errors
 
@@ -185,6 +198,12 @@ jobs:
             --set-env-vars \
               MODEL_SERVICE_ENDPOINT_PATH="$MODEL_SERVICE_ENDPOINT_PATH" \
               MODEL_SERVICE_DEPLOYMENT_ID="$MODEL_DEPLOYMENT_ID" \
+              MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS="$MODEL_DEPLOYMENT_ID" \
+              MODEL_SERVICE_EXPECTED_MODEL_ID="$MODEL_EXPECTED_ID" \
+              MODEL_SERVICE_EXPECTED_MODEL_VERSION="$MODEL_EXPECTED_VERSION" \
+              MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION="$MODEL_EXPECTED_FEATURE_SCHEMA" \
+              MODEL_SERVICE_EXPECTED_ANALYSIS_MODE="$MODEL_EXPECTED_ANALYSIS_MODE" \
+              MODEL_SERVICE_EXPECTED_THRESHOLD="$MODEL_EXPECTED_BASELINE_THRESHOLD" \
               MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD="$MODEL_EXPECTED_BASELINE_THRESHOLD" \
             --only-show-errors
 
@@ -215,6 +234,12 @@ jobs:
           test "$(echo "$WORKER" | jq -r '.properties.configuration.scheduleTriggerConfig.cronExpression')" = "$PARKED_WORKER_CRON"
           test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_ENDPOINT_PATH") | .value')" = "$MODEL_SERVICE_ENDPOINT_PATH"
           test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_EXPECTED_MODEL_ID") | .value')" = "$MODEL_EXPECTED_ID"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_EXPECTED_MODEL_VERSION") | .value')" = "$MODEL_EXPECTED_VERSION"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION") | .value')" = "$MODEL_EXPECTED_FEATURE_SCHEMA"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_EXPECTED_ANALYSIS_MODE") | .value')" = "$MODEL_EXPECTED_ANALYSIS_MODE"
+          test "$(echo "$WORKER" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_EXPECTED_THRESHOLD") | .value')" = "$MODEL_EXPECTED_BASELINE_THRESHOLD"
 
           SETTINGS="$(az webapp config appsettings list \
             --resource-group "$AZURE_RESOURCE_GROUP" \

@@ -46,6 +46,11 @@ export {
 } from "./password.js";
 export { createControlPlaneRepositories } from "./repositories.js";
 export { createIntegrationCredentialsRepository } from "./integration-credentials-repository.js";
+export {
+  createModelDeploymentRepository,
+  modelDeploymentRuntimeConfigKey,
+  projectModelDeployment,
+} from "./model-deployment-repository.js";
 export { withControlPlaneTransaction } from "./transaction.js";
 export {
   assertNoPlaintextPassword,
