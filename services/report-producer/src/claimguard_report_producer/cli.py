@@ -6,7 +6,10 @@ from pathlib import Path
 import sys
 import time
 
-from .worker import create_discovered_workers_from_environment, create_worker_from_environment
+from .prospective_worker import (
+    create_discovered_workers_from_environment,
+    create_worker_from_environment,
+)
 
 
 def build_worker_parser() -> argparse.ArgumentParser:
