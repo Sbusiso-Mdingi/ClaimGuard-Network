@@ -177,6 +177,7 @@ export function createClaimIngestionBatchSchema({ maxBatchSize = 500, maxReferen
 export function parseClaimIngestionBatch(payload, options) {
   return createClaimIngestionBatchSchema(options).parse(payload);
 }
+
 const forbiddenReportFieldNames = new Set([
   "firstname",
   "lastname",
@@ -195,7 +196,7 @@ const forbiddenReportFieldNames = new Set([
 
 export const detectionReportContractVersion = "1.0";
 
-const modelReviewSchema = z.object({
+const retrospectiveModelReviewSchema = z.object({
   baselineFraudProbability: finiteNumber.min(0).max(1),
   baselinePredictedClass: z.enum(["LEGITIMATE", "FRAUD"]),
   baselineThreshold: finiteNumber.min(0).max(1),
@@ -218,13 +219,57 @@ const modelReviewSchema = z.object({
   ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Model decisions must match the published thresholds.",
+      message: "Retrospective model decisions must match the published thresholds.",
     });
   }
 });
 
+const prospectiveModelReviewSchema = z.object({
+  fraudProbability: finiteNumber.min(0).max(1),
+  predictedClass: z.enum(["LEGITIMATE", "FRAUD"]),
+  threshold: finiteNumber.min(0).max(1),
+  reviewRecommended: z.boolean(),
+}).strict().superRefine((review, context) => {
+  const thresholdHit = review.fraudProbability >= review.threshold;
+  if (
+    (review.predictedClass === "FRAUD") !== thresholdHit
+    || review.reviewRecommended !== thresholdHit
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Prospective ML decisions must match the published threshold.",
+    });
+  }
+});
+
+const modelReviewSchema = z.union([
+  retrospectiveModelReviewSchema,
+  prospectiveModelReviewSchema,
+]);
+
+const retrospectiveModelMetadataSchema = z.object({
+  deploymentId: identifier(128),
+  ensembleId: identifier(128),
+  ensembleVersion: identifier(64),
+  featureSchemaVersion: identifier(128),
+  analysisMode: z.literal("RETROSPECTIVE_CLOSED_WINDOW_REVIEW"),
+  requestId: identifier(128),
+  riskScoreBasis: z.literal("THRESHOLD_NORMALIZED_MAX_COMPONENT"),
+}).strict();
+
+const prospectiveModelMetadataSchema = z.object({
+  deploymentId: identifier(128),
+  modelId: identifier(128),
+  modelVersion: identifier(64),
+  featureSchemaVersion: identifier(128),
+  analysisMode: z.literal("PROSPECTIVE_CLAIM_SCREENING"),
+  requestId: identifier(128),
+  riskScoreBasis: z.literal("THRESHOLD_NORMALIZED_BASELINE"),
+}).strict();
+
 const canonicalClaimSchema = z.object({
   claimId: z.string().min(1),
+  claimVersion: z.number().int().positive(),
   providerId: z.string().min(1),
   memberId: z.string().min(1),
   schemeId: z.string().min(1),
@@ -260,21 +305,21 @@ export const detectionReportSchema = z.object({
       type: z.string().min(1),
       watermark: z.string().min(1),
       historicalWindow: z.record(z.unknown()).nullable(),
+      sourceJobIds: z.array(identifier(64)).optional(),
     }).strict(),
     includedCounts: z.object({ claims: z.number().int().nonnegative(), providers: z.number().int().nonnegative(), members: z.number().int().nonnegative() }).strict(),
     includedDateRange: z.object({ from: z.string().nullable(), to: z.string().nullable() }).strict(),
     detectionEngineVersion: z.string().min(1),
     producerVersion: z.string().min(1),
     generationCorrelationId: z.string(),
-    model: z.object({
-      deploymentId: identifier(128),
-      ensembleId: identifier(128),
-      ensembleVersion: identifier(64),
-      featureSchemaVersion: identifier(128),
-      analysisMode: z.literal("RETROSPECTIVE_CLOSED_WINDOW_REVIEW"),
-      requestId: identifier(128),
-      riskScoreBasis: z.literal("THRESHOLD_NORMALIZED_MAX_COMPONENT"),
+    detectionStrategy: z.object({
+      detectionStrategyId: z.number().int().positive(),
+      strategyType: z.enum(["deterministic_rules", "approved_model"]),
     }).strict().optional(),
+    model: z.union([
+      retrospectiveModelMetadataSchema,
+      prospectiveModelMetadataSchema,
+    ]).optional(),
   }).strict(),
   summary: z.object({
     totalClaims: z.number().int().nonnegative(),
@@ -323,6 +368,12 @@ export const detectionReportSchema = z.object({
   }
   if (!report.metadata.model && report.claims.some((claim) => claim.modelReview)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Deterministic reports cannot contain modelReview results." });
+  }
+  if (report.metadata.model?.analysisMode === "PROSPECTIVE_CLAIM_SCREENING" && report.claims.some((claim) => !("fraudProbability" in claim.modelReview))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Prospective reports require prospective ML result fields." });
+  }
+  if (report.metadata.model?.analysisMode === "RETROSPECTIVE_CLOSED_WINDOW_REVIEW" && report.claims.some((claim) => !("baselineFraudProbability" in claim.modelReview))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Retrospective reports require ensemble result fields." });
   }
 });
 
