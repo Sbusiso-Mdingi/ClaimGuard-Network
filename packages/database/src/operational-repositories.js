@@ -1,5 +1,5 @@
 import { createClaimIngestionRepository } from "./claim-ingestion-repository.js";
-import { createClaimsReadRepository } from "./claims-read-repository.js";
+import { createClaimsReadRepository } from "./prospective-claims-read-repository.js";
 import { createClaimProcessingOutboxRepository } from "./claim-processing-outbox-repository.js";
 import { createDatabaseFromPool } from "./client.js";
 import { requireOperationalDataPlaneContext } from "./data-plane-context.js";
