@@ -39,7 +39,7 @@ class WorkerCliTests(TestCase):
         for worker in workers:
             worker.run_until_empty.assert_called_once_with()
 
-    @patch("claimguard_report_producer.worker.create_discovered_workers_from_environment")
+    @patch("claimguard_report_producer.prospective_worker.create_discovered_workers_from_environment")
     def test_module_execution_invokes_the_worker_command(self, create_workers) -> None:
         worker = Mock()
         create_workers.return_value = [worker]
