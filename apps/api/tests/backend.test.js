@@ -582,6 +582,52 @@ test("claims ingestion endpoint accepts claims via ingestion service", async () 
   assert.equal(json.ingestion.source, "medical-aid-desktop");
 });
 
+test("claims ingestion rejects an active deployment that is no longer approved", async () => {
+  const app = createBackendApp({
+    claimIngestionService: {
+      async ingestClaims() {
+        const error = new Error(
+          "The active model deployment is no longer approved.",
+        );
+        error.code =
+          "CLAIM_MODEL_SELECTION_UNAVAILABLE";
+        error.status = 409;
+        throw error;
+      },
+    },
+  });
+
+  const response = await app.request(
+    "http://localhost/claims/ingest",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...developmentAuthHeaders(),
+      },
+      body: JSON.stringify({
+        claims: [{
+          claim_id: "C-MODEL-DRIFT",
+          scheme_id: "scheme_a",
+          member_id: "M1",
+          provider_id: "P1",
+          service_date: "2026-07-26",
+          billing_code: "CONSULT",
+          amount: 100,
+          ...modelClaimFields("2026-07-26"),
+        }],
+      }),
+    },
+  );
+  const json = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(
+    json.code,
+    "CLAIM_MODEL_SELECTION_UNAVAILABLE",
+  );
+});
+
 test("claims list endpoint requires configured read repository", async () => {
   const app = createBackendApp();
   const response = await app.request("http://localhost/claims", {

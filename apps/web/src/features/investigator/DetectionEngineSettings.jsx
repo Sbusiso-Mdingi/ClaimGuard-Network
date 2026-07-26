@@ -12,9 +12,14 @@ const DEPLOYMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function normaliseSelection(strategy) {
   const strategyType = String(strategy?.strategyType || "").trim();
+  const strategyId = Number(strategy?.strategyId);
+  if (!Number.isSafeInteger(strategyId) || strategyId <= 0) {
+    throw new Error("The API returned an invalid detection strategy identifier.");
+  }
 
   if (strategyType === "selection_required") {
     return {
+      strategyId,
       strategyType: "",
       modelDeploymentId: "",
       requiresSelection: true,
@@ -32,6 +37,7 @@ function normaliseSelection(strategy) {
   }
 
   return {
+    strategyId,
     strategyType,
     modelDeploymentId,
     requiresSelection: false,
@@ -77,6 +83,7 @@ export function DetectionEngineSettings({ tenantId }) {
   const [strategyType, setStrategyType] = useState("");
   const [proprietaryDeploymentId, setProprietaryDeploymentId] = useState("");
   const [savedSelection, setSavedSelection] = useState({
+    strategyId: null,
     strategyType: "",
     modelDeploymentId: "",
   });
@@ -111,6 +118,7 @@ export function DetectionEngineSettings({ tenantId }) {
             : "",
         );
         setSavedSelection({
+          strategyId: selection.strategyId,
           strategyType: selection.strategyType,
           modelDeploymentId: selection.modelDeploymentId,
         });
@@ -195,6 +203,7 @@ export function DetectionEngineSettings({ tenantId }) {
             ? canonicalProprietaryDeploymentId
             : null,
           changeReason: reason,
+          expectedActiveStrategyId: savedSelection.strategyId,
         }),
       });
 
@@ -210,6 +219,7 @@ export function DetectionEngineSettings({ tenantId }) {
           : "",
       );
       setSavedSelection({
+        strategyId: saved.strategyId,
         strategyType: saved.strategyType,
         modelDeploymentId: saved.modelDeploymentId,
       });

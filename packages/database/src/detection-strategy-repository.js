@@ -47,6 +47,21 @@ export class DetectionStrategyIntegrityError
   }
 }
 
+export class DetectionStrategyConflictError
+  extends Error {
+  constructor(message) {
+    super(message);
+
+    this.name =
+      "DetectionStrategyConflictError";
+
+    this.code =
+      "DETECTION_STRATEGY_CONFLICT";
+
+    this.status = 409;
+  }
+}
+
 
 function validationError(
   message,
@@ -61,6 +76,14 @@ function integrityError(
   message,
 ) {
   return new DetectionStrategyIntegrityError(
+    message,
+  );
+}
+
+function conflictError(
+  message,
+) {
+  return new DetectionStrategyConflictError(
     message,
   );
 }
@@ -608,6 +631,31 @@ export function createDetectionStrategyRepository(
           change,
         );
 
+      const expectedActiveStrategyId =
+        change.expectedActiveStrategyId
+        === undefined
+        || change.expectedActiveStrategyId
+        === null
+          ? null
+          : Number(
+              change.expectedActiveStrategyId,
+            );
+
+      if (
+        expectedActiveStrategyId !== null
+        && (
+          !Number.isSafeInteger(
+            expectedActiveStrategyId,
+          )
+          || expectedActiveStrategyId <= 0
+        )
+      ) {
+        throw validationError(
+          "expectedActiveStrategyId must be "
+          + "a positive integer.",
+        );
+      }
+
       const connection =
         await pool.getConnection();
 
@@ -623,6 +671,18 @@ export function createDetectionStrategyRepository(
               forUpdate: true,
             },
           );
+
+        if (
+          expectedActiveStrategyId !== null
+          && current.strategyId
+            !== expectedActiveStrategyId
+        ) {
+          throw conflictError(
+            "The active detection strategy changed "
+            + "after it was read. Reload the current "
+            + "selection before retrying.",
+          );
+        }
 
         /*
          * Safe retry behaviour:

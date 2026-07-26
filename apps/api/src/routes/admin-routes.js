@@ -1,4 +1,7 @@
 import { createBackendHealth, createBackendInfo } from "@claimguard/shared-schema";
+import {
+  DetectionStrategyConflictError,
+} from "@claimguard/database";
 import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
 import {
   createRequireOperationalRouteAuthorizationMiddleware,
@@ -112,7 +115,10 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
 
     const tenantContext = c.get("tenantContext");
     const storedStrategy = await detectionStrategyRepository.getActiveStrategy(tenantContext);
-    const strategy = projectDetectionModelSelection(storedStrategy, tenantContext);
+    const strategy = {
+      ...projectDetectionModelSelection(storedStrategy, tenantContext),
+      strategyId: storedStrategy.strategyId,
+    };
     return c.json({ available: true, strategy });
   });
 
@@ -123,7 +129,12 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
 
     const tenantContext = c.get("tenantContext");
     const payload = await c.req.json().catch(() => ({}));
-    const permittedKeys = new Set(["strategyType", "modelDeploymentId", "changeReason"]);
+    const permittedKeys = new Set([
+      "strategyType",
+      "modelDeploymentId",
+      "changeReason",
+      "expectedActiveStrategyId",
+    ]);
 
     if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
       return c.json({ available: false, message: "The strategy payload contains unsupported fields." }, 400);
@@ -140,6 +151,21 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
       return c.json({ available: false, message: "changeReason must contain 1–500 characters." }, 400);
     }
 
+    const expectedActiveStrategyId =
+      Number(payload.expectedActiveStrategyId);
+    if (
+      !Number.isSafeInteger(expectedActiveStrategyId)
+      || expectedActiveStrategyId <= 0
+    ) {
+      return c.json({
+        available: false,
+        code: "EXPECTED_ACTIVE_STRATEGY_REQUIRED",
+        message:
+          "expectedActiveStrategyId must identify the strategy "
+          + "that was reviewed before this change.",
+      }, 400);
+    }
+
     try {
       const resolved = resolveDetectionModelSelection(payload, tenantContext);
       const storedStrategy = await detectionStrategyRepository.setStrategy(
@@ -148,6 +174,7 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
           ...resolved.repositoryChange,
           actor,
           changeReason,
+          expectedActiveStrategyId,
         },
       );
 
@@ -166,6 +193,16 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
           code: error.code,
           message: error.message,
         }, error.status);
+      }
+      if (
+        error instanceof DetectionStrategyConflictError
+        || error?.code === "DETECTION_STRATEGY_CONFLICT"
+      ) {
+        return c.json({
+          available: false,
+          code: "DETECTION_STRATEGY_CONFLICT",
+          message: error.message,
+        }, 409);
       }
       throw error;
     }

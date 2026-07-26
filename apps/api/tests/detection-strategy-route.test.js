@@ -68,7 +68,11 @@ test("GET projects a legacy deterministic strategy as selection required", async
   const app = appFor({
     repository: {
       async getActiveStrategy() {
-        return { strategyType: "deterministic_rules", modelDeploymentId: null };
+        return {
+          strategyId: 7,
+          strategyType: "deterministic_rules",
+          modelDeploymentId: null,
+        };
       },
     },
   });
@@ -101,6 +105,7 @@ test("PUT ClaimGuard-managed selection resolves the platform deployment and stor
       strategyType: "claimguard_managed",
       modelDeploymentId: null,
       changeReason: "Use ClaimGuard's validated production model.",
+      expectedActiveStrategyId: 7,
     }),
   });
   const body = await response.json();
@@ -113,10 +118,77 @@ test("PUT ClaimGuard-managed selection resolves the platform deployment and stor
       modelDeploymentId: "claimguard-fraud-model:1.2.0",
       actor: "scheme-admin-1",
       changeReason: "Use ClaimGuard's validated production model.",
+      expectedActiveStrategyId: 7,
     },
   }]);
   assert.equal(body.strategy.strategyType, "claimguard_managed");
   assert.equal(body.strategy.modelDeploymentId, "claimguard-fraud-model:1.2.0");
+});
+
+test("PUT requires the active strategy ID and rejects a stale strategy transition", async () => {
+  configureModels();
+  let called = false;
+  const missingExpectationApp = appFor({
+    repository: {
+      async setStrategy() {
+        called = true;
+      },
+    },
+  });
+
+  const missingExpectation = await missingExpectationApp.request(
+    "/detection/strategy",
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        strategyType: "claimguard_managed",
+        modelDeploymentId: null,
+        changeReason: "Attempt an unguarded transition.",
+      }),
+    },
+  );
+  const missingBody = await missingExpectation.json();
+
+  assert.equal(missingExpectation.status, 400);
+  assert.equal(
+    missingBody.code,
+    "EXPECTED_ACTIVE_STRATEGY_REQUIRED",
+  );
+  assert.equal(called, false);
+
+  const conflictApp = appFor({
+    repository: {
+      async setStrategy() {
+        const error = new Error(
+          "The active detection strategy changed after it was read.",
+        );
+        error.code = "DETECTION_STRATEGY_CONFLICT";
+        error.status = 409;
+        throw error;
+      },
+    },
+  });
+  const conflict = await conflictApp.request(
+    "/detection/strategy",
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        strategyType: "claimguard_managed",
+        modelDeploymentId: null,
+        changeReason: "Attempt a stale transition.",
+        expectedActiveStrategyId: 7,
+      }),
+    },
+  );
+  const conflictBody = await conflict.json();
+
+  assert.equal(conflict.status, 409);
+  assert.equal(
+    conflictBody.code,
+    "DETECTION_STRATEGY_CONFLICT",
+  );
 });
 
 test("PUT scheme-managed selection requires a tenant-owned approved deployment", async () => {
@@ -137,6 +209,7 @@ test("PUT scheme-managed selection requires a tenant-owned approved deployment",
       strategyType: "scheme_managed",
       modelDeploymentId: "alpha-proprietary-model:production",
       changeReason: "Activate the scheme's validated proprietary model.",
+      expectedActiveStrategyId: 8,
     }),
   });
 
@@ -151,6 +224,7 @@ test("PUT scheme-managed selection requires a tenant-owned approved deployment",
       strategyType: "scheme_managed",
       modelDeploymentId: "another-scheme-model:production",
       changeReason: "Attempt a foreign deployment.",
+      expectedActiveStrategyId: 8,
     }),
   });
   const rejectedBody = await rejected.json();
@@ -178,6 +252,7 @@ test("PUT rejects deterministic scoring and managed deployment pinning", async (
       strategyType: "deterministic_rules",
       modelDeploymentId: null,
       changeReason: "This must be rejected.",
+      expectedActiveStrategyId: 9,
     }),
   });
   assert.equal(deterministic.status, 400);
@@ -189,6 +264,7 @@ test("PUT rejects deterministic scoring and managed deployment pinning", async (
       strategyType: "claimguard_managed",
       modelDeploymentId: "claimguard-fraud-model:1.2.0",
       changeReason: "A scheme must not pin the managed deployment.",
+      expectedActiveStrategyId: 9,
     }),
   });
   const body = await pinnedManaged.json();
