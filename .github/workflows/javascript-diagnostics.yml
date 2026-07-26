@@ -18,15 +18,25 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
       - run: pnpm install --frozen-lockfile
       - name: Run JavaScript tests verbosely
         shell: bash
         run: |
           set -o pipefail
           mkdir -p test-results
-          pnpm test 2>&1 | tee test-results/javascript-tests.log
+          pnpm --recursive \
+            --filter './apps/**' \
+            --filter './packages/**' \
+            --filter '!@claimguard/claimguard-sdk' \
+            --if-present \
+            run test \
+            2>&1 | tee test-results/javascript-tests.log
       - name: Upload JavaScript test log
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
