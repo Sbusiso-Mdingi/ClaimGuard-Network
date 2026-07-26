@@ -35,3 +35,6 @@ services/report-producer/reports/
 # Env files
 .env
 .env.*
+
+# Local production-verification state (contains record IDs, never credentials)
+tools/.prospective-production-verification-state-*.json
