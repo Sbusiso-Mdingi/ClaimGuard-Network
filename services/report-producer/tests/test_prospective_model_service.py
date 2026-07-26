@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-
-import pytest
+from unittest import TestCase
 
 from claimguard_report_producer.model_service import ModelHttpResponse
 from claimguard_report_producer.prospective_model_service import (
@@ -60,7 +59,8 @@ def _snapshot(features: dict[str, object] | None = None) -> ProspectiveScoringSn
     exact = {
         name: (
             "CATEGORY"
-            if name in {
+            if name
+            in {
                 "benefit_option",
                 "network_type",
                 "line_type",
@@ -139,60 +139,59 @@ def _client(transport: CapturingTransport) -> ProspectiveModelServiceClient:
     )
 
 
-def test_screen_sends_exact_contract_and_restores_claim_identity() -> None:
-    transport = CapturingTransport()
-    result = _client(transport).screen(_snapshot())
+class ProspectiveModelServiceTests(TestCase):
+    def test_screen_sends_exact_contract_and_restores_claim_identity(self) -> None:
+        transport = CapturingTransport()
+        result = _client(transport).screen(_snapshot())
 
-    assert result.model_id == MODEL_ID
-    assert result.model_version == MODEL_VERSION
-    assert result.analysis_mode == ANALYSIS_MODE
-    assert result.scores[0].claim_id == "C1"
-    assert result.scores[0].claim_version == 1
-    assert result.scores[0].review_recommended is True
+        self.assertEqual(result.model_id, MODEL_ID)
+        self.assertEqual(result.model_version, MODEL_VERSION)
+        self.assertEqual(result.analysis_mode, ANALYSIS_MODE)
+        self.assertEqual(result.scores[0].claim_id, "C1")
+        self.assertEqual(result.scores[0].claim_version, 1)
+        self.assertTrue(result.scores[0].review_recommended)
 
-    assert transport.request is not None
-    assert transport.request["schemaVersion"] == (
-        "claimguard.claim-screening-request.v3"
-    )
-    assert transport.request["analysisMode"] == ANALYSIS_MODE
-    assert list(
-        transport.request["contextFeatures"]["targets"][0]["features"]
-    ) == list(PREDICTOR_NAMES)
-    assert transport.request["targetClaims"][0]["claimId"] != "C1"
+        self.assertIsNotNone(transport.request)
+        assert transport.request is not None
+        self.assertEqual(
+            transport.request["schemaVersion"],
+            "claimguard.claim-screening-request.v3",
+        )
+        self.assertEqual(transport.request["analysisMode"], ANALYSIS_MODE)
+        self.assertEqual(
+            list(transport.request["contextFeatures"]["targets"][0]["features"]),
+            list(PREDICTOR_NAMES),
+        )
+        self.assertNotEqual(transport.request["targetClaims"][0]["claimId"], "C1")
 
+    def test_screen_rejects_incomplete_predictor_vector(self) -> None:
+        incomplete = {name: 0.0 for name in PREDICTOR_NAMES[:-1]}
+        with self.assertRaisesRegex(
+            ProspectiveModelContractError,
+            "sealed model contract",
+        ):
+            _client(CapturingTransport()).screen(_snapshot(incomplete))
 
-def test_screen_rejects_incomplete_predictor_vector() -> None:
-    incomplete = {
-        name: 0.0
-        for name in PREDICTOR_NAMES[:-1]
-    }
-    with pytest.raises(
-        ProspectiveModelContractError,
-        match="sealed model contract",
-    ):
-        _client(CapturingTransport()).screen(_snapshot(incomplete))
+    def test_screen_rejects_threshold_drift(self) -> None:
+        class ThresholdDriftTransport(CapturingTransport):
+            def post(self, *, url, body, headers, timeout_seconds):
+                response = super().post(
+                    url=url,
+                    body=body,
+                    headers=headers,
+                    timeout_seconds=timeout_seconds,
+                )
+                payload = json.loads(response.body.decode("utf-8"))
+                payload["scores"][0]["threshold"] = 0.5
+                payload["scores"][0]["predictedClass"] = "FRAUD"
+                payload["scores"][0]["reviewRecommended"] = True
+                return ModelHttpResponse(
+                    status=200,
+                    body=json.dumps(payload).encode("utf-8"),
+                )
 
-
-def test_screen_rejects_threshold_drift() -> None:
-    class ThresholdDriftTransport(CapturingTransport):
-        def post(self, *, url, body, headers, timeout_seconds):
-            response = super().post(
-                url=url,
-                body=body,
-                headers=headers,
-                timeout_seconds=timeout_seconds,
-            )
-            payload = json.loads(response.body.decode("utf-8"))
-            payload["scores"][0]["threshold"] = 0.5
-            payload["scores"][0]["predictedClass"] = "FRAUD"
-            payload["scores"][0]["reviewRecommended"] = True
-            return ModelHttpResponse(
-                status=200,
-                body=json.dumps(payload).encode("utf-8"),
-            )
-
-    with pytest.raises(
-        ProspectiveModelContractError,
-        match="threshold changed",
-    ):
-        _client(ThresholdDriftTransport()).screen(_snapshot())
+        with self.assertRaisesRegex(
+            ProspectiveModelContractError,
+            "threshold changed",
+        ):
+            _client(ThresholdDriftTransport()).screen(_snapshot())
