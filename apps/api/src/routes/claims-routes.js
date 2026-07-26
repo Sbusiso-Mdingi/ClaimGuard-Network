@@ -1,5 +1,6 @@
 import {
   ClaimOwnershipConflictError,
+  ClaimModelSelectionUnavailableError,
   ClaimReferenceValidationError,
   ReferenceOwnershipConflictError,
 } from "@claimguard/database";
@@ -230,6 +231,9 @@ export function registerClaimsRoutes(app, {
         const isClaimOwnershipConflict = error instanceof ClaimOwnershipConflictError || error?.code === "CLAIM_OWNERSHIP_CONFLICT";
         const isReferenceOwnershipConflict = error instanceof ReferenceOwnershipConflictError || error?.code === "REFERENCE_OWNERSHIP_CONFLICT";
         const isClaimReferenceInvalid = error instanceof ClaimReferenceValidationError || error?.code === "CLAIM_REFERENCE_INVALID";
+        const isModelSelectionUnavailable =
+          error instanceof ClaimModelSelectionUnavailableError
+          || error?.code === "CLAIM_MODEL_SELECTION_UNAVAILABLE";
         const isOwnershipConflict = isClaimOwnershipConflict || isReferenceOwnershipConflict;
 
         return c.json(
@@ -238,15 +242,22 @@ export function registerClaimsRoutes(app, {
             ...(isClaimOwnershipConflict ? { code: "CLAIM_OWNERSHIP_CONFLICT" } : {}),
             ...(isReferenceOwnershipConflict ? { code: "REFERENCE_OWNERSHIP_CONFLICT" } : {}),
             ...(isClaimReferenceInvalid ? { code: "CLAIM_REFERENCE_INVALID" } : {}),
+            ...(isModelSelectionUnavailable ? { code: "CLAIM_MODEL_SELECTION_UNAVAILABLE" } : {}),
             message: isClaimOwnershipConflict
               ? "Claim identifier is already owned by another tenant."
               : isReferenceOwnershipConflict
                 ? "A reference-data identifier is already owned by another tenant."
               : isClaimReferenceInvalid
                 ? "A claim reference is missing, belongs to another tenant, or belongs to a different scheme."
+              : isModelSelectionUnavailable
+                ? "The active model deployment is not approved for new claim ingestion."
               : error?.message || "Claim ingestion failed.",
           },
-          isOwnershipConflict ? 409 : isClaimReferenceInvalid ? 422 : 400,
+          isOwnershipConflict || isModelSelectionUnavailable
+            ? 409
+            : isClaimReferenceInvalid
+              ? 422
+              : 400,
         );
       }
     },

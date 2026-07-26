@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ClaimModelSelectionUnavailableError,
   ClaimOwnershipConflictError,
   ClaimReferenceValidationError,
   createClaimIngestionRepository,
@@ -1428,6 +1429,65 @@ test(
           },
         ],
       },
+    );
+  },
+);
+
+test(
+  "ingestion rejects an active model that is no longer approved",
+  async () => {
+    const pool =
+      createMemoryPool({
+        activeStrategy: {
+          id: 2,
+          strategy_type:
+            "approved_model",
+          model_deployment_id:
+            "retired-model:1.0.0",
+        },
+      });
+
+    const repository =
+      createClaimIngestionRepository(
+        pool,
+        {
+          allowLegacyTenantContext:
+            true,
+          approvedModelDeploymentIds:
+            "current-model:2.0.0",
+        },
+      );
+
+    await assert.rejects(
+      () =>
+        repository.ingestClaims({
+          source:
+            "upstream-connector",
+          claims: [
+            claimInput(),
+          ],
+        }),
+      (error) => (
+        error
+          instanceof
+          ClaimModelSelectionUnavailableError
+        && error.code
+          === "CLAIM_MODEL_SELECTION_UNAVAILABLE"
+        && error.status === 409
+      ),
+    );
+
+    assert.equal(
+      pool.claims.size,
+      0,
+    );
+    assert.equal(
+      pool.outbox.size,
+      0,
+    );
+    assert.equal(
+      pool.rollbackCount,
+      1,
     );
   },
 );

@@ -57,6 +57,7 @@ export {
 
 export {
   ClaimIngestionValidationError,
+  ClaimModelSelectionUnavailableError,
   ClaimOwnershipConflictError,
   ClaimReferenceValidationError,
   ClaimVersionIntegrityError,
@@ -86,6 +87,7 @@ export {
 
 export {
   createDetectionStrategyRepository,
+  DetectionStrategyConflictError,
   DetectionStrategyIntegrityError,
   DetectionStrategyValidationError,
 } from "./detection-strategy-repository.js";

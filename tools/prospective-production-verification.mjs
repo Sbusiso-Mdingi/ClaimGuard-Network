@@ -90,6 +90,10 @@ function targetFromOptions(command, options) {
   const canonicalSlug = options["organisation-slug"] || null;
   const schemeId = options["scheme-id"] || null;
   const claimPrefix = options["claim-prefix"] || null;
+  const expectedCurrentModelDeploymentId =
+    options["expected-current-model-deployment-id"] || null;
+  const expectedCurrentStrategyId =
+    options["expected-current-strategy-id"] || null;
   const allowedOptions = resolveOnly
     ? ["organisation-id", "model-deployment-id"]
     : [
@@ -98,6 +102,18 @@ function targetFromOptions(command, options) {
         "scheme-id",
         "claim-prefix",
         "model-deployment-id",
+        ...(
+          ["audit", "activate"].includes(command)
+            ? [
+                "expected-current-model-deployment-id",
+                ...(
+                  command === "activate"
+                    ? ["expected-current-strategy-id"]
+                    : []
+                ),
+              ]
+            : []
+        ),
       ];
   for (const name of Object.keys(options)) {
     assert(
@@ -119,12 +135,33 @@ function targetFromOptions(command, options) {
       "--claim-prefix must contain 2-5 uppercase letters or digits.",
     );
   }
+  if (["audit", "activate"].includes(command)) {
+    assert(
+      /^[A-Za-z0-9._:-]+$/.test(
+        expectedCurrentModelDeploymentId || "",
+      ),
+      "--expected-current-model-deployment-id is required for this phase.",
+    );
+  }
+  if (command === "activate") {
+    assert(
+      /^[1-9][0-9]*$/.test(
+        expectedCurrentStrategyId || "",
+      ),
+      "--expected-current-strategy-id must be a positive integer.",
+    );
+  }
   return Object.freeze({
     organisationId,
     canonicalSlug,
     schemeId,
     claimPrefix,
     modelDeploymentId,
+    expectedCurrentModelDeploymentId,
+    expectedCurrentStrategyId:
+      expectedCurrentStrategyId === null
+        ? null
+        : Number(expectedCurrentStrategyId),
     statePath: path.join(
       TOOL_DIRECTORY,
       ".prospective-production-verification-state-"
@@ -879,6 +916,140 @@ async function commandInspect() {
   }
 }
 
+async function commandAudit() {
+  const azure = azurePreflight();
+  const production = await openProduction();
+  try {
+    const [strategyRows] =
+      await production.acquired.pool.execute(
+        `
+          SELECT
+            id,
+            tenant_id,
+            strategy_type,
+            model_deployment_id,
+            is_active,
+            activated_at,
+            deactivated_at,
+            actor,
+            change_reason,
+            created_at,
+            updated_at
+          FROM detection_strategies
+          WHERE tenant_id = ?
+          ORDER BY activated_at DESC, id DESC
+          LIMIT 25
+        `,
+        [TARGET.organisationId],
+      );
+    assert(
+      Array.isArray(strategyRows) && strategyRows.length > 0,
+      "No detection-strategy history was found.",
+    );
+    const activeRows = strategyRows.filter(
+      ({ is_active: isActive }) => Number(isActive) === 1,
+    );
+    assertEqual(activeRows.length, 1, "Active strategy row count");
+    assertEqual(
+      activeRows[0].model_deployment_id,
+      TARGET.expectedCurrentModelDeploymentId,
+      "Current model deployment",
+    );
+
+    const [outboxRows] =
+      await production.acquired.pool.execute(
+        `
+          SELECT
+            strategy_type,
+            model_deployment_id,
+            status,
+            COUNT(*) AS job_count,
+            MIN(created_at) AS first_created_at,
+            MAX(created_at) AS last_created_at
+          FROM claim_processing_outbox
+          WHERE tenant_id = ?
+          GROUP BY strategy_type, model_deployment_id, status
+          ORDER BY model_deployment_id, status
+        `,
+        [TARGET.organisationId],
+      );
+
+    const [auditRows] =
+      await production.controlPlanePool.execute(
+        `
+          SELECT
+            audit_event_id,
+            actor_type,
+            actor_id,
+            action,
+            target_type,
+            target_id,
+            correlation_id,
+            occurred_at,
+            outcome,
+            source
+          FROM platform_audit_events
+          WHERE organisation_scope_id = ?
+          ORDER BY occurred_at DESC
+          LIMIT 50
+        `,
+        [TARGET.organisationId],
+      );
+
+    return {
+      azure: {
+        api: azure.api,
+        worker: azure.worker,
+        model: azure.model,
+      },
+      ...safeRoute(production),
+      activeStrategy: {
+        strategyId: Number(activeRows[0].id),
+        strategyType: activeRows[0].strategy_type,
+        modelDeploymentId:
+          activeRows[0].model_deployment_id,
+        activatedAt: activeRows[0].activated_at,
+        actor: activeRows[0].actor,
+        changeReason: activeRows[0].change_reason,
+      },
+      strategyHistory: strategyRows.map((row) => ({
+        strategyId: Number(row.id),
+        strategyType: row.strategy_type,
+        modelDeploymentId: row.model_deployment_id,
+        isActive: Number(row.is_active) === 1,
+        activatedAt: row.activated_at,
+        deactivatedAt: row.deactivated_at,
+        actor: row.actor,
+        changeReason: row.change_reason,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+      outboxByDeployment: outboxRows.map((row) => ({
+        strategyType: row.strategy_type,
+        modelDeploymentId: row.model_deployment_id,
+        status: row.status,
+        count: Number(row.job_count),
+        firstCreatedAt: row.first_created_at,
+        lastCreatedAt: row.last_created_at,
+      })),
+      controlPlaneAudit: auditRows.map((row) => ({
+        auditEventId: row.audit_event_id,
+        actorType: row.actor_type,
+        actorId: row.actor_id,
+        action: row.action,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        correlationId: row.correlation_id,
+        occurredAt: row.occurred_at,
+        outcome: row.outcome,
+        source: row.source,
+      })),
+    };
+  } finally {
+    await production.close();
+  }
+}
+
 async function commandResolve() {
   const azure = azurePreflight();
   const production = await openProduction({ requireIdentity: false });
@@ -904,19 +1075,22 @@ async function commandResolve() {
 async function commandActivate() {
   const azure = azurePreflight();
   const production = await openProduction();
+  const previousApprovedDeployments =
+    process.env.APPROVED_MODEL_DEPLOYMENT_IDS;
   try {
     const before =
       await production.repositories.detectionStrategy
         .getActiveStrategy();
-    if (
-      before.strategyType === "approved_model"
-      && before.modelDeploymentId !== TARGET.modelDeploymentId
-    ) {
-      fail(
-        "Refusing to replace unexpected active model deployment "
-        + before.modelDeploymentId,
-      );
-    }
+    assertEqual(
+      before.strategyId,
+      TARGET.expectedCurrentStrategyId,
+      "Current strategy ID",
+    );
+    assertEqual(
+      before.modelDeploymentId,
+      TARGET.expectedCurrentModelDeploymentId,
+      "Current model deployment",
+    );
     const resolved = resolveDetectionModelSelection(
       {
         strategyType: "claimguard_managed",
@@ -930,6 +1104,8 @@ async function commandActivate() {
       TARGET.modelDeploymentId,
       "Resolved managed deployment",
     );
+    process.env.APPROVED_MODEL_DEPLOYMENT_IDS =
+      azure.api.approvedModelDeploymentIds;
     const after =
       await production.repositories.detectionStrategy.setStrategy(
         null,
@@ -939,6 +1115,8 @@ async function commandActivate() {
           changeReason:
             "Activate the PR #67 prospective baseline for a controlled "
             + `three-claim ${TARGET.canonicalSlug} production verification.`,
+          expectedActiveStrategyId:
+            TARGET.expectedCurrentStrategyId,
         },
       );
     return {
@@ -947,10 +1125,20 @@ async function commandActivate() {
       operation: {
         publicSelection: resolved.publicSelection,
         actor: ACTOR,
+        expectedCurrentStrategyId:
+          TARGET.expectedCurrentStrategyId,
+        expectedCurrentModelDeploymentId:
+          TARGET.expectedCurrentModelDeploymentId,
       },
       after,
     };
   } finally {
+    if (previousApprovedDeployments === undefined) {
+      delete process.env.APPROVED_MODEL_DEPLOYMENT_IDS;
+    } else {
+      process.env.APPROVED_MODEL_DEPLOYMENT_IDS =
+        previousApprovedDeployments;
+    }
     await production.close();
   }
 }
@@ -1473,6 +1661,7 @@ async function commandVerifyResults() {
 
 const COMMANDS = Object.freeze({
   resolve: commandResolve,
+  audit: commandAudit,
   inspect: commandInspect,
   activate: commandActivate,
   ingest: commandIngest,
@@ -1488,7 +1677,7 @@ async function main() {
   if (!operation) {
     fail(
       "Usage: node tools/prospective-production-verification.mjs "
-      + "<resolve|inspect|activate|ingest|verify-job|start-worker|"
+      + "<resolve|audit|inspect|activate|ingest|verify-job|start-worker|"
       + "worker-status|verify-results> --organisation-id <uuid> "
       + "--model-deployment-id <name:version> "
       + "[--organisation-slug <canonical-slug> "

@@ -104,6 +104,21 @@ export class ClaimVersionIntegrityError
   }
 }
 
+export class ClaimModelSelectionUnavailableError
+  extends Error {
+  constructor(message) {
+    super(message);
+
+    this.name =
+      "ClaimModelSelectionUnavailableError";
+
+    this.code =
+      "CLAIM_MODEL_SELECTION_UNAVAILABLE";
+
+    this.status = 409;
+  }
+}
+
 function invalid(message) {
   return new ClaimIngestionValidationError(
     message,
@@ -1020,6 +1035,7 @@ async function ingestReferenceData(
 async function readActiveStrategy(
   connection,
   tenantId,
+  approvedModelDeploymentIds,
 ) {
   const [rows] =
     await connection.execute(
@@ -1093,6 +1109,20 @@ async function readActiveStrategy(
     throw new ClaimVersionIntegrityError(
       "The approved model strategy "
       + "has no valid deployment identifier.",
+    );
+  }
+
+  if (
+    strategyType === "approved_model"
+    && approvedModelDeploymentIds
+    && !approvedModelDeploymentIds.has(
+      modelDeploymentId,
+    )
+  ) {
+    throw new ClaimModelSelectionUnavailableError(
+      "The active model deployment is no longer "
+      + "approved for new claim ingestion. Select "
+      + "a currently approved model before retrying.",
     );
   }
 
@@ -1695,6 +1725,10 @@ export function createClaimIngestionRepository(
     dataPlaneContext = null,
 
     allowLegacyTenantContext = false,
+
+    approvedModelDeploymentIds =
+      process.env
+        .APPROVED_MODEL_DEPLOYMENT_IDS,
   } = {},
 ) {
   if (
@@ -1721,6 +1755,24 @@ export function createClaimIngestionRepository(
         allowLegacyTenantContext,
       },
     );
+
+  const approvedDeployments =
+    String(
+      approvedModelDeploymentIds
+      || "",
+    ).trim()
+      ? new Set(
+          String(
+            approvedModelDeploymentIds,
+          )
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) =>
+              DEPLOYMENT_ID_PATTERN.test(
+                value,
+              )),
+        )
+      : null;
 
   return {
     async ingestClaims({
@@ -1793,6 +1845,7 @@ export function createClaimIngestionRepository(
           await readActiveStrategy(
             connection,
             tenantId,
+            approvedDeployments,
           );
 
         referenceData =

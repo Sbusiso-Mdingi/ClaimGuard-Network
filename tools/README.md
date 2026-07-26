@@ -74,8 +74,18 @@ node tools/prospective-production-verification.mjs <phase> \
   --model-deployment-id <name:version>
 ```
 
-`<phase>` is one of `inspect`, `activate`, `ingest`, `verify-job`,
+`<phase>` is one of `audit`, `inspect`, `activate`, `ingest`, `verify-job`,
 `start-worker`, `worker-status`, or `verify-results`.
+
+The read-only `audit` phase additionally requires
+`--expected-current-model-deployment-id`. It returns strategy history, outbox
+counts grouped by pinned deployment, and organisation-scoped control-plane
+audit metadata without returning secrets or claim payloads.
+
+The `activate` phase requires both
+`--expected-current-strategy-id` and
+`--expected-current-model-deployment-id`. The repository locks the active row
+and rejects the transition if either expectation is stale.
 
 The ingestion phase creates exactly three fresh claims through the production
 API using an audited, one-hour integration credential that is revoked

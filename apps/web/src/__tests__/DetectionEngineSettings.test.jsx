@@ -9,7 +9,13 @@ import { apiJson } from "../lib/apiClient";
 import { DetectionEngineSettings } from "../features/investigator/DetectionEngineSettings";
 
 function response(strategy) {
-  return { available: true, strategy };
+  return {
+    available: true,
+    strategy: {
+      strategyId: 7,
+      ...strategy,
+    },
+  };
 }
 
 async function renderLoaded(strategy) {
@@ -60,6 +66,7 @@ describe("DetectionEngineSettings", () => {
         strategyType: "claimguard_managed",
         modelDeploymentId: null,
         changeReason: "Use the managed production model.",
+        expectedActiveStrategyId: 7,
       }),
     });
   });
@@ -89,6 +96,7 @@ describe("DetectionEngineSettings", () => {
         strategyType: "scheme_managed",
         modelDeploymentId: "ubuntu-fraud-model:production",
         changeReason: "Activate Ubuntu's validated proprietary model.",
+        expectedActiveStrategyId: 7,
       }),
     });
   });

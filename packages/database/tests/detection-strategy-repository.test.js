@@ -6,6 +6,7 @@ import {
 
 import {
   createDetectionStrategyRepository,
+  DetectionStrategyConflictError,
   DetectionStrategyIntegrityError,
   DetectionStrategyValidationError,
 } from "../src/detection-strategy-repository.js";
@@ -681,6 +682,71 @@ test(
             === "rollback",
       ),
       false,
+    );
+  },
+);
+
+test(
+  "strategy activation rejects a stale expected active strategy ID",
+  async () => {
+    process.env
+      .APPROVED_MODEL_DEPLOYMENT_IDS =
+        APPROVED_DEPLOYMENT_ID;
+
+    const pool =
+      createStrategyPool();
+
+    const repository =
+      createRepository(
+        pool,
+      );
+
+    await assert.rejects(
+      () =>
+        repository.setStrategy(
+          {
+            tenant_id:
+              "tenant_alpha",
+          },
+          {
+            strategyType:
+              "approved_model",
+
+            modelDeploymentId:
+              APPROVED_DEPLOYMENT_ID,
+
+            actor:
+              "scheme-admin-1",
+
+            changeReason:
+              "Attempt a stale transition",
+
+            expectedActiveStrategyId:
+              99,
+          },
+        ),
+      (error) => (
+        error
+          instanceof
+          DetectionStrategyConflictError
+        && error.code
+          === "DETECTION_STRATEGY_CONFLICT"
+        && error.status === 409
+      ),
+    );
+
+    assert.equal(
+      pool.rows.length,
+      1,
+    );
+
+    assert.equal(
+      pool.calls.some(
+        (call) =>
+          call.operation
+            === "rollback",
+      ),
+      true,
     );
   },
 );
