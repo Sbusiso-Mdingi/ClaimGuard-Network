@@ -75,7 +75,7 @@ node tools/prospective-production-verification.mjs <phase> \
 ```
 
 `<phase>` is one of `audit`, `inspect`, `activate`, `ingest`, `verify-job`,
-`start-worker`, `worker-status`, or `verify-results`.
+`start-worker`, `recover-worker`, `worker-status`, or `verify-results`.
 
 The read-only `audit` phase additionally requires
 `--expected-current-model-deployment-id`. It returns strategy history, outbox
@@ -93,13 +93,21 @@ immediately after the request. The worker phase submits an execution-only
 template for the existing Container Apps Job with:
 
 - the explicitly selected organisation as the only route;
+- the same organisation as the internal-service identity allowlist;
 - `worker once`;
 - `REPORT_WORKER_BATCH_SIZE=1`;
 - `REPORT_WORKER_MAX_BATCHES_PER_RUN=1`.
 
-It does not update the recurring job definition, modify historical outbox
-rows, or retry a second worker execution. Local run state contains only record
-identifiers, is isolated by organisation and scheme, and is ignored by Git.
+It does not update the recurring job definition or modify historical outbox
+rows. The ordinary start phase cannot launch a second execution. Local run
+state contains only record identifiers, is isolated by organisation and
+scheme, and is ignored by Git.
+
+`recover-worker` is a narrow exception for an execution that failed before
+leasing its exact job because the single-route service-identity allowlist was
+missing. It requires the prior execution to be failed, the allowlist to be
+absent from that execution, and the job to remain pending at attempt zero. It
+can be used only once and does not permit a second processed batch.
 
 ### Privacy compliance (POPIA / GDPR / HIPAA)
 

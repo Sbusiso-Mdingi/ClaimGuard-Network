@@ -1356,6 +1356,8 @@ function executionTemplate(worker) {
   container.env = mergeEnvironment(
     container.env,
     {
+      INTERNAL_SERVICE_ORGANISATION_IDS:
+        TARGET.organisationId,
       REPORT_WORKER_ORGANISATION_ID: TARGET.organisationId,
       REPORT_WORKER_BATCH_SIZE: "1",
       REPORT_WORKER_MAX_BATCHES_PER_RUN: "1",
@@ -1374,6 +1376,64 @@ function executionTemplate(worker) {
   };
 }
 
+function assertNoActiveWorkerExecutions() {
+  const executions = az([
+    "containerapp",
+    "job",
+    "execution",
+    "list",
+    "--resource-group",
+    EXPECTED.resourceGroup,
+    "--name",
+    EXPECTED.workerJob,
+    "--output",
+    "json",
+  ], { json: true });
+  const activeExecutions = executions.filter(({ properties }) =>
+    ["Running", "Processing", "Starting"]
+      .includes(properties?.status));
+  assertEqual(
+    activeExecutions.length,
+    0,
+    "Active worker execution count",
+  );
+}
+
+function startWorkerExecution(workerDefinition) {
+  const temporaryDirectory = mkdtempSync(
+    path.join(os.tmpdir(), "claimguard-worker-execution-"),
+  );
+  const templatePath = path.join(
+    temporaryDirectory,
+    "execution.json",
+  );
+  writeFileSync(
+    templatePath,
+    JSON.stringify(executionTemplate(workerDefinition)),
+    { encoding: "utf8", mode: 0o600 },
+  );
+  try {
+    return az([
+      "containerapp",
+      "job",
+      "start",
+      "--resource-group",
+      EXPECTED.resourceGroup,
+      "--name",
+      EXPECTED.workerJob,
+      "--yaml",
+      templatePath,
+      "--output",
+      "json",
+    ], { json: true });
+  } finally {
+    rmSync(temporaryDirectory, {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
 async function commandStartWorker() {
   const state = loadState();
   assertEqual(state.workerStarted, false, "Worker-start guard");
@@ -1386,60 +1446,9 @@ async function commandStartWorker() {
       await outboxSummary(production.acquired.pool),
       state.jobId,
     );
-    const executions = az([
-      "containerapp",
-      "job",
-      "execution",
-      "list",
-      "--resource-group",
-      EXPECTED.resourceGroup,
-      "--name",
-      EXPECTED.workerJob,
-      "--output",
-      "json",
-    ], { json: true });
-    const activeExecutions = executions.filter(({ properties }) =>
-      ["Running", "Processing", "Starting"]
-        .includes(properties?.status));
-    assertEqual(
-      activeExecutions.length,
-      0,
-      "Active worker execution count",
-    );
-
-    const temporaryDirectory = mkdtempSync(
-      path.join(os.tmpdir(), "claimguard-worker-execution-"),
-    );
-    const templatePath = path.join(
-      temporaryDirectory,
-      "execution.json",
-    );
-    writeFileSync(
-      templatePath,
-      JSON.stringify(executionTemplate(azure.workerDefinition)),
-      { encoding: "utf8", mode: 0o600 },
-    );
-    let execution;
-    try {
-      execution = az([
-        "containerapp",
-        "job",
-        "start",
-        "--resource-group",
-        EXPECTED.resourceGroup,
-        "--name",
-        EXPECTED.workerJob,
-        "--yaml",
-        templatePath,
-        "--output",
-        "json",
-      ], { json: true });
-    } finally {
-      rmSync(temporaryDirectory, {
-        recursive: true,
-        force: true,
-      });
-    }
+    assertNoActiveWorkerExecutions();
+    const execution =
+      startWorkerExecution(azure.workerDefinition);
     assert(execution?.name, "Worker start returned no execution name.");
     state.workerStarted = true;
     state.workerStartedAt = new Date().toISOString();
@@ -1450,6 +1459,101 @@ async function commandStartWorker() {
       executionStatus: execution?.properties?.status || null,
       override: {
         organisationId: TARGET.organisationId,
+        internalServiceOrganisationIds:
+          TARGET.organisationId,
+        args: ["worker", "once"],
+        batchSize: 1,
+        maximumBatchesPerRun: 1,
+      },
+      recurringDefinition: {
+        cron: azure.worker.cron,
+        args: azure.worker.args,
+      },
+    };
+  } finally {
+    await production.close();
+  }
+}
+
+async function commandRecoverWorker() {
+  const state = loadState();
+  assertEqual(state.workerStarted, true, "Worker-start state");
+  assertEqual(
+    state.workerRecoveryStarted,
+    undefined,
+    "Worker-recovery guard",
+  );
+  const failedExecution = az([
+    "containerapp",
+    "job",
+    "execution",
+    "show",
+    "--resource-group",
+    EXPECTED.resourceGroup,
+    "--name",
+    EXPECTED.workerJob,
+    "--job-execution-name",
+    state.workerExecutionName,
+    "--output",
+    "json",
+  ], { json: true });
+  assertEqual(
+    failedExecution?.properties?.status,
+    "Failed",
+    "Recoverable worker execution status",
+  );
+  const failedEnvironment = Object.fromEntries(
+    failedExecution?.properties?.template?.containers?.[0]?.env
+      ?.map(({ name, value }) => [name, value]) || [],
+  );
+  assertEqual(
+    failedEnvironment.REPORT_WORKER_ORGANISATION_ID,
+    TARGET.organisationId,
+    "Failed execution organisation",
+  );
+  assert(
+    !failedEnvironment.INTERNAL_SERVICE_ORGANISATION_IDS,
+    "Recovery is allowed only for the known missing service-scope allowlist.",
+  );
+
+  const azure = azurePreflight();
+  const production = await openProduction();
+  try {
+    const job = await readJob(production, state);
+    assertPinnedJob(job, state, { beforeWorker: true });
+    requireCleanOutbox(
+      await outboxSummary(production.acquired.pool),
+      state.jobId,
+    );
+    assertNoActiveWorkerExecutions();
+    const execution =
+      startWorkerExecution(azure.workerDefinition);
+    assert(
+      execution?.name,
+      "Worker recovery start returned no execution name.",
+    );
+    state.failedWorkerExecutionName =
+      state.workerExecutionName;
+    state.workerRecoveryStarted = true;
+    state.workerRecoveryStartedAt =
+      new Date().toISOString();
+    state.workerExecutionName = execution.name;
+    saveState(state);
+    return {
+      failedExecutionName:
+        state.failedWorkerExecutionName,
+      recoveryExecutionName: execution.name,
+      recoveryExecutionStatus:
+        execution?.properties?.status || null,
+      precondition: {
+        jobStatus: job.status,
+        attemptCount: job.attemptCount,
+        priorFailureOccurredBeforeLease: true,
+      },
+      override: {
+        organisationId: TARGET.organisationId,
+        internalServiceOrganisationIds:
+          TARGET.organisationId,
         args: ["worker", "once"],
         batchSize: 1,
         maximumBatchesPerRun: 1,
@@ -1492,6 +1596,7 @@ function commandWorkerStatus() {
       environment: Object.fromEntries(
         execution?.properties?.template?.containers?.[0]?.env
           ?.filter(({ name }) => [
+            "INTERNAL_SERVICE_ORGANISATION_IDS",
             "REPORT_WORKER_ORGANISATION_ID",
             "REPORT_WORKER_BATCH_SIZE",
             "REPORT_WORKER_MAX_BATCHES_PER_RUN",
@@ -1667,6 +1772,7 @@ const COMMANDS = Object.freeze({
   ingest: commandIngest,
   "verify-job": commandVerifyJob,
   "start-worker": commandStartWorker,
+  "recover-worker": commandRecoverWorker,
   "worker-status": commandWorkerStatus,
   "verify-results": commandVerifyResults,
 });
@@ -1678,7 +1784,8 @@ async function main() {
     fail(
       "Usage: node tools/prospective-production-verification.mjs "
       + "<resolve|audit|inspect|activate|ingest|verify-job|start-worker|"
-      + "worker-status|verify-results> --organisation-id <uuid> "
+      + "recover-worker|worker-status|verify-results> "
+      + "--organisation-id <uuid> "
       + "--model-deployment-id <name:version> "
       + "[--organisation-slug <canonical-slug> "
       + "--scheme-id <scheme-id> --claim-prefix <2-5-chars>]",
