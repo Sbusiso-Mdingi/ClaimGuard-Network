@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/button";
 import { PageFrame, SectionCard, MetricPill, StatusIndicator, severityStatusTone } from "./InvestigatorUI";
 
 import { useRole } from "../../context/RoleContext";
-import { CLAIMGUARD_ROLES } from "../../lib/claimguardRoles";
+import { hasCapability } from "../../lib/capabilities";
 import { addTrackedInvestigation } from "../../lib/trackedInvestigations";
 import { apiRequest } from "../../lib/apiClient";
 
@@ -105,7 +105,7 @@ export function ClaimDetailsPage({ report, graph, risk }) {
     claim: null,
     error: null,
   });
-  const canEscalate = [CLAIMGUARD_ROLES.FRAUD_ANALYST, CLAIMGUARD_ROLES.INVESTIGATOR].includes(identity.role);
+  const canEscalate = hasCapability(identity, "investigations.create");
 
   const { claim } = claimState;
 

@@ -199,12 +199,26 @@ export function DefinitionList({ items = [], columns = 2, className = "" }) {
 }
 
 export function FormField({ label, htmlFor, hint, error, children }) {
+  const generatedId = React.useId().replace(/:/g, "");
+  const controlId = htmlFor || children?.props?.id || `field-${generatedId}`;
+  const descriptionId = (error || hint) ? `${controlId}-description` : undefined;
+  const control = React.isValidElement(children)
+    ? React.cloneElement(children, {
+        id: children.props.id || controlId,
+        "aria-describedby": [
+          children.props["aria-describedby"],
+          descriptionId,
+        ].filter(Boolean).join(" ") || undefined,
+        "aria-invalid": error ? true : children.props["aria-invalid"],
+      })
+    : children;
+
   return (
-    <label className="grid gap-2 text-sm font-medium text-foreground" htmlFor={htmlFor}>
-      <span>{label}</span>
-      {children}
-      {error ? <span className="text-xs font-normal text-destructive">{error}</span> : hint ? <span className="text-xs font-normal leading-5 text-muted-foreground">{hint}</span> : null}
-    </label>
+    <div className="grid gap-2 text-sm font-medium text-foreground">
+      <label htmlFor={controlId}>{label}</label>
+      {control}
+      {error ? <span id={descriptionId} className="text-xs font-normal text-destructive">{error}</span> : hint ? <span id={descriptionId} className="text-xs font-normal leading-5 text-muted-foreground">{hint}</span> : null}
+    </div>
   );
 }
 

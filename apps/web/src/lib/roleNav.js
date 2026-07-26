@@ -1,3 +1,8 @@
+import {
+  hasAnyCapability,
+  hasEveryCapability,
+} from "./capabilities";
+
 export const NAV_GROUPS = [
   {
     key: "your-scheme",
@@ -6,7 +11,7 @@ export const NAV_GROUPS = [
     items: [
       {
         key: "dashboard",
-        to: "/",
+        to: "/dashboard",
         label: "Dashboard",
         capabilities: ["reports.view_own", "claims.view_own"],
         capabilityMode: "any",
@@ -52,7 +57,11 @@ export const NAV_GROUPS = [
         key: "committee",
         to: "/committee",
         label: "Shared Fraud Registry",
-        capabilities: ["fraud_registry.search", "fraud_registry.view"],
+        capabilities: [
+          "fraud_registry.search",
+          "fraud_registry.view",
+          "fraud_registry.review_history",
+        ],
         capabilityMode: "any",
       },
     ],
@@ -84,9 +93,8 @@ export const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
 export function canAccessNavItem(identity, item) {
   if (!item) return true;
-  const granted = new Set(identity?.capabilities || []);
   const required = item.capabilities || [];
   if (required.length === 0) return true;
-  if (item.capabilityMode === "any") return required.some((capability) => granted.has(capability));
-  return required.every((capability) => granted.has(capability));
+  if (item.capabilityMode === "any") return hasAnyCapability(identity, required);
+  return hasEveryCapability(identity, required);
 }

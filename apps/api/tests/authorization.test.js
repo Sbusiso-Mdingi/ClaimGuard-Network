@@ -379,7 +379,7 @@ test("detection routes require authentication, tenant match, and report permissi
     headers: authHeaders({ role: "scheme_user", requestTenantId: betaTenant.tenant_id }),
   });
   const insufficient = await app.request("http://localhost/detection/report", {
-    headers: authHeaders({ role: "scheme_administrator" }),
+    headers: authHeaders({ role: "applications_committee_member" }),
   });
   const permitted = await app.request("http://localhost/detection/report", {
     headers: authHeaders({ role: "scheme_user" }),
@@ -547,12 +547,17 @@ test("claims read routes require claims.view_own and enforce canonical tenant co
 
   assert.equal(unauthenticated.status, 401);
   assert.equal(contradictory.status, 403);
-  assert.equal(investigator.status, 403);
+  assert.equal(investigator.status, 200);
   assert.equal(platform.status, 403);
   assert.equal(permitted.status, 200);
   assert.equal(permittedDetail.status, 200);
   assert.equal(missingDetail.status, 404);
-  assert.deepEqual(observed, [alphaTenant.tenant_id, alphaTenant.tenant_id, alphaTenant.tenant_id]);
+  assert.deepEqual(observed, [
+    alphaTenant.tenant_id,
+    alphaTenant.tenant_id,
+    alphaTenant.tenant_id,
+    alphaTenant.tenant_id,
+  ]);
 });
 function modelClaimFields(serviceDate) {
   return {

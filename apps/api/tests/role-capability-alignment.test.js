@@ -68,10 +68,14 @@ test("session capability translation applies role overlays during migration roll
   ]));
 });
 
-test("demo-header rollback authority remains governed by the legacy role map", () => {
+test("demo-header rollback authority mirrors effective session visibility", () => {
   const investigator = headerContext("investigator");
   const schemeAdministrator = headerContext("scheme_administrator");
+  const committeeMember = headerContext("applications_committee_member");
 
-  assert.equal(hasPermission(investigator, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), false);
-  assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN), false);
+  assert.equal(hasPermission(investigator, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
+  assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN), true);
+  assert.equal(hasPermission(committeeMember, CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH), true);
+  assert.equal(hasPermission(committeeMember, CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW), true);
+  assert.equal(hasPermission(committeeMember, CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY), true);
 });

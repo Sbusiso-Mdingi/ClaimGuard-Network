@@ -1,53 +1,74 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
 import { ApiError, apiJson } from "../../lib/apiClient";
-import { FormField, WorkspaceNotice } from "./InvestigatorUI";
+import {
+  DefinitionList,
+  StatusIndicator,
+  WorkspaceNotice,
+} from "./InvestigatorUI";
 
 export function GlobalDetectionEngineSettings() {
-  const [modelDeploymentId, setModelDeploymentId] = useState("");
+  const [strategy, setStrategy] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    apiJson("/admin/platform/global-detection-engine")
-      .then((payload) => setModelDeploymentId(payload.strategy?.modelDeploymentId || ""))
+  const loadStrategy = useCallback(() => {
+    setLoading(true);
+    setError("");
+    return apiJson("/admin/platform/global-detection-engine")
+      .then((payload) => setStrategy(payload.strategy || null))
       .catch((requestError) => setError(requestError instanceof ApiError ? requestError.message : "Failed to load global detection configuration."))
       .finally(() => setLoading(false));
   }, []);
 
-  async function handleSave(event) {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    setMessage("");
-    try {
-      await apiJson("/admin/platform/global-detection-engine", {
-        method: "PUT",
-        body: JSON.stringify({ modelDeploymentId: modelDeploymentId || null }),
-      });
-      setMessage("Global detection engine configuration updated successfully.");
-    } catch (requestError) {
-      setError(requestError instanceof ApiError ? requestError.message : "Failed to update global detection configuration.");
-    } finally {
-      setSaving(false);
-    }
-  }
+  useEffect(() => {
+    loadStrategy();
+  }, [loadStrategy]);
 
   if (loading) {
-    return <WorkspaceNotice title="Loading global engine configuration">ClaimGuard is reading the active platform default.</WorkspaceNotice>;
+    return <WorkspaceNotice title="Loading managed model configuration">ClaimGuard is reading the deployment-authoritative setting.</WorkspaceNotice>;
   }
 
   return (
-    <form onSubmit={handleSave} className="grid gap-4">
+    <div className="grid gap-4">
       {error ? <WorkspaceNotice title="Global configuration unavailable" tone="danger">{error}</WorkspaceNotice> : null}
-      {message ? <WorkspaceNotice title={message} tone="success" /> : null}
-      <FormField label="Approved model deployment ID" hint="Use an approved deployment identifier; model endpoints and secrets are never accepted here.">
-        <Input required placeholder="claimguard-claim-fraud-ensemble-1.1.0" value={modelDeploymentId} onChange={(event) => setModelDeploymentId(event.target.value)} />
-      </FormField>
-      <Button type="submit" className="w-fit" disabled={saving || !modelDeploymentId}>{saving ? "Saving..." : "Save configuration"}</Button>
-    </form>
+      {strategy ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusIndicator
+              variant="badge"
+              tone={strategy.approved ? "success" : "warning"}
+            >
+              {strategy.approved ? "Approved deployment" : "Configuration attention required"}
+            </StatusIndicator>
+            <StatusIndicator variant="badge" tone="info">Deployment controlled</StatusIndicator>
+          </div>
+          <DefinitionList
+            columns={3}
+            items={[
+              {
+                label: "Fleet-managed deployment",
+                value: strategy.modelDeploymentId || "Not configured",
+                mono: true,
+              },
+              {
+                label: "Configuration source",
+                value: "Validated API deployment",
+              },
+              {
+                label: "Scheme activation",
+                value: "Audited prospective transition",
+              },
+            ]}
+          />
+          <WorkspaceNotice
+            title="Promotion is intentionally deployment-controlled"
+            actions={<Button type="button" variant="outline" size="sm" onClick={loadStrategy}>Refresh</Button>}
+          >
+            A platform deployment promotes the fleet-managed model. Each managed scheme then adopts it through its audited model-policy operation. Existing claims and historical outbox jobs are never rewritten.
+          </WorkspaceNotice>
+        </>
+      ) : null}
+    </div>
   );
 }

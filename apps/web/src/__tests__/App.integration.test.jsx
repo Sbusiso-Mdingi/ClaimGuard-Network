@@ -142,7 +142,7 @@ function claimsNavigationLink() {
 }
 
 beforeEach(() => {
-  window.history.pushState({}, "", "/");
+  window.history.pushState({}, "", "/dashboard");
   window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
   vi.useRealTimers();
   mockFetch();

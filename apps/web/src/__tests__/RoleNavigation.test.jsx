@@ -54,3 +54,36 @@ test("scheme administrator sees read-only operational navigation and administrat
   expect(screen.getByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Shared Fraud Registry/i })).not.toBeInTheDocument();
 });
+
+test("applications committee members see only the shared registry workspace", async () => {
+  const user = userEvent.setup();
+  renderLayout();
+
+  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
+  await user.selectOptions(identitySelect, "committee-alpha");
+
+  expect(await screen.findByRole("link", { name: /Shared Fraud Registry/i })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /^Claims$/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /^Investigations$/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();
+});
+
+test("platform administrators see platform governance without tenant operations", async () => {
+  const user = userEvent.setup();
+  renderLayout();
+
+  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
+  await user.selectOptions(identitySelect, "platform-admin");
+
+  expect(await screen.findByRole("link", { name: /Platform Administration/i })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /^Claims$/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /^Investigations$/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();
+});
+
+test("provides a keyboard skip link to the main workspace", () => {
+  renderLayout();
+
+  expect(screen.getByRole("link", { name: "Skip to main content" })).toHaveAttribute("href", "#main-content");
+  expect(document.querySelector("#main-content")).toBeInTheDocument();
+});

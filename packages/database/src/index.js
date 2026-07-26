@@ -109,6 +109,14 @@ export {
   normalizeInvestigationStatus,
 } from "./investigation-repository.js";
 
+export {
+  createInvestigationQueueRepository,
+  INVESTIGATION_QUEUE_DEFAULT_PAGE_SIZE,
+  INVESTIGATION_QUEUE_MAX_PAGE_SIZE,
+  INVESTIGATION_QUEUE_PRIORITIES,
+  INVESTIGATION_QUEUE_STATUSES,
+} from "./investigation-queue-repository.js";
+
 
 export {
   createLedgerRepository,

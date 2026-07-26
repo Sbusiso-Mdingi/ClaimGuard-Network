@@ -14,6 +14,7 @@ import {
 } from "./InvestigatorUI";
 import { DetectionEngineSettings } from "./DetectionEngineSettings";
 import { apiJson } from "../../lib/apiClient";
+import { hasCapability } from "../../lib/capabilities";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
 
@@ -138,6 +139,7 @@ function UserManagementPanel() {
   const [message, setMessage] = useState("");
   const [newUser, setNewUser] = useState({ displayName: "", username: "", password: "", roleKey: "claims_analyst" });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingDisableUserId, setPendingDisableUserId] = useState(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -177,13 +179,13 @@ function UserManagementPanel() {
   }
 
   async function handleDisableUser(userId) {
-    if (!window.confirm("Are you sure you want to disable this user?")) return;
     setLoading(true);
     setError("");
     setMessage("");
     try {
       await apiJson(`/admin/scheme/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
       await loadUsers();
+      setPendingDisableUserId(null);
       setMessage("User disabled successfully.");
     } catch (err) {
       setError(err.message || "Failed to disable user");
@@ -249,7 +251,16 @@ function UserManagementPanel() {
                 <p className="mt-1 text-xs text-muted-foreground">Roles: {(user.roles || []).map((role) => formatEnumLabel(role)).join(", ") || "None"}</p>
               </div>
               {user.userStatus === "active" ? (
-                <Button variant="destructive" size="sm" onClick={() => handleDisableUser(user.userId)} disabled={loading}>Disable user</Button>
+                pendingDisableUserId === user.userId ? (
+                  <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`Confirm disabling ${user.displayName}`}>
+                    <Button variant="destructive" size="sm" onClick={() => handleDisableUser(user.userId)} disabled={loading}>
+                      {loading ? "Disabling..." : "Confirm disable"}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setPendingDisableUserId(null)} disabled={loading}>Cancel</Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setPendingDisableUserId(user.userId)} disabled={loading}>Disable user</Button>
+                )
               ) : null}
             </div>
           ))}
@@ -273,11 +284,14 @@ function ApiGapPanel({ title, description }) {
 
 export function SchemeAdminPage() {
   const { identity } = useRole();
+  const canViewOperations = hasCapability(identity, "tenant_status.view");
+  const canManageUsers = hasCapability(identity, "users.manage_tenant");
   const [overview, setOverview] = useState(null);
   const [overviewStatus, setOverviewStatus] = useState("loading");
   const [overviewError, setOverviewError] = useState("");
 
   const loadOverview = useCallback(async () => {
+    if (!canViewOperations) return;
     setOverviewStatus((previous) => overview ? "refreshing" : previous === "error" ? "loading" : previous);
     setOverviewError("");
     try {
@@ -288,11 +302,11 @@ export function SchemeAdminPage() {
       setOverviewError(error.message || "Failed to load the scheme operations overview.");
       setOverviewStatus(overview ? "stale" : "error");
     }
-  }, [overview]);
+  }, [canViewOperations, overview]);
 
   useEffect(() => {
-    loadOverview();
-  }, []);
+    if (canViewOperations) loadOverview();
+  }, [canViewOperations]);
 
   const schemeLabel = useMemo(
     () => identity.tenantLabel || identity.organisationLabel || identity.organisationName || "Scheme operations",
@@ -306,10 +320,10 @@ export function SchemeAdminPage() {
       title={schemeLabel}
       description="Tenant-scoped operational visibility, detection configuration, user administration, and processing health."
       actions={[
-        <Button key="refresh" variant="outline" onClick={loadOverview} disabled={overviewStatus === "loading" || overviewStatus === "refreshing"}>
+        canViewOperations ? <Button key="refresh" variant="outline" onClick={loadOverview} disabled={overviewStatus === "loading" || overviewStatus === "refreshing"}>
           {overviewStatus === "refreshing" ? "Refreshing..." : "Refresh operations"}
-        </Button>,
-        overview?.generatedAt ? <StatusIndicator key="generated" variant="badge">Updated {formatDate(overview.generatedAt)}</StatusIndicator> : null,
+        </Button> : null,
+        canViewOperations && overview?.generatedAt ? <StatusIndicator key="generated" variant="badge">Updated {formatDate(overview.generatedAt)}</StatusIndicator> : null,
       ].filter(Boolean)}
     >
       <SectionCard title="Scheme identity" description="Organisation and operational tenant context resolved from the authenticated session.">
@@ -321,22 +335,26 @@ export function SchemeAdminPage() {
         />
       </SectionCard>
 
-      <OperationsOverview overview={overview} status={overviewStatus} error={overviewError} onRefresh={loadOverview} />
+      {canViewOperations ? <OperationsOverview overview={overview} status={overviewStatus} error={overviewError} onRefresh={loadOverview} /> : null}
 
-      <SectionCard title="Detection engine settings" description="Change the active rules or approved-model strategy with an auditable reason.">
-        <DetectionEngineSettings tenantId={identity.tenantId || identity.organisationId || null} />
-      </SectionCard>
+      {canManageUsers ? (
+        <>
+          <SectionCard title="Detection engine settings" description="Govern the approved model used for new claims. Every change is tenant-scoped, prospective, and requires an auditable reason.">
+            <DetectionEngineSettings tenantId={identity.tenantId || identity.organisationId || null} />
+          </SectionCard>
 
-      <SectionCard title="Users and roles" description="Create, review, and disable users within this scheme.">
-        <UserManagementPanel />
-      </SectionCard>
+          <SectionCard title="Users and roles" description="Create, review, and disable users within this scheme.">
+            <UserManagementPanel />
+          </SectionCard>
 
-      <SectionCard title="Management API coverage" description="These administrative domains remain intentionally explicit until authoritative APIs are implemented.">
-        <div className="grid gap-3 xl:grid-cols-2">
-          <ApiGapPanel title="Integration credentials" description="Credential creation, rotation, revocation, and last-used metadata need a dedicated control-plane management contract. Secret values must never be reconstructed in the browser." />
-          <ApiGapPanel title="Audit activity" description="The control plane stores safe audit events, but a tenant-filtered audit read endpoint is not exposed yet. The UI does not fabricate an activity feed." />
-        </div>
-      </SectionCard>
+          <SectionCard title="Management API coverage" description="These administrative domains remain intentionally explicit until authoritative APIs are implemented.">
+            <div className="grid gap-3 xl:grid-cols-2">
+              <ApiGapPanel title="Integration credentials" description="Credential creation, rotation, revocation, and last-used metadata need a dedicated control-plane management contract. Secret values must never be reconstructed in the browser." />
+              <ApiGapPanel title="Audit activity" description="The control plane stores safe audit events, but a tenant-filtered audit read endpoint is not exposed yet. The UI does not fabricate an activity feed." />
+            </div>
+          </SectionCard>
+        </>
+      ) : null}
     </PageFrame>
   );
 }

@@ -245,6 +245,67 @@ test("non-platform user cannot mutate onboarding routes", async () => {
   assert.equal(response.status, 403);
 });
 
+test("platform model endpoint reports the deployment-authoritative configuration", async () => {
+  const previousManagedModel = process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID;
+  const previousApprovedModels = process.env.APPROVED_MODEL_DEPLOYMENT_IDS;
+  process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID = "claimguard-claim-fraud-baseline:1.0.0";
+  process.env.APPROVED_MODEL_DEPLOYMENT_IDS = [
+    "claimguard-claim-fraud-baseline:1.0.0",
+    "scheme-owned-model:2.0.0",
+  ].join(",");
+
+  try {
+    const { app } = createApp();
+    const response = await app.request(
+      "http://localhost/admin/platform/global-detection-engine",
+      { headers: platformHeaders() },
+    );
+    const json = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(json.strategy, {
+      modelDeploymentId: "claimguard-claim-fraud-baseline:1.0.0",
+      approved: true,
+      configurationSource: "deployment_environment",
+      writable: false,
+      activationMode: "audited_prospective_transition",
+    });
+  } finally {
+    if (previousManagedModel === undefined) {
+      delete process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID;
+    } else {
+      process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID = previousManagedModel;
+    }
+    if (previousApprovedModels === undefined) {
+      delete process.env.APPROVED_MODEL_DEPLOYMENT_IDS;
+    } else {
+      process.env.APPROVED_MODEL_DEPLOYMENT_IDS = previousApprovedModels;
+    }
+  }
+});
+
+test("platform model promotion cannot create a phantom control-plane override", async () => {
+  const { app } = createApp();
+  const response = await app.request(
+    "http://localhost/admin/platform/global-detection-engine",
+    {
+      method: "PUT",
+      headers: {
+        ...platformHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        modelDeploymentId: "claimguard-claim-fraud-baseline:2.0.0",
+      }),
+    },
+  );
+  const json = await response.json();
+
+  assert.equal(response.status, 405);
+  assert.equal(response.headers.get("allow"), "GET");
+  assert.equal(json.code, "MODEL_PROMOTION_DEPLOYMENT_CONTROLLED");
+});
+
 test("provisioning request returns 202 and operation status can be polled", async () => {
   const { app, harness } = createApp();
   harness.organisations.set("org-bonitas", {

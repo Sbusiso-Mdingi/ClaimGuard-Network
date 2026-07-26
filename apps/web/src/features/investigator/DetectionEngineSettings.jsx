@@ -35,11 +35,17 @@ function normaliseSelection(strategy) {
   if (modelDeploymentId && !DEPLOYMENT_ID_PATTERN.test(modelDeploymentId)) {
     throw new Error("The API returned an invalid model deployment identifier.");
   }
+  const recommendedModelDeploymentId = String(strategy?.recommendedModelDeploymentId || "").trim();
+  if (recommendedModelDeploymentId && !DEPLOYMENT_ID_PATTERN.test(recommendedModelDeploymentId)) {
+    throw new Error("The API returned an invalid recommended model deployment identifier.");
+  }
 
   return {
     strategyId,
     strategyType,
     modelDeploymentId,
+    updateAvailable: strategyType === "claimguard_managed" && strategy?.updateAvailable === true,
+    recommendedModelDeploymentId,
     requiresSelection: false,
     message: null,
   };
@@ -86,6 +92,8 @@ export function DetectionEngineSettings({ tenantId }) {
     strategyId: null,
     strategyType: "",
     modelDeploymentId: "",
+    updateAvailable: false,
+    recommendedModelDeploymentId: "",
   });
   const [selectionRequiredMessage, setSelectionRequiredMessage] = useState("");
   const [changeReason, setChangeReason] = useState("");
@@ -121,6 +129,8 @@ export function DetectionEngineSettings({ tenantId }) {
           strategyId: selection.strategyId,
           strategyType: selection.strategyType,
           modelDeploymentId: selection.modelDeploymentId,
+          updateAvailable: selection.updateAvailable,
+          recommendedModelDeploymentId: selection.recommendedModelDeploymentId,
         });
         setSelectionRequiredMessage(selection.requiresSelection ? selection.message : "");
         setChangeReason("");
@@ -158,9 +168,24 @@ export function DetectionEngineSettings({ tenantId }) {
   const canSave = !loading
     && !saving
     && MODEL_SELECTIONS.has(strategyType)
-    && (configurationChanged || Boolean(selectionRequiredMessage))
+    && (configurationChanged || Boolean(selectionRequiredMessage) || savedSelection.updateAvailable)
     && reasonValid
     && customDeploymentValid;
+  const displayedDeploymentId = strategyType === "scheme_managed"
+    ? canonicalProprietaryDeploymentId || "Not selected"
+    : savedSelection.strategyType === "claimguard_managed"
+      ? savedSelection.modelDeploymentId || "Resolved by ClaimGuard"
+      : "Resolved when activated";
+  const policyLabel = strategyType === "claimguard_managed"
+    ? "ClaimGuard managed"
+    : strategyType === "scheme_managed"
+      ? "Scheme-owned pin"
+      : "Selection required";
+  const updateBehaviour = strategyType === "claimguard_managed"
+    ? "Eligible for audited ClaimGuard model rollouts"
+    : strategyType === "scheme_managed"
+      ? "Remains pinned until a scheme administrator changes it"
+      : "No supported model policy is active";
 
   function select(nextStrategyType) {
     if (saving || !MODEL_SELECTIONS.has(nextStrategyType)) return;
@@ -222,10 +247,12 @@ export function DetectionEngineSettings({ tenantId }) {
         strategyId: saved.strategyId,
         strategyType: saved.strategyType,
         modelDeploymentId: saved.modelDeploymentId,
+        updateAvailable: saved.updateAvailable,
+        recommendedModelDeploymentId: saved.recommendedModelDeploymentId,
       });
       setSelectionRequiredMessage("");
       setChangeReason("");
-      setNotice("Detection model selection saved.");
+      setNotice("Model update policy saved. New claims will pin the deployment active at ingestion.");
     } catch (saveError) {
       setError(saveError?.message || "Failed to save the detection model selection.");
     } finally {
@@ -245,10 +272,10 @@ export function DetectionEngineSettings({ tenantId }) {
   return (
     <div className="detection-settings-container">
       <div className="settings-header">
-        <h3 className="settings-title">Detection Model</h3>
+        <h3 className="settings-title">Model update policy</h3>
         <p className="settings-description">
-          Choose which machine-learning model scores prospective claims for this scheme.
-          Deterministic rules are not available as a substitute for model scoring.
+          Choose how the approved machine-learning deployment is governed for this scheme.
+          The policy applies prospectively: existing claims and historical outbox work are never rewritten.
         </p>
       </div>
 
@@ -258,10 +285,35 @@ export function DetectionEngineSettings({ tenantId }) {
         </div>
       ) : null}
 
-      <div className="strategy-toggle-group" role="radiogroup" aria-label="Detection model">
+      {savedSelection.updateAvailable ? (
+        <div className="managed-update-notice" role="status">
+          <strong>Managed model update available</strong>
+          <span>
+            ClaimGuard recommends <code>{savedSelection.recommendedModelDeploymentId}</code>.
+            Save with an auditable reason to activate it for new claims.
+          </span>
+        </div>
+      ) : null}
+
+      <div className="model-policy-summary" aria-label="Current model policy summary">
+        <div>
+          <span>Policy</span>
+          <strong>{policyLabel}</strong>
+        </div>
+        <div>
+          <span>Effective deployment</span>
+          <code>{displayedDeploymentId}</code>
+        </div>
+        <div>
+          <span>Update behaviour</span>
+          <strong>{updateBehaviour}</strong>
+        </div>
+      </div>
+
+      <div className="strategy-toggle-group" role="radiogroup" aria-label="Model update policy">
         <ModelChoice
-          title="ClaimGuard Managed Model"
-          description="Use ClaimGuard's currently approved fraud-detection model. ClaimGuard manages validated upgrades, monitoring and rollback."
+          title="ClaimGuard-managed updates"
+          description="Use ClaimGuard's approved baseline. Validated version changes are applied through audited rollout operations, with monitoring and rollback."
           badge="Managed by ClaimGuard"
           selected={strategyType === "claimguard_managed"}
           disabled={saving}
@@ -269,9 +321,9 @@ export function DetectionEngineSettings({ tenantId }) {
         />
 
         <ModelChoice
-          title="Custom Proprietary Model"
-          description="Use a deployment registered, approved and owned by this medical scheme."
-          badge="Scheme managed"
+          title="Scheme-owned model pin"
+          description="Pin this scheme to one registered and approved proprietary deployment until an authorised administrator changes it."
+          badge="Scheme controlled"
           selected={strategyType === "scheme_managed"}
           disabled={saving}
           onSelect={() => select("scheme_managed")}
@@ -294,7 +346,7 @@ export function DetectionEngineSettings({ tenantId }) {
             id="model-deployment-id"
             className="url-input"
             type="text"
-            placeholder="ubuntu-fraud-model:production"
+            placeholder="scheme-model-name:version"
             value={proprietaryDeploymentId}
             maxLength={128}
             autoComplete="off"
@@ -320,7 +372,7 @@ export function DetectionEngineSettings({ tenantId }) {
           maxLength={500}
           value={changeReason}
           disabled={saving}
-          placeholder="Explain why this model selection is being activated."
+          placeholder="Explain why this model policy is being activated."
           onChange={(event) => {
             setChangeReason(event.target.value);
             setError(null);
@@ -339,7 +391,7 @@ export function DetectionEngineSettings({ tenantId }) {
         onClick={handleSave}
         disabled={!canSave}
       >
-        {saving ? "Saving Model Selection..." : "Save Model Selection"}
+        {saving ? "Saving Model Policy..." : savedSelection.updateAvailable && strategyType === "claimguard_managed" ? "Apply Managed Model Update" : "Save Model Policy"}
       </button>
     </div>
   );

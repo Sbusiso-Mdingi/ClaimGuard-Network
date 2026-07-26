@@ -3,6 +3,7 @@ import Search from "lucide-react/dist/esm/icons/search.mjs";
 import History from "lucide-react/dist/esm/icons/history.mjs";
 import { useRole } from "../../context/RoleContext";
 import { apiRequest } from "../../lib/apiClient";
+import { hasCapability } from "../../lib/capabilities";
 import {
   EmptyState,
   FormField,
@@ -17,6 +18,8 @@ import { Button } from "../../components/ui/button";
 
 export function CommitteeRegistryPage() {
   const { identity } = useRole();
+  const canSearch = hasCapability(identity, "fraud_registry.search");
+  const canViewHistory = hasCapability(identity, "fraud_registry.review_history");
   const [subjectToken, setSubjectToken] = useState("");
   const [results, setResults] = useState(null);
   const [history, setHistory] = useState(null);
@@ -25,6 +28,7 @@ export function CommitteeRegistryPage() {
 
   async function search(event) {
     event.preventDefault();
+    if (!canSearch) return;
     const token = subjectToken.trim();
     if (!token) return;
     setLoading(true);
@@ -48,6 +52,7 @@ export function CommitteeRegistryPage() {
   }
 
   async function loadHistory() {
+    if (!canViewHistory) return;
     const token = subjectToken.trim();
     if (!token) return;
     setLoading(true);
@@ -89,14 +94,18 @@ export function CommitteeRegistryPage() {
             />
           </FormField>
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={loading || !subjectToken.trim()}>
-              <Search className="mr-2 h-4 w-4" />
-              {loading ? "Searching..." : "Search registry"}
-            </Button>
-            <Button type="button" variant="outline" onClick={loadHistory} disabled={loading || !subjectToken.trim()}>
-              <History className="mr-2 h-4 w-4" />
-              View history
-            </Button>
+            {canSearch ? (
+              <Button type="submit" disabled={loading || !subjectToken.trim()}>
+                <Search className="mr-2 h-4 w-4" />
+                {loading ? "Searching..." : "Search registry"}
+              </Button>
+            ) : null}
+            {canViewHistory ? (
+              <Button type="button" variant="outline" onClick={loadHistory} disabled={loading || !subjectToken.trim()}>
+                <History className="mr-2 h-4 w-4" />
+                View history
+              </Button>
+            ) : null}
           </div>
         </form>
         {error ? <div className="mt-4"><WorkspaceNotice title="Registry request failed" tone="danger">{error}</WorkspaceNotice></div> : null}

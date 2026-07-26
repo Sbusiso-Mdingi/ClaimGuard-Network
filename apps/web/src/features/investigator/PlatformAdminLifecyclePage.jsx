@@ -212,7 +212,7 @@ export function PlatformAdminLifecyclePage() {
         </>
       )}
 
-      <SectionCard title="Global ClaimGuard engine" description="Configure the default approved model used when a scheme has not selected a tenant-specific strategy.">
+      <SectionCard title="Global ClaimGuard engine" description="Review the fleet-managed model promoted by the validated API deployment. Managed schemes adopt updates through an audited prospective transition.">
         <GlobalDetectionEngineSettings />
       </SectionCard>
     </PageFrame>

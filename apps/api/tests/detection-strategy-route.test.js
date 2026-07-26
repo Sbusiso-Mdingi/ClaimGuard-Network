@@ -48,12 +48,15 @@ function appFor({ repository = null, authContext = ADMIN } = {}) {
 
 function configureModels() {
   process.env.APPROVED_MODEL_DEPLOYMENT_IDS = [
+    "claimguard-fraud-model:1.1.0",
     "claimguard-fraud-model:1.2.0",
     "alpha-proprietary-model:production",
+    "beta-proprietary-model:production",
   ].join(",");
   process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID = "claimguard-fraud-model:1.2.0";
   process.env.SCHEME_MODEL_DEPLOYMENTS_JSON = JSON.stringify({
     "tenant-alpha": ["alpha-proprietary-model:production"],
+    "tenant-beta": ["beta-proprietary-model:production"],
   });
 }
 
@@ -84,6 +87,52 @@ test("GET projects a legacy deterministic strategy as selection required", async
   assert.equal(body.strategy.strategyType, "selection_required");
   assert.equal(body.strategy.requiresSelection, true);
   assert.match(body.strategy.message, /Deterministic scoring is no longer selectable/);
+});
+
+test("GET preserves a managed scheme posture when a newer fleet deployment is promoted", async () => {
+  configureModels();
+  const app = appFor({
+    repository: {
+      async getActiveStrategy() {
+        return {
+          strategyId: 9,
+          strategyType: "approved_model",
+          modelDeploymentId: "claimguard-fraud-model:1.1.0",
+        };
+      },
+    },
+  });
+
+  const response = await app.request("/detection/strategy");
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.strategy.strategyType, "claimguard_managed");
+  assert.equal(body.strategy.modelDeploymentId, "claimguard-fraud-model:1.1.0");
+  assert.equal(body.strategy.updateAvailable, true);
+  assert.equal(body.strategy.recommendedModelDeploymentId, "claimguard-fraud-model:1.2.0");
+});
+
+test("GET does not misclassify another scheme's proprietary deployment as fleet-managed", async () => {
+  configureModels();
+  const app = appFor({
+    repository: {
+      async getActiveStrategy() {
+        return {
+          strategyId: 10,
+          strategyType: "approved_model",
+          modelDeploymentId: "beta-proprietary-model:production",
+        };
+      },
+    },
+  });
+
+  const response = await app.request("/detection/strategy");
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.strategy.strategyType, "selection_required");
+  assert.equal(body.strategy.requiresSelection, true);
 });
 
 test("PUT ClaimGuard-managed selection resolves the platform deployment and stores an approved model", async () => {

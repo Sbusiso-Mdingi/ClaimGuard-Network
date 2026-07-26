@@ -26,6 +26,15 @@ function parseAllowedDeploymentClasses() {
   );
 }
 
+function configuredModelDeploymentIds() {
+  return new Set(
+    String(process.env.APPROVED_MODEL_DEPLOYMENT_IDS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+}
+
 function safeProvisioningProjection(operation) {
   return {
     operationId: operation.operationId,
@@ -312,44 +321,33 @@ export function registerPlatformAdminRoutes(
   });
 
   app.get("/admin/platform/global-detection-engine", requirePlatformAdmin, async (c) => {
-    try {
-      const flag = await controlPlaneRepositories.configuration.getFeatureFlag({
-        flagKey: "global_detection_engine",
-      });
-      return c.json({
-        available: true,
-        strategy: flag?.value || { modelDeploymentId: "" },
-      });
-    } catch (error) {
-      return c.json({ available: false, message: "Failed to load global detection engine config" }, 500);
-    }
+    const modelDeploymentId = String(
+      process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID || "",
+    ).trim();
+    const approvedDeploymentIds = configuredModelDeploymentIds();
+
+    return c.json({
+      available: true,
+      strategy: {
+        modelDeploymentId: modelDeploymentId || null,
+        approved: Boolean(
+          modelDeploymentId
+          && approvedDeploymentIds.has(modelDeploymentId),
+        ),
+        configurationSource: "deployment_environment",
+        writable: false,
+        activationMode: "audited_prospective_transition",
+      },
+    });
   });
 
   app.put("/admin/platform/global-detection-engine", requirePlatformAdmin, async (c) => {
-    try {
-      const payload = await c.req.json();
-      const modelDeploymentId = String(payload.modelDeploymentId || "").trim();
-      const approvedDeploymentIds = new Set(
-        String(process.env.APPROVED_MODEL_DEPLOYMENT_IDS || "")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-      );
-      if (!modelDeploymentId || !approvedDeploymentIds.has(modelDeploymentId)) {
-        return c.json({ available: false, message: "modelDeploymentId is not approved in this environment." }, 400);
-      }
-      await controlPlaneRepositories.configuration.setFeatureFlag({
-        flagKey: "global_detection_engine",
-        valueType: "json",
-        value: {
-          modelDeploymentId,
-        },
-        enabled: true,
-      });
-      return c.json({ available: true, message: "Global detection engine updated" });
-    } catch (error) {
-      return c.json({ available: false, message: "Failed to update global detection engine config" }, 500);
-    }
+    c.header("Allow", "GET");
+    return c.json({
+      available: false,
+      code: "MODEL_PROMOTION_DEPLOYMENT_CONTROLLED",
+      message: "The fleet-managed model is controlled by validated deployment configuration. Promote it through the production deployment workflow.",
+    }, 405);
   });
 
   app.get("/admin/platform/organisations", requirePlatformAdmin, async (c) => {

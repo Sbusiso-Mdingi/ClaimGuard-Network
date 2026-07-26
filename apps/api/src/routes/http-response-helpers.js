@@ -27,7 +27,7 @@ export function sharedRegistryUnavailable(c) {
   );
 }
 
-export function investigationErrorResponse(c, error) {
+export function investigationErrorResponse(c, error, { logger = null, event = "investigation_operation_failed" } = {}) {
   if (error instanceof InvestigationNotFoundError || error?.code === "investigation_not_found") {
     return c.json({ available: false, message: error.message }, 404);
   }
@@ -46,12 +46,22 @@ export function investigationErrorResponse(c, error) {
     return c.json({ available: false, message: error.message }, 400);
   }
 
+  const requestId = c.get("requestId") || null;
+  logger?.("error", event, {
+    requestId,
+    code: error?.code || null,
+    errno: Number.isInteger(error?.errno) ? error.errno : null,
+    message: error?.message || "Investigation operation failed.",
+  });
+
   return c.json(
     {
       available: false,
-      message: error?.message || "Investigation operation failed.",
+      code: "INVESTIGATION_OPERATION_FAILED",
+      message: "The investigation service is currently unavailable.",
+      requestId,
     },
-    400,
+    500,
   );
 }
 

@@ -98,6 +98,13 @@ function schemeDeployments(tenantContext, environment = process.env) {
   return schemeDeploymentMap(environment).get(tenantId) || new Set();
 }
 
+function allSchemeDeploymentIds(environment = process.env) {
+  return new Set(
+    [...schemeDeploymentMap(environment).values()]
+      .flatMap((deployments) => [...deployments]),
+  );
+}
+
 export function projectDetectionModelSelection(
   storedStrategy,
   tenantContext,
@@ -139,6 +146,8 @@ export function projectDetectionModelSelection(
       modelDeploymentId: storedDeploymentId,
       requiresSelection: false,
       managedBy: "claimguard",
+      updateAvailable: false,
+      recommendedModelDeploymentId: configuredManagedId,
     };
   }
 
@@ -148,6 +157,23 @@ export function projectDetectionModelSelection(
       modelDeploymentId: storedDeploymentId,
       requiresSelection: false,
       managedBy: "scheme",
+      updateAvailable: false,
+      recommendedModelDeploymentId: null,
+    };
+  }
+
+  if (
+    configuredManagedId
+    && approvedDeployments(environment).has(storedDeploymentId)
+    && !allSchemeDeploymentIds(environment).has(storedDeploymentId)
+  ) {
+    return {
+      strategyType: "claimguard_managed",
+      modelDeploymentId: storedDeploymentId,
+      requiresSelection: false,
+      managedBy: "claimguard",
+      updateAvailable: true,
+      recommendedModelDeploymentId: configuredManagedId,
     };
   }
 
@@ -190,6 +216,8 @@ export function resolveDetectionModelSelection(
         modelDeploymentId: resolvedDeploymentId,
         requiresSelection: false,
         managedBy: "claimguard",
+        updateAvailable: false,
+        recommendedModelDeploymentId: resolvedDeploymentId,
       },
       repositoryChange: {
         strategyType: "approved_model",
@@ -222,6 +250,8 @@ export function resolveDetectionModelSelection(
       modelDeploymentId: submittedDeploymentId,
       requiresSelection: false,
       managedBy: "scheme",
+      updateAvailable: false,
+      recommendedModelDeploymentId: null,
     },
     repositoryChange: {
       strategyType: "approved_model",
