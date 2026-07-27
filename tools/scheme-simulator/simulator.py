@@ -77,8 +77,8 @@ class SchemeProfile:
     @classmethod
     def from_dict(cls, value: dict) -> "SchemeProfile":
         scheme_id = str(value["scheme_id"]).strip()
-        if not scheme_id or len(scheme_id) > 8:
-            raise ValueError("scheme_id must contain 1 to 8 characters for the current ClaimGuard database contract.")
+        if not scheme_id or len(scheme_id) > 64:
+            raise ValueError("scheme_id must contain 1 to 64 characters for the ClaimGuard ingestion contract.")
         return cls(
             slug=str(value["slug"]).strip(),
             scheme_id=scheme_id,

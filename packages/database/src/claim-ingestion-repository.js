@@ -361,25 +361,25 @@ function normalizeClaim(
     claim_id: requireText(
       rawClaim.claim_id,
       `claims[${index}].claim_id`,
-      32,
+      128,
     ),
 
     scheme_id: requireText(
       rawClaim.scheme_id,
       `claims[${index}].scheme_id`,
-      8,
+      64,
     ),
 
     member_id: requireText(
       rawClaim.member_id,
       `claims[${index}].member_id`,
-      32,
+      128,
     ),
 
     provider_id: requireText(
       rawClaim.provider_id,
       `claims[${index}].provider_id`,
-      32,
+      128,
     ),
 
     service_date: canonicalDate(
@@ -395,7 +395,7 @@ function normalizeClaim(
     billing_code: requireText(
       rawClaim.billing_code,
       `claims[${index}].billing_code`,
-      32,
+      64,
     ),
 
     amount: canonicalDecimal(
