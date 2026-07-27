@@ -8,11 +8,18 @@ import {
 } from "../middleware/authorization-middleware.js";
 import {
   DetectionModelSelectionError,
+  listApprovedSchemeModelDeployments,
   projectDetectionModelSelection,
   resolveDetectionModelSelection,
 } from "../detection-model-selection.js";
 
-export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = null, detectionStrategyRepository = null, tenantRepository = null }) {
+export function registerAdminRoutes(app, {
+  reportService,
+  dataPlaneRuntime = null,
+  detectionStrategyRepository = null,
+  tenantRepository = null,
+  modelDeploymentRepository = null,
+}) {
   const requireInternalDataPlaneHealth = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH,
   });
@@ -114,12 +121,46 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     }
 
     const tenantContext = c.get("tenantContext");
+    const organisationId = String(
+      c.get("authContext")?.organisation_id || "",
+    ).trim();
+    if (
+      modelDeploymentRepository?.listSelectableForOrganisation
+      && !organisationId
+    ) {
+      return c.json({
+        available: false,
+        code: "DETECTION_MODEL_ORGANISATION_REQUIRED",
+        message: "The verified organisation is required for model selection.",
+      }, 503);
+    }
+    const registeredModels = modelDeploymentRepository
+      ?.listSelectableForOrganisation
+      ? await modelDeploymentRepository.listSelectableForOrganisation(
+        organisationId,
+      )
+      : null;
     const storedStrategy = await detectionStrategyRepository.getActiveStrategy(tenantContext);
     const strategy = {
-      ...projectDetectionModelSelection(storedStrategy, tenantContext),
+      ...projectDetectionModelSelection(
+        storedStrategy,
+        tenantContext,
+        process.env,
+        registeredModels,
+      ),
       strategyId: storedStrategy.strategyId,
     };
-    return c.json({ available: true, strategy });
+    return c.json({
+      available: true,
+      strategy,
+      modelCatalogue: {
+        schemeOwned: listApprovedSchemeModelDeployments(
+          tenantContext,
+          process.env,
+          registeredModels,
+        ),
+      },
+    });
   });
 
   app.put("/detection/strategy", requireDetectionStrategyUpdate, async (c) => {
@@ -167,7 +208,30 @@ export function registerAdminRoutes(app, { reportService, dataPlaneRuntime = nul
     }
 
     try {
-      const resolved = resolveDetectionModelSelection(payload, tenantContext);
+      let registeredModels = null;
+      if (modelDeploymentRepository?.listSelectableForOrganisation) {
+        const organisationId = String(
+          authContext?.organisation_id || "",
+        ).trim();
+        if (!organisationId) {
+          throw new DetectionModelSelectionError(
+            "The verified organisation is required for model selection.",
+            "DETECTION_MODEL_ORGANISATION_REQUIRED",
+            503,
+          );
+        }
+        registeredModels = (
+          await modelDeploymentRepository.listSelectableForOrganisation(
+            organisationId,
+          )
+        );
+      }
+      const resolved = resolveDetectionModelSelection(
+        payload,
+        tenantContext,
+        process.env,
+        registeredModels,
+      );
       const storedStrategy = await detectionStrategyRepository.setStrategy(
         tenantContext,
         {

@@ -35,6 +35,14 @@ function configuredModelDeploymentIds() {
   );
 }
 
+function projectDeploymentRuntimeState(model, approvedIds, managedId) {
+  return {
+    ...model,
+    runtimeApproved: approvedIds.has(model.deploymentId),
+    fleetManaged: model.deploymentId === managedId,
+  };
+}
+
 function safeProvisioningProjection(operation) {
   return {
     operationId: operation.operationId,
@@ -203,6 +211,142 @@ export function registerPlatformAdminRoutes(
     permission: CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
   });
   const allowedDeploymentClasses = parseAllowedDeploymentClasses();
+
+  app.get("/admin/platform/model-deployments", requirePlatformAdmin, async (c) => {
+    const repository = controlPlaneRepositories?.modelDeployments;
+    if (!repository?.listAll) {
+      return c.json({
+        available: false,
+        code: "MODEL_CATALOGUE_NOT_CONFIGURED",
+        message: "The model deployment catalogue is not configured.",
+      }, 503);
+    }
+
+    const approvedIds = configuredModelDeploymentIds();
+    const managedId = String(
+      process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID || "",
+    ).trim();
+    const models = await repository.listAll();
+    return c.json({
+      available: true,
+      models: models.map((model) =>
+        projectDeploymentRuntimeState(model, approvedIds, managedId)),
+    });
+  });
+
+  app.post("/admin/platform/model-deployments", requirePlatformAdmin, async (c) => {
+    const repository = controlPlaneRepositories?.modelDeployments;
+    const auditRepository = controlPlaneRepositories?.security;
+    const runInTransaction = controlPlaneRepositories?.runInTransaction;
+    if (
+      !repository?.registerCandidate
+      || !auditRepository?.recordPlatformAudit
+      || typeof runInTransaction !== "function"
+    ) {
+      return c.json({
+        available: false,
+        code: "MODEL_CATALOGUE_NOT_CONFIGURED",
+        message: "The audited model deployment catalogue is not configured.",
+      }, 503);
+    }
+
+    const payload = await c.req.json().catch(() => ({}));
+    const permittedKeys = new Set([
+      "deploymentId",
+      "modelId",
+      "modelVersion",
+      "displayName",
+      "ownerType",
+      "ownerOrganisationId",
+      "requestSchemaVersion",
+      "responseSchemaVersion",
+      "featureSchemaVersion",
+      "analysisMode",
+      "decisionThreshold",
+      "artifactSha256",
+      "containerImageDigest",
+      "capabilities",
+      "automaticAdverseAction",
+    ]);
+    if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
+      return c.json({
+        available: false,
+        code: "MODEL_DEPLOYMENT_INPUT_INVALID",
+        message: "The model deployment payload contains unsupported fields.",
+      }, 400);
+    }
+    if (!payload.artifactSha256 || !payload.containerImageDigest) {
+      return c.json({
+        available: false,
+        code: "MODEL_DEPLOYMENT_DIGESTS_REQUIRED",
+        message: "Immutable model artifact and container image digests are required.",
+      }, 400);
+    }
+    if (payload.automaticAdverseAction === true) {
+      return c.json({
+        available: false,
+        code: "MODEL_AUTOMATIC_ADVERSE_ACTION_FORBIDDEN",
+        message: "Automatic adverse action is not permitted.",
+      }, 400);
+    }
+
+    const actor = actorFromContext(c);
+    try {
+      const { model, audit } = await runInTransaction(async (repositories) => {
+        const registeredModel = await repositories.modelDeployments
+          .registerCandidate({
+            ...payload,
+            automaticAdverseAction: false,
+            registeredBy: actor.id,
+          });
+        const auditEvent = await repositories.security.recordPlatformAudit({
+          actorType: actor.type,
+          actorId: actor.id,
+          organisationScopeId: registeredModel.ownerOrganisationId,
+          action: "model_deployment.register_candidate",
+          targetType: "model_deployment",
+          targetId: registeredModel.deploymentId,
+          beforeSummary: null,
+          afterSummary: {
+            deploymentId: registeredModel.deploymentId,
+            modelId: registeredModel.modelId,
+            modelVersion: registeredModel.modelVersion,
+            ownerType: registeredModel.ownerType,
+            ownerOrganisationId: registeredModel.ownerOrganisationId,
+            lifecycleStatus: registeredModel.lifecycleStatus,
+            artifactSha256: registeredModel.artifactSha256,
+            containerImageDigest: registeredModel.containerImageDigest,
+          },
+          correlationId: actor.correlationId,
+          outcome: "success",
+          source: actor.source,
+        });
+        return { model: registeredModel, audit: auditEvent };
+      });
+      return c.json({
+        available: true,
+        model: projectDeploymentRuntimeState(
+          model,
+          configuredModelDeploymentIds(),
+          String(
+            process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID || "",
+          ).trim(),
+        ),
+        auditEventId: audit.auditEventId,
+      }, 201);
+    } catch (error) {
+      const duplicate = error?.code === "ER_DUP_ENTRY";
+      return c.json({
+        available: false,
+        code: duplicate
+          ? "MODEL_DEPLOYMENT_ALREADY_REGISTERED"
+          : error?.code || "MODEL_DEPLOYMENT_REGISTRATION_FAILED",
+        message: duplicate
+          ? "The immutable model deployment is already registered."
+          : error?.message || "Failed to register the model deployment.",
+      }, duplicate ? 409 : Number.isInteger(error?.status) ? error.status : 400);
+    }
+  });
 
   app.post("/admin/platform/organisations", requirePlatformAdmin, async (c) => {
     const actor = actorFromContext(c);

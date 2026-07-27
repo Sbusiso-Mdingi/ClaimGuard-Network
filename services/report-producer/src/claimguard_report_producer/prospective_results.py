@@ -10,12 +10,9 @@ from .detection_results import (
     RESULT_PAYLOAD_SCHEMA_VERSION,
 )
 from .prospective_model_service import (
-    ANALYSIS_MODE,
-    FEATURE_SCHEMA_VERSION,
-    MODEL_ID,
-    MODEL_VERSION,
     ProspectiveClaimScore,
     ProspectiveModelServiceClient,
+    ProspectiveModelServiceExpectations,
     ProspectiveScreeningResult,
 )
 from .snapshot import ProspectiveScoringSnapshot
@@ -81,6 +78,7 @@ def _probability(value: object, field: str) -> float:
 def _records(
     snapshot: ProspectiveScoringSnapshot,
     result: ProspectiveScreeningResult,
+    expectations: ProspectiveModelServiceExpectations,
 ) -> list[dict[str, object]]:
     targets = _targets(snapshot)
     source_job_id = _source_job_id(snapshot)
@@ -98,13 +96,14 @@ def _records(
             "Prospective model watermark differs from the pinned snapshot."
         )
     if (
-        result.model_id != MODEL_ID
-        or result.model_version != MODEL_VERSION
-        or result.feature_schema_version != FEATURE_SCHEMA_VERSION
-        or result.analysis_mode != ANALYSIS_MODE
+        result.deployment_id != expectations.deployment_id
+        or result.model_id != expectations.model_id
+        or result.model_version != expectations.model_version
+        or result.feature_schema_version != expectations.feature_schema_version
+        or result.analysis_mode != expectations.analysis_mode
     ):
         raise DetectionResultContractError(
-            "Prospective model identity differs from the approved baseline contract."
+            "Prospective model identity differs from its approved deployment."
         )
 
     by_target = {
@@ -121,6 +120,15 @@ def _records(
         score = by_target[(claim_id, claim_version)]
         probability = _probability(score.fraud_probability, "fraud_probability")
         threshold = _probability(score.threshold, "threshold")
+        if not math.isclose(
+            threshold,
+            expectations.threshold,
+            rel_tol=0,
+            abs_tol=1e-15,
+        ):
+            raise DetectionResultContractError(
+                "Prospective model threshold differs from its approved deployment."
+            )
         expected_review = probability >= threshold
         if (
             score.predicted_class not in {"LEGITIMATE", "FRAUD"}
@@ -182,6 +190,7 @@ def _records(
 def _result_from_stored(
     snapshot: ProspectiveScoringSnapshot,
     records: Sequence[Mapping[str, object]],
+    expectations: ProspectiveModelServiceExpectations,
 ) -> ProspectiveScreeningResult:
     targets = _targets(snapshot)
     source_job_id = _source_job_id(snapshot)
@@ -256,6 +265,15 @@ def _result_from_stored(
 
         probability = _probability(score.get("fraudProbability"), "fraudProbability")
         threshold = _probability(score.get("threshold"), "threshold")
+        if not math.isclose(
+            threshold,
+            expectations.threshold,
+            rel_tol=0,
+            abs_tol=1e-15,
+        ):
+            raise DetectionResultIntegrityError(
+                "Stored prospective threshold differs from its approved deployment."
+            )
         predicted = score.get("predictedClass")
         review = score.get("reviewRecommended")
         expected_review = probability >= threshold
@@ -283,10 +301,11 @@ def _result_from_stored(
         raise DetectionResultIntegrityError("No stored prospective results were found.")
     model_id, model_version, feature_schema, analysis_mode, request_id, watermark = common
     if (
-        model_id != MODEL_ID
-        or model_version != MODEL_VERSION
-        or feature_schema != FEATURE_SCHEMA_VERSION
-        or analysis_mode != ANALYSIS_MODE
+        expectations.deployment_id != snapshot.model_deployment_id
+        or model_id != expectations.model_id
+        or model_version != expectations.model_version
+        or feature_schema != expectations.feature_schema_version
+        or analysis_mode != expectations.analysis_mode
         or watermark != snapshot.watermark
     ):
         raise DetectionResultIntegrityError(
@@ -310,6 +329,11 @@ def load_or_score_prospective_result(
     client: ProspectiveModelServiceClient,
     repository: PyMySqlDetectionResultsRepository,
 ) -> ProspectiveScreeningResult:
+    expectations = client.expectations
+    if expectations.deployment_id != snapshot.model_deployment_id:
+        raise DetectionResultContractError(
+            "The prospective client does not match the pinned snapshot deployment."
+        )
     targets = _targets(snapshot)
     existing = [
         repository.results_exist(snapshot.tenant_id, claim_id, claim_version)
@@ -321,7 +345,9 @@ def load_or_score_prospective_result(
         )
     if not any(existing):
         result = client.screen(snapshot)
-        repository.save_result_records(_records(snapshot, result))
+        repository.save_result_records(
+            _records(snapshot, result, expectations)
+        )
 
     stored = repository.load_results_for_report(snapshot.tenant_id, targets)
-    return _result_from_stored(snapshot, stored)
+    return _result_from_stored(snapshot, stored, expectations)

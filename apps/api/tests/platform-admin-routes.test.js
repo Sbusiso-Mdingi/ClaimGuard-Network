@@ -19,14 +19,17 @@ function investigatorHeaders() {
   };
 }
 
-function createControlPlaneHarness() {
+function createControlPlaneHarness({ failModelAudit = false } = {}) {
   const organisations = new Map();
   const operations = new Map();
   const stepsByOperation = new Map();
   const integrationCredentials = new Map();
+  const modelDeployments = new Map();
+  const audits = [];
   let opCounter = 0;
 
-  const repositories = {
+  let repositories;
+  repositories = {
     organisations: {
       async getById(id) {
         return organisations.get(id) || null;
@@ -59,6 +62,55 @@ function createControlPlaneHarness() {
       async listForOrganisation(organisationId) {
         return [...integrationCredentials.values()].filter((entry) => entry.organisationId === organisationId);
       },
+    },
+    modelDeployments: {
+      async listAll() {
+        return [...modelDeployments.values()];
+      },
+      async registerCandidate(input) {
+        if (modelDeployments.has(input.deploymentId)) {
+          const error = new Error("Duplicate model deployment.");
+          error.code = "ER_DUP_ENTRY";
+          throw error;
+        }
+        const model = {
+          ...input,
+          lifecycleStatus: "candidate",
+          runtimeConfigKey: "CANDIDATE_RUNTIME_KEY",
+          automaticAdverseAction: false,
+          validatedAt: null,
+          activatedAt: null,
+          retiredAt: null,
+        };
+        modelDeployments.set(model.deploymentId, model);
+        return model;
+      },
+    },
+    security: {
+      async recordPlatformAudit(event) {
+        if (
+          failModelAudit
+          && event.action === "model_deployment.register_candidate"
+        ) {
+          throw new Error("Simulated audit failure.");
+        }
+        audits.push(event);
+        return { auditEventId: `audit-${audits.length}` };
+      },
+    },
+    async runInTransaction(operation) {
+      const modelSnapshot = new Map(modelDeployments);
+      const auditCount = audits.length;
+      try {
+        return await operation(repositories);
+      } catch (error) {
+        modelDeployments.clear();
+        for (const [key, value] of modelSnapshot) {
+          modelDeployments.set(key, value);
+        }
+        audits.splice(auditCount);
+        throw error;
+      }
     },
   };
 
@@ -191,11 +243,19 @@ function createControlPlaneHarness() {
     },
   };
 
-  return { repositories, service, organisations, operations, integrationCredentials };
+  return {
+    repositories,
+    service,
+    organisations,
+    operations,
+    integrationCredentials,
+    modelDeployments,
+    audits,
+  };
 }
 
-function createApp() {
-  const harness = createControlPlaneHarness();
+function createApp(options) {
+  const harness = createControlPlaneHarness(options);
   const app = createBackendApp({
     controlPlaneRepositories: harness.repositories,
     controlPlaneService: harness.service,
@@ -304,6 +364,140 @@ test("platform model promotion cannot create a phantom control-plane override", 
   assert.equal(response.status, 405);
   assert.equal(response.headers.get("allow"), "GET");
   assert.equal(json.code, "MODEL_PROMOTION_DEPLOYMENT_CONTROLLED");
+});
+
+test("platform model catalogue registers an immutable audited candidate", async () => {
+  const { app, harness } = createApp();
+  const payload = {
+    deploymentId: "claimguard-claim-fraud-ensemble:2.0.0",
+    modelId: "claimguard-claim-fraud-ensemble",
+    modelVersion: "2.0.0",
+    displayName: "ClaimGuard fraud ensemble 2.0.0",
+    ownerType: "claimguard",
+    ownerOrganisationId: null,
+    requestSchemaVersion: "claimguard.claim-screening-request.v3",
+    responseSchemaVersion: "claimguard.claim-screening-response.v3",
+    featureSchemaVersion: "claim-feature-schema-2026.2",
+    analysisMode: "PROSPECTIVE_CLAIM_SCREENING",
+    decisionThreshold: 0.19,
+    artifactSha256: "a".repeat(64),
+    containerImageDigest: `registry.example/model@sha256:${"b".repeat(64)}`,
+    capabilities: {
+      prospectiveClaimScreening: true,
+      networkEnrichment: false,
+    },
+    automaticAdverseAction: false,
+  };
+
+  const created = await app.request(
+    "http://localhost/admin/platform/model-deployments",
+    {
+      method: "POST",
+      headers: {
+        ...platformHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  const createdBody = await created.json();
+  const listed = await app.request(
+    "http://localhost/admin/platform/model-deployments",
+    { headers: platformHeaders() },
+  );
+  const listedBody = await listed.json();
+
+  assert.equal(created.status, 201);
+  assert.equal(createdBody.model.lifecycleStatus, "candidate");
+  assert.equal(createdBody.model.runtimeApproved, false);
+  assert.equal(createdBody.auditEventId, "audit-1");
+  assert.equal(listed.status, 200);
+  assert.deepEqual(
+    listedBody.models.map((model) => model.deploymentId),
+    [payload.deploymentId],
+  );
+  assert.equal(harness.audits[0].action, "model_deployment.register_candidate");
+  assert.equal(harness.audits[0].targetId, payload.deploymentId);
+});
+
+test("model catalogue rejects automatic adverse action and non-platform access", async () => {
+  const { app, harness } = createApp();
+  const request = {
+    method: "POST",
+    headers: {
+      ...platformHeaders(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      deploymentId: "unsafe-model:1.0.0",
+      artifactSha256: "a".repeat(64),
+      containerImageDigest: `sha256:${"b".repeat(64)}`,
+      automaticAdverseAction: true,
+    }),
+  };
+
+  const rejected = await app.request(
+    "http://localhost/admin/platform/model-deployments",
+    request,
+  );
+  const rejectedBody = await rejected.json();
+  const forbidden = await app.request(
+    "http://localhost/admin/platform/model-deployments",
+    {
+      ...request,
+      headers: {
+        ...investigatorHeaders(),
+        "content-type": "application/json",
+      },
+    },
+  );
+
+  assert.equal(rejected.status, 400);
+  assert.equal(
+    rejectedBody.code,
+    "MODEL_AUTOMATIC_ADVERSE_ACTION_FORBIDDEN",
+  );
+  assert.equal(forbidden.status, 403);
+  assert.equal(harness.modelDeployments.size, 0);
+  assert.equal(harness.audits.length, 0);
+});
+
+test("model candidate registration rolls back when its audit cannot be stored", async () => {
+  const { app, harness } = createApp({ failModelAudit: true });
+  const response = await app.request(
+    "http://localhost/admin/platform/model-deployments",
+    {
+      method: "POST",
+      headers: {
+        ...platformHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        deploymentId: "claimguard-claim-fraud-ensemble:2.0.0",
+        modelId: "claimguard-claim-fraud-ensemble",
+        modelVersion: "2.0.0",
+        displayName: "ClaimGuard fraud ensemble 2.0.0",
+        ownerType: "claimguard",
+        ownerOrganisationId: null,
+        requestSchemaVersion: "claimguard.claim-screening-request.v3",
+        responseSchemaVersion: "claimguard.claim-screening-response.v3",
+        featureSchemaVersion: "claim-feature-schema-2026.2",
+        analysisMode: "PROSPECTIVE_CLAIM_SCREENING",
+        decisionThreshold: 0.19,
+        artifactSha256: "a".repeat(64),
+        containerImageDigest: `registry.example/model@sha256:${"b".repeat(64)}`,
+        capabilities: {
+          prospectiveClaimScreening: true,
+          networkEnrichment: false,
+        },
+        automaticAdverseAction: false,
+      }),
+    },
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(harness.modelDeployments.size, 0);
+  assert.equal(harness.audits.length, 0);
 });
 
 test("provisioning request returns 202 and operation status can be polled", async () => {

@@ -235,6 +235,7 @@ export function createBackendApp({
     dataPlaneRuntime,
     detectionStrategyRepository: dependencies.detectionStrategyRepository,
     tenantRepository: dependencies.tenantRepository,
+    modelDeploymentRepository: controlPlaneRepositories?.modelDeployments || null,
   });
 
   if (controlPlaneRepositories && controlPlaneService) {

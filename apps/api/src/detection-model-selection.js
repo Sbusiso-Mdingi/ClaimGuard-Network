@@ -105,10 +105,44 @@ function allSchemeDeploymentIds(environment = process.env) {
   );
 }
 
+export function listApprovedSchemeModelDeployments(
+  tenantContext,
+  environment = process.env,
+  registeredModels = null,
+) {
+  const approved = approvedDeployments(environment);
+  const registeredById = Array.isArray(registeredModels)
+    ? new Map(registeredModels
+      .filter((model) =>
+        model?.ownerType === "scheme"
+        && model?.lifecycleStatus === "active"
+        && approved.has(model?.deploymentId))
+      .map((model) => [model.deploymentId, model]))
+    : null;
+  const deploymentIds = registeredById
+    ? [...registeredById.keys()]
+    : [...schemeDeployments(tenantContext, environment)]
+      .filter((id) => approved.has(id));
+  return deploymentIds
+    .sort((left, right) => left.localeCompare(right))
+    .map((id) => {
+      const registered = registeredById?.get(id);
+      return Object.freeze({
+        deploymentId: id,
+        displayName: registered?.displayName || id,
+        modelId: registered?.modelId || null,
+        modelVersion: registered?.modelVersion || null,
+        featureSchemaVersion: registered?.featureSchemaVersion || null,
+        ownership: "scheme",
+      });
+    });
+}
+
 export function projectDetectionModelSelection(
   storedStrategy,
   tenantContext,
   environment = process.env,
+  registeredModels = null,
 ) {
   const storedType = String(storedStrategy?.strategyType || "").trim();
   const storedDeploymentId = deploymentId(storedStrategy?.modelDeploymentId);
@@ -139,8 +173,18 @@ export function projectDetectionModelSelection(
   } catch (error) {
     if (!(error instanceof DetectionModelSelectionError)) throw error;
   }
+  const catalogueModel = Array.isArray(registeredModels)
+    ? registeredModels.find((model) =>
+      model?.deploymentId === storedDeploymentId
+      && model?.lifecycleStatus === "active")
+    : null;
+  const catalogueConfigured = Array.isArray(registeredModels);
 
-  if (configuredManagedId && storedDeploymentId === configuredManagedId) {
+  if (
+    configuredManagedId
+    && storedDeploymentId === configuredManagedId
+    && (!catalogueConfigured || catalogueModel?.ownerType === "claimguard")
+  ) {
     return {
       strategyType: "claimguard_managed",
       modelDeploymentId: storedDeploymentId,
@@ -151,7 +195,11 @@ export function projectDetectionModelSelection(
     };
   }
 
-  if (schemeDeployments(tenantContext, environment).has(storedDeploymentId)) {
+  if (
+    catalogueConfigured
+      ? catalogueModel?.ownerType === "scheme"
+      : schemeDeployments(tenantContext, environment).has(storedDeploymentId)
+  ) {
     return {
       strategyType: "scheme_managed",
       modelDeploymentId: storedDeploymentId,
@@ -165,7 +213,11 @@ export function projectDetectionModelSelection(
   if (
     configuredManagedId
     && approvedDeployments(environment).has(storedDeploymentId)
-    && !allSchemeDeploymentIds(environment).has(storedDeploymentId)
+    && (
+      catalogueConfigured
+        ? catalogueModel?.ownerType === "claimguard"
+        : !allSchemeDeploymentIds(environment).has(storedDeploymentId)
+    )
   ) {
     return {
       strategyType: "claimguard_managed",
@@ -190,6 +242,7 @@ export function resolveDetectionModelSelection(
   input,
   tenantContext,
   environment = process.env,
+  registeredModels = null,
 ) {
   const strategyType = String(input?.strategyType || "").trim();
   if (!PUBLIC_SELECTION_TYPES.has(strategyType)) {
@@ -210,6 +263,19 @@ export function resolveDetectionModelSelection(
     }
 
     const resolvedDeploymentId = managedDeployment(environment);
+    if (
+      Array.isArray(registeredModels)
+      && !registeredModels.some((model) =>
+        model?.deploymentId === resolvedDeploymentId
+        && model?.ownerType === "claimguard"
+        && model?.lifecycleStatus === "active")
+    ) {
+      throw selectionError(
+        "The ClaimGuard-managed runtime deployment is not active in the model catalogue.",
+        "CLAIMGUARD_MANAGED_MODEL_CATALOGUE_MISMATCH",
+        503,
+      );
+    }
     return {
       publicSelection: {
         strategyType,
@@ -233,9 +299,14 @@ export function resolveDetectionModelSelection(
     );
   }
 
-  const tenantDeployments = schemeDeployments(tenantContext, environment);
+  const tenantDeploymentApproved = Array.isArray(registeredModels)
+    ? registeredModels.some((model) =>
+      model?.deploymentId === submittedDeploymentId
+      && model?.ownerType === "scheme"
+      && model?.lifecycleStatus === "active")
+    : schemeDeployments(tenantContext, environment).has(submittedDeploymentId);
   if (
-    !tenantDeployments.has(submittedDeploymentId)
+    !tenantDeploymentApproved
     || !approvedDeployments(environment).has(submittedDeploymentId)
   ) {
     throw selectionError(
