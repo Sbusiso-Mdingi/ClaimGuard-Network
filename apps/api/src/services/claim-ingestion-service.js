@@ -1,7 +1,14 @@
+import { createClaimWakeupPublisher } from "./claim-wakeup-publisher.js";
+
 export function createClaimIngestionService({
   claimIngestionRepository = null,
+  wakeupPublisher = undefined,
   logger,
 } = {}) {
+  const resolvedWakeupPublisher = wakeupPublisher === undefined
+    ? createClaimWakeupPublisher({ logger })
+    : wakeupPublisher;
+
   return {
     isConfigured() {
       return Boolean(claimIngestionRepository && typeof claimIngestionRepository.ingestClaims === "function");
@@ -17,6 +24,17 @@ export function createClaimIngestionService({
         correlationId: requestId,
       });
 
+      let wakeup = {
+        status: summary.processing?.asynchronous ? "not_configured" : "not_required",
+        messageId: null,
+      };
+      if (summary.processing?.asynchronous && summary.processing?.jobId && resolvedWakeupPublisher?.publish) {
+        wakeup = await resolvedWakeupPublisher.publish({
+          jobId: summary.processing.jobId,
+          correlationId: summary.processing.correlationId || requestId,
+        });
+      }
+
       logger?.("info", "claims_ingested", {
         requestId,
         source,
@@ -26,9 +44,16 @@ export function createClaimIngestionService({
         referenceRecords: schemes.length + members.length + providers.length,
         jobId: summary.processing?.jobId || null,
         processingStatus: summary.processing?.status || null,
+        wakeupStatus: wakeup.status,
       });
 
-      return summary;
+      return {
+        ...summary,
+        processing: {
+          ...summary.processing,
+          wakeup,
+        },
+      };
     },
   };
 }

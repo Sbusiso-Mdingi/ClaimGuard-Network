@@ -225,7 +225,7 @@ export function registerClaimsRoutes(app, {
       } catch (error) {
         logger?.("error", "claims_ingestion_failed", {
           requestId: c.get("requestId") || null,
-          message: error?.message || "Claim ingestion failed.",
+          message: error?.message || "Claims ingestion failed.",
         });
 
         const isClaimOwnershipConflict = error instanceof ClaimOwnershipConflictError || error?.code === "CLAIM_OWNERSHIP_CONFLICT";
@@ -234,30 +234,37 @@ export function registerClaimsRoutes(app, {
         const isModelSelectionUnavailable =
           error instanceof ClaimModelSelectionUnavailableError
           || error?.code === "CLAIM_MODEL_SELECTION_UNAVAILABLE";
+        const isWakeupUnavailable = error?.code === "CLAIM_SCORING_WAKEUP_UNAVAILABLE";
         const isOwnershipConflict = isClaimOwnershipConflict || isReferenceOwnershipConflict;
 
         return c.json(
           {
             available: false,
+            committed: isWakeupUnavailable,
             ...(isClaimOwnershipConflict ? { code: "CLAIM_OWNERSHIP_CONFLICT" } : {}),
             ...(isReferenceOwnershipConflict ? { code: "REFERENCE_OWNERSHIP_CONFLICT" } : {}),
             ...(isClaimReferenceInvalid ? { code: "CLAIM_REFERENCE_INVALID" } : {}),
             ...(isModelSelectionUnavailable ? { code: "CLAIM_MODEL_SELECTION_UNAVAILABLE" } : {}),
+            ...(isWakeupUnavailable ? { code: "CLAIM_SCORING_WAKEUP_UNAVAILABLE" } : {}),
             message: isClaimOwnershipConflict
               ? "Claim identifier is already owned by another tenant."
               : isReferenceOwnershipConflict
                 ? "A reference-data identifier is already owned by another tenant."
-              : isClaimReferenceInvalid
-                ? "A claim reference is missing, belongs to another tenant, or belongs to a different scheme."
-              : isModelSelectionUnavailable
-                ? "The active model deployment is not approved for new claim ingestion."
-              : error?.message || "Claim ingestion failed.",
+                : isClaimReferenceInvalid
+                  ? "A claim reference is missing, belongs to another tenant, or belongs to a different scheme."
+                  : isModelSelectionUnavailable
+                    ? "The active model deployment is not approved for new claim ingestion."
+                    : isWakeupUnavailable
+                      ? "The claim batch was committed, but automatic scoring could not be triggered. Retry the identical batch."
+                      : error?.message || "Claim ingestion failed.",
           },
-          isOwnershipConflict || isModelSelectionUnavailable
-            ? 409
-            : isClaimReferenceInvalid
-              ? 422
-              : 400,
+          isWakeupUnavailable
+            ? 503
+            : isOwnershipConflict || isModelSelectionUnavailable
+              ? 409
+              : isClaimReferenceInvalid
+                ? 422
+                : 400,
         );
       }
     },
