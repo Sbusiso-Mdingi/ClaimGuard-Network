@@ -45,8 +45,11 @@ export function createClaimWakeupPublisher({
   if (!resolvedQueueUrl) return null;
   if (typeof fetchImpl !== "function") throw new TypeError("fetchImpl is required.");
 
+  const managedIdentityClientId = String(
+    process.env.CLAIM_SCORING_MANAGED_IDENTITY_CLIENT_ID || "",
+  ).trim() || undefined;
   const resolvedCredential = credential || new DefaultAzureCredential({
-    managedIdentityClientId: process.env.AZURE_CLIENT_ID || undefined,
+    managedIdentityClientId,
   });
 
   return Object.freeze({
