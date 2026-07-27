@@ -14,6 +14,8 @@ param reportStorageAccountUrl string
 param reportStorageContainerName string = 'claimguard-reports'
 param claimScoringQueueName string = 'claimguard-claim-scoring'
 param reportWorkerJobName string = 'claimguard-report-producer'
+param recoveryJobName string = '${reportWorkerJobName}-recovery'
+param recoveryScheduleCron string = '*/15 * * * *'
 param modelServiceBaseUrl string
 param modelServiceAudience string
 param modelDeploymentId string = 'claimguard-claim-fraud-baseline:1.0.0'
@@ -77,6 +79,62 @@ resource claimScoringQueue 'Microsoft.Storage/storageAccounts/queueServices/queu
   }
 }
 
+var workerSecrets = [
+  {
+    name: 'control-plane-url'
+    keyVaultUrl: '${vault.properties.vaultUri}secrets/${controlPlaneSecretName}'
+    identity: identity.id
+  }
+  {
+    name: 'operational-url'
+    keyVaultUrl: '${vault.properties.vaultUri}secrets/${operationalSecretName}'
+    identity: identity.id
+  }
+  {
+    name: 'model-pseudonymization-key'
+    keyVaultUrl: '${vault.properties.vaultUri}secrets/${modelPseudonymSecretName}'
+    identity: identity.id
+  }
+]
+
+var workerEnvironment = [
+  { name: 'CONTROL_PLANE_MYSQL_URL', secretRef: 'control-plane-url' }
+  { name: 'MYSQL_URL', secretRef: 'operational-url' }
+  { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
+  { name: 'CLAIM_SCORING_QUEUE_URL', value: 'https://${storage.name}.queue.core.windows.net/${claimScoringQueue.name}' }
+  { name: 'MODEL_SERVICE_BASE_URL', value: modelServiceBaseUrl }
+  { name: 'MODEL_SERVICE_AUDIENCE', value: modelServiceAudience }
+  { name: 'MODEL_SERVICE_PSEUDONYMIZATION_KEY', secretRef: 'model-pseudonymization-key' }
+  { name: 'MODEL_SERVICE_DEPLOYMENT_ID', value: modelDeploymentId }
+  { name: 'MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS', value: approvedModelDeploymentIds }
+  { name: 'MODEL_SERVICE_EXPECTED_MODEL_ID', value: prospectiveModelId }
+  { name: 'MODEL_SERVICE_EXPECTED_MODEL_VERSION', value: prospectiveModelVersion }
+  { name: 'MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION', value: prospectiveFeatureSchemaVersion }
+  { name: 'MODEL_SERVICE_EXPECTED_ANALYSIS_MODE', value: prospectiveAnalysisMode }
+  { name: 'MODEL_SERVICE_EXPECTED_THRESHOLD', value: prospectiveThreshold }
+  { name: 'MODEL_SERVICE_ENDPOINT_PATH', value: '/v3/claim-screening' }
+  { name: 'MODEL_SERVICE_TIMEOUT_SECONDS', value: '120' }
+  { name: 'REPORT_STORAGE_BACKEND', value: 'azure_blob' }
+  { name: 'REPORT_STORAGE_ACCOUNT_URL', value: reportStorageAccountUrl }
+  { name: 'REPORT_STORAGE_CONTAINER', value: reportStorageContainerName }
+  { name: 'DATA_PLANE_ENVIRONMENT', value: 'legacy' }
+  { name: 'DATA_PLANE_PRIVATE_ENVIRONMENT', value: 'production' }
+  { name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS', value: '14' }
+  { name: 'REPORT_WORKER_BATCH_SIZE', value: '10' }
+  { name: 'REPORT_WORKER_MAX_BATCHES_PER_RUN', value: '100' }
+  { name: 'REPORT_WORKER_LEASE_SECONDS', value: '300' }
+  { name: 'REPORT_WORKER_MAX_ATTEMPTS', value: '5' }
+  { name: 'REPORT_WORKER_RETRY_INITIAL_SECONDS', value: '30' }
+  { name: 'REPORT_WORKER_RETRY_MAX_SECONDS', value: '900' }
+]
+
+var registryConfiguration = [
+  {
+    server: registry.properties.loginServer
+    identity: identity.id
+  }
+]
+
 resource reportWorker 'Microsoft.App/jobs@2024-03-01' = {
   name: reportWorkerJobName
   location: location
@@ -119,29 +177,8 @@ resource reportWorker 'Microsoft.App/jobs@2024-03-01' = {
       }
       replicaTimeout: 1800
       replicaRetryLimit: 2
-      registries: [
-        {
-          server: registry.properties.loginServer
-          identity: identity.id
-        }
-      ]
-      secrets: [
-        {
-          name: 'control-plane-url'
-          keyVaultUrl: '${vault.properties.vaultUri}secrets/${controlPlaneSecretName}'
-          identity: identity.id
-        }
-        {
-          name: 'operational-url'
-          keyVaultUrl: '${vault.properties.vaultUri}secrets/${operationalSecretName}'
-          identity: identity.id
-        }
-        {
-          name: 'model-pseudonymization-key'
-          keyVaultUrl: '${vault.properties.vaultUri}secrets/${modelPseudonymSecretName}'
-          identity: identity.id
-        }
-      ]
+      registries: registryConfiguration
+      secrets: workerSecrets
     }
     template: {
       containers: [
@@ -157,36 +194,7 @@ resource reportWorker 'Microsoft.App/jobs@2024-03-01' = {
             'worker'
             'event'
           ]
-          env: [
-            { name: 'CONTROL_PLANE_MYSQL_URL', secretRef: 'control-plane-url' }
-            { name: 'MYSQL_URL', secretRef: 'operational-url' }
-            { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
-            { name: 'CLAIM_SCORING_QUEUE_URL', value: 'https://${storage.name}.queue.core.windows.net/${claimScoringQueue.name}' }
-            { name: 'MODEL_SERVICE_BASE_URL', value: modelServiceBaseUrl }
-            { name: 'MODEL_SERVICE_AUDIENCE', value: modelServiceAudience }
-            { name: 'MODEL_SERVICE_PSEUDONYMIZATION_KEY', secretRef: 'model-pseudonymization-key' }
-            { name: 'MODEL_SERVICE_DEPLOYMENT_ID', value: modelDeploymentId }
-            { name: 'MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS', value: approvedModelDeploymentIds }
-            { name: 'MODEL_SERVICE_EXPECTED_MODEL_ID', value: prospectiveModelId }
-            { name: 'MODEL_SERVICE_EXPECTED_MODEL_VERSION', value: prospectiveModelVersion }
-            { name: 'MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION', value: prospectiveFeatureSchemaVersion }
-            { name: 'MODEL_SERVICE_EXPECTED_ANALYSIS_MODE', value: prospectiveAnalysisMode }
-            { name: 'MODEL_SERVICE_EXPECTED_THRESHOLD', value: prospectiveThreshold }
-            { name: 'MODEL_SERVICE_ENDPOINT_PATH', value: '/v3/claim-screening' }
-            { name: 'MODEL_SERVICE_TIMEOUT_SECONDS', value: '120' }
-            { name: 'REPORT_STORAGE_BACKEND', value: 'azure_blob' }
-            { name: 'REPORT_STORAGE_ACCOUNT_URL', value: reportStorageAccountUrl }
-            { name: 'REPORT_STORAGE_CONTAINER', value: reportStorageContainerName }
-            { name: 'DATA_PLANE_ENVIRONMENT', value: 'legacy' }
-            { name: 'DATA_PLANE_PRIVATE_ENVIRONMENT', value: 'production' }
-            { name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS', value: '14' }
-            { name: 'REPORT_WORKER_BATCH_SIZE', value: '10' }
-            { name: 'REPORT_WORKER_MAX_BATCHES_PER_RUN', value: '100' }
-            { name: 'REPORT_WORKER_LEASE_SECONDS', value: '300' }
-            { name: 'REPORT_WORKER_MAX_ATTEMPTS', value: '5' }
-            { name: 'REPORT_WORKER_RETRY_INITIAL_SECONDS', value: '30' }
-            { name: 'REPORT_WORKER_RETRY_MAX_SECONDS', value: '900' }
-          ]
+          env: workerEnvironment
           resources: {
             cpu: json('1.0')
             memory: '2Gi'
@@ -200,6 +208,61 @@ resource reportWorker 'Microsoft.App/jobs@2024-03-01' = {
   ]
 }
 
+resource recoveryWorker 'Microsoft.App/jobs@2024-03-01' = {
+  name: recoveryJobName
+  location: location
+  tags: {
+    component: 'report-producer-recovery'
+    trigger: 'scheduled-outbox-recovery'
+    scaleToZero: 'true'
+    schemaVersion: '14'
+  }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: environment.id
+    configuration: {
+      triggerType: 'Schedule'
+      scheduleTriggerConfig: {
+        cronExpression: recoveryScheduleCron
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      replicaTimeout: 1800
+      replicaRetryLimit: 1
+      registries: registryConfiguration
+      secrets: workerSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'report-producer-recovery'
+          image: reportWorkerImage
+          command: [
+            'python'
+            '-m'
+            'claimguard_report_producer.cli'
+          ]
+          args: [
+            'worker'
+            'drain-all'
+          ]
+          env: workerEnvironment
+          resources: {
+            cpu: json('1.0')
+            memory: '2Gi'
+          }
+        }
+      ]
+    }
+  }
+}
+
 output claimScoringQueueUrl string = 'https://${storage.name}.queue.core.windows.net/${claimScoringQueue.name}'
 output reportWorkerJobId string = reportWorker.id
+output recoveryWorkerJobId string = recoveryWorker.id
 output workerIdentityClientId string = identity.properties.clientId
