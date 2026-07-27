@@ -1,0 +1,69 @@
+{
+  "schemes": [
+    {
+      "slug": "ubuntu",
+      "scheme_id": "UBUNTU",
+      "scheme_name": "Ubuntu Medical Scheme",
+      "source": "ubuntu-claims-server-01",
+      "api_url": "https://claimguard-api.azurewebsites.net",
+      "token_env": "CLAIMGUARD_UBUNTU_TOKEN",
+      "tokenisation_key_env": "CLAIMGUARD_UBUNTU_TOKENISATION_KEY",
+      "interval_seconds": 30,
+      "claims_per_batch": 5,
+      "members": [
+        {
+          "member_id": "UB-M001",
+          "first_name": "Thabo",
+          "last_name": "Mokoena",
+          "date_of_birth": "1985-06-15",
+          "gender": "Male",
+          "identity_number": "8506155012083",
+          "banking_detail": "SIMULATED-FNB-001",
+          "home_region": "Gauteng",
+          "home_lat": -26.2,
+          "home_lon": 28.0,
+          "join_date": "2020-01-15"
+        },
+        {
+          "member_id": "UB-M002",
+          "first_name": "Lerato",
+          "last_name": "Dlamini",
+          "date_of_birth": "1992-03-22",
+          "gender": "Female",
+          "identity_number": "9203220156089",
+          "banking_detail": "SIMULATED-ABSA-002",
+          "home_region": "KwaZulu-Natal",
+          "home_lat": -29.9,
+          "home_lon": 31.0,
+          "join_date": "2021-06-01"
+        }
+      ],
+      "providers": [
+        {
+          "provider_id": "UB-P001",
+          "practice_number": "0512345",
+          "specialty": "GENERAL_PRACTICE",
+          "practice_name": "Ubuntu Family Practice",
+          "banking_detail": "SIMULATED-FNB-P001",
+          "practice_region": "Gauteng",
+          "practice_lat": -26.2,
+          "practice_lon": 28.0,
+          "provider_kind": "PRACTICE",
+          "provider_category": "GENERAL_PRACTITIONER"
+        },
+        {
+          "provider_id": "UB-P002",
+          "practice_number": "0523456",
+          "specialty": "RADIOLOGY",
+          "practice_name": "Ubuntu Radiology Centre",
+          "banking_detail": "SIMULATED-ABSA-P002",
+          "practice_region": "Gauteng",
+          "practice_lat": -26.1,
+          "practice_lon": 28.1,
+          "provider_kind": "PRACTICE",
+          "provider_category": "RADIOLOGY_PRACTICE"
+        }
+      ]
+    }
+  ]
+}

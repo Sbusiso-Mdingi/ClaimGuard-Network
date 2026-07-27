@@ -1,0 +1,57 @@
+name: infra-validation
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/report-worker-deploy.yml'
+      - '.github/workflows/infra-validation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/report-worker-deploy.yml'
+      - '.github/workflows/infra-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-event-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile event-worker Bicep
+        shell: bash
+        run: |
+          set -euo pipefail
+          az bicep build --file infra/event-report-worker.bicep --stdout >/dev/null
+
+      - name: Validate deployment workflow invariants
+        shell: python
+        run: |
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/report-worker-deploy.yml').read_text(encoding='utf-8')
+          required = [
+              'infra/event-report-worker.bicep',
+              'Storage Queue Data Message Sender',
+              'Storage Queue Data Contributor',
+              'CLAIM_SCORING_QUEUE_URL',
+              'triggerType',
+              'worker event',
+              'worker drain-all',
+          ]
+          missing = [value for value in required if value not in workflow]
+          if missing:
+              raise SystemExit(f'Missing event-worker deployment invariants: {missing}')
+
+          forbidden = [
+              'infra/report-worker.bicep',
+              'PARKED_WORKER_CRON',
+              '--cron-expression',
+          ]
+          present = [value for value in forbidden if value in workflow]
+          if present:
+              raise SystemExit(f'Parked-worker deployment references remain: {present}')
