@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const sourceUrl = new URL("../src/claim-ingestion-repository.js", import.meta.url);
+const repositorySourceUrl = new URL("../src/claim-ingestion-repository.js", import.meta.url);
+const simulatorSourceUrl = new URL("../../../tools/scheme-simulator/simulator.py", import.meta.url);
 
 test("claim ingestion repository mirrors the migrated identifier widths", async () => {
-  const source = await readFile(sourceUrl, "utf8");
+  const source = await readFile(repositorySourceUrl, "utf8");
   const expected = [
     [/`claims\[\$\{index\}\]\.claim_id`,\s*128,/, "claim_id"],
     [/`claims\[\$\{index\}\]\.scheme_id`,\s*64,/, "scheme_id"],
@@ -16,4 +17,10 @@ test("claim ingestion repository mirrors the migrated identifier widths", async 
   for (const [pattern, field] of expected) {
     assert.match(source, pattern, `${field} validator must match migration 0010 and the public schema`);
   }
+});
+
+test("Windows simulator accepts the canonical 64-character scheme identifier", async () => {
+  const source = await readFile(simulatorSourceUrl, "utf8");
+  assert.match(source, /len\(scheme_id\) > 64/);
+  assert.doesNotMatch(source, /len\(scheme_id\) > 8/);
 });
