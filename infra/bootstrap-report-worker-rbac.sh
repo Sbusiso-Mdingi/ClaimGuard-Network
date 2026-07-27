@@ -8,6 +8,7 @@ WORKER_IDENTITY_NAME="${REPORT_WORKER_IDENTITY_NAME:-claimguard-report-worker-id
 API_APP_NAME="${AZURE_WEBAPP_API:-claimguard-api}"
 STORAGE_ACCOUNT_NAME="${REPORT_STORAGE_ACCOUNT_NAME:-cgrpt0715sa}"
 STORAGE_CONTAINER_NAME="${REPORT_STORAGE_CONTAINER:-claimguard-reports}"
+CLAIM_SCORING_QUEUE_NAME="${CLAIM_SCORING_QUEUE_NAME:-claimguard-claim-scoring}"
 CONTROL_PLANE_SECRET_NAME="${CONTROL_PLANE_MYSQL_URL_SECRET_NAME:-claimguard--api--control-plane-mysql-url}"
 OPERATIONAL_SECRET_NAME="${MYSQL_URL_SECRET_NAME:-claimguard--api--mysql-url}"
 MODEL_PSEUDONYM_SECRET_NAME="${MODEL_PSEUDONYM_SECRET_NAME:-claimguard--report-worker--model-pseudonymization-key}"
@@ -88,13 +89,16 @@ STORAGE_ACCOUNT_ID="$(az storage account show \
   --query id \
   --output tsv)"
 CONTAINER_SCOPE="${STORAGE_ACCOUNT_ID}/blobServices/default/containers/${STORAGE_CONTAINER_NAME}"
+QUEUE_SCOPE="${STORAGE_ACCOUNT_ID}/queueServices/default/queues/${CLAIM_SCORING_QUEUE_NAME}"
 
 ensure_assignment "$WORKER_PRINCIPAL_ID" "AcrPull" "$ACR_ID"
 ensure_assignment "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${CONTROL_PLANE_SECRET_NAME}"
 ensure_assignment "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${OPERATIONAL_SECRET_NAME}"
 ensure_assignment "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${MODEL_PSEUDONYM_SECRET_NAME}"
 ensure_assignment "$WORKER_PRINCIPAL_ID" "Storage Blob Data Contributor" "$CONTAINER_SCOPE"
+ensure_assignment "$WORKER_PRINCIPAL_ID" "Storage Queue Data Contributor" "$QUEUE_SCOPE"
 ensure_assignment "$API_PRINCIPAL_ID" "Storage Blob Data Reader" "$CONTAINER_SCOPE"
+ensure_assignment "$API_PRINCIPAL_ID" "Storage Queue Data Message Sender" "$QUEUE_SCOPE"
 
 echo
 echo "Report-worker RBAC bootstrap complete."
