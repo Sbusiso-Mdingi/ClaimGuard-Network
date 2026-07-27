@@ -49,7 +49,9 @@ def _drain_all(*, backend: str | None, output_dir: Path | None) -> int:
         output_dir=output_dir,
     )
     for worker in workers:
-        total += worker.run_until_empty()
+        result = worker.run_until_empty()
+        if isinstance(result, int) and not isinstance(result, bool):
+            total += result
     return total
 
 
