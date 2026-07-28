@@ -1,0 +1,113 @@
+#!/usr/bin/expect -f
+
+set timeout 180
+
+if {$argc != 3} {
+    puts stderr "usage: containerapp-canary-exec.exp REVISION REPLICA BASE64_PROBE"
+    exit 64
+}
+
+set revision [lindex $argv 0]
+set replica [lindex $argv 1]
+set probe [lindex $argv 2]
+
+spawn -noecho az containerapp exec \
+    --resource-group ClaimGuard \
+    --name claimguard-ensemble-211-canary \
+    --revision $revision \
+    --replica $replica \
+    --container model-service \
+    --command python \
+    --only-show-errors
+
+expect {
+    -re {Successfully connected to container:} {
+        log_user 0
+    }
+    timeout {
+        puts stderr "Container Apps exec did not connect within the timeout."
+        exit 70
+    }
+    eof {
+        puts stderr "Container Apps exec exited before connecting."
+        exit 71
+    }
+}
+
+expect {
+    -re {>>> $} {}
+    timeout {
+        puts stderr "Python did not become ready within the timeout."
+        exit 75
+    }
+    eof {
+        puts stderr "Container Apps exec exited before Python became ready."
+        exit 76
+    }
+}
+
+send -- "probe = ''\r"
+expect {
+    -re {>>> $} {}
+    timeout {
+        puts stderr "Python did not acknowledge probe initialization."
+        exit 77
+    }
+    eof {
+        puts stderr "Container Apps exec exited during probe initialization."
+        exit 78
+    }
+}
+
+set offset 0
+set probe_length [string length $probe]
+set chunk_size 2000
+while {$offset < $probe_length} {
+    set end [expr {$offset + $chunk_size - 1}]
+    set chunk [string range $probe $offset $end]
+    send -- "probe += '$chunk'\r"
+    expect {
+        -re {>>> $} {}
+        timeout {
+            puts stderr "Python did not acknowledge a probe chunk."
+            exit 79
+        }
+        eof {
+            puts stderr "Container Apps exec exited while streaming the probe."
+            exit 80
+        }
+    }
+    set offset [expr {$offset + $chunk_size}]
+}
+
+send -- "import base64;exec(base64.b64decode(probe))\r"
+
+expect {
+    -re {CLAIMGUARD_CANARY_RESULT=([^\r\n]+)} {
+        set result $expect_out(1,string)
+    }
+    timeout {
+        puts stderr "Canary probe did not return evidence within the timeout."
+        exit 72
+    }
+    eof {
+        puts stderr "Container Apps exec exited before canary evidence."
+        exit 73
+    }
+    -re {Traceback \(most recent call last\):} {
+        puts stderr "Canary probe raised a Python exception."
+        exit 81
+    }
+}
+
+send -- "exit()\r"
+expect {
+    eof {}
+    timeout {
+        puts stderr "Container Apps exec did not close cleanly."
+        exit 74
+    }
+}
+
+log_user 1
+puts "CLAIMGUARD_CANARY_RESULT=$result"
