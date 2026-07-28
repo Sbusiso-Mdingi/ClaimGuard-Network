@@ -15,6 +15,7 @@ function repositoryWorkflows() {
     ci: read(".github/workflows/ci.yml"),
     worker: read(".github/workflows/report-worker-deploy.yml"),
     eventWorker: read("infra/event-report-worker.bicep"),
+    recoveryBootstrap: read("infra/recovery-job-bootstrap.bicep"),
     legacyApi: read(".github/workflows/main_claimguard-api.yml"),
   };
 }
@@ -74,6 +75,48 @@ test("event-worker infrastructure keeps recovery parked", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /Event-worker parked recovery is missing/,
+  );
+});
+
+test("first recovery-job bootstrap cannot acquire a schedule", () => {
+  const workflows = repositoryWorkflows();
+  workflows.recoveryBootstrap = workflows.recoveryBootstrap.replace(
+    "triggerType: 'Manual'",
+    "triggerType: 'Schedule'\n      cronExpression: '*/5 * * * *'",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Recovery-job identity bootstrap/,
+  );
+});
+
+test("worker deployment cannot move RBAC verification after deployment", () => {
+  const workflows = repositoryWorkflows();
+  workflows.worker = workflows.worker
+    .replace(
+      "Verify queue-scoped runtime RBAC before deployment",
+      "TEMPORARY_STEP_NAME",
+    )
+    .replace(
+      "Build and push immutable report-worker image",
+      "Verify queue-scoped runtime RBAC before deployment",
+    )
+    .replace(
+      "TEMPORARY_STEP_NAME",
+      "Build and push immutable report-worker image",
+    );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /step order is unsafe/,
+  );
+});
+
+test("worker deployment cannot start a scoring or recovery execution", () => {
+  const workflows = repositoryWorkflows();
+  workflows.worker += "\n# az containerapp job start\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Report-worker deployment still contains/,
   );
 });
 
