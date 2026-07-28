@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiRequest } from "../lib/apiClient";
+import { ApiError, apiRequest, safeApiErrorMessage } from "../lib/apiClient";
 
 const CLAIMS_POLL_INTERVAL_MS = 15000;
 const CLAIMS_PAGE_SIZE = 25;
@@ -90,7 +90,11 @@ async function fetchAvailableResource(path, key, label) {
   const response = await apiRequest(path, { cache: "no-store" });
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.available !== true) {
-    throw new Error(payload?.message || `${label} unavailable (${response.status})`);
+    throw new ApiError(payload?.message || `${label} unavailable (${response.status})`, {
+      status: response.status,
+      code: payload?.code || null,
+      payload,
+    });
   }
   return payload[key];
 }
@@ -101,7 +105,11 @@ async function fetchClaims({ page = 1, pageSize = CLAIMS_PAGE_SIZE } = {}) {
   const response = await apiRequest(`/claims?page=${requestedPage}&pageSize=${requestedPageSize}`, { cache: "no-store" });
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.available !== true) {
-    throw new Error(payload?.message || `Claims unavailable (${response.status})`);
+    throw new ApiError(payload?.message || `Claims unavailable (${response.status})`, {
+      status: response.status,
+      code: payload?.code || null,
+      payload,
+    });
   }
   return {
     claims: (payload.claims || []).map(mapApiClaimToView).filter((claim) => Boolean(claim.claimId)),
@@ -122,12 +130,12 @@ function settledResource(result, previousValue, hasPreviousValue = Boolean(previ
   return {
     value: previousValue,
     status: hasPreviousValue ? "stale" : "error",
-    error: result.reason instanceof Error ? result.reason.message : "Resource unavailable.",
+    error: safeApiErrorMessage(result.reason, "The resource is temporarily unavailable."),
   };
 }
 
 function resourceError(error, fallback) {
-  return error instanceof Error ? error.message : fallback;
+  return safeApiErrorMessage(error, fallback);
 }
 
 export function useInvestigatorData({ enabled = true } = {}) {

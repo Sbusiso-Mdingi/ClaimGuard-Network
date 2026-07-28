@@ -1,16 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import Flag from "lucide-react/dist/esm/icons/flag.mjs";
+import FolderOpen from "lucide-react/dist/esm/icons/folder-open.mjs";
 import Search from "lucide-react/dist/esm/icons/search.mjs";
+import UserRound from "lucide-react/dist/esm/icons/user-round.mjs";
 import { useRole } from "../../context/RoleContext";
-import { apiJson, apiRequest } from "../../lib/apiClient";
+import { apiJson, apiRequest, safeApiErrorMessage } from "../../lib/apiClient";
 import {
   DataTableShell,
   EmptyState,
   FormField,
   PageFrame,
   SectionCard,
-  StatCard,
+  SummaryRail,
   StatusIndicator,
+  TableLoadingRows,
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
@@ -58,7 +62,10 @@ export function InvestigationsPage() {
       setPagination(result.pagination || { page, total: 0, totalPages: 0, hasNextPage: false, hasPreviousPage: false });
       setStatus("ready");
     } catch (loadError) {
-      setError(loadError?.message || "Failed to load the investigation queue.");
+      setError(safeApiErrorMessage(
+        loadError,
+        "We couldn't load the investigation queue.",
+      ));
       setStatus("error");
     }
   }, [appliedFilters]);
@@ -115,66 +122,84 @@ export function InvestigationsPage() {
 
   return (
     <PageFrame
-      eyebrow="Investigations"
       title="Investigation queue"
-      description={`Authoritative tenant-scoped cases for ${identity.label}, ordered by most recent activity.`}
+      description={`Authoritative tenant-scoped cases for ${identity.tenantLabel || identity.tenantId}, ordered by most recent activity.`}
       actions={[
-        <StatusIndicator key="count" variant="badge">{pagination.total || 0} cases</StatusIndicator>,
-        <Button key="refresh" variant="outline" onClick={() => loadQueue(pagination.page || 1)} disabled={status === "loading" || status === "refreshing"}>
+        <Button key="refresh" variant="outline" size="sm" className="h-9" onClick={() => loadQueue(pagination.page || 1)} disabled={status === "loading" || status === "refreshing"}>
           {status === "refreshing" ? "Refreshing..." : "Refresh queue"}
         </Button>,
       ]}
     >
-      <SectionCard title="Filter cases" description="Search by investigation or claim ID and narrow the tenant queue by workflow state.">
-        <form onSubmit={applyFilters} className="grid gap-4 lg:grid-cols-4">
+      <section aria-labelledby="investigation-filters-heading" className="rounded-xl border border-border/80 bg-card p-4 shadow-sm">
+        <h2 id="investigation-filters-heading" className="sr-only">Filter cases</h2>
+        <form onSubmit={applyFilters} className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_1fr_1fr_1fr_auto] xl:items-end">
           <FormField label="Search">
-            <Input value={filters.search} onChange={(event) => setFilters((previous) => ({ ...previous, search: event.target.value }))} placeholder="Investigation or claim ID" />
+            <Input className="h-10" value={filters.search} onChange={(event) => setFilters((previous) => ({ ...previous, search: event.target.value }))} placeholder="Investigation or claim ID" />
           </FormField>
           <FormField label="Status">
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={filters.status} onChange={(event) => setFilters((previous) => ({ ...previous, status: event.target.value }))}>
+            <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" value={filters.status} onChange={(event) => setFilters((previous) => ({ ...previous, status: event.target.value }))}>
               <option value="">All statuses</option>
               {STATUS_OPTIONS.map((value) => <option key={value} value={value}>{formatEnumLabel(value)}</option>)}
             </select>
           </FormField>
           <FormField label="Priority">
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={filters.priority} onChange={(event) => setFilters((previous) => ({ ...previous, priority: event.target.value }))}>
+            <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" value={filters.priority} onChange={(event) => setFilters((previous) => ({ ...previous, priority: event.target.value }))}>
               <option value="">All priorities</option>
               {PRIORITY_OPTIONS.map((value) => <option key={value} value={value}>{formatEnumLabel(value)}</option>)}
             </select>
           </FormField>
           <FormField label="Assignment">
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={filters.assignment} onChange={(event) => setFilters((previous) => ({ ...previous, assignment: event.target.value }))}>
+            <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" value={filters.assignment} onChange={(event) => setFilters((previous) => ({ ...previous, assignment: event.target.value }))}>
               <option value="all">All cases</option>
               <option value="mine">Assigned to me</option>
               <option value="assigned">Assigned</option>
               <option value="unassigned">Unassigned</option>
             </select>
           </FormField>
-          <div className="flex flex-wrap gap-2 lg:col-span-4">
-            <Button type="submit">Apply filters</Button>
-            <Button type="button" variant="outline" onClick={clearFilters} disabled={activeFilterCount === 0}>Clear filters</Button>
+          <div className="flex gap-2 md:col-span-2 xl:col-span-1">
+            <Button type="submit" className="h-10">Apply filters</Button>
+            <Button type="button" variant="outline" className="h-10" onClick={clearFilters} disabled={activeFilterCount === 0}>Clear</Button>
           </div>
         </form>
-      </SectionCard>
+      </section>
+
+      <SummaryRail
+        ariaLabel="Visible investigation queue summary"
+        items={[
+          {
+            key: "visible",
+            label: "Visible cases",
+            value: status === "loading" ? "—" : investigations.length,
+            description: `${pagination.total || 0} total`,
+            icon: FolderOpen,
+          },
+          {
+            key: "unassigned",
+            label: "Unassigned",
+            value: status === "loading" ? "—" : visibleQueueSummary.unassigned,
+            description: "Waiting for an investigator",
+            icon: UserRound,
+            iconClassName: visibleQueueSummary.unassigned > 0 ? "text-amber-500" : "text-emerald-500",
+          },
+          {
+            key: "urgent",
+            label: "Urgent",
+            value: status === "loading" ? "—" : visibleQueueSummary.urgent,
+            description: "High or critical priority",
+            icon: Flag,
+            iconClassName: visibleQueueSummary.urgent > 0 ? "text-rose-500" : "text-emerald-500",
+          },
+        ]}
+      />
 
       {status === "error" ? (
-        <WorkspaceNotice title="Investigation queue unavailable" tone="danger" actions={<Button variant="outline" onClick={() => loadQueue(1)}>Retry</Button>}>
+        <WorkspaceNotice title="We couldn't load the investigation queue." tone="danger" actions={<Button variant="outline" size="sm" onClick={() => loadQueue(1)}>Retry</Button>}>
           {error}
         </WorkspaceNotice>
       ) : null}
 
-      {status !== "loading" && status !== "error" ? (
-        <section aria-label="Visible investigation queue summary" className="grid gap-3 sm:grid-cols-3">
-          <StatCard title="Visible cases" value={investigations.length} description="Cases returned on the current page." />
-          <StatCard title="High or critical" value={visibleQueueSummary.urgent} description="Visible cases requiring priority attention." tone={visibleQueueSummary.urgent > 0 ? "warning" : "success"} />
-          <StatCard title="Unassigned" value={visibleQueueSummary.unassigned} description="Visible cases waiting for an investigator." tone={visibleQueueSummary.unassigned > 0 ? "warning" : "success"} />
-        </section>
-      ) : null}
-
-      <SectionCard title="Tenant cases" description="Cases are read directly from the active operational tenant, not browser storage.">
-        {status === "loading" ? (
-          <WorkspaceNotice title="Loading investigation queue">Reading the latest case state from the active tenant.</WorkspaceNotice>
-        ) : investigations.length === 0 && status !== "error" ? (
+      <SectionCard variant="console" title="Tenant cases" description="Cases are read directly from the active operational tenant, not browser storage.">
+        {investigations.length === 0 && status !== "loading" && status !== "error" ? (
           <EmptyState icon={Search} title="No investigations found" description={activeFilterCount > 0 ? "No cases match the current filters." : "Escalated claims will appear here automatically."} compact />
         ) : (
           <DataTableShell ariaLabel="Investigation queue" minWidth="900px">
@@ -191,7 +216,7 @@ export function InvestigationsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/70">
-              {investigations.map((investigation) => (
+              {status === "loading" ? <TableLoadingRows columns={8} /> : investigations.map((investigation) => (
                 <tr key={investigation.investigationId}>
                   <td className="px-4 py-4 font-data text-xs">{investigation.investigationId}</td>
                   <td className="px-4 py-4 font-data text-xs">{investigation.claimId}</td>
@@ -218,8 +243,8 @@ export function InvestigationsPage() {
 
       <SectionCard title="Open by investigation ID" description="Use direct lookup when you have an ID that is outside the current filter or page.">
         <form onSubmit={handleOpenById} className="flex flex-wrap gap-3">
-          <Input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="investigation-id" className="max-w-xs" />
-          <Button type="submit" disabled={checking || !lookupId.trim()}>{checking ? "Checking..." : "Open"}</Button>
+          <Input aria-label="Investigation ID" value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="investigation-id" className="max-w-xs" />
+          <Button type="submit" disabled={checking || !lookupId.trim()}>{checking ? "Checking..." : "Open investigation"}</Button>
         </form>
         {lookupError ? <p className="mt-2 text-sm text-destructive" role="alert">{lookupError}</p> : null}
       </SectionCard>

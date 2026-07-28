@@ -169,7 +169,7 @@ test("renders dashboard and routes to claim details", async () => {
   }
 
   await user.click(claimsNavigationLink());
-  expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /^Claims$/i })).toBeInTheDocument();
 
   expect(screen.getAllByText("82").length).toBeGreaterThan(0);
 
