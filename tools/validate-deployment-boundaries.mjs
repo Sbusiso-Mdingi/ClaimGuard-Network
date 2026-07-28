@@ -6,6 +6,9 @@ import { pathToFileURL } from "node:url";
 const CI_PATH = ".github/workflows/ci.yml";
 const WORKER_PATH = ".github/workflows/report-worker-deploy.yml";
 const EVENT_WORKER_PATH = "infra/event-report-worker.bicep";
+const RECOVERY_BOOTSTRAP_PATH = "infra/recovery-job-bootstrap.bicep";
+const RECOVERY_BOOTSTRAP_SCRIPT_PATH =
+  "infra/bootstrap-report-recovery-job.sh";
 const LEGACY_API_PATH = ".github/workflows/main_claimguard-api.yml";
 
 function read(path) {
@@ -32,6 +35,8 @@ export function validateDeploymentBoundaries({
   ci,
   worker,
   eventWorker,
+  recoveryBootstrap,
+  recoveryBootstrapScript,
   legacyApi,
 }) {
   for (const required of [
@@ -73,8 +78,46 @@ export function validateDeploymentBoundaries({
     "REPORT_WORKER_RECOVERY_CRON || '0 0 1 1 *'",
     'test "$REPORT_WORKER_RECOVERY_CRON" = "0 0 1 1 *"',
     'test "${#REPORT_WORKER_RECOVERY_JOB_NAME}" -le 32',
+    "infra/bootstrap-report-recovery-job.sh",
+    "Verify queue-scoped runtime RBAC before deployment",
+    "EVENT_EXECUTION_COUNT_BEFORE",
+    "RECOVERY_EXECUTION_COUNT_BEFORE",
+    "QUEUE_PEEK_COUNT_BEFORE",
+    "QUEUE_PEEK_COUNT_AFTER",
+    "MODEL_SETTINGS_BEFORE",
   ]) {
     requireText(worker, required, "Report-worker deployment authorization");
+  }
+  for (const forbidden of [
+    "az containerapp job start",
+    "az containerapp job execution start",
+  ]) {
+    forbidText(worker, forbidden, "Report-worker deployment");
+    forbidText(
+      recoveryBootstrapScript,
+      forbidden,
+      "Recovery-job bootstrap script",
+    );
+  }
+
+  const workerStepOrder = [
+    "Capture deployment safety baseline",
+    "Bootstrap identity-free recovery job and attach identity",
+    "Verify queue-scoped runtime RBAC before deployment",
+    "Build and push immutable report-worker image",
+    "Deploy event scorer and scheduled recovery job",
+    "Configure API claim-scoring wake-ups",
+    "Verify event-driven production configuration",
+  ];
+  let previousStepIndex = -1;
+  for (const stepName of workerStepOrder) {
+    const stepIndex = worker.indexOf(stepName);
+    if (stepIndex <= previousStepIndex) {
+      fail(
+        `Report-worker deployment step order is unsafe at ${JSON.stringify(stepName)}.`,
+      );
+    }
+    previousStepIndex = stepIndex;
   }
 
   for (const required of [
@@ -82,6 +125,83 @@ export function validateDeploymentBoundaries({
     "param recoveryScheduleCron string = '0 0 1 1 *'",
   ]) {
     requireText(eventWorker, required, "Event-worker parked recovery");
+  }
+
+  for (const required of [
+    "param recoveryJobName string = 'claimguard-report-recovery'",
+    "triggerType: 'Manual'",
+    "manual-identity-free-bootstrap",
+    "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+  ]) {
+    requireText(
+      recoveryBootstrap,
+      required,
+      "Recovery-job identity bootstrap",
+    );
+  }
+  for (const forbidden of [
+    "triggerType: 'Schedule'",
+    "cronExpression",
+    "worker drain-all",
+    "identity:",
+    "Microsoft.ManagedIdentity",
+    "workerIdentityName",
+    "userAssignedIdentities",
+    "registries:",
+    "secretRef:",
+  ]) {
+    forbidText(
+      recoveryBootstrap,
+      forbidden,
+      "Recovery-job identity bootstrap",
+    );
+  }
+
+  for (const required of [
+    "create_identity_free_shell_if_absent",
+    "attach_expected_identity_if_missing",
+    "assert_exact_user_identity",
+    "assert_manual_shell",
+    "assert_scheduled_recovery",
+    "az containerapp job identity assign",
+    'RECOVERY_CRON="${REPORT_WORKER_RECOVERY_CRON:-0 0 1 1 *}"',
+    'MODEL_DEPLOYMENT_ID="${MODEL_DEPLOYMENT_ID:-claimguard-claim-fraud-baseline:1.0.0}"',
+    'assert_execution_count_unchanged',
+  ]) {
+    requireText(
+      recoveryBootstrapScript,
+      required,
+      "Recovery-job bootstrap script",
+    );
+  }
+  const recoveryBootstrapMainOrder = [
+    "create_identity_free_shell_if_absent\n",
+    'recovery_job="$(show_recovery_job)"',
+    'attach_expected_identity_if_missing "$recovery_job" "$worker_identity_id"',
+    'assert_exact_user_identity "$recovery_job" "$worker_identity_id"',
+  ];
+  const mainStart = recoveryBootstrapScript.indexOf("main() {");
+  const mainEnd = recoveryBootstrapScript.indexOf('\n}\n\nmain "$@"', mainStart);
+  if (mainStart === -1 || mainEnd === -1) {
+    fail("Recovery-job bootstrap script main function is missing.");
+  }
+  const recoveryBootstrapMain = recoveryBootstrapScript.slice(
+    mainStart,
+    mainEnd,
+  );
+  let previousBootstrapIndex = -1;
+  for (const operation of recoveryBootstrapMainOrder) {
+    const operationIndex = recoveryBootstrapMain.indexOf(
+      operation,
+      previousBootstrapIndex + 1,
+    );
+    if (operationIndex <= previousBootstrapIndex) {
+      fail(
+        "Recovery-job bootstrap operation order is unsafe at "
+        + JSON.stringify(operation),
+      );
+    }
+    previousBootstrapIndex = operationIndex;
   }
 
   for (const forbidden of [
@@ -103,6 +223,8 @@ export function validateRepositoryDeploymentBoundaries() {
     ci: read(CI_PATH),
     worker: read(WORKER_PATH),
     eventWorker: read(EVENT_WORKER_PATH),
+    recoveryBootstrap: read(RECOVERY_BOOTSTRAP_PATH),
+    recoveryBootstrapScript: read(RECOVERY_BOOTSTRAP_SCRIPT_PATH),
     legacyApi: read(LEGACY_API_PATH),
   });
 }

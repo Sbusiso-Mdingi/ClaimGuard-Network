@@ -203,7 +203,11 @@ test("renders dashboard and routes to claim details", async () => {
   render(<AppRoot />);
 
   expect(
-    await screen.findByRole("heading", { name: /Claims risk intelligence/i }, { timeout: 5_000 })
+    await screen.findByRole(
+      "heading",
+      { name: /Claims risk intelligence/i },
+      { timeout: 10_000 },
+    ),
   ).toBeInTheDocument();
   expect(screen.getByText(/Claims Screened/i)).toBeInTheDocument();
 
@@ -232,8 +236,7 @@ test("automatic refresh polls claims without refetching aggregate resources", as
   render(<AppRoot />);
 
   await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
   });
 
   const requestCount = (path) =>

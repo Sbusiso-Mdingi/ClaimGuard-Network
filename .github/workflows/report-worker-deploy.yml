@@ -122,6 +122,107 @@ jobs:
             --content-type application/vnd.claimguard.model-pseudonymization-key \
             >/dev/null
 
+      - name: Capture deployment safety baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVENT_JOB_BEFORE="$(az containerapp job show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            --output json)"
+          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.triggerType')" = "Event"
+          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
+          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "1"
+          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
+          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+
+          EVENT_EXECUTION_COUNT_BEFORE="$(az containerapp job execution list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            --query 'length(@)' -o tsv)"
+          EVENT_ACTIVE_BEFORE="$(az containerapp job execution list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            --query "length([?properties.status=='Running' || properties.status=='Processing'])" -o tsv)"
+
+          if az containerapp job show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
+            >/dev/null 2>&1; then
+            RECOVERY_EXECUTION_COUNT_BEFORE="$(az containerapp job execution list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
+              --query 'length(@)' -o tsv)"
+            RECOVERY_ACTIVE_BEFORE="$(az containerapp job execution list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
+              --query "length([?properties.status=='Running' || properties.status=='Processing'])" -o tsv)"
+            test "$RECOVERY_ACTIVE_BEFORE" = "0"
+          else
+            RECOVERY_EXECUTION_COUNT_BEFORE=0
+          fi
+
+          QUEUE_PEEK_COUNT_BEFORE="$(az storage message peek \
+            --account-name "$REPORT_STORAGE_ACCOUNT_NAME" \
+            --queue-name "$CLAIM_SCORING_QUEUE_NAME" \
+            --num-messages 32 \
+            --auth-mode key \
+            --query 'length(@)' -o tsv)"
+
+          MODEL_SETTINGS_BEFORE="$(az webapp config appsettings list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --query "[?name=='APPROVED_MODEL_DEPLOYMENT_IDS' || name=='CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID'].{name:name,value:value}" \
+            --output json)"
+          test "$(echo "$MODEL_SETTINGS_BEFORE" | jq length)" -eq 2
+          test "$(echo "$MODEL_SETTINGS_BEFORE" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$MODEL_SETTINGS_BEFORE" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+
+          echo "EVENT_EXECUTION_COUNT_BEFORE=$EVENT_EXECUTION_COUNT_BEFORE" >> "$GITHUB_ENV"
+          echo "EVENT_ACTIVE_BEFORE=$EVENT_ACTIVE_BEFORE" >> "$GITHUB_ENV"
+          echo "RECOVERY_EXECUTION_COUNT_BEFORE=$RECOVERY_EXECUTION_COUNT_BEFORE" >> "$GITHUB_ENV"
+          echo "QUEUE_PEEK_COUNT_BEFORE=$QUEUE_PEEK_COUNT_BEFORE" >> "$GITHUB_ENV"
+
+      - name: Bootstrap identity-free recovery job and attach identity
+        shell: bash
+        run: bash infra/bootstrap-report-recovery-job.sh
+
+      - name: Verify queue-scoped runtime RBAC before deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKER_PRINCIPAL_ID="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_IDENTITY_NAME" --query principalId -o tsv)"
+          API_PRINCIPAL_ID="$(az webapp identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API" --query principalId -o tsv)"
+          test -n "$API_PRINCIPAL_ID"
+          test "$API_PRINCIPAL_ID" != "null"
+          ACR_ID="$(az acr show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_ACR_NAME" --query id -o tsv)"
+          KEY_VAULT_ID="$(az keyvault show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_KEYVAULT_NAME" --query id -o tsv)"
+          STORAGE_ID="$(az storage account show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_STORAGE_ACCOUNT_NAME" --query id -o tsv)"
+          CONTAINER_SCOPE="${STORAGE_ID}/blobServices/default/containers/${REPORT_STORAGE_CONTAINER}"
+          QUEUE_SCOPE="${STORAGE_ID}/queueServices/default/queues/${CLAIM_SCORING_QUEUE_NAME}"
+
+          require_role() {
+            local principal_id="$1"
+            local role="$2"
+            local scope="$3"
+            local count
+            count="$(az role assignment list --assignee-object-id "$principal_id" --scope "$scope" --query "[?roleDefinitionName=='${role}'] | length(@)" -o tsv)"
+            if [ "$count" = "0" ]; then
+              echo "Missing bootstrap role: $role on $scope for $principal_id"
+              echo "Run infra/bootstrap-report-worker-rbac.sh as the subscription owner, then rerun this workflow."
+              exit 1
+            fi
+          }
+
+          require_role "$WORKER_PRINCIPAL_ID" "AcrPull" "$ACR_ID"
+          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${CONTROL_PLANE_MYSQL_URL_SECRET_NAME}"
+          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${MYSQL_URL_SECRET_NAME}"
+          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${MODEL_PSEUDONYM_SECRET_NAME}"
+          require_role "$WORKER_PRINCIPAL_ID" "Storage Blob Data Contributor" "$CONTAINER_SCOPE"
+          require_role "$WORKER_PRINCIPAL_ID" "Storage Queue Data Contributor" "$QUEUE_SCOPE"
+          require_role "$API_PRINCIPAL_ID" "Storage Blob Data Reader" "$CONTAINER_SCOPE"
+          require_role "$API_PRINCIPAL_ID" "Storage Queue Data Message Sender" "$QUEUE_SCOPE"
+
       - name: Build and push immutable report-worker image
         shell: bash
         run: |
@@ -169,40 +270,6 @@ jobs:
               prospectiveThreshold="$MODEL_EXPECTED_BASELINE_THRESHOLD" \
             --only-show-errors
 
-      - name: Verify queue-scoped runtime RBAC
-        shell: bash
-        run: |
-          set -euo pipefail
-          WORKER_PRINCIPAL_ID="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_IDENTITY_NAME" --query principalId -o tsv)"
-          API_PRINCIPAL_ID="$(az webapp identity assign --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API" --query principalId -o tsv)"
-          ACR_ID="$(az acr show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_ACR_NAME" --query id -o tsv)"
-          KEY_VAULT_ID="$(az keyvault show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_KEYVAULT_NAME" --query id -o tsv)"
-          STORAGE_ID="$(az storage account show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_STORAGE_ACCOUNT_NAME" --query id -o tsv)"
-          CONTAINER_SCOPE="${STORAGE_ID}/blobServices/default/containers/${REPORT_STORAGE_CONTAINER}"
-          QUEUE_SCOPE="${STORAGE_ID}/queueServices/default/queues/${CLAIM_SCORING_QUEUE_NAME}"
-
-          require_role() {
-            local principal_id="$1"
-            local role="$2"
-            local scope="$3"
-            local count
-            count="$(az role assignment list --assignee-object-id "$principal_id" --scope "$scope" --query "[?roleDefinitionName=='${role}'] | length(@)" -o tsv)"
-            if [ "$count" = "0" ]; then
-              echo "Missing bootstrap role: $role on $scope for $principal_id"
-              echo "Run infra/bootstrap-report-worker-rbac.sh as the subscription owner, then rerun this workflow."
-              exit 1
-            fi
-          }
-
-          require_role "$WORKER_PRINCIPAL_ID" "AcrPull" "$ACR_ID"
-          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${CONTROL_PLANE_MYSQL_URL_SECRET_NAME}"
-          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${MYSQL_URL_SECRET_NAME}"
-          require_role "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_ID}/secrets/${MODEL_PSEUDONYM_SECRET_NAME}"
-          require_role "$WORKER_PRINCIPAL_ID" "Storage Blob Data Contributor" "$CONTAINER_SCOPE"
-          require_role "$WORKER_PRINCIPAL_ID" "Storage Queue Data Contributor" "$QUEUE_SCOPE"
-          require_role "$API_PRINCIPAL_ID" "Storage Blob Data Reader" "$CONTAINER_SCOPE"
-          require_role "$API_PRINCIPAL_ID" "Storage Queue Data Message Sender" "$QUEUE_SCOPE"
-
       - name: Configure API claim-scoring wake-ups
         shell: bash
         run: |
@@ -232,9 +299,35 @@ jobs:
           test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "1"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].image')" = "$REPORT_WORKER_IMAGE"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.triggerType')" = "Schedule"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.scheduleTriggerConfig.cronExpression')" = "$REPORT_WORKER_RECOVERY_CRON"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker drain-all"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].image')" = "$REPORT_WORKER_IMAGE"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          EVENT_EXECUTION_COUNT_AFTER="$(az containerapp job execution list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            --query 'length(@)' -o tsv)"
+          test "$(az containerapp job execution list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
+            --query 'length(@)' -o tsv)" = "$RECOVERY_EXECUTION_COUNT_BEFORE"
+          EVENT_ACTIVE_AFTER="$(az containerapp job execution list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_JOB_NAME" \
+            --query "length([?properties.status=='Running' || properties.status=='Processing'])" -o tsv)"
+          test "$(az containerapp job execution list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
+            --query "length([?properties.status=='Running' || properties.status=='Processing'])" -o tsv)" = "0"
+          QUEUE_PEEK_COUNT_AFTER="$(az storage message peek \
+            --account-name "$REPORT_STORAGE_ACCOUNT_NAME" \
+            --queue-name "$CLAIM_SCORING_QUEUE_NAME" \
+            --num-messages 32 \
+            --auth-mode key \
+            --query 'length(@)' -o tsv)"
 
           SETTINGS="$(az webapp config appsettings list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -243,3 +336,15 @@ jobs:
             --output json)"
           test "$(echo "$SETTINGS" | jq length)" -eq 6
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIM_SCORING_QUEUE_URL") | .value')" = "https://${REPORT_STORAGE_ACCOUNT_NAME}.queue.core.windows.net/${CLAIM_SCORING_QUEUE_NAME}"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+
+          {
+            echo "### Report-worker deployment audit"
+            echo "- Event executions: ${EVENT_EXECUTION_COUNT_BEFORE} before, ${EVENT_EXECUTION_COUNT_AFTER} after"
+            echo "- Active event executions: ${EVENT_ACTIVE_BEFORE} before, ${EVENT_ACTIVE_AFTER} after"
+            echo "- Recovery executions: ${RECOVERY_EXECUTION_COUNT_BEFORE} before and after"
+            echo "- Queue peek (maximum 32): ${QUEUE_PEEK_COUNT_BEFORE} before, ${QUEUE_PEEK_COUNT_AFTER} after"
+            echo "- Recovery cron: ${REPORT_WORKER_RECOVERY_CRON}"
+            echo "- Model deployment: ${MODEL_DEPLOYMENT_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"
