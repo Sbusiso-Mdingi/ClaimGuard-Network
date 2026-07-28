@@ -13,10 +13,10 @@ export function formatEnumLabel(value, fallback = "Unknown") {
 export function PageFrame({ eyebrow, title, description, actions, children }) {
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-border/70 pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-4 border-b border-border/70 pb-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 space-y-1.5">
           {eyebrow ? <p className="font-data text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">{eyebrow}</p> : null}
-          <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground lg:text-[1.75rem]">{title}</h1>
+          <h1 className="font-display text-[1.85rem] font-semibold leading-tight tracking-tight text-foreground lg:text-[2.15rem]">{title}</h1>
           {description ? <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
         </div>
         {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
@@ -109,6 +109,46 @@ export function StatCard({ title, value, description, icon: Icon, tone = "defaul
         <p className="text-sm leading-6 text-muted-foreground">{description}</p>
       </CardContent>
     </Card>
+  );
+}
+
+export function SummaryRail({ items = [], ariaLabel = "Workspace summary" }) {
+  const columnClass = items.length >= 4
+    ? "xl:grid-cols-4"
+    : items.length === 3
+      ? "xl:grid-cols-3"
+      : items.length === 2
+        ? "xl:grid-cols-2"
+        : "xl:grid-cols-1";
+  return (
+    <section
+      aria-label={ariaLabel}
+      className={`grid overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm ${columnClass}`}
+    >
+      {items.map((item, index) => {
+        const Icon = item.icon;
+        return (
+          <div
+            key={item.key || item.label}
+            className={[
+              "flex min-w-0 items-center gap-3 px-4 py-3.5",
+              index > 0 ? "border-t border-border/70 xl:border-l xl:border-t-0" : "",
+            ].join(" ")}
+          >
+            {Icon ? (
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background/60 ${item.iconClassName || "text-primary"}`}>
+                <Icon className="h-4 w-4" aria-hidden="true" />
+              </span>
+            ) : null}
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-muted-foreground">{item.label}</p>
+              <p className="font-data mt-0.5 text-xl font-semibold leading-none text-foreground">{item.value}</p>
+              {item.description ? <p className="mt-1 truncate text-[11px] text-muted-foreground">{item.description}</p> : null}
+            </div>
+          </div>
+        );
+      })}
+    </section>
   );
 }
 
@@ -230,6 +270,21 @@ export function DataTableShell({ ariaLabel, children, minWidth = "760px" }) {
       </table>
     </div>
   );
+}
+
+export function TableLoadingRows({ columns, rows = 5 }) {
+  return Array.from({ length: rows }, (_, rowIndex) => (
+    <tr key={`loading-row-${rowIndex}`} aria-hidden="true">
+      {Array.from({ length: columns }, (_unused, columnIndex) => (
+        <td key={`loading-cell-${rowIndex}-${columnIndex}`}>
+          <span
+            className="block h-3 animate-pulse rounded bg-secondary"
+            style={{ width: `${Math.max(38, 82 - columnIndex * 5)}%` }}
+          />
+        </td>
+      ))}
+    </tr>
+  ));
 }
 
 export function severityStatusTone(severity) {

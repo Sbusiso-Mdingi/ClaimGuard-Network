@@ -8,6 +8,20 @@ export class ApiError extends Error {
   }
 }
 
+const UNSAFE_ERROR_DETAIL = /\b(?:mysql(?:d)?(?:_[a-z0-9]+)*|sqlstate|stmt_execute|database driver|stack trace|select\s+.+\s+from|insert\s+into|update\s+.+\s+set)\b/i;
+
+export function safeApiErrorMessage(error, fallback = "The service is temporarily unavailable.") {
+  const payload = error instanceof ApiError ? error.payload : null;
+  const candidate = String(
+    (error instanceof Error ? error.message : "") || fallback,
+  ).trim();
+  const message = !candidate || UNSAFE_ERROR_DETAIL.test(candidate)
+    ? fallback
+    : candidate;
+  const requestId = String(payload?.requestId || payload?.request_id || "").trim();
+  return requestId ? `${message} Request ID: ${requestId}.` : message;
+}
+
 let csrfToken = null;
 let unauthorizedHandler = null;
 let demoAuthorityHeaders = null;

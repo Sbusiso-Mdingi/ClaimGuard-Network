@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, fireEvent, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
 
@@ -108,11 +108,57 @@ const claimDetailPayload = {
   claim: claimsPayload.claims[0],
 };
 
+const investigationsPayload = {
+  available: true,
+  investigations: [
+    {
+      investigationId: "INV-100",
+      claimId: "C-2",
+      status: "UNDER_REVIEW",
+      priority: "CRITICAL",
+      assignedInvestigator: null,
+      noteCount: 2,
+      evidenceCount: 1,
+      updatedAt: "2026-07-16T00:00:00.000Z",
+    },
+    {
+      investigationId: "INV-101",
+      claimId: "C-1",
+      status: "AWAITING_EVIDENCE",
+      priority: "NORMAL",
+      assignedInvestigator: "investigator-alpha",
+      noteCount: 1,
+      evidenceCount: 0,
+      updatedAt: "2026-07-15T00:00:00.000Z",
+    },
+  ],
+  pagination: {
+    page: 1,
+    pageSize: 25,
+    total: 27,
+    totalPages: 2,
+    hasNextPage: true,
+    hasPreviousPage: false,
+  },
+};
+
 function mockFetch() {
   global.fetch = vi.fn((url) => {
     if (String(url).includes("/api/detection/report")) return Promise.resolve({ ok: true, json: async () => reportPayload });
     if (String(url).includes("/api/detection/graph")) return Promise.resolve({ ok: true, json: async () => graphPayload });
     if (String(url).includes("/api/detection/risk")) return Promise.resolve({ ok: true, json: async () => riskPayload });
+    if (String(url).includes("/api/investigations/missing-case")) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          available: false,
+          message: "Investigation not found for the active tenant.",
+        }),
+      });
+    }
+    if (String(url).includes("/api/investigations/queue")) {
+      return Promise.resolve({ ok: true, json: async () => investigationsPayload });
+    }
     if (String(url).includes("/api/claims/C-1")) return Promise.resolve({ ok: true, json: async () => claimDetailPayload });
     if (String(url).includes("/api/claims")) return Promise.resolve({ ok: true, json: async () => claimsPayload });
     return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
@@ -169,7 +215,7 @@ test("renders dashboard and routes to claim details", async () => {
   }
 
   await user.click(claimsNavigationLink());
-  expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /^Claims$/i })).toBeInTheDocument();
 
   expect(screen.getAllByText("82").length).toBeGreaterThan(0);
 
@@ -232,4 +278,50 @@ test("shows unavailable state without substituting demo analytics when backend A
   expect(await screen.findByText(/Dashboard Unavailable/i)).toBeInTheDocument();
   expect(screen.getByText("ClaimGuard")).toBeInTheDocument();
   expect(screen.queryByText(/Claims Screened/i)).not.toBeInTheDocument();
+});
+
+test("renders the tenant investigation queue and applies operational filters", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem("claimguard-dev-identity", "investigator-alpha");
+  window.history.pushState({}, "", "/investigations");
+
+  render(<AppRoot />);
+
+  expect(
+    await screen.findByRole("heading", { name: "Investigation queue" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/authoritative tenant-scoped cases for Bonitas/i)).toBeInTheDocument();
+  expect(await screen.findByText("INV-100")).toBeInTheDocument();
+  expect(screen.getAllByText("Critical").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Unassigned").length).toBeGreaterThan(0);
+
+  await user.type(screen.getByLabelText("Search"), " INV-100 ");
+  await user.selectOptions(screen.getByLabelText("Status"), "UNDER_REVIEW");
+  await user.selectOptions(screen.getByLabelText("Priority"), "CRITICAL");
+  await user.selectOptions(screen.getByLabelText("Assignment"), "unassigned");
+  await user.click(screen.getByRole("button", { name: "Apply filters" }));
+
+  await waitFor(() => {
+    expect(global.fetch.mock.calls.some(([url]) => {
+      const requestUrl = String(url);
+      return requestUrl.includes("/api/investigations/queue?")
+        && requestUrl.includes("search=INV-100")
+        && requestUrl.includes("status=UNDER_REVIEW")
+        && requestUrl.includes("priority=CRITICAL")
+        && requestUrl.includes("assignment=unassigned");
+    })).toBe(true);
+  });
+
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await waitFor(() => {
+    expect(global.fetch.mock.calls.some(([url]) =>
+      String(url).includes("/api/investigations/queue?page=2"),
+    )).toBe(true);
+  });
+
+  await user.type(screen.getByLabelText("Investigation ID"), "missing-case");
+  await user.click(screen.getByRole("button", { name: "Open investigation" }));
+  expect(
+    await screen.findByRole("alert"),
+  ).toHaveTextContent("Investigation not found for the active tenant.");
 });

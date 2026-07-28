@@ -153,7 +153,7 @@ export function InvestigatorLayout({
         />
       ) : null}
 
-      <div className="mx-auto grid min-h-screen w-full max-w-[1680px] grid-cols-1 lg:grid-cols-[260px_1fr]">
+      <div className="mx-auto grid min-h-screen w-full max-w-[1720px] grid-cols-1 lg:grid-cols-[248px_1fr]">
         <aside
           aria-label="Workspace navigation"
           aria-hidden={!isDesktop && !sidebarOpen}
@@ -161,7 +161,7 @@ export function InvestigatorLayout({
           role={!isDesktop && sidebarOpen ? "dialog" : undefined}
           inert={!isDesktop && !sidebarOpen ? "" : undefined}
           className={[
-            "fixed inset-y-0 left-0 z-40 flex h-screen w-[260px] flex-col overflow-y-auto border-r border-border-soft bg-surface-elevated px-4 py-5 transition-transform duration-200 investigator-scrollbar",
+            "fixed inset-y-0 left-0 z-40 flex h-screen w-[248px] flex-col overflow-y-auto border-r border-border-soft bg-surface-elevated px-4 py-5 transition-transform duration-200 investigator-scrollbar",
             sidebarOpen ? "translate-x-0" : "-translate-x-full",
             "lg:sticky lg:top-0 lg:z-auto lg:w-auto lg:translate-x-0",
           ].join(" ")}
@@ -255,19 +255,19 @@ export function InvestigatorLayout({
         </aside>
 
         <main id="main-content" tabIndex={-1} className="min-w-0 p-4 outline-none md:p-6 xl:p-8">
-          <header className="mb-6 flex flex-col gap-4 rounded-[14px] border border-border-soft bg-surface-elevated px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+          <header className="mb-6 flex flex-col gap-4 rounded-xl border border-border-soft bg-surface-elevated px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2.5">
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1">
+              <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#71a8d9]" aria-hidden="true" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Tenant:</span>
                 <span className="text-[11px] font-semibold text-foreground">{identity.tenantLabel || identity.tenantId}</span>
               </div>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1">
+              <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Role:</span>
                 <span className="text-[11px] font-semibold text-foreground">{formatIdentityRoles(identity)}</span>
               </div>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1">
+              <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
                 <Activity className="h-3 w-3 text-[#62ce9b]" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
                   {mode === "session" ? "Authenticated" : "Demo Mode"}
@@ -276,18 +276,18 @@ export function InvestigatorLayout({
             </div>
             {showLiveControls ? (
               <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
-                <div className={`inline-flex items-center gap-1.5 rounded-full border border-border-soft bg-background/55 px-3 py-1 ${ledgerStatus === "Connected" ? "text-emerald-600 dark:text-[#62ce9b]" : "text-amber-700 dark:text-[#e6a74d]"}`}>
+                <div className={`inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1 ${ledgerStatus === "Connected" ? "text-emerald-600 dark:text-[#62ce9b]" : "text-amber-700 dark:text-[#e6a74d]"}`}>
                   <span className={`h-1.5 w-1.5 rounded-full ${ledgerStatus === "Connected" ? "bg-[#62ce9b]" : "bg-[#e6a74d]"}`} aria-hidden="true" />
                   <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Ledger:</span>
                   <span className="text-[11px] font-semibold">{ledgerStatus}</span>
                 </div>
-                <div className="inline-flex rounded-full border border-border-soft bg-background/55 p-0.5">
+                <div className="inline-flex rounded-lg border border-border-soft bg-background/55 p-0.5">
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => setLiveRefreshEnabled(true)}
                     aria-label="Enable live refresh"
-                    className={`h-7 rounded-full px-3 text-[11px] font-semibold hover:bg-transparent ${liveRefreshEnabled ? "bg-primary/20 text-primary border border-primary/30" : "text-muted hover:text-foreground"}`}
+                    className={`h-7 rounded-md px-3 text-[11px] font-semibold hover:bg-transparent ${liveRefreshEnabled ? "bg-primary/20 text-primary border border-primary/30" : "text-muted hover:text-foreground"}`}
                   >
                     Live Refresh
                   </Button>
@@ -296,12 +296,12 @@ export function InvestigatorLayout({
                     variant="ghost"
                     onClick={() => setLiveRefreshEnabled(false)}
                     aria-label="Disable live refresh"
-                    className={`h-7 rounded-full px-3 text-[11px] font-semibold hover:bg-transparent ${!liveRefreshEnabled ? "border border-border-soft bg-secondary/70 text-foreground" : "text-muted hover:text-foreground"}`}
+                    className={`h-7 rounded-md px-3 text-[11px] font-semibold hover:bg-transparent ${!liveRefreshEnabled ? "border border-border-soft bg-secondary/70 text-foreground" : "text-muted hover:text-foreground"}`}
                   >
                     Paused
                   </Button>
                 </div>
-                <Button size="sm" variant="outline" onClick={refreshNow} className="h-8 rounded-full border-border-soft bg-background/50 px-4 text-xs text-foreground hover:bg-secondary/70">
+                <Button size="sm" variant="outline" onClick={refreshNow} className="h-8 rounded-lg border-border-soft bg-background/50 px-4 text-xs text-foreground hover:bg-secondary/70">
                   Refresh
                 </Button>
               </div>

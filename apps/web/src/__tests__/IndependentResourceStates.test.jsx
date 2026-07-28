@@ -125,7 +125,7 @@ test("keeps claims and other healthy resources usable when the report request fa
 
   await user.click(claimsNavigationLink());
 
-  expect(await screen.findByRole("heading", { name: /Claims review table/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /^Claims$/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "C-QUEUED-1" })).toBeInTheDocument();
 });
 
@@ -136,12 +136,13 @@ test("shows truthful processing and failure states", async () => {
   await screen.findByRole("heading", { name: /Claims risk intelligence/i });
   await user.click(claimsNavigationLink());
 
-  expect((await screen.findAllByText("Awaiting scoring")).length).toBeGreaterThan(0);
-  expect(screen.getAllByText("Scoring failed").length).toBeGreaterThan(0);
-  expect(screen.getByText(/WORKER_DEAD_LETTER: Detection worker exhausted retries/i)).toBeInTheDocument();
+  expect((await screen.findAllByText("Queued")).length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Scoring needs attention").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Calculating…").length).toBeGreaterThan(0);
+  expect(screen.queryByText(/Detection worker exhausted retries/i)).not.toBeInTheDocument();
 
   const claimsTable = screen.getByRole("table", { name: "Claims table" });
-  expect(within(claimsTable).queryByText(/^Unavailable$/i)).not.toBeInTheDocument();
+  expect(within(claimsTable).queryByText(/^0$/i)).not.toBeInTheDocument();
 });
 
 test("uses server pagination and loads the requested page only", async () => {
@@ -172,7 +173,7 @@ test("manual claims refresh does not refetch report, graph or aggregate risk", a
 
   await screen.findByRole("heading", { name: /Claims risk intelligence/i });
   await user.click(claimsNavigationLink());
-  await screen.findByRole("heading", { name: /Claims review table/i });
+  await screen.findByRole("heading", { name: /^Claims$/i });
 
   const aggregateCallsBefore = global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/detection/")).length;
   const claimsCallsBefore = global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/claims")).length;
