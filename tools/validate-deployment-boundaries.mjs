@@ -11,6 +11,11 @@ const RECOVERY_BOOTSTRAP_SCRIPT_PATH =
   "infra/bootstrap-report-recovery-job.sh";
 const API_HEALTH_SCRIPT_PATH = "infra/verify-api-health.sh";
 const LEGACY_API_PATH = ".github/workflows/main_claimguard-api.yml";
+const ENSEMBLE_STAGE_PATH =
+  ".github/workflows/ensemble211-release-stage.yml";
+const ENSEMBLE_FINALIZE_PATH =
+  ".github/workflows/ensemble211-release-finalize.yml";
+const ENSEMBLE_PRODUCTION_PATH = "infra/ensemble211-production.bicep";
 
 function read(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -40,6 +45,9 @@ export function validateDeploymentBoundaries({
   recoveryBootstrapScript,
   apiHealthScript,
   legacyApi,
+  ensembleStage,
+  ensembleFinalize,
+  ensembleProduction,
 }) {
   for (const required of [
     "workflow_dispatch:",
@@ -91,6 +99,11 @@ export function validateDeploymentBoundaries({
     'API_HEALTH_DEADLINE_SECONDS: "300"',
     'API_HEALTH_REQUEST_TIMEOUT_SECONDS: "10"',
     'API_HEALTH_RETRY_SECONDS: "5"',
+    "claimguard-claim-fraud-baseline:1.0.0,claimguard-claim-fraud-ensemble:2.1.1",
+    "CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E",
+    "CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256",
+    "CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST",
+    "CLAIMGUARD_RELEASE_IMAGE_DIGEST",
   ]) {
     requireText(worker, required, "Report-worker deployment authorization");
   }
@@ -151,6 +164,11 @@ export function validateDeploymentBoundaries({
   for (const required of [
     "param recoveryJobName string = 'claimguard-report-recovery'",
     "param recoveryScheduleCron string = '0 0 1 1 *'",
+    "param ensembleDeploymentId string = 'claimguard-claim-fraud-ensemble:2.1.1'",
+    "param ensembleRuntimeConfigKey string = 'CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E'",
+    "param ensembleThreshold string = '0.049236234887246655'",
+    "MODEL_SERVICE_BASE_URL_${ensembleRuntimeConfigKey}",
+    "MODEL_SERVICE_PSEUDONYMIZATION_KEY_${ensembleRuntimeConfigKey}",
   ]) {
     requireText(eventWorker, required, "Event-worker parked recovery");
   }
@@ -244,6 +262,80 @@ export function validateDeploymentBoundaries({
     "claimguard-api-deploy-retired",
     "Retired direct API workflow",
   );
+
+  for (const required of [
+    "workflow_dispatch:",
+    "inputs.confirmation == 'STAGE_ENSEMBLE_2_1_1'",
+    "inputs.commit_sha == github.sha",
+    '[[ "$INPUT_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]',
+    "git ls-remote origin refs/heads/main",
+    "896d3c72-d979-4bdc-a37f-060988d12032",
+    "8efc1bb9-b90f-4a48-bf6c-ba0686193b80",
+    "southafricanorth",
+    "claimguard-claim-fraud-ensemble:2.1.1",
+    "sha256:0a4b771e8453b6f891e35b5a2921c2c840325ffd29bf773aa7989f5ef4241b2c",
+    "--show-values",
+    "0 0 1 1 *",
+    "Runtime traffic remains on the baseline",
+  ]) {
+    requireText(ensembleStage, required, "Ensemble release staging");
+  }
+  for (const required of [
+    "workflow_dispatch:",
+    "inputs.confirmation == 'ACTIVATE_ENSEMBLE_2_1_1_RUNTIME'",
+    "inputs.commit_sha == github.sha",
+    "ACTIVATION_AUDIT_EVENT_ID",
+    "git ls-remote origin refs/heads/main",
+    '[[ "$ACTIVATION_AUDIT_EVENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]',
+    'test "$CONFIGURED_APPROVED_MODEL_DEPLOYMENT_IDS" = "$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS"',
+    'test "$CONFIGURED_MANAGED_MODEL_DEPLOYMENT_ID" = "$ENSEMBLE_DEPLOYMENT_ID"',
+    "APPROVED_MODEL_DEPLOYMENT_IDS=\"$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS\"",
+    "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID=\"$ENSEMBLE_DEPLOYMENT_ID\"",
+    "0 0 1 1 *",
+    "No worker job was started by this workflow.",
+  ]) {
+    requireText(ensembleFinalize, required, "Ensemble release finalization");
+  }
+  for (const forbidden of [
+    "az containerapp job start",
+    "az containerapp job execution start",
+    "az containerapp job update",
+    "az containerapp job create",
+    "az containerapp job delete",
+  ]) {
+    forbidText(ensembleStage, forbidden, "Ensemble release staging");
+    forbidText(ensembleFinalize, forbidden, "Ensemble release finalization");
+  }
+  for (const forbidden of [
+    "az deployment group create",
+    "az containerapp update",
+    "az containerapp create",
+    "az containerapp delete",
+  ]) {
+    forbidText(
+      ensembleFinalize,
+      forbidden,
+      "Ensemble release finalization",
+    );
+  }
+
+  for (const required of [
+    "param modelContainerAppName string = 'claimguard-ml-ensemble-211'",
+    "var deploymentId = 'claimguard-claim-fraud-ensemble:2.1.1'",
+    "param modelIdentityName string = 'claimguard-prospective-model-identity'",
+    "CLAIMGUARD_ALLOWED_CALLER_PRINCIPAL_ID",
+    "minReplicas: 0",
+    "maxReplicas: 2",
+    "unauthenticatedClientAction: 'Return401'",
+    "'/health/live'",
+    "'/health/ready'",
+  ]) {
+    requireText(
+      ensembleProduction,
+      required,
+      "Ensemble production model infrastructure",
+    );
+  }
 }
 
 export function validateRepositoryDeploymentBoundaries() {
@@ -255,6 +347,9 @@ export function validateRepositoryDeploymentBoundaries() {
     recoveryBootstrapScript: read(RECOVERY_BOOTSTRAP_SCRIPT_PATH),
     apiHealthScript: read(API_HEALTH_SCRIPT_PATH),
     legacyApi: read(LEGACY_API_PATH),
+    ensembleStage: read(ENSEMBLE_STAGE_PATH),
+    ensembleFinalize: read(ENSEMBLE_FINALIZE_PATH),
+    ensembleProduction: read(ENSEMBLE_PRODUCTION_PATH),
   });
 }
 

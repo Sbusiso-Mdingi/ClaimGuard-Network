@@ -41,6 +41,18 @@ env:
   MODEL_EXPECTED_FEATURE_SCHEMA: claim-feature-schema-2026.2
   MODEL_EXPECTED_ANALYSIS_MODE: PROSPECTIVE_CLAIM_SCREENING
   MODEL_EXPECTED_BASELINE_THRESHOLD: '0.08760971001434723'
+  ENSEMBLE_MODEL_SERVICE_BASE_URL: https://claimguard-ml-ensemble-211.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io
+  ENSEMBLE_DEPLOYMENT_ID: claimguard-claim-fraud-ensemble:2.1.1
+  ENSEMBLE_RUNTIME_CONFIG_KEY: CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E
+  ENSEMBLE_EXPECTED_ID: claimguard-claim-fraud-ensemble
+  ENSEMBLE_EXPECTED_VERSION: 2.1.1
+  ENSEMBLE_EXPECTED_THRESHOLD: '0.049236234887246655'
+  WORKER_APPROVED_MODEL_DEPLOYMENT_IDS: claimguard-claim-fraud-baseline:1.0.0,claimguard-claim-fraud-ensemble:2.1.1
+  API_APPROVED_MODEL_DEPLOYMENT_IDS: ${{ vars.CLAIMGUARD_APPROVED_MODEL_DEPLOYMENT_IDS || 'claimguard-claim-fraud-baseline:1.0.0' }}
+  API_MANAGED_MODEL_DEPLOYMENT_ID: ${{ vars.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID || 'claimguard-claim-fraud-baseline:1.0.0' }}
+  RELEASE_ARTIFACT_SHA256: 644bbefaf14ac13c7eeb69965d6d53d29d150b632ec485b4bf9fd47297773d62
+  RELEASE_CANDIDATE_IMAGE_DIGEST: claimguardacr11e.azurecr.io/claimguard/ensemble2-prospective-model-service@sha256:423a6f88b8fb28580c47950676714237f72b73f7273acbad21806afd06c8fd1a
+  RELEASE_IMAGE_DIGEST: claimguardacr11e.azurecr.io/claimguard/ensemble2-prospective-model-service@sha256:0a4b771e8453b6f891e35b5a2921c2c840325ffd29bf773aa7989f5ef4241b2c
   MODEL_PSEUDONYM_SECRET_NAME: ${{ vars.MODEL_PSEUDONYM_SECRET_NAME || 'claimguard--report-worker--model-pseudonymization-key' }}
   VALIDATED_MAIN_SHA: ${{ github.event.workflow_run.head_sha }}
 
@@ -84,6 +96,13 @@ jobs:
             MODEL_EXPECTED_ID MODEL_EXPECTED_VERSION
             MODEL_EXPECTED_FEATURE_SCHEMA MODEL_EXPECTED_ANALYSIS_MODE
             MODEL_EXPECTED_BASELINE_THRESHOLD MODEL_PSEUDONYM_SECRET_NAME
+            ENSEMBLE_MODEL_SERVICE_BASE_URL ENSEMBLE_DEPLOYMENT_ID
+            ENSEMBLE_RUNTIME_CONFIG_KEY ENSEMBLE_EXPECTED_ID
+            ENSEMBLE_EXPECTED_VERSION ENSEMBLE_EXPECTED_THRESHOLD
+            WORKER_APPROVED_MODEL_DEPLOYMENT_IDS
+            API_APPROVED_MODEL_DEPLOYMENT_IDS API_MANAGED_MODEL_DEPLOYMENT_ID
+            RELEASE_ARTIFACT_SHA256 RELEASE_CANDIDATE_IMAGE_DIGEST
+            RELEASE_IMAGE_DIGEST
             MODEL_PSEUDONYMIZATION_KEY VALIDATED_MAIN_SHA
           )
           for name in "${required[@]}"; do
@@ -99,6 +118,15 @@ jobs:
           esac
           test "$MODEL_SERVICE_ENDPOINT_PATH" = "/v3/claim-screening"
           test "$MODEL_DEPLOYMENT_ID" = "claimguard-claim-fraud-baseline:1.0.0"
+          test "$ENSEMBLE_DEPLOYMENT_ID" = "claimguard-claim-fraud-ensemble:2.1.1"
+          test "$ENSEMBLE_RUNTIME_CONFIG_KEY" = "CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E"
+          test "$WORKER_APPROVED_MODEL_DEPLOYMENT_IDS" = "$MODEL_DEPLOYMENT_ID,$ENSEMBLE_DEPLOYMENT_ID"
+          if [ "$API_MANAGED_MODEL_DEPLOYMENT_ID" = "$MODEL_DEPLOYMENT_ID" ]; then
+            test "$API_APPROVED_MODEL_DEPLOYMENT_IDS" = "$MODEL_DEPLOYMENT_ID"
+          else
+            test "$API_MANAGED_MODEL_DEPLOYMENT_ID" = "$ENSEMBLE_DEPLOYMENT_ID"
+            test "$API_APPROVED_MODEL_DEPLOYMENT_IDS" = "$WORKER_APPROVED_MODEL_DEPLOYMENT_IDS"
+          fi
           [[ "$CLAIM_SCORING_QUEUE_NAME" =~ ^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$ ]]
           [[ "$REPORT_WORKER_JOB_NAME" =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]]
           [[ "$REPORT_WORKER_RECOVERY_JOB_NAME" =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]]
@@ -175,8 +203,8 @@ jobs:
             --query "[?name=='APPROVED_MODEL_DEPLOYMENT_IDS' || name=='CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID'].{name:name,value:value}" \
             --output json)"
           test "$(echo "$MODEL_SETTINGS_BEFORE" | jq length)" -eq 2
-          test "$(echo "$MODEL_SETTINGS_BEFORE" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$MODEL_DEPLOYMENT_ID"
-          test "$(echo "$MODEL_SETTINGS_BEFORE" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$MODEL_SETTINGS_BEFORE" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$API_APPROVED_MODEL_DEPLOYMENT_IDS"
+          test "$(echo "$MODEL_SETTINGS_BEFORE" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$API_MANAGED_MODEL_DEPLOYMENT_ID"
 
           echo "EVENT_EXECUTION_COUNT_BEFORE=$EVENT_EXECUTION_COUNT_BEFORE" >> "$GITHUB_ENV"
           echo "EVENT_ACTIVE_BEFORE=$EVENT_ACTIVE_BEFORE" >> "$GITHUB_ENV"
@@ -262,12 +290,21 @@ jobs:
               modelServiceBaseUrl="$MODEL_SERVICE_BASE_URL" \
               modelServiceAudience="$MODEL_SERVICE_AUDIENCE" \
               modelDeploymentId="$MODEL_DEPLOYMENT_ID" \
-              approvedModelDeploymentIds="$MODEL_DEPLOYMENT_ID" \
+              approvedModelDeploymentIds="$WORKER_APPROVED_MODEL_DEPLOYMENT_IDS" \
               prospectiveModelId="$MODEL_EXPECTED_ID" \
               prospectiveModelVersion="$MODEL_EXPECTED_VERSION" \
               prospectiveFeatureSchemaVersion="$MODEL_EXPECTED_FEATURE_SCHEMA" \
               prospectiveAnalysisMode="$MODEL_EXPECTED_ANALYSIS_MODE" \
               prospectiveThreshold="$MODEL_EXPECTED_BASELINE_THRESHOLD" \
+              ensembleModelServiceBaseUrl="$ENSEMBLE_MODEL_SERVICE_BASE_URL" \
+              ensembleModelServiceAudience="$MODEL_SERVICE_AUDIENCE" \
+              ensembleDeploymentId="$ENSEMBLE_DEPLOYMENT_ID" \
+              ensembleRuntimeConfigKey="$ENSEMBLE_RUNTIME_CONFIG_KEY" \
+              ensembleModelId="$ENSEMBLE_EXPECTED_ID" \
+              ensembleModelVersion="$ENSEMBLE_EXPECTED_VERSION" \
+              ensembleFeatureSchemaVersion="$MODEL_EXPECTED_FEATURE_SCHEMA" \
+              ensembleAnalysisMode="$MODEL_EXPECTED_ANALYSIS_MODE" \
+              ensembleThreshold="$ENSEMBLE_EXPECTED_THRESHOLD" \
             --only-show-errors
 
       - name: Configure API claim-scoring wake-ups
@@ -282,8 +319,12 @@ jobs:
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
-              APPROVED_MODEL_DEPLOYMENT_IDS="$MODEL_DEPLOYMENT_ID" \
-              CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID="$MODEL_DEPLOYMENT_ID" \
+              APPROVED_MODEL_DEPLOYMENT_IDS="$API_APPROVED_MODEL_DEPLOYMENT_IDS" \
+              CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID="$API_MANAGED_MODEL_DEPLOYMENT_ID" \
+              CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID="$ENSEMBLE_DEPLOYMENT_ID" \
+              CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256="$RELEASE_ARTIFACT_SHA256" \
+              CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST="$RELEASE_CANDIDATE_IMAGE_DIGEST" \
+              CLAIMGUARD_RELEASE_IMAGE_DIGEST="$RELEASE_IMAGE_DIGEST" \
               CLAIM_SCORING_QUEUE_URL="$CLAIM_SCORING_QUEUE_URL" \
             >/dev/null
           az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API"
@@ -309,11 +350,14 @@ jobs:
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].image')" = "$REPORT_WORKER_IMAGE"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS") | .value')" = "$WORKER_APPROVED_MODEL_DEPLOYMENT_IDS"
+          test "$(echo "$EVENT_JOB" | jq -r ".properties.template.containers[0].env[] | select(.name == \"MODEL_SERVICE_BASE_URL_${ENSEMBLE_RUNTIME_CONFIG_KEY}\") | .value")" = "$ENSEMBLE_MODEL_SERVICE_BASE_URL"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.triggerType')" = "Schedule"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.scheduleTriggerConfig.cronExpression')" = "$REPORT_WORKER_RECOVERY_CRON"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker drain-all"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].image')" = "$REPORT_WORKER_IMAGE"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS") | .value')" = "$WORKER_APPROVED_MODEL_DEPLOYMENT_IDS"
           EVENT_EXECUTION_COUNT_AFTER="$(az containerapp job execution list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$REPORT_WORKER_JOB_NAME" \
@@ -344,8 +388,8 @@ jobs:
             --output json)"
           test "$(echo "$SETTINGS" | jq length)" -eq 6
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIM_SCORING_QUEUE_URL") | .value')" = "https://${REPORT_STORAGE_ACCOUNT_NAME}.queue.core.windows.net/${CLAIM_SCORING_QUEUE_NAME}"
-          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$MODEL_DEPLOYMENT_ID"
-          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$API_APPROVED_MODEL_DEPLOYMENT_IDS"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$API_MANAGED_MODEL_DEPLOYMENT_ID"
 
           {
             echo "### Report-worker deployment audit"
@@ -354,5 +398,6 @@ jobs:
             echo "- Recovery executions: ${RECOVERY_EXECUTION_COUNT_BEFORE} before and after"
             echo "- Queue peek (maximum 32): ${QUEUE_PEEK_COUNT_BEFORE} before, ${QUEUE_PEEK_COUNT_AFTER} after"
             echo "- Recovery cron: ${REPORT_WORKER_RECOVERY_CRON}"
-            echo "- Model deployment: ${MODEL_DEPLOYMENT_ID}"
+            echo "- Worker-approved deployments: ${WORKER_APPROVED_MODEL_DEPLOYMENT_IDS}"
+            echo "- API-managed deployment: ${API_MANAGED_MODEL_DEPLOYMENT_ID}"
           } >> "$GITHUB_STEP_SUMMARY"

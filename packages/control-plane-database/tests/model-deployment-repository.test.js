@@ -183,3 +183,128 @@ test("registration rejects unsafe ownership, digests, and adverse action", async
     /not permitted/,
   );
 });
+
+test("activation verifies the governed candidate and retires only prior ClaimGuard models", async () => {
+  const deploymentId = "claimguard-claim-fraud-ensemble:2.1.1";
+  const candidateImage = `registry.example/model@sha256:${"b".repeat(64)}`;
+  const releaseImage = `registry.example/model@sha256:${"c".repeat(64)}`;
+  const candidateRow = rowFrom([
+    deploymentId,
+    "claimguard-claim-fraud-ensemble",
+    "2.1.1",
+    "ClaimGuard fraud ensemble 2.1.1",
+    "claimguard",
+    null,
+    "claimguard.claim-screening-request.v3",
+    "claimguard.claim-screening-response.v3",
+    "claim-feature-schema-2026.2",
+    "PROSPECTIVE_CLAIM_SCREENING",
+    0.049236234887246655,
+    "CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E",
+    "a".repeat(64),
+    candidateImage,
+    JSON.stringify({ prospectiveClaimScreening: true }),
+    "platform-admin-1",
+  ]);
+  const calls = [];
+  const executor = {
+    async execute(sql, params = []) {
+      const normalized = String(sql).replace(/\s+/g, " ").trim();
+      calls.push({ sql: normalized, params });
+      if (
+        normalized.startsWith("SELECT * FROM model_deployments")
+        && normalized.endsWith("FOR UPDATE")
+      ) {
+        return [[candidateRow], []];
+      }
+      if (normalized.startsWith("SELECT deployment_id FROM model_deployments")) {
+        return [[{
+          deployment_id: "claimguard-claim-fraud-baseline:1.0.0",
+        }], []];
+      }
+      if (
+        normalized.startsWith("UPDATE model_deployments")
+        && normalized.includes("SET lifecycle_status = 'retired'")
+      ) {
+        return [{ affectedRows: 1 }, []];
+      }
+      if (
+        normalized.startsWith("UPDATE model_deployments")
+        && normalized.includes("SET lifecycle_status = 'active'")
+      ) {
+        candidateRow.lifecycle_status = "active";
+        candidateRow.container_image_digest = params[0];
+        candidateRow.validated_at = new Date("2026-07-28T10:00:00Z");
+        candidateRow.activated_at = new Date("2026-07-28T10:00:00Z");
+        return [{ affectedRows: 1 }, []];
+      }
+      if (normalized.startsWith("SELECT * FROM model_deployments WHERE deployment_id")) {
+        return [[candidateRow], []];
+      }
+      throw new Error(`Unexpected SQL: ${normalized}`);
+    },
+  };
+
+  const result = await createModelDeploymentRepository(executor)
+    .activateClaimGuardCandidate({
+      deploymentId,
+      expectedArtifactSha256: "a".repeat(64),
+      expectedCandidateImageDigest: candidateImage,
+      releaseImageDigest: releaseImage,
+    });
+
+  assert.equal(result.alreadyActive, false);
+  assert.equal(result.model.lifecycleStatus, "active");
+  assert.equal(result.model.containerImageDigest, releaseImage);
+  assert.deepEqual(result.retiredDeploymentIds, [
+    "claimguard-claim-fraud-baseline:1.0.0",
+  ]);
+  assert.equal(
+    calls.filter((call) =>
+      call.sql.includes("SET lifecycle_status = 'retired'")).length,
+    1,
+  );
+});
+
+test("activation stops before mutation when candidate evidence differs", async () => {
+  const deploymentId = "claimguard-claim-fraud-ensemble:2.1.1";
+  const candidateRow = rowFrom([
+    deploymentId,
+    "claimguard-claim-fraud-ensemble",
+    "2.1.1",
+    "ClaimGuard fraud ensemble 2.1.1",
+    "claimguard",
+    null,
+    "claimguard.claim-screening-request.v3",
+    "claimguard.claim-screening-response.v3",
+    "claim-feature-schema-2026.2",
+    "PROSPECTIVE_CLAIM_SCREENING",
+    0.049236234887246655,
+    "CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E",
+    "a".repeat(64),
+    `registry.example/model@sha256:${"b".repeat(64)}`,
+    JSON.stringify({ prospectiveClaimScreening: true }),
+    "platform-admin-1",
+  ]);
+  let calls = 0;
+  const repository = createModelDeploymentRepository({
+    async execute(sql) {
+      calls += 1;
+      assert.match(String(sql), /FOR UPDATE/);
+      return [[candidateRow], []];
+    },
+  });
+
+  await assert.rejects(
+    () => repository.activateClaimGuardCandidate({
+      deploymentId,
+      expectedArtifactSha256: "d".repeat(64),
+      expectedCandidateImageDigest:
+        `registry.example/model@sha256:${"b".repeat(64)}`,
+      releaseImageDigest:
+        `registry.example/model@sha256:${"c".repeat(64)}`,
+    }),
+    (error) => error.code === "MODEL_DEPLOYMENT_RELEASE_MISMATCH",
+  );
+  assert.equal(calls, 1);
+});

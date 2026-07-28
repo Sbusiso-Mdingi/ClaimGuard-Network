@@ -19,7 +19,10 @@ function investigatorHeaders() {
   };
 }
 
-function createControlPlaneHarness({ failModelAudit = false } = {}) {
+function createControlPlaneHarness({
+  failModelAudit = false,
+  failModelActivationAudit = false,
+} = {}) {
   const organisations = new Map();
   const operations = new Map();
   const stepsByOperation = new Map();
@@ -85,12 +88,67 @@ function createControlPlaneHarness({ failModelAudit = false } = {}) {
         modelDeployments.set(model.deploymentId, model);
         return model;
       },
+      async activateClaimGuardCandidate({
+        deploymentId,
+        expectedArtifactSha256,
+        expectedCandidateImageDigest,
+        releaseImageDigest,
+      }) {
+        const current = modelDeployments.get(deploymentId);
+        if (
+          !current
+          || current.ownerType !== "claimguard"
+          || current.artifactSha256 !== expectedArtifactSha256
+          || current.containerImageDigest !== expectedCandidateImageDigest
+          || current.lifecycleStatus !== "candidate"
+        ) {
+          const error = new Error("The governed release does not match.");
+          error.code = "MODEL_DEPLOYMENT_RELEASE_MISMATCH";
+          error.status = 409;
+          throw error;
+        }
+        const retiredDeploymentIds = [];
+        for (const [id, model] of modelDeployments) {
+          if (
+            id !== deploymentId
+            && model.ownerType === "claimguard"
+            && model.lifecycleStatus === "active"
+          ) {
+            retiredDeploymentIds.push(id);
+            modelDeployments.set(id, {
+              ...model,
+              lifecycleStatus: "retired",
+              retiredAt: "2026-07-28T10:00:00.000Z",
+            });
+          }
+        }
+        const activated = {
+          ...current,
+          containerImageDigest: releaseImageDigest,
+          lifecycleStatus: "active",
+          validatedAt: "2026-07-28T10:00:00.000Z",
+          activatedAt: "2026-07-28T10:00:00.000Z",
+        };
+        modelDeployments.set(deploymentId, activated);
+        return {
+          model: activated,
+          previous: current,
+          retiredDeploymentIds,
+          alreadyActive: false,
+        };
+      },
     },
     security: {
       async recordPlatformAudit(event) {
         if (
-          failModelAudit
-          && event.action === "model_deployment.register_candidate"
+          (
+            failModelAudit
+            && event.action === "model_deployment.register_candidate"
+          )
+          || (
+            failModelActivationAudit
+            && event.action === "model_deployment.activate"
+          )
         ) {
           throw new Error("Simulated audit failure.");
         }
@@ -539,6 +597,143 @@ test("model candidate registration rolls back when its audit cannot be stored", 
   assert.equal(response.status, 400);
   assert.equal(harness.modelDeployments.size, 0);
   assert.equal(harness.audits.length, 0);
+});
+
+test("platform activation promotes only the exact staged ClaimGuard release and audits it", async () => {
+  const previous = {
+    deploymentId:
+      process.env.CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID,
+    artifact:
+      process.env.CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256,
+    candidateImage:
+      process.env.CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST,
+    releaseImage:
+      process.env.CLAIMGUARD_RELEASE_IMAGE_DIGEST,
+  };
+  const deploymentId = "claimguard-claim-fraud-ensemble:2.1.1";
+  const artifactSha256 = "a".repeat(64);
+  const candidateImageDigest = `registry.example/model@sha256:${"b".repeat(64)}`;
+  const releaseImageDigest = `registry.example/model@sha256:${"c".repeat(64)}`;
+  process.env.CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID = deploymentId;
+  process.env.CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256 = artifactSha256;
+  process.env.CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST = candidateImageDigest;
+  process.env.CLAIMGUARD_RELEASE_IMAGE_DIGEST = releaseImageDigest;
+
+  try {
+    const { app, harness } = createApp();
+    harness.modelDeployments.set("claimguard-claim-fraud-baseline:1.0.0", {
+      deploymentId: "claimguard-claim-fraud-baseline:1.0.0",
+      ownerType: "claimguard",
+      ownerOrganisationId: null,
+      lifecycleStatus: "active",
+      automaticAdverseAction: false,
+    });
+    harness.modelDeployments.set(deploymentId, {
+      deploymentId,
+      modelId: "claimguard-claim-fraud-ensemble",
+      modelVersion: "2.1.1",
+      ownerType: "claimguard",
+      ownerOrganisationId: null,
+      lifecycleStatus: "candidate",
+      artifactSha256,
+      containerImageDigest: candidateImageDigest,
+      automaticAdverseAction: false,
+      validatedAt: null,
+      activatedAt: null,
+      retiredAt: null,
+    });
+
+    const response = await app.request(
+      `http://localhost/admin/platform/model-deployments/${encodeURIComponent(deploymentId)}/activate`,
+      {
+        method: "POST",
+        headers: {
+          ...platformHeaders(),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          confirmation: `ACTIVATE ${deploymentId}`,
+        }),
+      },
+    );
+    const json = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(json.activated, true);
+    assert.equal(json.model.lifecycleStatus, "active");
+    assert.equal(json.model.containerImageDigest, releaseImageDigest);
+    assert.equal(json.runtimeActivationPending, true);
+    assert.deepEqual(json.retiredDeploymentIds, [
+      "claimguard-claim-fraud-baseline:1.0.0",
+    ]);
+    assert.equal(harness.audits[0].action, "model_deployment.activate");
+    assert.equal(harness.audits[0].targetId, deploymentId);
+  } finally {
+    const mappings = [
+      ["CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID", previous.deploymentId],
+      ["CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256", previous.artifact],
+      ["CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST", previous.candidateImage],
+      ["CLAIMGUARD_RELEASE_IMAGE_DIGEST", previous.releaseImage],
+    ];
+    for (const [key, value] of mappings) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("model activation rolls back when its audit cannot be stored", async () => {
+  const deploymentId = "claimguard-claim-fraud-ensemble:2.1.1";
+  const artifactSha256 = "d".repeat(64);
+  const candidateImageDigest = `registry.example/model@sha256:${"e".repeat(64)}`;
+  const releaseImageDigest = `registry.example/model@sha256:${"f".repeat(64)}`;
+  const keys = [
+    "CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID",
+    "CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256",
+    "CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST",
+    "CLAIMGUARD_RELEASE_IMAGE_DIGEST",
+  ];
+  const oldValues = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID: deploymentId,
+    CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256: artifactSha256,
+    CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST: candidateImageDigest,
+    CLAIMGUARD_RELEASE_IMAGE_DIGEST: releaseImageDigest,
+  });
+  try {
+    const { app, harness } = createApp({ failModelActivationAudit: true });
+    harness.modelDeployments.set(deploymentId, {
+      deploymentId,
+      ownerType: "claimguard",
+      ownerOrganisationId: null,
+      lifecycleStatus: "candidate",
+      artifactSha256,
+      containerImageDigest: candidateImageDigest,
+      automaticAdverseAction: false,
+    });
+    const response = await app.request(
+      `http://localhost/admin/platform/model-deployments/${encodeURIComponent(deploymentId)}/activate`,
+      {
+        method: "POST",
+        headers: {
+          ...platformHeaders(),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ confirmation: `ACTIVATE ${deploymentId}` }),
+      },
+    );
+    assert.equal(response.status, 400);
+    assert.equal(
+      harness.modelDeployments.get(deploymentId).lifecycleStatus,
+      "candidate",
+    );
+    assert.equal(harness.audits.length, 0);
+  } finally {
+    for (const key of keys) {
+      if (oldValues[key] === undefined) delete process.env[key];
+      else process.env[key] = oldValues[key];
+    }
+  }
 });
 
 test("provisioning request returns 202 and operation status can be polled", async () => {
