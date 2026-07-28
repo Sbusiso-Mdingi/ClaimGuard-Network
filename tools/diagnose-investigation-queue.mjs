@@ -165,6 +165,7 @@ async function main() {
     });
     acquired = await connectionManager.acquire(context);
     const repositories = createOperationalRepositories(context, acquired.pool);
+    const activeStrategy = await repositories.detectionStrategy.getActiveStrategy();
     const queue = await repositories.investigations.listInvestigations({
       page: 1,
       pageSize: 25,
@@ -191,6 +192,7 @@ async function main() {
         logicalDatabaseIdentifier: context.logicalDatabaseIdentifier,
       },
       databaseMetadata: acquired.metadata,
+      activeStrategy,
       queue: {
         rowCount: queue.investigations.length,
         pagination: queue.pagination,
