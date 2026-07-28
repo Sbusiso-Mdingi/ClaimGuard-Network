@@ -5,7 +5,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
-    "lint": "turbo run lint",
+    "lint": "node tools/validate-deployment-boundaries.mjs && turbo run lint",
     "report:worker": "pnpm --dir services/report-producer exec claimguard-produce-report worker --once",
     "report:producer:test": "pnpm --dir services/report-producer test"
   },

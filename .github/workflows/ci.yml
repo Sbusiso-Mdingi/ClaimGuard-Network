@@ -4,6 +4,16 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact 40-character main commit SHA approved for production
+        required: true
+        type: string
+      production_confirmation:
+        description: Type DEPLOY_PRODUCTION to authorize the release
+        required: true
+        type: string
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -59,6 +69,19 @@ jobs:
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Validate explicit production deployment authorization
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.production_confirmation }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_MAIN_SHA" = "$GITHUB_SHA"
+          test "$PRODUCTION_CONFIRMATION" = "DEPLOY_PRODUCTION"
 
       - name: Lint and build the complete monorepo
         run: pnpm turbo run lint build
@@ -172,7 +195,7 @@ jobs:
           retention-days: 14
 
       - name: Package deployable web artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY_PRODUCTION' && inputs.expected_main_sha == github.sha
         run: |
           rm -rf /tmp/claimguard-web-deploy
           pnpm --filter ./apps/web deploy /tmp/claimguard-web-deploy -P
@@ -186,7 +209,7 @@ jobs:
                "vitest.config.ts"
 
       - name: Package deployable API artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY_PRODUCTION' && inputs.expected_main_sha == github.sha
         run: |
           rm -rf /tmp/claimguard-api-deploy
           pnpm --filter ./apps/api deploy /tmp/claimguard-api-deploy -P
@@ -200,7 +223,7 @@ jobs:
                "*.log"
 
       - name: Verify API artifact preserves pnpm symlinks
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY_PRODUCTION' && inputs.expected_main_sha == github.sha
         run: |
           rm -rf /tmp/claimguard-api-deploy-check
           mkdir -p /tmp/claimguard-api-deploy-check
@@ -209,7 +232,7 @@ jobs:
           test -L /tmp/claimguard-api-deploy-check/node_modules/@claimguard/database
 
       - name: Upload deployable artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY_PRODUCTION' && inputs.expected_main_sha == github.sha
         uses: actions/upload-artifact@v4
         with:
           name: claimguard-deploy-packages
@@ -437,7 +460,7 @@ jobs:
     needs:
       - validate
       - mysql-integration
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY_PRODUCTION' && inputs.expected_main_sha == github.sha
     concurrency:
       group: claimguard-production
       cancel-in-progress: false
