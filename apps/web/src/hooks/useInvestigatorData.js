@@ -140,7 +140,6 @@ function resourceError(error, fallback) {
 
 export function useInvestigatorData({ enabled = true } = {}) {
   const claimsPageRef = useRef(1);
-  const [liveRefreshEnabled, setLiveRefreshEnabled] = useState(true);
   const [state, setState] = useState({
     status: "loading",
     report: null,
@@ -287,12 +286,12 @@ export function useInvestigatorData({ enabled = true } = {}) {
   }, [enabled, load]);
 
   useEffect(() => {
-    if (!enabled || !liveRefreshEnabled) return undefined;
+    if (!enabled) return undefined;
     const id = window.setInterval(() => {
       refreshClaims();
     }, CLAIMS_POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [enabled, liveRefreshEnabled, refreshClaims]);
+  }, [enabled, refreshClaims]);
 
   const metrics = useMemo(() => {
     const { report, claims, claimsPagination } = state;
@@ -334,12 +333,8 @@ export function useInvestigatorData({ enabled = true } = {}) {
 
   return {
     ...state,
-    mode: liveRefreshEnabled ? "live" : "static",
-    liveRefreshEnabled,
-    setLiveRefreshEnabled,
     metrics,
     pollingIntervalMs: CLAIMS_POLL_INTERVAL_MS,
-    setMode: (mode) => setLiveRefreshEnabled(mode === "live"),
     refreshNow: load,
     refreshClaims,
     loadClaimsPage: refreshClaims,

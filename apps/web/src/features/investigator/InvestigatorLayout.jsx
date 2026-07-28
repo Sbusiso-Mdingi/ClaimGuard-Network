@@ -14,14 +14,12 @@ import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
 import { useRole } from "../../context/RoleContext";
 import { canAccessNavItem, NAV_GROUPS } from "../../lib/roleNav";
 import {
   defaultRouteForIdentity,
   formatIdentityRoles,
 } from "../../lib/capabilities";
-import { RoleSwitcher } from "./RoleSwitcher";
 
 function isLiveDetectionRoute(pathname) {
   return (
@@ -47,12 +45,7 @@ const NAV_ICONS = Object.freeze({
 });
 
 export function InvestigatorLayout({
-  liveRefreshEnabled,
-  setLiveRefreshEnabled,
-  refreshNow,
-  lastRefresh,
   ledgerStatus,
-  dataSource,
 }) {
   const { identity, logout, mode } = useRole();
   const location = useLocation();
@@ -243,7 +236,6 @@ export function InvestigatorLayout({
           </nav>
 
           <div className="mt-auto space-y-4 pt-6 border-t border-border-soft/50">
-            <RoleSwitcher />
             {mode === "session" ? (
               <div className="rounded-[12px] border border-border-soft bg-surface-card p-3 shadow-sm">
                 <p className="text-[13px] font-semibold text-foreground">{identity.label}</p>
@@ -267,12 +259,14 @@ export function InvestigatorLayout({
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Role:</span>
                 <span className="text-[11px] font-semibold text-foreground">{formatIdentityRoles(identity)}</span>
               </div>
-              <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
-                <Activity className="h-3 w-3 text-[#62ce9b]" />
-                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
-                  {mode === "session" ? "Authenticated" : "Demo Mode"}
-                </span>
-              </div>
+              {mode === "session" ? (
+                <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
+                  <Activity className="h-3 w-3 text-[#62ce9b]" />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+                    Authenticated
+                  </span>
+                </div>
+              ) : null}
             </div>
             {showLiveControls ? (
               <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
@@ -281,29 +275,6 @@ export function InvestigatorLayout({
                   <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Ledger:</span>
                   <span className="text-[11px] font-semibold">{ledgerStatus}</span>
                 </div>
-                <div className="inline-flex rounded-lg border border-border-soft bg-background/55 p-0.5">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setLiveRefreshEnabled(true)}
-                    aria-label="Enable live refresh"
-                    className={`h-7 rounded-md px-3 text-[11px] font-semibold hover:bg-transparent ${liveRefreshEnabled ? "bg-primary/20 text-primary border border-primary/30" : "text-muted hover:text-foreground"}`}
-                  >
-                    Live Refresh
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setLiveRefreshEnabled(false)}
-                    aria-label="Disable live refresh"
-                    className={`h-7 rounded-md px-3 text-[11px] font-semibold hover:bg-transparent ${!liveRefreshEnabled ? "border border-border-soft bg-secondary/70 text-foreground" : "text-muted hover:text-foreground"}`}
-                  >
-                    Paused
-                  </Button>
-                </div>
-                <Button size="sm" variant="outline" onClick={refreshNow} className="h-8 rounded-lg border-border-soft bg-background/50 px-4 text-xs text-foreground hover:bg-secondary/70">
-                  Refresh
-                </Button>
               </div>
             ) : null}
           </header>

@@ -100,11 +100,6 @@ function InvestigatorRoutes() {
   const data = useInvestigatorData({ enabled: operationalWorkspaceEnabled });
   const ledger = useLedgerStatus({ enabled: operationalWorkspaceEnabled });
 
-  function refreshWorkspace() {
-    data.refreshNow();
-    ledger.refresh();
-  }
-
   function renderResourceContent(readyElement, { status, error, loadingTitle, loadingDescription, errorTitle, errorDescription }) {
     if (status === "loading") {
       return (
@@ -136,12 +131,7 @@ function InvestigatorRoutes() {
           path="/"
           element={
             <InvestigatorLayout
-              liveRefreshEnabled={data.liveRefreshEnabled}
-              setLiveRefreshEnabled={data.setLiveRefreshEnabled}
-              refreshNow={refreshWorkspace}
-              lastRefresh={data.lastRefresh}
               ledgerStatus={ledger.status}
-              dataSource={data.dataSource}
             />
           }
         >

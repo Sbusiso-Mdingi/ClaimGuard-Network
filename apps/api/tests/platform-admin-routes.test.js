@@ -259,6 +259,10 @@ function createApp(options) {
   const app = createBackendApp({
     controlPlaneRepositories: harness.repositories,
     controlPlaneService: harness.service,
+    authenticationConfiguration: {
+      mode: "demo_headers",
+      deploymentClass: options?.deploymentClass || "demo",
+    },
   });
   return { app, harness };
 }
@@ -288,6 +292,43 @@ test("platform admin creates draft organisation without provisioning infrastruct
   assert.equal(json.available, true);
   assert.equal(json.organisation.status, "draft");
   assert.equal(json.provisioningReview.generatedLogicalDatabaseName.startsWith("claimguard_tenant_"), true);
+});
+
+test("production onboarding defaults to production and rejects demo or pilot classes", async () => {
+  const { app } = createApp({ deploymentClass: "production" });
+
+  const accepted = await app.request("http://localhost/admin/platform/organisations", {
+    method: "POST",
+    headers: {
+      ...platformHeaders(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      displayName: "Production Scheme",
+      canonicalSlug: "production-scheme",
+    }),
+  });
+  const acceptedJson = await accepted.json();
+  assert.equal(accepted.status, 201);
+  assert.equal(acceptedJson.organisation.deploymentClass, "production");
+
+  for (const deploymentClass of ["demo", "pilot"]) {
+    const rejected = await app.request("http://localhost/admin/platform/organisations", {
+      method: "POST",
+      headers: {
+        ...platformHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        displayName: `${deploymentClass} Scheme`,
+        canonicalSlug: `${deploymentClass}-scheme`,
+        deploymentClass,
+      }),
+    });
+    const rejectedJson = await rejected.json();
+    assert.equal(rejected.status, 400);
+    assert.equal(rejectedJson.code, "DEPLOYMENT_CLASS_NOT_ALLOWED");
+  }
 });
 
 test("non-platform user cannot mutate onboarding routes", async () => {

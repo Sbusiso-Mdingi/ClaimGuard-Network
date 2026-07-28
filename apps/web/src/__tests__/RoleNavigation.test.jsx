@@ -1,6 +1,5 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { RoleProvider } from "../context/RoleContext";
 import { InvestigatorLayout } from "../features/investigator/InvestigatorLayout";
@@ -9,7 +8,8 @@ beforeEach(() => {
   window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
 });
 
-function renderLayout() {
+function renderLayout(identityId = "analyst-alpha") {
+  window.localStorage.setItem("claimguard-dev-identity", identityId);
   return render(
     <RoleProvider>
       <MemoryRouter initialEntries={["/"]}>
@@ -17,13 +17,7 @@ function renderLayout() {
           <Route
             path="/"
             element={
-              <InvestigatorLayout
-                liveRefreshEnabled={false}
-                setLiveRefreshEnabled={() => {}}
-                refreshNow={() => {}}
-                lastRefresh={null}
-                ledgerStatus="Not linked"
-              />
+              <InvestigatorLayout ledgerStatus="Not linked" />
             }
           >
             <Route index element={<div>dashboard content</div>} />
@@ -41,41 +35,29 @@ test("fraud analyst sees operational navigation but not scheme administration", 
   expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();
 });
 
-test("scheme administrator sees read-only operational navigation and administration", async () => {
-  const user = userEvent.setup();
-  renderLayout();
+test("scheme administrator sees read-only operational navigation and administration", () => {
+  renderLayout("scheme-admin-alpha");
 
-  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
-  await user.selectOptions(identitySelect, "scheme-admin-alpha");
-
-  expect(await screen.findByRole("link", { name: /Scheme Administration/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Scheme Administration/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Claims/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Investigations/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Shared Fraud Registry/i })).not.toBeInTheDocument();
 });
 
-test("applications committee members see only the shared registry workspace", async () => {
-  const user = userEvent.setup();
-  renderLayout();
+test("applications committee members see only the shared registry workspace", () => {
+  renderLayout("committee-alpha");
 
-  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
-  await user.selectOptions(identitySelect, "committee-alpha");
-
-  expect(await screen.findByRole("link", { name: /Shared Fraud Registry/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Shared Fraud Registry/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /^Claims$/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /^Investigations$/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();
 });
 
-test("platform administrators see platform governance without tenant operations", async () => {
-  const user = userEvent.setup();
-  renderLayout();
+test("platform administrators see platform governance without tenant operations", () => {
+  renderLayout("platform-admin");
 
-  const [identitySelect] = screen.getAllByRole("combobox", { name: /demo identity/i });
-  await user.selectOptions(identitySelect, "platform-admin");
-
-  expect(await screen.findByRole("link", { name: /Platform Administration/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Platform Administration/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /^Claims$/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /^Investigations$/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();
@@ -86,4 +68,13 @@ test("provides a keyboard skip link to the main workspace", () => {
 
   expect(screen.getByRole("link", { name: "Skip to main content" })).toHaveAttribute("href", "#main-content");
   expect(document.querySelector("#main-content")).toBeInTheDocument();
+});
+
+test("does not expose development or live-refresh controls", () => {
+  renderLayout();
+
+  expect(screen.queryByText(/Demo Mode/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Dev-only role switcher/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /live refresh/i })).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Paused$/i)).not.toBeInTheDocument();
 });

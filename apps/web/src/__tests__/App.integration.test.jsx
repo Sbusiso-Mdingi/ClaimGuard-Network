@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
 
@@ -227,7 +227,7 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
 });
 
-test("live refresh polls claims without refetching aggregate resources", async () => {
+test("automatic refresh polls claims without refetching aggregate resources", async () => {
   vi.useFakeTimers();
   render(<AppRoot />);
 
@@ -256,18 +256,17 @@ test("live refresh polls claims without refetching aggregate resources", async (
   expect(requestCount("/api/detection/graph")).toBe(1);
   expect(requestCount("/api/detection/risk")).toBe(1);
 
-  fireEvent.click(screen.getByRole("button", { name: /Disable live refresh/i }));
-
   await act(async () => {
     vi.advanceTimersByTime(30000);
     await Promise.resolve();
     await Promise.resolve();
   });
 
-  expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(3);
+  expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(5);
   expect(requestCount("/api/detection/report")).toBe(1);
   expect(requestCount("/api/detection/graph")).toBe(1);
   expect(requestCount("/api/detection/risk")).toBe(1);
+  expect(screen.queryByRole("button", { name: /live refresh/i })).not.toBeInTheDocument();
 }, 10000);
 
 test("shows unavailable state without substituting demo analytics when backend APIs fail", async () => {
