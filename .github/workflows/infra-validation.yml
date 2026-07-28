@@ -36,7 +36,10 @@ jobs:
           az bicep build --file infra/recovery-job-bootstrap.bicep --stdout >/dev/null
 
       - name: Validate production deployment boundaries
-        run: node --test tools/tests/validate-deployment-boundaries.test.mjs
+        run: |
+          node --test \
+            tools/tests/bootstrap-report-recovery-job.test.mjs \
+            tools/tests/validate-deployment-boundaries.test.mjs
 
       - name: Validate deployment workflow invariants
         shell: python
@@ -47,6 +50,7 @@ jobs:
           required = [
               'infra/event-report-worker.bicep',
               'infra/recovery-job-bootstrap.bicep',
+              'infra/bootstrap-report-recovery-job.sh',
               'Storage Queue Data Message Sender',
               'Storage Queue Data Contributor',
               'CLAIM_SCORING_QUEUE_URL',

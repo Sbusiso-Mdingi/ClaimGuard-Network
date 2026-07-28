@@ -183,52 +183,9 @@ jobs:
           echo "RECOVERY_EXECUTION_COUNT_BEFORE=$RECOVERY_EXECUTION_COUNT_BEFORE" >> "$GITHUB_ENV"
           echo "QUEUE_PEEK_COUNT_BEFORE=$QUEUE_PEEK_COUNT_BEFORE" >> "$GITHUB_ENV"
 
-      - name: Bootstrap first recovery-job identity association
+      - name: Bootstrap identity-free recovery job and attach identity
         shell: bash
-        run: |
-          set -euo pipefail
-          WORKER_IDENTITY_ID="$(az identity show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_WORKER_IDENTITY_NAME" \
-            --query id -o tsv)"
-
-          RECOVERY_CREATED=0
-          if ! az containerapp job show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
-            >/dev/null 2>&1; then
-            az deployment group create \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --name "recovery-job-bootstrap-${VALIDATED_MAIN_SHA::12}" \
-              --template-file infra/recovery-job-bootstrap.bicep \
-              --parameters \
-                containerAppsEnvironmentName="$REPORT_WORKER_ENVIRONMENT_NAME" \
-                workerIdentityName="$REPORT_WORKER_IDENTITY_NAME" \
-                recoveryJobName="$REPORT_WORKER_RECOVERY_JOB_NAME" \
-              --only-show-errors
-            RECOVERY_CREATED=1
-          fi
-
-          RECOVERY_JOB="$(az containerapp job show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
-            --output json)"
-          test "$(echo "$RECOVERY_JOB" | jq -r --arg id "$WORKER_IDENTITY_ID" '.identity.userAssignedIdentities | has($id)')" = "true"
-
-          RECOVERY_TRIGGER="$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.triggerType')"
-          if [ "$RECOVERY_CREATED" = "1" ]; then
-            test "$RECOVERY_TRIGGER" = "Manual"
-            test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].name')" = "recovery-bootstrap"
-          elif [ "$RECOVERY_TRIGGER" = "Schedule" ]; then
-            test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.scheduleTriggerConfig.cronExpression')" = "$REPORT_WORKER_RECOVERY_CRON"
-          else
-            test "$RECOVERY_TRIGGER" = "Manual"
-          fi
-
-          test "$(az containerapp job execution list \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$REPORT_WORKER_RECOVERY_JOB_NAME" \
-            --query 'length(@)' -o tsv)" = "$RECOVERY_EXECUTION_COUNT_BEFORE"
+        run: bash infra/bootstrap-report-recovery-job.sh
 
       - name: Verify queue-scoped runtime RBAC before deployment
         shell: bash
