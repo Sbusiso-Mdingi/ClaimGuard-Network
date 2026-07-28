@@ -4,14 +4,20 @@ on:
   pull_request:
     paths:
       - 'infra/**'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/main_claimguard-api.yml'
       - '.github/workflows/report-worker-deploy.yml'
       - '.github/workflows/infra-validation.yml'
+      - 'tools/validate-deployment-boundaries.mjs'
   push:
     branches: [main]
     paths:
       - 'infra/**'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/main_claimguard-api.yml'
       - '.github/workflows/report-worker-deploy.yml'
       - '.github/workflows/infra-validation.yml'
+      - 'tools/validate-deployment-boundaries.mjs'
 
 permissions:
   contents: read
@@ -27,6 +33,9 @@ jobs:
         run: |
           set -euo pipefail
           az bicep build --file infra/event-report-worker.bicep --stdout >/dev/null
+
+      - name: Validate production deployment boundaries
+        run: node --test tools/tests/validate-deployment-boundaries.test.mjs
 
       - name: Validate deployment workflow invariants
         shell: python
