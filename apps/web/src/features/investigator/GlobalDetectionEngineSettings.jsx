@@ -45,6 +45,7 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
   const [registration, setRegistration] = useState(DEFAULT_REGISTRATION);
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
+  const [activatingId, setActivatingId] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -132,6 +133,42 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
     }
   }
 
+  async function activateStagedRelease(model) {
+    const confirmed = window.confirm(
+      `Activate ${model.deploymentId} in the governed catalogue? `
+      + "This retires the prior ClaimGuard-managed catalogue entry. "
+      + "Runtime selection remains a separate deployment-controlled step.",
+    );
+    if (!confirmed) return;
+    setActivatingId(model.deploymentId);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiJson(
+        `/admin/platform/model-deployments/${encodeURIComponent(model.deploymentId)}/activate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            confirmation: `ACTIVATE ${model.deploymentId}`,
+          }),
+        },
+      );
+      setMessage(
+        `Catalogue activation recorded as ${result.auditEventId}. `
+        + "Complete the guarded runtime finalization before sending new release traffic.",
+      );
+      await loadConfiguration();
+    } catch (requestError) {
+      setError(
+        requestError instanceof ApiError
+          ? requestError.message
+          : "Failed to activate the staged model release.",
+      );
+    } finally {
+      setActivatingId("");
+    }
+  }
+
   if (loading) {
     return (
       <WorkspaceNotice title="Loading managed model configuration">
@@ -143,7 +180,7 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
   return (
     <div className="grid gap-5">
       {error ? <WorkspaceNotice title="Model governance unavailable" tone="danger">{error}</WorkspaceNotice> : null}
-      {message ? <WorkspaceNotice title="Candidate recorded" tone="success">{message}</WorkspaceNotice> : null}
+      {message ? <WorkspaceNotice title="Model governance updated" tone="success">{message}</WorkspaceNotice> : null}
 
       {strategy ? (
         <>
@@ -251,6 +288,28 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
                     },
                   ]}
                 />
+                {model.ownerType === "claimguard"
+                  && model.lifecycleStatus === "candidate"
+                  && model.artifactSha256
+                  && model.containerImageDigest ? (
+                    <div className="mt-4 border-t border-border/70 pt-4">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={Boolean(activatingId)}
+                        onClick={() => activateStagedRelease(model)}
+                      >
+                        {activatingId === model.deploymentId
+                          ? "Recording activation…"
+                          : "Activate staged release"}
+                      </Button>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Available only when the deployed release evidence exactly
+                        matches this candidate. Runtime traffic changes separately.
+                      </p>
+                    </div>
+                  ) : null}
               </article>
             ))}
           </div>

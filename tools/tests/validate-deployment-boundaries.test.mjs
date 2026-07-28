@@ -19,6 +19,11 @@ function repositoryWorkflows() {
     recoveryBootstrapScript: read("infra/bootstrap-report-recovery-job.sh"),
     apiHealthScript: read("infra/verify-api-health.sh"),
     legacyApi: read(".github/workflows/main_claimguard-api.yml"),
+    ensembleStage: read(".github/workflows/ensemble211-release-stage.yml"),
+    ensembleFinalize: read(
+      ".github/workflows/ensemble211-release-finalize.yml",
+    ),
+    ensembleProduction: read("infra/ensemble211-production.bicep"),
   };
 }
 
@@ -211,6 +216,36 @@ test("worker deployment cannot start a scoring or recovery execution", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /Report-worker deployment still contains/,
+  );
+});
+
+test("ensemble staging cannot start or mutate a worker job", () => {
+  const workflows = repositoryWorkflows();
+  workflows.ensembleStage += "\n# az containerapp job start\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Ensemble release staging still contains/,
+  );
+});
+
+test("ensemble finalization cannot deploy infrastructure", () => {
+  const workflows = repositoryWorkflows();
+  workflows.ensembleFinalize += "\n# az deployment group create\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Ensemble release finalization still contains/,
+  );
+});
+
+test("ensemble production service must remain scale-to-zero", () => {
+  const workflows = repositoryWorkflows();
+  workflows.ensembleProduction = workflows.ensembleProduction.replace(
+    "minReplicas: 0",
+    "minReplicas: 1",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Ensemble production model infrastructure is missing/,
   );
 });
 

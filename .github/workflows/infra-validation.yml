@@ -7,6 +7,8 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/workflows/main_claimguard-api.yml'
       - '.github/workflows/report-worker-deploy.yml'
+      - '.github/workflows/ensemble211-release-stage.yml'
+      - '.github/workflows/ensemble211-release-finalize.yml'
       - '.github/workflows/infra-validation.yml'
       - 'tools/validate-deployment-boundaries.mjs'
   push:
@@ -16,6 +18,8 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/workflows/main_claimguard-api.yml'
       - '.github/workflows/report-worker-deploy.yml'
+      - '.github/workflows/ensemble211-release-stage.yml'
+      - '.github/workflows/ensemble211-release-finalize.yml'
       - '.github/workflows/infra-validation.yml'
       - 'tools/validate-deployment-boundaries.mjs'
 
@@ -34,6 +38,7 @@ jobs:
           set -euo pipefail
           az bicep build --file infra/event-report-worker.bicep --stdout >/dev/null
           az bicep build --file infra/recovery-job-bootstrap.bicep --stdout >/dev/null
+          az bicep build --file infra/ensemble211-production.bicep --stdout >/dev/null
 
       - name: Validate production deployment boundaries
         run: |
@@ -65,6 +70,10 @@ jobs:
               'worker event',
               'worker drain-all',
               'Verify API health after claim-scoring restart',
+              'CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256',
+              'CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST',
+              'CLAIMGUARD_RELEASE_IMAGE_DIGEST',
+              'claimguard-claim-fraud-baseline:1.0.0,claimguard-claim-fraud-ensemble:2.1.1',
           ]
           missing = [value for value in workflow_required if value not in workflow]
           if missing:

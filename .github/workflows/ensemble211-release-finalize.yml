@@ -1,0 +1,157 @@
+name: ensemble211-release-finalize
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact main commit containing the staged release
+        required: true
+        type: string
+      activation_audit_event_id:
+        description: Audit event returned by the production activation API
+        required: true
+        type: string
+      confirmation:
+        description: Type ACTIVATE_ENSEMBLE_2_1_1_RUNTIME
+        required: true
+        type: string
+
+concurrency:
+  group: claimguard-model-release-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'ClaimGuard' }}
+  AZURE_WEBAPP_API: ${{ vars.AZURE_WEBAPP_API }}
+  REPORT_WORKER_JOB_NAME: ${{ vars.REPORT_WORKER_JOB_NAME || 'claimguard-report-producer' }}
+  REPORT_WORKER_RECOVERY_JOB_NAME: ${{ vars.REPORT_WORKER_RECOVERY_JOB_NAME || 'claimguard-report-recovery' }}
+  RELEASE_MODEL_APP_NAME: claimguard-ml-ensemble-211
+  BASELINE_DEPLOYMENT_ID: claimguard-claim-fraud-baseline:1.0.0
+  ENSEMBLE_DEPLOYMENT_ID: claimguard-claim-fraud-ensemble:2.1.1
+  ENSEMBLE_RUNTIME_CONFIG_KEY: CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E
+  FINAL_APPROVED_MODEL_DEPLOYMENT_IDS: claimguard-claim-fraud-baseline:1.0.0,claimguard-claim-fraud-ensemble:2.1.1
+  CONFIGURED_APPROVED_MODEL_DEPLOYMENT_IDS: ${{ vars.CLAIMGUARD_APPROVED_MODEL_DEPLOYMENT_IDS }}
+  CONFIGURED_MANAGED_MODEL_DEPLOYMENT_ID: ${{ vars.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID }}
+  RELEASE_IMAGE: claimguardacr11e.azurecr.io/claimguard/ensemble2-prospective-model-service@sha256:0a4b771e8453b6f891e35b5a2921c2c840325ffd29bf773aa7989f5ef4241b2c
+  INPUT_COMMIT_SHA: ${{ inputs.commit_sha }}
+  ACTIVATION_AUDIT_EVENT_ID: ${{ inputs.activation_audit_event_id }}
+
+jobs:
+  finalize:
+    if: >-
+      github.ref_name == 'main' &&
+      inputs.confirmation == 'ACTIVATE_ENSEMBLE_2_1_1_RUNTIME' &&
+      inputs.commit_sha == github.sha
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Validate immutable release input
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$INPUT_COMMIT_SHA"
+          test "$(git ls-remote origin refs/heads/main | awk '{print $1}')" = "$INPUT_COMMIT_SHA"
+          [[ "$ACTIVATION_AUDIT_EVENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          test "$CONFIGURED_APPROVED_MODEL_DEPLOYMENT_IDS" = "$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS"
+          test "$CONFIGURED_MANAGED_MODEL_DEPLOYMENT_ID" = "$ENSEMBLE_DEPLOYMENT_ID"
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+
+      - name: Verify exact staged production state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(az account show --query id -o tsv)" = "896d3c72-d979-4bdc-a37f-060988d12032"
+          test "$(az account show --query tenantId -o tsv)" = "8efc1bb9-b90f-4a48-bf6c-ba0686193b80"
+          test "$AZURE_RESOURCE_GROUP" = "ClaimGuard"
+          test "$(az group show --name "$AZURE_RESOURCE_GROUP" --query location -o tsv)" = "southafricanorth"
+
+          RELEASE_APP="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$RELEASE_MODEL_APP_NAME" -o json)"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.provisioningState')" = "Succeeded"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.template.containers[0].image')" = "$RELEASE_IMAGE"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.minReplicas')" = "0"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.maxReplicas')" = "2"
+          test "$(curl --fail --silent --show-error --max-time 30 "https://claimguard-ml-ensemble-211.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io/health/ready" | jq -r '.status')" = "ready"
+
+          EVENT_JOB="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_JOB_NAME" -o json)"
+          RECOVERY_JOB="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" -o json)"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.triggerType')" = "Event"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "1"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS") | .value')" = "$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS"
+          test "$(echo "$EVENT_JOB" | jq -r ".properties.template.containers[0].env[] | select(.name == \"MODEL_SERVICE_BASE_URL_${ENSEMBLE_RUNTIME_CONFIG_KEY}\") | .value")" = "https://claimguard-ml-ensemble-211.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.triggerType')" = "Schedule"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.scheduleTriggerConfig.cronExpression')" = "0 0 1 1 *"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker drain-all"
+          test "$(az containerapp job execution list --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" --query 'length(@)' -o tsv)" = "0"
+
+          SETTINGS="$(az webapp config appsettings list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" -o json)"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$BASELINE_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$BASELINE_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID") | .value')" = "$ENSEMBLE_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_IMAGE_DIGEST") | .value')" = "$RELEASE_IMAGE"
+
+      - name: Select the audited model for future claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          az webapp config appsettings set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" \
+            --settings \
+              APPROVED_MODEL_DEPLOYMENT_IDS="$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS" \
+              CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID="$ENSEMBLE_DEPLOYMENT_ID" \
+              CLAIMGUARD_MODEL_ACTIVATION_AUDIT_EVENT_ID="$ACTIVATION_AUDIT_EVENT_ID" \
+            >/dev/null
+          az webapp restart \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API"
+
+      - name: Verify final production state
+        shell: bash
+        env:
+          API_HEALTH_DEADLINE_SECONDS: "300"
+          API_HEALTH_REQUEST_TIMEOUT_SECONDS: "10"
+          API_HEALTH_RETRY_SECONDS: "5"
+        run: |
+          set -euo pipefail
+          bash infra/verify-api-health.sh
+          SETTINGS="$(az webapp config appsettings list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" -o json)"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$ENSEMBLE_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MODEL_ACTIVATION_AUDIT_EVENT_ID") | .value')" = "$ACTIVATION_AUDIT_EVENT_ID"
+          test "$(az containerapp job execution list --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" --query 'length(@)' -o tsv)" = "0"
+
+          {
+            echo "### Ensemble 2.1.1 runtime activated"
+            echo "- Commit: ${INPUT_COMMIT_SHA}"
+            echo "- Audit event: ${ACTIVATION_AUDIT_EVENT_ID}"
+            echo "- Managed deployment: ${ENSEMBLE_DEPLOYMENT_ID}"
+            echo "- Approved deployments: ${FINAL_APPROVED_MODEL_DEPLOYMENT_IDS}"
+            echo "- Recovery schedule: 0 0 1 1 *"
+            echo "- Recovery executions: 0"
+            echo "- No worker job was started by this workflow."
+          } >> "$GITHUB_STEP_SUMMARY"

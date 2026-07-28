@@ -25,6 +25,15 @@ param prospectiveModelVersion string = '1.0.0'
 param prospectiveFeatureSchemaVersion string = 'claim-feature-schema-2026.2'
 param prospectiveAnalysisMode string = 'PROSPECTIVE_CLAIM_SCREENING'
 param prospectiveThreshold string = '0.08760971001434723'
+param ensembleModelServiceBaseUrl string
+param ensembleModelServiceAudience string = modelServiceAudience
+param ensembleDeploymentId string = 'claimguard-claim-fraud-ensemble:2.1.1'
+param ensembleRuntimeConfigKey string = 'CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E'
+param ensembleModelId string = 'claimguard-claim-fraud-ensemble'
+param ensembleModelVersion string = '2.1.1'
+param ensembleFeatureSchemaVersion string = 'claim-feature-schema-2026.2'
+param ensembleAnalysisMode string = 'PROSPECTIVE_CLAIM_SCREENING'
+param ensembleThreshold string = '0.049236234887246655'
 param pollingIntervalSeconds int = 5
 param maximumExecutions int = 1
 
@@ -114,6 +123,16 @@ var workerEnvironment = [
   { name: 'MODEL_SERVICE_EXPECTED_THRESHOLD', value: prospectiveThreshold }
   { name: 'MODEL_SERVICE_ENDPOINT_PATH', value: '/v3/claim-screening' }
   { name: 'MODEL_SERVICE_TIMEOUT_SECONDS', value: '120' }
+  { name: 'MODEL_SERVICE_BASE_URL_${ensembleRuntimeConfigKey}', value: ensembleModelServiceBaseUrl }
+  { name: 'MODEL_SERVICE_AUDIENCE_${ensembleRuntimeConfigKey}', value: ensembleModelServiceAudience }
+  { name: 'MODEL_SERVICE_PSEUDONYMIZATION_KEY_${ensembleRuntimeConfigKey}', secretRef: 'model-pseudonymization-key' }
+  { name: 'MODEL_SERVICE_EXPECTED_MODEL_ID_${ensembleRuntimeConfigKey}', value: ensembleModelId }
+  { name: 'MODEL_SERVICE_EXPECTED_MODEL_VERSION_${ensembleRuntimeConfigKey}', value: ensembleModelVersion }
+  { name: 'MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION_${ensembleRuntimeConfigKey}', value: ensembleFeatureSchemaVersion }
+  { name: 'MODEL_SERVICE_EXPECTED_ANALYSIS_MODE_${ensembleRuntimeConfigKey}', value: ensembleAnalysisMode }
+  { name: 'MODEL_SERVICE_EXPECTED_THRESHOLD_${ensembleRuntimeConfigKey}', value: ensembleThreshold }
+  { name: 'MODEL_SERVICE_ENDPOINT_PATH_${ensembleRuntimeConfigKey}', value: '/v3/claim-screening' }
+  { name: 'MODEL_SERVICE_TIMEOUT_SECONDS_${ensembleRuntimeConfigKey}', value: '120' }
   { name: 'REPORT_STORAGE_BACKEND', value: 'azure_blob' }
   { name: 'REPORT_STORAGE_ACCOUNT_URL', value: reportStorageAccountUrl }
   { name: 'REPORT_STORAGE_CONTAINER', value: reportStorageContainerName }
@@ -143,6 +162,7 @@ resource reportWorker 'Microsoft.App/jobs@2024-03-01' = {
     trigger: 'claim-scoring-queue'
     scaleToZero: 'true'
     schemaVersion: '14'
+    stagedModelDeployment: ensembleDeploymentId
   }
   identity: {
     type: 'UserAssigned'
@@ -216,6 +236,7 @@ resource recoveryWorker 'Microsoft.App/jobs@2024-03-01' = {
     trigger: 'scheduled-outbox-recovery'
     scaleToZero: 'true'
     schemaVersion: '14'
+    stagedModelDeployment: ensembleDeploymentId
   }
   identity: {
     type: 'UserAssigned'

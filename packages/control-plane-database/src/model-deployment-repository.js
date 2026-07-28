@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 
-import { ControlPlaneValidationError } from "./errors.js";
+import {
+  ControlPlaneConflictError,
+  ControlPlaneNotFoundError,
+  ControlPlaneValidationError,
+} from "./errors.js";
 import { executorOr } from "./transaction.js";
 import { assertNoPlaintextPassword } from "./validation.js";
 
@@ -266,6 +270,137 @@ export function createModelDeploymentRepository(defaultExecutor) {
         [canonical],
       );
       return projectModelDeployment(rows?.[0]);
+    },
+
+    async activateClaimGuardCandidate(input, { executor } = {}) {
+      assertNoPlaintextPassword(input);
+      const db = executorOr(defaultExecutor, executor);
+      const deploymentId = identifier(
+        input.deploymentId,
+        "deploymentId",
+        DEPLOYMENT_ID_PATTERN,
+        128,
+      );
+      const expectedArtifactSha256 = requiredDigest(
+        input.expectedArtifactSha256,
+        "expectedArtifactSha256",
+        SHA256_PATTERN,
+      );
+      const expectedCandidateImageDigest = requiredDigest(
+        input.expectedCandidateImageDigest,
+        "expectedCandidateImageDigest",
+        IMAGE_DIGEST_PATTERN,
+      );
+      const releaseImageDigest = requiredDigest(
+        input.releaseImageDigest,
+        "releaseImageDigest",
+        IMAGE_DIGEST_PATTERN,
+      );
+
+      const [rows] = await db.execute(
+        `SELECT * FROM model_deployments
+         WHERE deployment_id = ? LIMIT 1 FOR UPDATE`,
+        [deploymentId],
+      );
+      const current = projectModelDeployment(rows?.[0]);
+      if (!current) {
+        throw new ControlPlaneNotFoundError(
+          "The governed model deployment was not found.",
+          "MODEL_DEPLOYMENT_NOT_FOUND",
+        );
+      }
+      if (
+        current.ownerType !== "claimguard"
+        || current.ownerOrganisationId !== null
+        || current.automaticAdverseAction
+        || current.artifactSha256 !== expectedArtifactSha256
+      ) {
+        throw new ControlPlaneConflictError(
+          "The governed model candidate does not match the approved release.",
+          "MODEL_DEPLOYMENT_RELEASE_MISMATCH",
+        );
+      }
+      if (
+        current.lifecycleStatus === "active"
+        && current.containerImageDigest === releaseImageDigest
+        && current.validatedAt
+        && current.activatedAt
+        && !current.retiredAt
+      ) {
+        return {
+          model: current,
+          previous: current,
+          retiredDeploymentIds: [],
+          alreadyActive: true,
+        };
+      }
+      if (
+        current.lifecycleStatus !== "candidate"
+        || current.containerImageDigest !== expectedCandidateImageDigest
+        || current.validatedAt
+        || current.activatedAt
+        || current.retiredAt
+      ) {
+        throw new ControlPlaneConflictError(
+          "The model deployment is not in the exact releasable candidate state.",
+          "MODEL_DEPLOYMENT_NOT_RELEASABLE",
+        );
+      }
+
+      const [activeRows] = await db.execute(
+        `SELECT deployment_id FROM model_deployments
+         WHERE owner_type = 'claimguard'
+           AND owner_organisation_id IS NULL
+           AND lifecycle_status = 'active'
+           AND deployment_id <> ?
+         FOR UPDATE`,
+        [deploymentId],
+      );
+      const retiredDeploymentIds = (activeRows || [])
+        .map((row) => row.deployment_id)
+        .sort();
+
+      await db.execute(
+        `UPDATE model_deployments
+         SET lifecycle_status = 'retired',
+             retired_at = CURRENT_TIMESTAMP(3)
+         WHERE owner_type = 'claimguard'
+           AND owner_organisation_id IS NULL
+           AND lifecycle_status = 'active'
+           AND deployment_id <> ?`,
+        [deploymentId],
+      );
+      await db.execute(
+        `UPDATE model_deployments
+         SET lifecycle_status = 'active',
+             container_image_digest = ?,
+             validated_at = CURRENT_TIMESTAMP(3),
+             activated_at = CURRENT_TIMESTAMP(3),
+             retired_at = NULL
+         WHERE deployment_id = ?`,
+        [releaseImageDigest, deploymentId],
+      );
+      const [storedRows] = await db.execute(
+        "SELECT * FROM model_deployments WHERE deployment_id = ? LIMIT 1",
+        [deploymentId],
+      );
+      const model = projectModelDeployment(storedRows?.[0]);
+      if (
+        !model
+        || model.lifecycleStatus !== "active"
+        || model.containerImageDigest !== releaseImageDigest
+      ) {
+        throw new ControlPlaneConflictError(
+          "The model deployment activation could not be verified.",
+          "MODEL_DEPLOYMENT_ACTIVATION_UNVERIFIED",
+        );
+      }
+      return {
+        model,
+        previous: current,
+        retiredDeploymentIds,
+        alreadyActive: false,
+      };
     },
 
     async listAll({ executor } = {}) {

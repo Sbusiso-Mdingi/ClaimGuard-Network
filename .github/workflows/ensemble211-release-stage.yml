@@ -1,0 +1,186 @@
+name: ensemble211-release-stage
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact main commit to stage
+        required: true
+        type: string
+      confirmation:
+        description: Type STAGE_ENSEMBLE_2_1_1
+        required: true
+        type: string
+
+concurrency:
+  group: claimguard-model-release-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'ClaimGuard' }}
+  AZURE_WEBAPP_API: ${{ vars.AZURE_WEBAPP_API }}
+  CONTAINER_APPS_ENVIRONMENT: ${{ vars.REPORT_WORKER_ENVIRONMENT_NAME || 'claimguard-env-11e' }}
+  CONTAINER_REGISTRY_NAME: ${{ vars.REPORT_WORKER_ACR_NAME || 'claimguardacr11e' }}
+  MODEL_IDENTITY_NAME: claimguard-prospective-model-identity
+  BASELINE_MODEL_APP_NAME: claimguard-ml-prospective
+  RELEASE_MODEL_APP_NAME: claimguard-ml-ensemble-211
+  CANARY_MODEL_APP_NAME: claimguard-ensemble-211-canary
+  REPORT_WORKER_IDENTITY_NAME: ${{ vars.REPORT_WORKER_IDENTITY_NAME || 'claimguard-report-worker-identity' }}
+  REPORT_WORKER_JOB_NAME: ${{ vars.REPORT_WORKER_JOB_NAME || 'claimguard-report-producer' }}
+  REPORT_WORKER_RECOVERY_JOB_NAME: ${{ vars.REPORT_WORKER_RECOVERY_JOB_NAME || 'claimguard-report-recovery' }}
+  ENSEMBLE_DEPLOYMENT_ID: claimguard-claim-fraud-ensemble:2.1.1
+  ENSEMBLE_RUNTIME_CONFIG_KEY: CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E
+  RELEASE_ARTIFACT_SHA256: 644bbefaf14ac13c7eeb69965d6d53d29d150b632ec485b4bf9fd47297773d62
+  RELEASE_CANDIDATE_IMAGE: claimguardacr11e.azurecr.io/claimguard/ensemble2-prospective-model-service@sha256:423a6f88b8fb28580c47950676714237f72b73f7273acbad21806afd06c8fd1a
+  RELEASE_IMAGE: claimguardacr11e.azurecr.io/claimguard/ensemble2-prospective-model-service@sha256:0a4b771e8453b6f891e35b5a2921c2c840325ffd29bf773aa7989f5ef4241b2c
+  INPUT_COMMIT_SHA: ${{ inputs.commit_sha }}
+
+jobs:
+  stage:
+    if: >-
+      github.ref_name == 'main' &&
+      inputs.confirmation == 'STAGE_ENSEMBLE_2_1_1' &&
+      inputs.commit_sha == github.sha
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Reject a non-main or moving revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$INPUT_COMMIT_SHA"
+          test "$(git ls-remote origin refs/heads/main | awk '{print $1}')" = "$INPUT_COMMIT_SHA"
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+
+      - name: Verify exact production boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(az account show --query id -o tsv)" = "896d3c72-d979-4bdc-a37f-060988d12032"
+          test "$(az account show --query tenantId -o tsv)" = "8efc1bb9-b90f-4a48-bf6c-ba0686193b80"
+          test "$AZURE_RESOURCE_GROUP" = "ClaimGuard"
+          test "$(az group show --name "$AZURE_RESOURCE_GROUP" --query location -o tsv)" = "southafricanorth"
+
+          CANARY="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$CANARY_MODEL_APP_NAME" -o json)"
+          test "$(echo "$CANARY" | jq -r '.properties.provisioningState')" = "Succeeded"
+          test "$(echo "$CANARY" | jq -r '.properties.template.containers[0].image')" = "$RELEASE_IMAGE"
+          test "$(echo "$CANARY" | jq -r '.properties.template.scale.minReplicas')" = "0"
+          test "$(echo "$CANARY" | jq -r '.properties.template.scale.maxReplicas')" = "1"
+
+          EVENT_JOB="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_JOB_NAME" -o json)"
+          RECOVERY_JOB="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" -o json)"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.triggerType')" = "Event"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "1"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS") | .value')" = "claimguard-claim-fraud-baseline:1.0.0,${ENSEMBLE_DEPLOYMENT_ID}"
+          test "$(echo "$EVENT_JOB" | jq -r ".properties.template.containers[0].env[] | select(.name == \"MODEL_SERVICE_BASE_URL_${ENSEMBLE_RUNTIME_CONFIG_KEY}\") | .value")" = "https://claimguard-ml-ensemble-211.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.triggerType')" = "Schedule"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.scheduleTriggerConfig.cronExpression')" = "0 0 1 1 *"
+          test "$(echo "$RECOVERY_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker drain-all"
+          test "$(az containerapp job execution list --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" --query "length([?properties.status=='Running' || properties.status=='Processing'])" -o tsv)" = "0"
+          test "$(az containerapp job execution list --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" --query 'length(@)' -o tsv)" = "0"
+
+          API_SETTINGS="$(az webapp config appsettings list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_API" -o json)"
+          test "$(echo "$API_SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "claimguard-claim-fraud-baseline:1.0.0"
+          test "$(echo "$API_SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "claimguard-claim-fraud-baseline:1.0.0"
+          test "$(echo "$API_SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID") | .value')" = "$ENSEMBLE_DEPLOYMENT_ID"
+          test "$(echo "$API_SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256") | .value')" = "$RELEASE_ARTIFACT_SHA256"
+          test "$(echo "$API_SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST") | .value')" = "$RELEASE_CANDIDATE_IMAGE"
+          test "$(echo "$API_SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_IMAGE_DIGEST") | .value')" = "$RELEASE_IMAGE"
+
+          if az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$RELEASE_MODEL_APP_NAME" >/dev/null 2>&1; then
+            RELEASE_APP="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$RELEASE_MODEL_APP_NAME" -o json)"
+            MODEL_IDENTITY_ID="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$MODEL_IDENTITY_NAME" --query id -o tsv)"
+            test "$(echo "$RELEASE_APP" | jq -r '.properties.template.containers[0].image')" = "$RELEASE_IMAGE"
+            test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.minReplicas')" = "0"
+            test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.maxReplicas')" = "2"
+            test "$(echo "$RELEASE_APP" | jq -r '.identity.type')" = "UserAssigned"
+            test "$(echo "$RELEASE_APP" | jq -r '.identity.userAssignedIdentities | keys | length')" = "1"
+            test "$(echo "$RELEASE_APP" | jq -r '.identity.userAssignedIdentities | keys[0]' | tr '[:upper:]' '[:lower:]')" = "$(echo "$MODEL_IDENTITY_ID" | tr '[:upper:]' '[:lower:]')"
+          fi
+
+      - name: Deploy the scale-to-zero production model service
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUTH_CONFIG="$(az containerapp auth show --resource-group "$AZURE_RESOURCE_GROUP" --name "$BASELINE_MODEL_APP_NAME" -o json)"
+          MODEL_AUTH_CLIENT_ID="$(echo "$AUTH_CONFIG" | jq -r '.identityProviders.azureActiveDirectory.registration.clientId')"
+          MODEL_AUDIENCE="$(echo "$AUTH_CONFIG" | jq -r '.identityProviders.azureActiveDirectory.validation.allowedAudiences[0]')"
+          test "$MODEL_AUDIENCE" = "api://${MODEL_AUTH_CLIENT_ID}"
+          AUTH_SECRET_NAME="$(echo "$AUTH_CONFIG" | jq -r '.identityProviders.azureActiveDirectory.registration.clientSecretSettingName')"
+          test "$AUTH_SECRET_NAME" = "microsoft-provider-authentication-secret"
+          MODEL_AUTH_CLIENT_SECRET="$(az containerapp secret list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$BASELINE_MODEL_APP_NAME" \
+            --show-values \
+            --query "[?name=='${AUTH_SECRET_NAME}'].value | [0]" -o tsv)"
+          test -n "$MODEL_AUTH_CLIENT_SECRET"
+          test "$MODEL_AUTH_CLIENT_SECRET" != "null"
+          WORKER_PRINCIPAL_ID="$(az identity show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$REPORT_WORKER_IDENTITY_NAME" \
+            --query principalId -o tsv)"
+          test "$WORKER_PRINCIPAL_ID" = "7d7b986b-2984-4aba-925c-9a009ee56c67"
+
+          az deployment group create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "ensemble211-production-${INPUT_COMMIT_SHA::12}" \
+            --template-file infra/ensemble211-production.bicep \
+            --parameters \
+              containerAppsEnvironmentName="$CONTAINER_APPS_ENVIRONMENT" \
+              containerRegistryName="$CONTAINER_REGISTRY_NAME" \
+              modelIdentityName="$MODEL_IDENTITY_NAME" \
+              modelContainerAppName="$RELEASE_MODEL_APP_NAME" \
+              modelImage="$RELEASE_IMAGE" \
+              tenantId="$AZURE_TENANT_ID" \
+              modelAuthClientId="$MODEL_AUTH_CLIENT_ID" \
+              modelAuthClientSecret="$MODEL_AUTH_CLIENT_SECRET" \
+              workerPrincipalId="$WORKER_PRINCIPAL_ID" \
+            --only-show-errors
+
+      - name: Verify staged service and unchanged worker safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_APP="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$RELEASE_MODEL_APP_NAME" -o json)"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.provisioningState')" = "Succeeded"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.template.containers[0].image')" = "$RELEASE_IMAGE"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.minReplicas')" = "0"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.maxReplicas')" = "2"
+          test "$(echo "$RELEASE_APP" | jq -r '.properties.template.containers[0].env[] | select(.name == "CLAIMGUARD_MODEL_DEPLOYMENT_ID") | .value')" = "$ENSEMBLE_DEPLOYMENT_ID"
+          test "$(curl --fail --silent --show-error --max-time 30 "https://claimguard-ml-ensemble-211.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io/health/ready" | jq -r '.status')" = "ready"
+          test "$(az containerapp job execution list --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" --query 'length(@)' -o tsv)" = "0"
+
+          {
+            echo "### Ensemble 2.1.1 staged"
+            echo "- Commit: ${INPUT_COMMIT_SHA}"
+            echo "- Deployment: ${ENSEMBLE_DEPLOYMENT_ID}"
+            echo "- Image: ${RELEASE_IMAGE}"
+            echo "- Scale: 0–2"
+            echo "- Recovery schedule: 0 0 1 1 *"
+            echo "- Recovery executions: 0"
+            echo "- Runtime traffic remains on the baseline until audited activation."
+          } >> "$GITHUB_STEP_SUMMARY"

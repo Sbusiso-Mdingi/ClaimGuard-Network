@@ -199,6 +199,71 @@ describe("PlatformAdminLifecyclePage", () => {
         },
       );
     });
-    expect(await screen.findByText("Candidate recorded")).toBeInTheDocument();
+    expect(await screen.findByText("Model governance updated")).toBeInTheDocument();
+  });
+
+  test("activates a staged release through the audited catalogue operation", async () => {
+    const deploymentId = "claimguard-claim-fraud-ensemble:2.1.1";
+    apiJson.mockImplementation((path, options = {}) => {
+      if (path === "/admin/platform/global-detection-engine") {
+        return Promise.resolve({
+          strategy: {
+            modelDeploymentId: "claimguard-claim-fraud-baseline:1.0.0",
+            approved: true,
+          },
+        });
+      }
+      if (
+        path === `/admin/platform/model-deployments/${encodeURIComponent(deploymentId)}/activate`
+        && options.method === "POST"
+      ) {
+        return Promise.resolve({
+          activated: true,
+          auditEventId: "104d8b58-b021-4a40-a5a2-b609a3cc2d0e",
+        });
+      }
+      if (path === "/admin/platform/model-deployments") {
+        return Promise.resolve({
+          models: [{
+            deploymentId,
+            displayName: "ClaimGuard fraud ensemble 2.1.1",
+            ownerType: "claimguard",
+            ownerOrganisationId: null,
+            lifecycleStatus: "candidate",
+            featureSchemaVersion: "claim-feature-schema-2026.2",
+            decisionThreshold: 0.049236234887246655,
+            artifactSha256: "a".repeat(64),
+            containerImageDigest: `registry/model@sha256:${"b".repeat(64)}`,
+            runtimeApproved: false,
+            fleetManaged: false,
+          }],
+        });
+      }
+      if (path === "/admin/platform/organisations") {
+        return Promise.resolve({ organisations });
+      }
+      return Promise.reject(new Error(`Unexpected request: ${path}`));
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<PlatformAdminPage />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", {
+      name: "Activate staged release",
+    }));
+
+    await waitFor(() => {
+      expect(apiJson).toHaveBeenCalledWith(
+        `/admin/platform/model-deployments/${encodeURIComponent(deploymentId)}/activate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            confirmation: `ACTIVATE ${deploymentId}`,
+          }),
+        },
+      );
+    });
+    expect(await screen.findByText(/104d8b58-b021-4a40-a5a2-b609a3cc2d0e/))
+      .toBeInTheDocument();
   });
 });

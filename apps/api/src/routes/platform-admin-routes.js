@@ -39,6 +39,23 @@ function configuredModelDeploymentIds() {
   );
 }
 
+function configuredClaimGuardRelease() {
+  return {
+    deploymentId: String(
+      process.env.CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID || "",
+    ).trim(),
+    artifactSha256: String(
+      process.env.CLAIMGUARD_RELEASE_CANDIDATE_ARTIFACT_SHA256 || "",
+    ).trim().toLowerCase(),
+    candidateImageDigest: String(
+      process.env.CLAIMGUARD_RELEASE_CANDIDATE_IMAGE_DIGEST || "",
+    ).trim().toLowerCase(),
+    releaseImageDigest: String(
+      process.env.CLAIMGUARD_RELEASE_IMAGE_DIGEST || "",
+    ).trim().toLowerCase(),
+  };
+}
+
 function projectDeploymentRuntimeState(model, approvedIds, managedId) {
   return {
     ...model,
@@ -353,6 +370,125 @@ export function registerPlatformAdminRoutes(
       }, duplicate ? 409 : Number.isInteger(error?.status) ? error.status : 400);
     }
   });
+
+  app.post(
+    "/admin/platform/model-deployments/:deploymentId/activate",
+    requirePlatformAdmin,
+    async (c) => {
+      const repository = controlPlaneRepositories?.modelDeployments;
+      const auditRepository = controlPlaneRepositories?.security;
+      const runInTransaction = controlPlaneRepositories?.runInTransaction;
+      if (
+        !repository?.activateClaimGuardCandidate
+        || !auditRepository?.recordPlatformAudit
+        || typeof runInTransaction !== "function"
+      ) {
+        return c.json({
+          available: false,
+          code: "MODEL_CATALOGUE_NOT_CONFIGURED",
+          message: "The audited model deployment catalogue is not configured.",
+        }, 503);
+      }
+
+      const release = configuredClaimGuardRelease();
+      if (Object.values(release).some((value) => !value)) {
+        return c.json({
+          available: false,
+          code: "MODEL_RELEASE_NOT_STAGED",
+          message: "No complete production-governed model release is staged.",
+        }, 503);
+      }
+
+      const deploymentId = String(c.req.param("deploymentId") || "").trim();
+      if (deploymentId !== release.deploymentId) {
+        return c.json({
+          available: false,
+          code: "MODEL_RELEASE_TARGET_MISMATCH",
+          message: "The requested deployment is not the staged production release.",
+        }, 409);
+      }
+      const payload = await c.req.json().catch(() => ({}));
+      if (
+        Object.keys(payload).some((key) => key !== "confirmation")
+        || payload.confirmation !== `ACTIVATE ${release.deploymentId}`
+      ) {
+        return c.json({
+          available: false,
+          code: "MODEL_RELEASE_CONFIRMATION_REQUIRED",
+          message: `Confirm the exact staged release with ACTIVATE ${release.deploymentId}.`,
+        }, 400);
+      }
+
+      const actor = actorFromContext(c);
+      try {
+        const { activation, audit } = await runInTransaction(
+          async (repositories) => {
+            const activated = await repositories.modelDeployments
+              .activateClaimGuardCandidate({
+                deploymentId: release.deploymentId,
+                expectedArtifactSha256: release.artifactSha256,
+                expectedCandidateImageDigest: release.candidateImageDigest,
+                releaseImageDigest: release.releaseImageDigest,
+              });
+            const auditEvent = await repositories.security.recordPlatformAudit({
+              actorType: actor.type,
+              actorId: actor.id,
+              organisationScopeId: null,
+              action: activated.alreadyActive
+                ? "model_deployment.activate_idempotent"
+                : "model_deployment.activate",
+              targetType: "model_deployment",
+              targetId: activated.model.deploymentId,
+              beforeSummary: {
+                deploymentId: activated.previous.deploymentId,
+                lifecycleStatus: activated.previous.lifecycleStatus,
+                artifactSha256: activated.previous.artifactSha256,
+                containerImageDigest:
+                  activated.previous.containerImageDigest,
+              },
+              afterSummary: {
+                deploymentId: activated.model.deploymentId,
+                lifecycleStatus: activated.model.lifecycleStatus,
+                artifactSha256: activated.model.artifactSha256,
+                containerImageDigest: activated.model.containerImageDigest,
+                retiredDeploymentIds: activated.retiredDeploymentIds,
+                automaticAdverseAction:
+                  activated.model.automaticAdverseAction,
+              },
+              correlationId: actor.correlationId,
+              outcome: "success",
+              source: actor.source,
+            });
+            return { activation: activated, audit: auditEvent };
+          },
+        );
+        return c.json({
+          available: true,
+          activated: !activation.alreadyActive,
+          alreadyActive: activation.alreadyActive,
+          model: projectDeploymentRuntimeState(
+            activation.model,
+            configuredModelDeploymentIds(),
+            String(
+              process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID || "",
+            ).trim(),
+          ),
+          retiredDeploymentIds: activation.retiredDeploymentIds,
+          auditEventId: audit.auditEventId,
+          runtimeActivationPending:
+            String(
+              process.env.CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID || "",
+            ).trim() !== activation.model.deploymentId,
+        }, 200);
+      } catch (error) {
+        return c.json({
+          available: false,
+          code: error?.code || "MODEL_DEPLOYMENT_ACTIVATION_FAILED",
+          message: error?.message || "Failed to activate the model deployment.",
+        }, Number.isInteger(error?.status) ? error.status : 400);
+      }
+    },
+  );
 
   app.post("/admin/platform/organisations", requirePlatformAdmin, async (c) => {
     const actor = actorFromContext(c);
