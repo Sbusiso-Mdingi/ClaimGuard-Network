@@ -288,6 +288,14 @@ jobs:
             >/dev/null
           az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_API"
 
+      - name: Verify API health after claim-scoring restart
+        shell: bash
+        env:
+          API_HEALTH_DEADLINE_SECONDS: "300"
+          API_HEALTH_REQUEST_TIMEOUT_SECONDS: "10"
+          API_HEALTH_RETRY_SECONDS: "5"
+        run: bash infra/verify-api-health.sh
+
       - name: Verify event-driven production configuration
         shell: bash
         run: |

@@ -17,6 +17,7 @@ function repositoryWorkflows() {
     eventWorker: read("infra/event-report-worker.bicep"),
     recoveryBootstrap: read("infra/recovery-job-bootstrap.bicep"),
     recoveryBootstrapScript: read("infra/bootstrap-report-recovery-job.sh"),
+    apiHealthScript: read("infra/verify-api-health.sh"),
     legacyApi: read(".github/workflows/main_claimguard-api.yml"),
   };
 }
@@ -147,6 +148,60 @@ test("worker deployment cannot move RBAC verification after deployment", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /step order is unsafe/,
+  );
+});
+
+test("worker deployment must verify API health after its restart", () => {
+  const workflows = repositoryWorkflows();
+  workflows.worker = workflows.worker
+    .replace(
+      "Configure API claim-scoring wake-ups",
+      "TEMPORARY_STEP_NAME",
+    )
+    .replace(
+      "Verify API health after claim-scoring restart",
+      "Configure API claim-scoring wake-ups",
+    )
+    .replace(
+      "TEMPORARY_STEP_NAME",
+      "Verify API health after claim-scoring restart",
+    );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /step order is unsafe/,
+  );
+});
+
+test("worker API health verification cannot omit readiness", () => {
+  const workflows = repositoryWorkflows();
+  workflows.apiHealthScript = workflows.apiHealthScript.replace(
+    "https://${API_NAME}.azurewebsites.net/ready",
+    "https://${API_NAME}.azurewebsites.net/health",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Post-restart API health script is missing/,
+  );
+});
+
+test("worker API health verification must bound each HTTP request", () => {
+  const workflows = repositoryWorkflows();
+  workflows.apiHealthScript = workflows.apiHealthScript.replace(
+    '--max-time "$REQUEST_TIMEOUT_SECONDS"',
+    "--connect-timeout 10",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Post-restart API health script is missing/,
+  );
+});
+
+test("worker API health verification cannot mutate App Service", () => {
+  const workflows = repositoryWorkflows();
+  workflows.apiHealthScript += "\n# az webapp restart\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Post-restart API health script still contains/,
   );
 });
 
