@@ -8,7 +8,7 @@ export class ApiError extends Error {
   }
 }
 
-const UNSAFE_ERROR_DETAIL = /\b(?:mysql|mysqld|sqlstate|stmt_execute|database driver|stack trace|select\s+.+\s+from|insert\s+into|update\s+.+\s+set)\b/i;
+const UNSAFE_ERROR_DETAIL = /\b(?:mysql(?:d)?(?:_[a-z0-9]+)*|sqlstate|stmt_execute|database driver|stack trace|select\s+.+\s+from|insert\s+into|update\s+.+\s+set)\b/i;
 
 export function safeApiErrorMessage(error, fallback = "The service is temporarily unavailable.") {
   const payload = error instanceof ApiError ? error.payload : null;

@@ -40,4 +40,18 @@ describe("safeApiErrorMessage", () => {
     );
     expect(message).not.toMatch(/mysql|stmt_execute/i);
   });
+
+  test.each([
+    "MySQL connection refused",
+    "mysqld_stmt_execute failed",
+    "SQLSTATE[HY000]: General error",
+    "Database driver returned an internal error",
+  ])("filters database implementation detail: %s", (detail) => {
+    expect(
+      safeApiErrorMessage(
+        new ApiError(detail, { status: 500 }),
+        "Please try again.",
+      ),
+    ).toBe("Please try again.");
+  });
 });
