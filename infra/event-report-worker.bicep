@@ -14,8 +14,8 @@ param reportStorageAccountUrl string
 param reportStorageContainerName string = 'claimguard-reports'
 param claimScoringQueueName string = 'claimguard-claim-scoring'
 param reportWorkerJobName string = 'claimguard-report-producer'
-param recoveryJobName string = '${reportWorkerJobName}-recovery'
-param recoveryScheduleCron string = '*/15 * * * *'
+param recoveryJobName string = 'claimguard-report-recovery'
+param recoveryScheduleCron string = '0 0 1 1 *'
 param modelServiceBaseUrl string
 param modelServiceAudience string
 param modelDeploymentId string = 'claimguard-claim-fraud-baseline:1.0.0'

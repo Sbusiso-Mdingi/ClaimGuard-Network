@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 const CI_PATH = ".github/workflows/ci.yml";
 const WORKER_PATH = ".github/workflows/report-worker-deploy.yml";
+const EVENT_WORKER_PATH = "infra/event-report-worker.bicep";
 const LEGACY_API_PATH = ".github/workflows/main_claimguard-api.yml";
 
 function read(path) {
@@ -27,7 +28,12 @@ function forbidText(source, forbidden, label) {
   }
 }
 
-export function validateDeploymentBoundaries({ ci, worker, legacyApi }) {
+export function validateDeploymentBoundaries({
+  ci,
+  worker,
+  eventWorker,
+  legacyApi,
+}) {
   for (const required of [
     "workflow_dispatch:",
     "expected_main_sha:",
@@ -63,8 +69,19 @@ export function validateDeploymentBoundaries({ ci, worker, legacyApi }) {
     "github.event.workflow_run.conclusion == 'success'",
     "github.event.workflow_run.head_branch == 'main'",
     "github.event.workflow_run.event == 'workflow_dispatch'",
+    "claimguard-report-recovery",
+    "REPORT_WORKER_RECOVERY_CRON || '0 0 1 1 *'",
+    'test "$REPORT_WORKER_RECOVERY_CRON" = "0 0 1 1 *"',
+    'test "${#REPORT_WORKER_RECOVERY_JOB_NAME}" -le 32',
   ]) {
     requireText(worker, required, "Report-worker deployment authorization");
+  }
+
+  for (const required of [
+    "param recoveryJobName string = 'claimguard-report-recovery'",
+    "param recoveryScheduleCron string = '0 0 1 1 *'",
+  ]) {
+    requireText(eventWorker, required, "Event-worker parked recovery");
   }
 
   for (const forbidden of [
@@ -85,6 +102,7 @@ export function validateRepositoryDeploymentBoundaries() {
   validateDeploymentBoundaries({
     ci: read(CI_PATH),
     worker: read(WORKER_PATH),
+    eventWorker: read(EVENT_WORKER_PATH),
     legacyApi: read(LEGACY_API_PATH),
   });
 }

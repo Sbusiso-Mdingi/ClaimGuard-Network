@@ -14,6 +14,7 @@ function repositoryWorkflows() {
   return {
     ci: read(".github/workflows/ci.yml"),
     worker: read(".github/workflows/report-worker-deploy.yml"),
+    eventWorker: read("infra/event-report-worker.bicep"),
     legacyApi: read(".github/workflows/main_claimguard-api.yml"),
   };
 }
@@ -49,6 +50,30 @@ test("worker deployment requires a manually dispatched CI run", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /Report-worker deployment authorization is missing/,
+  );
+});
+
+test("worker recovery cannot regain a live recurring schedule", () => {
+  const workflows = repositoryWorkflows();
+  workflows.worker = workflows.worker.replaceAll(
+    "0 0 1 1 *",
+    "*/15 * * * *",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Report-worker deployment authorization is missing/,
+  );
+});
+
+test("event-worker infrastructure keeps recovery parked", () => {
+  const workflows = repositoryWorkflows();
+  workflows.eventWorker = workflows.eventWorker.replace(
+    "param recoveryScheduleCron string = '0 0 1 1 *'",
+    "param recoveryScheduleCron string = '*/15 * * * *'",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Event-worker parked recovery is missing/,
   );
 });
 

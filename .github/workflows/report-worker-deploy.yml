@@ -26,8 +26,8 @@ env:
   REPORT_WORKER_ENVIRONMENT_NAME: ${{ vars.REPORT_WORKER_ENVIRONMENT_NAME || 'claimguard-env-11e' }}
   REPORT_WORKER_IDENTITY_NAME: ${{ vars.REPORT_WORKER_IDENTITY_NAME || 'claimguard-report-worker-identity' }}
   REPORT_WORKER_JOB_NAME: ${{ vars.REPORT_WORKER_JOB_NAME || 'claimguard-report-producer' }}
-  REPORT_WORKER_RECOVERY_JOB_NAME: ${{ vars.REPORT_WORKER_RECOVERY_JOB_NAME || 'claimguard-report-producer-recovery' }}
-  REPORT_WORKER_RECOVERY_CRON: ${{ vars.REPORT_WORKER_RECOVERY_CRON || '*/15 * * * *' }}
+  REPORT_WORKER_RECOVERY_JOB_NAME: ${{ vars.REPORT_WORKER_RECOVERY_JOB_NAME || 'claimguard-report-recovery' }}
+  REPORT_WORKER_RECOVERY_CRON: ${{ vars.REPORT_WORKER_RECOVERY_CRON || '0 0 1 1 *' }}
   REPORT_STORAGE_ACCOUNT_NAME: ${{ vars.REPORT_STORAGE_ACCOUNT_NAME || 'cgrpt0715sa' }}
   REPORT_STORAGE_ACCOUNT_URL: ${{ vars.REPORT_STORAGE_ACCOUNT_URL || 'https://cgrpt0715sa.blob.core.windows.net' }}
   REPORT_STORAGE_CONTAINER: ${{ vars.REPORT_STORAGE_CONTAINER || 'claimguard-reports' }}
@@ -100,6 +100,11 @@ jobs:
           test "$MODEL_SERVICE_ENDPOINT_PATH" = "/v3/claim-screening"
           test "$MODEL_DEPLOYMENT_ID" = "claimguard-claim-fraud-baseline:1.0.0"
           [[ "$CLAIM_SCORING_QUEUE_NAME" =~ ^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$ ]]
+          [[ "$REPORT_WORKER_JOB_NAME" =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]]
+          [[ "$REPORT_WORKER_RECOVERY_JOB_NAME" =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]]
+          test "${#REPORT_WORKER_JOB_NAME}" -le 32
+          test "${#REPORT_WORKER_RECOVERY_JOB_NAME}" -le 32
+          test "$REPORT_WORKER_RECOVERY_CRON" = "0 0 1 1 *"
 
       - name: Ensure report-worker managed identity and pseudonym key
         shell: bash
