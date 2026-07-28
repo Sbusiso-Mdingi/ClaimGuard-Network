@@ -33,6 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           az bicep build --file infra/event-report-worker.bicep --stdout >/dev/null
+          az bicep build --file infra/recovery-job-bootstrap.bicep --stdout >/dev/null
 
       - name: Validate production deployment boundaries
         run: node --test tools/tests/validate-deployment-boundaries.test.mjs
@@ -45,9 +46,15 @@ jobs:
           workflow = Path('.github/workflows/report-worker-deploy.yml').read_text(encoding='utf-8')
           required = [
               'infra/event-report-worker.bicep',
+              'infra/recovery-job-bootstrap.bicep',
               'Storage Queue Data Message Sender',
               'Storage Queue Data Contributor',
               'CLAIM_SCORING_QUEUE_URL',
+              'EVENT_EXECUTION_COUNT_BEFORE',
+              'RECOVERY_EXECUTION_COUNT_BEFORE',
+              'QUEUE_PEEK_COUNT_BEFORE',
+              'QUEUE_PEEK_COUNT_AFTER',
+              'MODEL_SETTINGS_BEFORE',
               'triggerType',
               'worker event',
               'worker drain-all',

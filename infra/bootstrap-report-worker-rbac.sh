@@ -40,7 +40,7 @@ fi
 az storage queue create \
   --account-name "$STORAGE_ACCOUNT_NAME" \
   --name "$CLAIM_SCORING_QUEUE_NAME" \
-  --auth-mode login \
+  --auth-mode key \
   -o none
 
 WORKER_PRINCIPAL_ID="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$WORKER_IDENTITY_NAME" --query principalId -o tsv)"
