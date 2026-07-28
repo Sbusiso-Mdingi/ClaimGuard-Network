@@ -15,7 +15,7 @@ const organisations = [{
   organisationId: "org-ubuntu",
   displayName: "Ubuntu Medical Scheme",
   canonicalSlug: "ubuntu-medical",
-  deploymentClass: "pilot",
+  deploymentClass: "production",
   status: "active",
 }];
 
@@ -73,7 +73,7 @@ function configureApi() {
           organisationId: "org-new",
           displayName: "New Medical Scheme",
           canonicalSlug: "new-medical",
-          deploymentClass: "demo",
+          deploymentClass: "production",
           status: "draft",
         },
         provisioningReview: null,
@@ -118,7 +118,7 @@ describe("PlatformAdminLifecyclePage", () => {
         body: JSON.stringify({
           displayName: "New Medical Scheme",
           canonicalSlug: "new-medical",
-          deploymentClass: "demo",
+          deploymentClass: "production",
           organisationType: "medical_scheme",
           initialAdministrator: { displayName: "Nandi Dube", email: "nandi@example.com" },
         }),
@@ -126,6 +126,7 @@ describe("PlatformAdminLifecyclePage", () => {
     });
 
     expect(await screen.findByText(/Draft organisation created/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Deployment class/i)).not.toBeInTheDocument();
   });
 
   test("enables only valid lifecycle actions for an active scheme", async () => {

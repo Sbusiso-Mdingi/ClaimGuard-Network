@@ -20,7 +20,6 @@ export function usePlatformAdminLifecycle() {
   const [draftForm, setDraftForm] = useState({
     displayName: "",
     canonicalSlug: "",
-    deploymentClass: "demo",
     adminDisplayName: "",
     adminEmail: "",
   });
@@ -94,7 +93,7 @@ export function usePlatformAdminLifecycle() {
         body: JSON.stringify({
           displayName: draftForm.displayName,
           canonicalSlug: draftForm.canonicalSlug,
-          deploymentClass: draftForm.deploymentClass,
+          deploymentClass: "production",
           organisationType: "medical_scheme",
           initialAdministrator: { displayName: draftForm.adminDisplayName, email: draftForm.adminEmail },
         }),

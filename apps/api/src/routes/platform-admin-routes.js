@@ -17,9 +17,13 @@ function actorFromContext(c) {
   };
 }
 
-function parseAllowedDeploymentClasses() {
+function parseAllowedDeploymentClasses(defaultDeploymentClass) {
   return new Set(
-    String(process.env.PLATFORM_ALLOWED_DEPLOYMENT_CLASSES || "demo")
+    String(
+      process.env.PLATFORM_ALLOWED_DEPLOYMENT_CLASSES
+      || defaultDeploymentClass
+      || "production",
+    )
       .split(",")
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
@@ -202,7 +206,7 @@ export function registerPlatformAdminRoutes(
   {
     controlPlaneRepositories,
     controlPlaneService,
-    deploymentClass = "demo",
+    deploymentClass = "production",
     startProvisioningJob =
       triggerProvisioningJob,
   } = {},
@@ -210,7 +214,9 @@ export function registerPlatformAdminRoutes(
   const requirePlatformAdmin = createRequirePermissionMiddleware({
     permission: CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
   });
-  const allowedDeploymentClasses = parseAllowedDeploymentClasses();
+  const allowedDeploymentClasses = parseAllowedDeploymentClasses(
+    deploymentClass,
+  );
 
   app.get("/admin/platform/model-deployments", requirePlatformAdmin, async (c) => {
     const repository = controlPlaneRepositories?.modelDeployments;

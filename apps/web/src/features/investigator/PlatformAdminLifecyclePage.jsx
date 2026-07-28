@@ -106,12 +106,6 @@ export function PlatformAdminLifecyclePage() {
               <FormField label="Canonical slug">
                 <Input value={draftForm.canonicalSlug} onChange={(event) => setDraftForm((previous) => ({ ...previous, canonicalSlug: event.target.value.toLowerCase() }))} required />
               </FormField>
-              <FormField label="Deployment class">
-                <select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={draftForm.deploymentClass} onChange={(event) => setDraftForm((previous) => ({ ...previous, deploymentClass: event.target.value }))}>
-                  <option value="demo">Demo</option>
-                  <option value="pilot">Pilot</option>
-                </select>
-              </FormField>
               <FormField label="Initial administrator name">
                 <Input value={draftForm.adminDisplayName} onChange={(event) => setDraftForm((previous) => ({ ...previous, adminDisplayName: event.target.value }))} required />
               </FormField>
@@ -138,7 +132,6 @@ export function PlatformAdminLifecyclePage() {
             <DefinitionList
               items={[
                 { label: "Organisation ID", value: selected.organisationId, mono: true },
-                { label: "Deployment class", value: formatEnumLabel(selected.deploymentClass) },
                 { label: "Current operation", value: operation?.status ? formatEnumLabel(operation.status) : "No active operation" },
                 { label: "Current step", value: currentStep ? formatEnumLabel(currentStep) : "No running step" },
                 { label: "Ready for activation", value: selected.status === "ready_for_activation" ? "Yes" : "No" },
