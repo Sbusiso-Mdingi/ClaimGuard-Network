@@ -9,6 +9,7 @@ const EVENT_WORKER_PATH = "infra/event-report-worker.bicep";
 const RECOVERY_BOOTSTRAP_PATH = "infra/recovery-job-bootstrap.bicep";
 const RECOVERY_BOOTSTRAP_SCRIPT_PATH =
   "infra/bootstrap-report-recovery-job.sh";
+const API_HEALTH_SCRIPT_PATH = "infra/verify-api-health.sh";
 const LEGACY_API_PATH = ".github/workflows/main_claimguard-api.yml";
 
 function read(path) {
@@ -37,6 +38,7 @@ export function validateDeploymentBoundaries({
   eventWorker,
   recoveryBootstrap,
   recoveryBootstrapScript,
+  apiHealthScript,
   legacyApi,
 }) {
   for (const required of [
@@ -79,12 +81,16 @@ export function validateDeploymentBoundaries({
     'test "$REPORT_WORKER_RECOVERY_CRON" = "0 0 1 1 *"',
     'test "${#REPORT_WORKER_RECOVERY_JOB_NAME}" -le 32',
     "infra/bootstrap-report-recovery-job.sh",
+    "infra/verify-api-health.sh",
     "Verify queue-scoped runtime RBAC before deployment",
     "EVENT_EXECUTION_COUNT_BEFORE",
     "RECOVERY_EXECUTION_COUNT_BEFORE",
     "QUEUE_PEEK_COUNT_BEFORE",
     "QUEUE_PEEK_COUNT_AFTER",
     "MODEL_SETTINGS_BEFORE",
+    'API_HEALTH_DEADLINE_SECONDS: "300"',
+    'API_HEALTH_REQUEST_TIMEOUT_SECONDS: "10"',
+    'API_HEALTH_RETRY_SECONDS: "5"',
   ]) {
     requireText(worker, required, "Report-worker deployment authorization");
   }
@@ -107,6 +113,7 @@ export function validateDeploymentBoundaries({
     "Build and push immutable report-worker image",
     "Deploy event scorer and scheduled recovery job",
     "Configure API claim-scoring wake-ups",
+    "Verify API health after claim-scoring restart",
     "Verify event-driven production configuration",
   ];
   let previousStepIndex = -1;
@@ -118,6 +125,27 @@ export function validateDeploymentBoundaries({
       );
     }
     previousStepIndex = stepIndex;
+  }
+
+  for (const required of [
+    'API_NAME="${AZURE_WEBAPP_API:?AZURE_WEBAPP_API is required}"',
+    "https://${API_NAME}.azurewebsites.net/health",
+    "https://${API_NAME}.azurewebsites.net/ready",
+    "DEADLINE_SECONDS >= 1 && DEADLINE_SECONDS <= 300",
+    "REQUEST_TIMEOUT_SECONDS >= 1 && REQUEST_TIMEOUT_SECONDS <= 10",
+    '--max-time "$REQUEST_TIMEOUT_SECONDS"',
+    "--write-out '%{http_code}'",
+    "Post-restart API health passed",
+  ]) {
+    requireText(apiHealthScript, required, "Post-restart API health script");
+  }
+  for (const forbidden of [
+    "az webapp restart",
+    "az webapp config",
+    "az containerapp",
+    "az deployment",
+  ]) {
+    forbidText(apiHealthScript, forbidden, "Post-restart API health script");
   }
 
   for (const required of [
@@ -225,6 +253,7 @@ export function validateRepositoryDeploymentBoundaries() {
     eventWorker: read(EVENT_WORKER_PATH),
     recoveryBootstrap: read(RECOVERY_BOOTSTRAP_PATH),
     recoveryBootstrapScript: read(RECOVERY_BOOTSTRAP_SCRIPT_PATH),
+    apiHealthScript: read(API_HEALTH_SCRIPT_PATH),
     legacyApi: read(LEGACY_API_PATH),
   });
 }

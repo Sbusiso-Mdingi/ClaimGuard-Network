@@ -39,7 +39,8 @@ jobs:
         run: |
           node --test \
             tools/tests/bootstrap-report-recovery-job.test.mjs \
-            tools/tests/validate-deployment-boundaries.test.mjs
+            tools/tests/validate-deployment-boundaries.test.mjs \
+            tools/tests/verify-api-health.test.mjs
 
       - name: Validate deployment workflow invariants
         shell: python
@@ -51,6 +52,7 @@ jobs:
           workflow_required = [
               'infra/event-report-worker.bicep',
               'infra/bootstrap-report-recovery-job.sh',
+              'infra/verify-api-health.sh',
               'Storage Queue Data Message Sender',
               'Storage Queue Data Contributor',
               'CLAIM_SCORING_QUEUE_URL',
@@ -62,6 +64,7 @@ jobs:
               'triggerType',
               'worker event',
               'worker drain-all',
+              'Verify API health after claim-scoring restart',
           ]
           missing = [value for value in workflow_required if value not in workflow]
           if missing:
