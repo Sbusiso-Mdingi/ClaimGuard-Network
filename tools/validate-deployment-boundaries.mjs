@@ -7,6 +7,8 @@ const CI_PATH = ".github/workflows/ci.yml";
 const WORKER_PATH = ".github/workflows/report-worker-deploy.yml";
 const EVENT_WORKER_PATH = "infra/event-report-worker.bicep";
 const RECOVERY_BOOTSTRAP_PATH = "infra/recovery-job-bootstrap.bicep";
+const RECOVERY_BOOTSTRAP_SCRIPT_PATH =
+  "infra/bootstrap-report-recovery-job.sh";
 const LEGACY_API_PATH = ".github/workflows/main_claimguard-api.yml";
 
 function read(path) {
@@ -34,6 +36,7 @@ export function validateDeploymentBoundaries({
   worker,
   eventWorker,
   recoveryBootstrap,
+  recoveryBootstrapScript,
   legacyApi,
 }) {
   for (const required of [
@@ -75,7 +78,7 @@ export function validateDeploymentBoundaries({
     "REPORT_WORKER_RECOVERY_CRON || '0 0 1 1 *'",
     'test "$REPORT_WORKER_RECOVERY_CRON" = "0 0 1 1 *"',
     'test "${#REPORT_WORKER_RECOVERY_JOB_NAME}" -le 32',
-    "infra/recovery-job-bootstrap.bicep",
+    "infra/bootstrap-report-recovery-job.sh",
     "Verify queue-scoped runtime RBAC before deployment",
     "EVENT_EXECUTION_COUNT_BEFORE",
     "RECOVERY_EXECUTION_COUNT_BEFORE",
@@ -90,11 +93,16 @@ export function validateDeploymentBoundaries({
     "az containerapp job execution start",
   ]) {
     forbidText(worker, forbidden, "Report-worker deployment");
+    forbidText(
+      recoveryBootstrapScript,
+      forbidden,
+      "Recovery-job bootstrap script",
+    );
   }
 
   const workerStepOrder = [
     "Capture deployment safety baseline",
-    "Bootstrap first recovery-job identity association",
+    "Bootstrap identity-free recovery job and attach identity",
     "Verify queue-scoped runtime RBAC before deployment",
     "Build and push immutable report-worker image",
     "Deploy event scorer and scheduled recovery job",
@@ -122,7 +130,7 @@ export function validateDeploymentBoundaries({
   for (const required of [
     "param recoveryJobName string = 'claimguard-report-recovery'",
     "triggerType: 'Manual'",
-    "manual-identity-bootstrap",
+    "manual-identity-free-bootstrap",
     "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
   ]) {
     requireText(
@@ -135,12 +143,65 @@ export function validateDeploymentBoundaries({
     "triggerType: 'Schedule'",
     "cronExpression",
     "worker drain-all",
+    "identity:",
+    "Microsoft.ManagedIdentity",
+    "workerIdentityName",
+    "userAssignedIdentities",
+    "registries:",
+    "secretRef:",
   ]) {
     forbidText(
       recoveryBootstrap,
       forbidden,
       "Recovery-job identity bootstrap",
     );
+  }
+
+  for (const required of [
+    "create_identity_free_shell_if_absent",
+    "attach_expected_identity_if_missing",
+    "assert_exact_user_identity",
+    "assert_manual_shell",
+    "assert_scheduled_recovery",
+    "az containerapp job identity assign",
+    'RECOVERY_CRON="${REPORT_WORKER_RECOVERY_CRON:-0 0 1 1 *}"',
+    'MODEL_DEPLOYMENT_ID="${MODEL_DEPLOYMENT_ID:-claimguard-claim-fraud-baseline:1.0.0}"',
+    'assert_execution_count_unchanged',
+  ]) {
+    requireText(
+      recoveryBootstrapScript,
+      required,
+      "Recovery-job bootstrap script",
+    );
+  }
+  const recoveryBootstrapMainOrder = [
+    "create_identity_free_shell_if_absent\n",
+    'recovery_job="$(show_recovery_job)"',
+    'attach_expected_identity_if_missing "$recovery_job" "$worker_identity_id"',
+    'assert_exact_user_identity "$recovery_job" "$worker_identity_id"',
+  ];
+  const mainStart = recoveryBootstrapScript.indexOf("main() {");
+  const mainEnd = recoveryBootstrapScript.indexOf('\n}\n\nmain "$@"', mainStart);
+  if (mainStart === -1 || mainEnd === -1) {
+    fail("Recovery-job bootstrap script main function is missing.");
+  }
+  const recoveryBootstrapMain = recoveryBootstrapScript.slice(
+    mainStart,
+    mainEnd,
+  );
+  let previousBootstrapIndex = -1;
+  for (const operation of recoveryBootstrapMainOrder) {
+    const operationIndex = recoveryBootstrapMain.indexOf(
+      operation,
+      previousBootstrapIndex + 1,
+    );
+    if (operationIndex <= previousBootstrapIndex) {
+      fail(
+        "Recovery-job bootstrap operation order is unsafe at "
+        + JSON.stringify(operation),
+      );
+    }
+    previousBootstrapIndex = operationIndex;
   }
 
   for (const forbidden of [
@@ -163,6 +224,7 @@ export function validateRepositoryDeploymentBoundaries() {
     worker: read(WORKER_PATH),
     eventWorker: read(EVENT_WORKER_PATH),
     recoveryBootstrap: read(RECOVERY_BOOTSTRAP_PATH),
+    recoveryBootstrapScript: read(RECOVERY_BOOTSTRAP_SCRIPT_PATH),
     legacyApi: read(LEGACY_API_PATH),
   });
 }

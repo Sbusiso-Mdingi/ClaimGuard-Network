@@ -36,7 +36,10 @@ jobs:
           az bicep build --file infra/recovery-job-bootstrap.bicep --stdout >/dev/null
 
       - name: Validate production deployment boundaries
-        run: node --test tools/tests/validate-deployment-boundaries.test.mjs
+        run: |
+          node --test \
+            tools/tests/bootstrap-report-recovery-job.test.mjs \
+            tools/tests/validate-deployment-boundaries.test.mjs
 
       - name: Validate deployment workflow invariants
         shell: python
@@ -44,9 +47,10 @@ jobs:
           from pathlib import Path
 
           workflow = Path('.github/workflows/report-worker-deploy.yml').read_text(encoding='utf-8')
-          required = [
+          bootstrap = Path('infra/bootstrap-report-recovery-job.sh').read_text(encoding='utf-8')
+          workflow_required = [
               'infra/event-report-worker.bicep',
-              'infra/recovery-job-bootstrap.bicep',
+              'infra/bootstrap-report-recovery-job.sh',
               'Storage Queue Data Message Sender',
               'Storage Queue Data Contributor',
               'CLAIM_SCORING_QUEUE_URL',
@@ -59,9 +63,16 @@ jobs:
               'worker event',
               'worker drain-all',
           ]
-          missing = [value for value in required if value not in workflow]
+          missing = [value for value in workflow_required if value not in workflow]
           if missing:
               raise SystemExit(f'Missing event-worker deployment invariants: {missing}')
+          bootstrap_required = [
+              'infra/recovery-job-bootstrap.bicep',
+              'az containerapp job identity assign',
+          ]
+          missing = [value for value in bootstrap_required if value not in bootstrap]
+          if missing:
+              raise SystemExit(f'Missing recovery-bootstrap invariants: {missing}')
 
           forbidden = [
               'infra/report-worker.bicep',

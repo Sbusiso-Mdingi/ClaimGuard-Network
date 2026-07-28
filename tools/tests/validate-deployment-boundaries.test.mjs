@@ -16,6 +16,7 @@ function repositoryWorkflows() {
     worker: read(".github/workflows/report-worker-deploy.yml"),
     eventWorker: read("infra/event-report-worker.bicep"),
     recoveryBootstrap: read("infra/recovery-job-bootstrap.bicep"),
+    recoveryBootstrapScript: read("infra/bootstrap-report-recovery-job.sh"),
     legacyApi: read(".github/workflows/main_claimguard-api.yml"),
   };
 }
@@ -87,6 +88,44 @@ test("first recovery-job bootstrap cannot acquire a schedule", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /Recovery-job identity bootstrap/,
+  );
+});
+
+test("first recovery-job bootstrap cannot contain an identity", () => {
+  const workflows = repositoryWorkflows();
+  workflows.recoveryBootstrap = workflows.recoveryBootstrap.replace(
+    "properties: {",
+    "identity: {\n    type: 'UserAssigned'\n  }\n  properties: {",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Recovery-job identity bootstrap/,
+  );
+});
+
+test("recovery bootstrap must attach identity after shell creation", () => {
+  const workflows = repositoryWorkflows();
+  workflows.recoveryBootstrapScript =
+    workflows.recoveryBootstrapScript.replace(
+      "create_identity_free_shell_if_absent\n",
+      "attach_expected_identity_if_missing \"$recovery_job\" \"$worker_identity_id\"\n",
+    );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /operation order is unsafe/,
+  );
+});
+
+test("recovery bootstrap cannot omit the supported identity attachment", () => {
+  const workflows = repositoryWorkflows();
+  workflows.recoveryBootstrapScript =
+    workflows.recoveryBootstrapScript.replace(
+      "az containerapp job identity assign",
+      "az containerapp job update",
+    );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Recovery-job bootstrap script is missing/,
   );
 });
 
