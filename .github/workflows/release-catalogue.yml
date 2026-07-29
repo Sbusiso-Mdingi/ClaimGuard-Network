@@ -1,0 +1,189 @@
+name: release-catalogue
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact 40-character main commit SHA to package as an eligible release
+        required: true
+        type: string
+      catalogue_confirmation:
+        description: Type CATALOGUE_RELEASE to authorize immutable artifact creation
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: claimguard-release-catalogue
+  cancel-in-progress: false
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME }}
+  CONTROL_PLANE_MYSQL_URL_SECRET_NAME: ${{ vars.CONTROL_PLANE_MYSQL_URL_SECRET_NAME }}
+
+jobs:
+  catalogue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact main source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ inputs.expected_main_sha }}
+          fetch-depth: 0
+
+      - name: Validate catalogue authorization
+        shell: bash
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          CATALOGUE_CONFIRMATION: ${{ inputs.catalogue_confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CATALOGUE_CONFIRMATION" = "CATALOGUE_RELEASE"
+          test "$GITHUB_SHA" = "$EXPECTED_MAIN_SHA"
+          git fetch origin main --no-tags
+          test "$(git rev-parse origin/main)" = "$EXPECTED_MAIN_SHA"
+
+      - name: Verify successful CI and CodeQL runs
+        id: gates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          CI_RUNS="$(
+            gh run list \
+              --workflow ci.yml \
+              --commit "$EXPECTED_MAIN_SHA" \
+              --event push \
+              --status completed \
+              --limit 20 \
+              --json databaseId,conclusion,headSha,url
+          )"
+          SECURITY_RUNS="$(
+            gh run list \
+              --workflow codeql.yml \
+              --commit "$EXPECTED_MAIN_SHA" \
+              --event push \
+              --status completed \
+              --limit 20 \
+              --json databaseId,conclusion,headSha,url
+          )"
+
+          CI_RUN_ID="$(
+            echo "$CI_RUNS" \
+              | jq -r --arg sha "$EXPECTED_MAIN_SHA" \
+                '[.[] | select(.conclusion == "success" and .headSha == $sha)][0].databaseId // empty'
+          )"
+          CI_RUN_URL="$(
+            echo "$CI_RUNS" \
+              | jq -r --arg sha "$EXPECTED_MAIN_SHA" \
+                '[.[] | select(.conclusion == "success" and .headSha == $sha)][0].url // empty'
+          )"
+          SECURITY_RUN_ID="$(
+            echo "$SECURITY_RUNS" \
+              | jq -r --arg sha "$EXPECTED_MAIN_SHA" \
+                '[.[] | select(.conclusion == "success" and .headSha == $sha)][0].databaseId // empty'
+          )"
+          SECURITY_RUN_URL="$(
+            echo "$SECURITY_RUNS" \
+              | jq -r --arg sha "$EXPECTED_MAIN_SHA" \
+                '[.[] | select(.conclusion == "success" and .headSha == $sha)][0].url // empty'
+          )"
+
+          test -n "$CI_RUN_ID"
+          test -n "$CI_RUN_URL"
+          test -n "$SECURITY_RUN_ID"
+          test -n "$SECURITY_RUN_URL"
+
+          echo "ci_run_id=$CI_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "ci_run_url=$CI_RUN_URL" >> "$GITHUB_OUTPUT"
+          echo "security_run_id=$SECURITY_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "security_run_url=$SECURITY_RUN_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install and build from the lockfile
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm turbo run build
+
+      - name: Package digest-pinned release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/package-release-artifacts.sh
+          tools/package-release-artifacts.sh "$GITHUB_SHA" /tmp/claimguard-release
+
+      - name: Upload immutable release artifact
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: claimguard-release-${{ github.sha }}
+          path: |
+            /tmp/claimguard-release/claimguard-web-deploy.zip
+            /tmp/claimguard-release/claimguard-api-deploy.zip
+            /tmp/claimguard-release/release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Azure login with OIDC
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          audience: api://AzureADTokenExchange
+
+      - name: Register eligible release in the control plane
+        shell: bash
+        env:
+          CI_RUN_ID: ${{ steps.gates.outputs.ci_run_id }}
+          CI_RUN_URL: ${{ steps.gates.outputs.ci_run_url }}
+          SECURITY_RUN_ID: ${{ steps.gates.outputs.security_run_id }}
+          SECURITY_RUN_URL: ${{ steps.gates.outputs.security_run_url }}
+        run: |
+          set -euo pipefail
+          export CONTROL_PLANE_MYSQL_URL="$(
+            az keyvault secret show \
+              --vault-name "$AZURE_KEYVAULT_NAME" \
+              --name "$CONTROL_PLANE_MYSQL_URL_SECRET_NAME" \
+              --query value \
+              --output tsv
+          )"
+          test -n "$CONTROL_PLANE_MYSQL_URL"
+          WORKFLOW_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          MANIFEST=/tmp/claimguard-release/release-manifest.json
+
+          pnpm --filter @claimguard/control-plane-database exec node src/cli.js release-register \
+            --commit-sha="$GITHUB_SHA" \
+            --repository="$GITHUB_REPOSITORY" \
+            --branch=main \
+            --artifact-digest="$(jq -r .artifactDigest "$MANIFEST")" \
+            --web-artifact-digest="$(jq -r .webArtifactDigest "$MANIFEST")" \
+            --api-artifact-digest="$(jq -r .apiArtifactDigest "$MANIFEST")" \
+            --artifact-name="claimguard-release-${GITHUB_SHA}" \
+            --artifact-workflow-run-id="$GITHUB_RUN_ID" \
+            --artifact-workflow-run-url="$WORKFLOW_URL" \
+            --ci-workflow-run-id="$CI_RUN_ID" \
+            --ci-workflow-run-url="$CI_RUN_URL" \
+            --security-workflow-run-id="$SECURITY_RUN_ID" \
+            --security-workflow-run-url="$SECURITY_RUN_URL" \
+            --actor="github-actions:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}" \
+            --correlation-id="$GITHUB_RUN_ID"

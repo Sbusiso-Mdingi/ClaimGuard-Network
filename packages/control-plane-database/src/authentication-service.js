@@ -350,6 +350,54 @@ export function createControlPlaneAuthenticationService({
       return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
     },
 
+    async reauthenticate(resolvedSession, password, metadata = {}) {
+      const session = resolvedSession?.session || null;
+      const actor = resolvedSession?.actor || null;
+      const credentialId = session?.credentialId || actor?.credential?.credentialId || null;
+      const references = {
+        organisationId: session?.organisationId || actor?.organisation?.organisationId || null,
+        userId: session?.userId || actor?.user?.userId || null,
+        credentialId,
+      };
+      const credential = credentialId
+        ? await authenticationRepository.getCredentialById(credentialId)
+        : null;
+      const passwordMatches = Boolean(
+        credential
+        && credential.authenticationProvider === "local_password"
+        && credential.passwordHash
+        && credential.status === "active"
+        && credential.userId === references.userId
+        && credential.organisationId === references.organisationId
+        && await passwordHasher.verify(
+          credential.passwordHash,
+          typeof password === "string" ? password : "",
+        ),
+      );
+      if (!passwordMatches) {
+        await recordEvent(
+          "reauthentication_failure",
+          "failure",
+          metadata,
+          references,
+          "invalid_credential",
+        );
+        throw new AuthenticationRejectedError("reauthentication_failed");
+      }
+      const reauthenticatedAt = now();
+      await recordEvent(
+        "reauthentication_success",
+        "success",
+        metadata,
+        references,
+      );
+      return {
+        userId: references.userId,
+        credentialId,
+        reauthenticatedAt,
+      };
+    },
+
     async logout(resolvedSession, metadata = {}) {
       if (!resolvedSession?.session) return false;
       const revoked = await authenticationRepository.revokeSession(resolvedSession.session.sessionId, "logout");

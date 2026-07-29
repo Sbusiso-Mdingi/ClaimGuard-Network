@@ -13,7 +13,8 @@ import {
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
-import { GlobalDetectionEngineSettings } from "./PlatformAdminPage";
+import { GlobalDetectionEngineSettings } from "./GlobalDetectionEngineSettings";
+import { ReleaseGovernancePanel } from "./ReleaseGovernancePanel";
 import { usePlatformAdminLifecycle } from "./usePlatformAdminLifecycle";
 
 function LifecycleActions({ lifecycle }) {
@@ -56,8 +57,8 @@ export function PlatformAdminLifecyclePage() {
   return (
     <PageFrame
       eyebrow="Platform Administration"
-      title="Medical scheme lifecycle console"
-      description="Create medical schemes, provision their data planes, manage administrator access, and connect claims servers without exposing infrastructure secrets to the browser."
+      title="Platform operations console"
+      description="Govern production releases, onboard medical schemes, manage administrator access, and connect claims servers without exposing infrastructure secrets to the browser."
       actions={[
         <StatusIndicator key="health" variant="badge" tone={health?.health?.status === "ok" ? "success" : "info"}>API {health?.health?.status || "checking"}</StatusIndicator>,
         <StatusIndicator key="ready" variant="badge" tone={health?.ready?.ready ? "success" : "warning"}>Readiness {health?.ready?.status || "checking"}</StatusIndicator>,
@@ -65,6 +66,8 @@ export function PlatformAdminLifecyclePage() {
     >
       {error ? <WorkspaceNotice title="Platform action failed" tone="danger">{error}</WorkspaceNotice> : null}
       {message ? <WorkspaceNotice title={message} tone="success" /> : null}
+
+      <ReleaseGovernancePanel />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <SectionCard title="Medical scheme inventory" description="Select an organisation to manage its lifecycle and access configuration.">

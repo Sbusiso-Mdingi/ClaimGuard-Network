@@ -8,6 +8,7 @@ const AUTH_EVENT_TYPES = new Set([
   "login_success", "login_failure", "login_throttled", "login_locked", "credential_temporarily_locked", "logout", "session_revoked",
   "password_changed", "password_reset_requested", "password_reset_completed", "credential_disabled",
   "session_expired", "authorization_version_mismatch", "header_spoof_attempt", "csrf_rejection",
+  "reauthentication_success", "reauthentication_failure",
 ]);
 
 function assertHash(value, fieldName) {

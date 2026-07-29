@@ -104,18 +104,192 @@ async function runDemoProvisioning({ values }) {
   }
 }
 
+function requiredArgument(values, name) {
+  const value = String(values.get(name) || "").trim();
+  if (!value) throw new Error(`--${name}=... is required.`);
+  return value;
+}
+
+async function runReleaseGovernance(command, { values }) {
+  const pool = createControlPlanePool(requireControlPlaneDatabaseUrl());
+  try {
+    const repositories = createControlPlaneRepositories(pool);
+    if (command === "release-status") {
+      const [currentDeployment, releases, promotionRequests] = await Promise.all([
+        repositories.releaseGovernance.getCurrentDeployment("production"),
+        repositories.releaseGovernance.listEligibleReleases({ limit: 20 }),
+        repositories.releaseGovernance.listPromotionRequests({ limit: 30 }),
+      ]);
+      json({ currentDeployment, releases, promotionRequests });
+      return;
+    }
+
+    if (command === "release-register") {
+      const result = await repositories.runInTransaction(async (transaction) => {
+        const release = await transaction.releaseGovernance.registerEligibleRelease({
+          commitSha: requiredArgument(values, "commit-sha"),
+          sourceRepository: requiredArgument(values, "repository"),
+          sourceBranch: values.get("branch") || "main",
+          artifactDigest: requiredArgument(values, "artifact-digest"),
+          webArtifactDigest: requiredArgument(values, "web-artifact-digest"),
+          apiArtifactDigest: requiredArgument(values, "api-artifact-digest"),
+          artifactName: requiredArgument(values, "artifact-name"),
+          artifactWorkflowRunId: requiredArgument(values, "artifact-workflow-run-id"),
+          artifactWorkflowRunUrl: requiredArgument(values, "artifact-workflow-run-url"),
+          ciWorkflowRunId: requiredArgument(values, "ci-workflow-run-id"),
+          ciWorkflowRunUrl: requiredArgument(values, "ci-workflow-run-url"),
+          securityWorkflowRunId: requiredArgument(values, "security-workflow-run-id"),
+          securityWorkflowRunUrl: requiredArgument(values, "security-workflow-run-url"),
+          ciConclusion: "success",
+          securityConclusion: "success",
+          eligibleAt: new Date(),
+          registeredBy: values.get("actor") || "github-actions",
+        });
+        const audit = await transaction.security.recordPlatformAudit({
+          actorType: "service",
+          actorId: values.get("actor") || "github-actions",
+          organisationScopeId: null,
+          action: "platform_release.register_eligible",
+          targetType: "platform_release",
+          targetId: release.releaseId,
+          beforeSummary: null,
+          afterSummary: {
+            commitSha: release.commitSha,
+            artifactDigest: release.artifactDigest,
+            ciWorkflowRunId: release.ciWorkflowRunId,
+            securityWorkflowRunId: release.securityWorkflowRunId,
+            ciConclusion: release.ciConclusion,
+            securityConclusion: release.securityConclusion,
+          },
+          correlationId: values.get("correlation-id") || null,
+          outcome: "success",
+          source: "release-governance-cli",
+        });
+        return { release, auditEventId: audit.auditEventId };
+      });
+      json(result);
+      return;
+    }
+
+    if (command === "release-authorize" || command === "release-bootstrap") {
+      const result = await repositories.runInTransaction(async (transaction) => {
+        const common = {
+          deploymentWorkflowRunId: requiredArgument(values, "workflow-run-id"),
+          deploymentWorkflowRunUrl: requiredArgument(values, "workflow-run-url"),
+          deploymentStartedAt: new Date(),
+        };
+        const authorized = command === "release-bootstrap"
+          ? await transaction.releaseGovernance.createBootstrapDeploymentRequest({
+              ...common,
+              releaseId: requiredArgument(values, "release-id"),
+              actor: values.get("actor") || "github-actions",
+            })
+          : await transaction.releaseGovernance.authorizePromotionDeployment({
+              ...common,
+              promotionRequestId: requiredArgument(values, "promotion-request-id"),
+              commitSha: requiredArgument(values, "commit-sha"),
+            });
+        const audit = await transaction.security.recordPlatformAudit({
+          actorType: "service",
+          actorId: values.get("actor") || "github-actions",
+          organisationScopeId: null,
+          action: command === "release-bootstrap"
+            ? "platform_release.bootstrap_deployment"
+            : "platform_release.authorize_deployment",
+          targetType: "platform_release_promotion",
+          targetId: authorized.request.promotionRequestId,
+          beforeSummary: {
+            status: command === "release-bootstrap" ? null : "approved",
+          },
+          afterSummary: {
+            status: authorized.request.status,
+            commitSha: authorized.release.commitSha,
+            artifactDigest: authorized.release.artifactDigest,
+            workflowRunId: authorized.request.deploymentWorkflowRunId,
+            bootstrap: authorized.request.bootstrapRequest,
+          },
+          correlationId: values.get("correlation-id") || null,
+          outcome: "success",
+          source: "release-governance-cli",
+        });
+        return {
+          promotionRequest: authorized.request,
+          release: authorized.release,
+          auditEventId: audit.auditEventId,
+        };
+      });
+      json(result);
+      return;
+    }
+
+    if (command === "release-complete" || command === "release-fail") {
+      const result = await repositories.runInTransaction(async (transaction) => {
+        const promotionRequestId = requiredArgument(values, "promotion-request-id");
+        const operation = command === "release-complete"
+          ? await transaction.releaseGovernance.completePromotionDeployment({
+              promotionRequestId,
+              deployedAt: new Date(),
+              recordedBy: values.get("actor") || "github-actions",
+            })
+          : {
+              request: await transaction.releaseGovernance.failPromotionDeployment({
+                promotionRequestId,
+                completedAt: new Date(),
+                failureSummary: values.get("failure-summary") || "Production deployment workflow failed.",
+              }),
+              deployment: null,
+            };
+        const audit = await transaction.security.recordPlatformAudit({
+          actorType: "service",
+          actorId: values.get("actor") || "github-actions",
+          organisationScopeId: null,
+          action: command === "release-complete"
+            ? "platform_release.complete_deployment"
+            : "platform_release.fail_deployment",
+          targetType: "platform_release_promotion",
+          targetId: promotionRequestId,
+          beforeSummary: { status: "deploying" },
+          afterSummary: {
+            status: operation.request.status,
+            deploymentRecordId: operation.deployment?.deploymentRecordId || null,
+            commitSha: operation.deployment?.commitSha || operation.request.commitSha,
+          },
+          correlationId: values.get("correlation-id") || null,
+          outcome: command === "release-complete" ? "success" : "failure",
+          source: "release-governance-cli",
+        });
+        return { ...operation, auditEventId: audit.auditEventId };
+      });
+      json(result);
+      return;
+    }
+
+    throw new Error("Unsupported release governance command.");
+  } finally {
+    await pool.end();
+  }
+}
+
 export async function runControlPlaneCli(argv = process.argv.slice(2)) {
   const command = argv[0];
   const args = parseArguments(argv.slice(1));
   if (command === "inventory") return runInventory(args);
   if (command === "provision-demo") return runDemoProvisioning(args);
+  if ([
+    "release-status",
+    "release-register",
+    "release-authorize",
+    "release-bootstrap",
+    "release-complete",
+    "release-fail",
+  ].includes(command)) return runReleaseGovernance(command, args);
 
   const pool = createControlPlanePool(requireControlPlaneDatabaseUrl());
   try {
     if (command === "migrate") json(await applyControlPlaneMigrations(pool));
     else if (command === "status") json(await getControlPlaneMigrationStatus(pool));
     else if (command === "diagnose") json(await getShadowDiagnostics(pool));
-    else throw new Error("Command must be one of: migrate, status, diagnose, inventory, provision-demo.");
+    else throw new Error("Unsupported control-plane command.");
   } finally {
     await pool.end();
   }

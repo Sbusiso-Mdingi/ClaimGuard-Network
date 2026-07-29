@@ -6,6 +6,7 @@ import { createLegacyTenantMappingsRepository } from "./legacy-mapping-repositor
 import { createModelDeploymentRepository } from "./model-deployment-repository.js";
 import { createOrganisationsRepository } from "./organisations-repository.js";
 import { createProvisioningRepository } from "./provisioning-repository.js";
+import { createReleaseGovernanceRepository } from "./release-governance-repository.js";
 import { createDataPlaneRoutesRepository } from "./routes-repository.js";
 import { createSecurityRepository } from "./security-repository.js";
 import { withControlPlaneTransaction } from "./transaction.js";
@@ -20,6 +21,7 @@ export function createControlPlaneRepositories(executor) {
     legacyMappings: createLegacyTenantMappingsRepository(executor),
     modelDeployments: createModelDeploymentRepository(executor),
     provisioning: createProvisioningRepository(executor),
+    releaseGovernance: createReleaseGovernanceRepository(executor),
     security: createSecurityRepository(executor),
     configuration: createConfigurationRepository(executor),
     runInTransaction: async (operation) => {

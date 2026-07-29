@@ -14,6 +14,10 @@ on:
         description: Type DEPLOY_PRODUCTION to authorize the release
         required: true
         type: string
+      promotion_request_id:
+        description: Approved ClaimGuard promotion request UUID; leave empty only for the one-time governance bootstrap
+        required: false
+        type: string
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -81,12 +85,16 @@ jobs:
         env:
           EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
           PRODUCTION_CONFIRMATION: ${{ inputs.production_confirmation }}
+          PROMOTION_REQUEST_ID: ${{ inputs.promotion_request_id }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main"
           [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$EXPECTED_MAIN_SHA" = "$GITHUB_SHA"
           test "$PRODUCTION_CONFIRMATION" = "DEPLOY_PRODUCTION"
+          if [ -n "$PROMOTION_REQUEST_ID" ]; then
+            [[ "$PROMOTION_REQUEST_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          fi
 
       - name: Lint and build the complete monorepo
         run: pnpm turbo run lint build
@@ -235,6 +243,11 @@ jobs:
           unzip -q /tmp/claimguard-api-deploy.zip -d /tmp/claimguard-api-deploy-check
           test -L /tmp/claimguard-api-deploy-check/node_modules/hono
           test -L /tmp/claimguard-api-deploy-check/node_modules/@claimguard/database
+          node tools/create-release-manifest.mjs \
+            "$GITHUB_SHA" \
+            /tmp/claimguard-web-deploy.zip \
+            /tmp/claimguard-api-deploy.zip \
+            /tmp/release-manifest.json
 
       - name: Upload deployable artifacts
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY_PRODUCTION' && inputs.expected_main_sha == github.sha
@@ -244,6 +257,7 @@ jobs:
           path: |
             /tmp/claimguard-web-deploy.zip
             /tmp/claimguard-api-deploy.zip
+            /tmp/release-manifest.json
           if-no-files-found: error
           retention-days: 14
 
@@ -471,6 +485,7 @@ jobs:
       group: claimguard-production
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: read
       id-token: write
     steps:
@@ -532,6 +547,116 @@ jobs:
           pnpm --filter @claimguard/control-plane-database migrate
           pnpm --filter @claimguard/database exec node src/migrate.js
 
+      - name: Authorize the exact governed release
+        id: release_authorization
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_REQUEST_ID: ${{ inputs.promotion_request_id }}
+        run: |
+          set -euo pipefail
+          export CONTROL_PLANE_MYSQL_URL="$(
+            az keyvault secret show \
+              --vault-name "$AZURE_KEYVAULT_NAME" \
+              --name "$CONTROL_PLANE_MYSQL_URL_SECRET_NAME" \
+              --query value \
+              --output tsv
+          )"
+          test -n "$CONTROL_PLANE_MYSQL_URL"
+
+          WORKFLOW_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          ACTOR="github-actions:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}"
+
+          if [ -z "$PROMOTION_REQUEST_ID" ]; then
+            SECURITY_RUNS="$(
+              gh run list \
+                --workflow codeql.yml \
+                --commit "$GITHUB_SHA" \
+                --event push \
+                --status completed \
+                --limit 20 \
+                --json databaseId,conclusion,headSha,url
+            )"
+            SECURITY_RUN_ID="$(
+              echo "$SECURITY_RUNS" \
+                | jq -r --arg sha "$GITHUB_SHA" \
+                  '[.[] | select(.conclusion == "success" and .headSha == $sha)][0].databaseId // empty'
+            )"
+            SECURITY_RUN_URL="$(
+              echo "$SECURITY_RUNS" \
+                | jq -r --arg sha "$GITHUB_SHA" \
+                  '[.[] | select(.conclusion == "success" and .headSha == $sha)][0].url // empty'
+            )"
+            test -n "$SECURITY_RUN_ID"
+            test -n "$SECURITY_RUN_URL"
+
+            RELEASE_REGISTER_JSON="$(
+              pnpm --filter @claimguard/control-plane-database exec node src/cli.js release-register \
+                --commit-sha="$GITHUB_SHA" \
+                --repository="$GITHUB_REPOSITORY" \
+                --branch=main \
+                --artifact-digest="$(jq -r .artifactDigest /tmp/claimguard-deploy-packages/release-manifest.json)" \
+                --web-artifact-digest="$(jq -r .webArtifactDigest /tmp/claimguard-deploy-packages/release-manifest.json)" \
+                --api-artifact-digest="$(jq -r .apiArtifactDigest /tmp/claimguard-deploy-packages/release-manifest.json)" \
+                --artifact-name=claimguard-deploy-packages \
+                --artifact-workflow-run-id="$GITHUB_RUN_ID" \
+                --artifact-workflow-run-url="$WORKFLOW_URL" \
+                --ci-workflow-run-id="$GITHUB_RUN_ID" \
+                --ci-workflow-run-url="$WORKFLOW_URL" \
+                --security-workflow-run-id="$SECURITY_RUN_ID" \
+                --security-workflow-run-url="$SECURITY_RUN_URL" \
+                --actor="$ACTOR" \
+                --correlation-id="$GITHUB_RUN_ID"
+            )"
+            RELEASE_ID="$(echo "$RELEASE_REGISTER_JSON" | jq -r .release.releaseId)"
+            AUTHORIZATION_JSON="$(
+              pnpm --filter @claimguard/control-plane-database exec node src/cli.js release-bootstrap \
+                --release-id="$RELEASE_ID" \
+                --workflow-run-id="$GITHUB_RUN_ID" \
+                --workflow-run-url="$WORKFLOW_URL" \
+                --actor="$ACTOR" \
+                --correlation-id="$GITHUB_RUN_ID"
+            )"
+          else
+            AUTHORIZATION_JSON="$(
+              pnpm --filter @claimguard/control-plane-database exec node src/cli.js release-authorize \
+                --promotion-request-id="$PROMOTION_REQUEST_ID" \
+                --commit-sha="$GITHUB_SHA" \
+                --workflow-run-id="$GITHUB_RUN_ID" \
+                --workflow-run-url="$WORKFLOW_URL" \
+                --actor="$ACTOR" \
+                --correlation-id="$GITHUB_RUN_ID"
+            )"
+          fi
+
+          echo "promotion_request_id=$(echo "$AUTHORIZATION_JSON" | jq -r .promotionRequest.promotionRequestId)" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$(echo "$AUTHORIZATION_JSON" | jq -r .release.artifactName)" >> "$GITHUB_OUTPUT"
+          echo "artifact_run_id=$(echo "$AUTHORIZATION_JSON" | jq -r .release.artifactWorkflowRunId)" >> "$GITHUB_OUTPUT"
+          echo "artifact_digest=$(echo "$AUTHORIZATION_JSON" | jq -r .release.artifactDigest)" >> "$GITHUB_OUTPUT"
+          echo "web_artifact_digest=$(echo "$AUTHORIZATION_JSON" | jq -r .release.webArtifactDigest)" >> "$GITHUB_OUTPUT"
+          echo "api_artifact_digest=$(echo "$AUTHORIZATION_JSON" | jq -r .release.apiArtifactDigest)" >> "$GITHUB_OUTPUT"
+
+      - name: Download the approved immutable release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ steps.release_authorization.outputs.artifact_name }}
+          path: /tmp/claimguard-governed-release
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.release_authorization.outputs.artifact_run_id }}
+
+      - name: Verify governed release artifact digests
+        shell: bash
+        env:
+          EXPECTED_ARTIFACT_DIGEST: ${{ steps.release_authorization.outputs.artifact_digest }}
+          EXPECTED_WEB_ARTIFACT_DIGEST: ${{ steps.release_authorization.outputs.web_artifact_digest }}
+          EXPECTED_API_ARTIFACT_DIGEST: ${{ steps.release_authorization.outputs.api_artifact_digest }}
+        run: |
+          set -euo pipefail
+          test "$(jq -r .commitSha /tmp/claimguard-governed-release/release-manifest.json)" = "$GITHUB_SHA"
+          test "$(jq -r .artifactDigest /tmp/claimguard-governed-release/release-manifest.json)" = "$EXPECTED_ARTIFACT_DIGEST"
+          test "$(sha256sum /tmp/claimguard-governed-release/claimguard-web-deploy.zip | cut -d' ' -f1)" = "$EXPECTED_WEB_ARTIFACT_DIGEST"
+          test "$(sha256sum /tmp/claimguard-governed-release/claimguard-api-deploy.zip | cut -d' ' -f1)" = "$EXPECTED_API_ARTIFACT_DIGEST"
+
       - name: Deploy web app with retry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08
         with:
@@ -543,7 +668,7 @@ jobs:
             --resource-group "$AZURE_RESOURCE_GROUP"
             --name "$AZURE_WEBAPP_WEB"
             --type zip
-            --src-path /tmp/claimguard-deploy-packages/claimguard-web-deploy.zip
+            --src-path /tmp/claimguard-governed-release/claimguard-web-deploy.zip
             --clean false
             --track-status true
             --timeout 1800000
@@ -559,7 +684,7 @@ jobs:
             --resource-group "$AZURE_RESOURCE_GROUP"
             --name "$AZURE_WEBAPP_API"
             --type zip
-            --src-path /tmp/claimguard-deploy-packages/claimguard-api-deploy.zip
+            --src-path /tmp/claimguard-governed-release/claimguard-api-deploy.zip
             --clean false
             --track-status true
             --timeout 1800000
@@ -606,6 +731,24 @@ jobs:
 
           echo "Deployment verification failed after retries."
           exit 1
+
+      - name: Record the completed production deployment
+        shell: bash
+        env:
+          GOVERNED_PROMOTION_REQUEST_ID: ${{ steps.release_authorization.outputs.promotion_request_id }}
+        run: |
+          set -euo pipefail
+          export CONTROL_PLANE_MYSQL_URL="$(
+            az keyvault secret show \
+              --vault-name "$AZURE_KEYVAULT_NAME" \
+              --name "$CONTROL_PLANE_MYSQL_URL_SECRET_NAME" \
+              --query value \
+              --output tsv
+          )"
+          pnpm --filter @claimguard/control-plane-database exec node src/cli.js release-complete \
+            --promotion-request-id="$GOVERNED_PROMOTION_REQUEST_ID" \
+            --actor="github-actions:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}" \
+            --correlation-id="$GITHUB_RUN_ID"
 
       - name: Capture bounded App Service diagnostics on deploy failure
         if: failure()
@@ -656,3 +799,23 @@ jobs:
           echo "## Recent startup and container exceptions (redacted)"
           grep -RInE "Error:|Exception|MODULE_NOT_FOUND|Cannot find module|Unhandled|exited with code|Killed|failed to start|ContainerTimeout|SiteStartupCancelled|node src/backend-server.js" /tmp/claimguard-failure-diagnostics/logs/LogFiles | tail -n 200 \
             | sed -E 's#(https?://)[^ @]+@#\\1REDACTED@#g; s#(password|pwd|token|secret|connectionstring|cookie|authorization)[^[:space:]]*#\\1=REDACTED#Ig; s#(AccountKey=)[^;]+#\\1REDACTED#Ig; s#(SharedAccessKey=)[^;]+#\\1REDACTED#Ig'
+
+      - name: Record failed governed deployment
+        if: (failure() || cancelled()) && steps.release_authorization.outputs.promotion_request_id != ''
+        shell: bash
+        env:
+          GOVERNED_PROMOTION_REQUEST_ID: ${{ steps.release_authorization.outputs.promotion_request_id }}
+        run: |
+          set +e
+          export CONTROL_PLANE_MYSQL_URL="$(
+            az keyvault secret show \
+              --vault-name "$AZURE_KEYVAULT_NAME" \
+              --name "$CONTROL_PLANE_MYSQL_URL_SECRET_NAME" \
+              --query value \
+              --output tsv
+          )"
+          pnpm --filter @claimguard/control-plane-database exec node src/cli.js release-fail \
+            --promotion-request-id="$GOVERNED_PROMOTION_REQUEST_ID" \
+            --failure-summary="Production deployment workflow failed. Inspect the linked GitHub Actions run." \
+            --actor="github-actions:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}" \
+            --correlation-id="$GITHUB_RUN_ID"

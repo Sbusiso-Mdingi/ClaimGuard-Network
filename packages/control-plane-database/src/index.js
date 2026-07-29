@@ -51,6 +51,7 @@ export {
   modelDeploymentRuntimeConfigKey,
   projectModelDeployment,
 } from "./model-deployment-repository.js";
+export { createReleaseGovernanceRepository } from "./release-governance-repository.js";
 export { withControlPlaneTransaction } from "./transaction.js";
 export {
   assertNoPlaintextPassword,
