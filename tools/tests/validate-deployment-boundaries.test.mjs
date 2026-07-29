@@ -33,6 +33,27 @@ test("current production deployment boundaries pass", () => {
     validateDeploymentBoundaries(repositoryWorkflows()));
 });
 
+test("runtime selection cannot precede catalogue audit verification", () => {
+  const workflows = repositoryWorkflows();
+  workflows.ensembleFinalize = workflows.ensembleFinalize
+    .replace(
+      "Verify exact audited catalogue activation",
+      "TEMPORARY_STEP_NAME",
+    )
+    .replace(
+      "Select the audited model for future claims",
+      "Verify exact audited catalogue activation",
+    )
+    .replace(
+      "TEMPORARY_STEP_NAME",
+      "Select the audited model for future claims",
+    );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /audit verification order is unsafe/,
+  );
+});
+
 test("ordinary main pushes cannot regain a deploy condition", () => {
   const workflows = repositoryWorkflows();
   const deploymentGuard =

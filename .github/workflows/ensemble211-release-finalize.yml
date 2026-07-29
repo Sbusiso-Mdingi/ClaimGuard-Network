@@ -57,6 +57,20 @@ jobs:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install control-plane verifier dependencies
+        run: >-
+          pnpm install --frozen-lockfile
+          --filter @claimguard/control-plane-database
+
       - name: Validate immutable release input
         shell: bash
         run: |
@@ -117,6 +131,11 @@ jobs:
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$BASELINE_DEPLOYMENT_ID"
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID") | .value')" = "$ENSEMBLE_DEPLOYMENT_ID"
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_RELEASE_IMAGE_DIGEST") | .value')" = "$RELEASE_IMAGE"
+
+      - name: Verify exact audited catalogue activation
+        run: >-
+          node tools/verify-production-model-activation.mjs
+          --audit-event-id "$ACTIVATION_AUDIT_EVENT_ID"
 
       - name: Select the audited model for future claims
         shell: bash
