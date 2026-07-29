@@ -325,6 +325,9 @@ export function validateDeploymentBoundaries({
     '[[ "$ACTIVATION_AUDIT_EVENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]',
     'test "$CONFIGURED_APPROVED_MODEL_DEPLOYMENT_IDS" = "$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS"',
     'test "$CONFIGURED_MANAGED_MODEL_DEPLOYMENT_ID" = "$ENSEMBLE_DEPLOYMENT_ID"',
+    "Verify exact audited catalogue activation",
+    "tools/verify-production-model-activation.mjs",
+    '--audit-event-id "$ACTIVATION_AUDIT_EVENT_ID"',
     "infra/verify-model-readiness.sh",
     'MODEL_READINESS_DEADLINE_SECONDS: "300"',
     'MODEL_READINESS_REQUEST_TIMEOUT_SECONDS: "10"',
@@ -335,6 +338,21 @@ export function validateDeploymentBoundaries({
     "No worker job was started by this workflow.",
   ]) {
     requireText(ensembleFinalize, required, "Ensemble release finalization");
+  }
+  const catalogueAuditIndex = ensembleFinalize.indexOf(
+    "Verify exact audited catalogue activation",
+  );
+  const runtimeSelectionIndex = ensembleFinalize.indexOf(
+    "Select the audited model for future claims",
+  );
+  if (
+    catalogueAuditIndex < 0
+    || runtimeSelectionIndex < 0
+    || catalogueAuditIndex >= runtimeSelectionIndex
+  ) {
+    fail(
+      "Ensemble release finalization audit verification order is unsafe.",
+    );
   }
   for (const forbidden of [
     "az containerapp job start",
