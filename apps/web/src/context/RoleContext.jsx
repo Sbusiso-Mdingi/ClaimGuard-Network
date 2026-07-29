@@ -95,6 +95,17 @@ export function RoleProvider({ children }) {
     setState({ status: "unauthenticated", session: null, error: null });
   }, []);
 
+  const expireSession = useCallback(() => {
+    setCsrfToken(null);
+    setState((previous) => ({
+      status: "unauthenticated",
+      session: null,
+      error: previous.status === "authenticated"
+        ? "Your session ended. Sign in again to continue."
+        : previous.error,
+    }));
+  }, []);
+
   const loadSession = useCallback(async () => {
     if (mode === "demo_headers") return;
     try {
@@ -109,7 +120,7 @@ export function RoleProvider({ children }) {
   }, [clearSession, mode]);
 
   useEffect(() => {
-    setUnauthorizedHandler(clearSession);
+    setUnauthorizedHandler(expireSession);
     if (mode === "demo_headers") {
       try { window.localStorage.setItem(STORAGE_KEY, selectedDemoIdentity.id); } catch { /* isolated rollback mode only */ }
     } else {
@@ -117,7 +128,7 @@ export function RoleProvider({ children }) {
       loadSession();
     }
     return () => setUnauthorizedHandler(null);
-  }, [clearSession, selectedDemoIdentity.id, loadSession, mode]);
+  }, [expireSession, selectedDemoIdentity.id, loadSession, mode]);
 
   const login = useCallback(async (credentials) => {
     setState({ status: "loading", session: null, error: null });

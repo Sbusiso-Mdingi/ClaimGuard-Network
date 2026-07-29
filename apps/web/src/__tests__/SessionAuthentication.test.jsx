@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import AppRoot from "../AppRoot";
+import { organisationSignInUrl } from "../features/auth/LoginPage";
 import { apiRequest, setCsrfToken, setDemoAuthorityHeaders } from "../lib/apiClient";
 
 const safeSession = {
@@ -42,6 +43,18 @@ test("unauthenticated users see organisation login and configured URL preview", 
   await user.type(screen.getByLabelText("Organisation"), "Alpha-Health");
   expect(screen.getByText("https://alpha-health.claimguard.example")).toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /demo identity/i })).not.toBeInTheDocument();
+});
+
+test("never advertises a localhost sign-in address from a production host", () => {
+  expect(organisationSignInUrl("ubuntu", {
+    __CLAIMGUARD_ORGANISATION_URL_SCHEME__: "https",
+    __CLAIMGUARD_ORGANISATION_HOST__: "localhost:3002",
+    location: {
+      host: "claimguard-web.azurewebsites.net",
+      origin: "https://claimguard-web.azurewebsites.net",
+      protocol: "https:",
+    },
+  })).toBe("https://claimguard-web.azurewebsites.net/o/ubuntu/login");
 });
 
 test("successful login uses cookies, stores CSRF only in memory, and sends no authority headers", async () => {
@@ -88,6 +101,45 @@ test("wrong credentials display only the generic server error", async () => {
   await user.type(screen.getByLabelText("Password"), "unknown");
   await user.click(screen.getByRole("button", { name: /^Sign in$/i }));
   expect(await screen.findByRole("alert")).toHaveTextContent("The organisation or credentials could not be verified.");
+});
+
+test("explains when an authenticated session expires", async () => {
+  global.fetch = vi.fn((url) => {
+    const value = String(url);
+    if (value.endsWith("/api/auth/session")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => safeSession,
+      });
+    }
+    if (value.endsWith("/api/auth/csrf")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ csrfToken: "csrf-session" }),
+      });
+    }
+    if (value.endsWith("/api/auth/demo-accounts")) {
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        json: async () => ({ message: "Not found." }),
+      });
+    }
+    return Promise.resolve({
+      ok: false,
+      status: 401,
+      json: async () => ({ message: "Authentication is required." }),
+    });
+  });
+
+  render(<AppRoot />);
+
+  expect(await screen.findByRole("alert"))
+    .toHaveTextContent("Your session ended. Sign in again to continue.");
+  expect(screen.getByRole("heading", { name: /Sign in to ClaimGuard/i }))
+    .toBeInTheDocument();
 });
 
 test("demo accounts panel appears only when the gated endpoint supplies ephemeral credentials", async () => {

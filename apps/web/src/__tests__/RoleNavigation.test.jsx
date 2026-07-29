@@ -58,6 +58,9 @@ test("platform administrators see platform governance without tenant operations"
   renderLayout("platform-admin");
 
   expect(screen.getByRole("link", { name: /Platform Administration/i })).toBeInTheDocument();
+  expect(screen.getByText("Platform operations")).toBeInTheDocument();
+  expect(screen.getByText("Organisation:")).toBeInTheDocument();
+  expect(screen.queryByText("Scheme workspace")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /^Claims$/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /^Investigations$/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();

@@ -326,4 +326,21 @@ test("renders the tenant investigation queue and applies operational filters", a
   expect(
     await screen.findByRole("alert"),
   ).toHaveTextContent("Investigation not found for the active tenant.");
+
+  global.fetch.mockImplementationOnce(() => Promise.resolve({
+    ok: false,
+    status: 500,
+    json: async () => ({
+      message: "Incorrect arguments to mysqld_stmt_execute",
+      requestId: "req-investigations-1",
+    }),
+  }));
+  await user.click(screen.getByRole("button", { name: "Refresh queue" }));
+
+  expect(await screen.findByText("Showing the last loaded investigation queue"))
+    .toBeInTheDocument();
+  expect(screen.getByText("INV-100")).toBeInTheDocument();
+  expect(screen.getByText(/Request ID: req-investigations-1/))
+    .toBeInTheDocument();
+  expect(screen.queryByText(/mysqld|stmt_execute/i)).not.toBeInTheDocument();
 });

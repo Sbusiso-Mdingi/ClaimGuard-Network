@@ -60,6 +60,9 @@ export function InvestigatorLayout({
     [identity],
   );
   const showLiveControls = isLiveDetectionRoute(location.pathname);
+  const isPlatformWorkspace = identity.organisationType === "platform";
+  const workspaceLabel = isPlatformWorkspace ? "Platform operations" : "Scheme workspace";
+  const contextLabel = isPlatformWorkspace ? "Organisation:" : "Scheme:";
 
   const [theme, setTheme] = useState(() => window.localStorage.getItem("claimguard-theme") || "dark");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -166,7 +169,7 @@ export function InvestigatorLayout({
               </span>
               <div>
                 <p className="font-display text-[15px] font-semibold tracking-tight leading-none text-foreground">ClaimGuard</p>
-                <p className="font-data text-[9px] uppercase tracking-[0.2em] text-muted-2 mt-1">Scheme workspace</p>
+                <p className="font-data text-[9px] uppercase tracking-[0.2em] text-muted-2 mt-1">{workspaceLabel}</p>
               </div>
             </Link>
             <div className="flex items-center gap-1">
@@ -251,7 +254,7 @@ export function InvestigatorLayout({
             <div className="flex flex-wrap items-center gap-2.5">
               <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#71a8d9]" aria-hidden="true" />
-                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Tenant:</span>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">{contextLabel}</span>
                 <span className="text-[11px] font-semibold text-foreground">{identity.tenantLabel || identity.tenantId}</span>
               </div>
               <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
