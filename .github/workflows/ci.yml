@@ -41,21 +41,21 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: 24
+          node-version: 22
           cache: pnpm
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
 
@@ -69,6 +69,11 @@ jobs:
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Reject credential material in Git history
+        run: |
+          node --test tools/audit-credential-history.test.mjs
+          node tools/audit-credential-history.mjs --fail-on-findings
 
       - name: Validate explicit production deployment authorization
         if: github.event_name == 'workflow_dispatch'
@@ -164,7 +169,7 @@ jobs:
           test -s coverage/python/coverage.xml
 
       - name: Upload JavaScript coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           use_oidc: true
           files: ./coverage/javascript/node/lcov.info,./coverage/javascript/web/lcov.info
@@ -175,7 +180,7 @@ jobs:
           verbose: true
 
       - name: Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           use_oidc: true
           files: ./coverage/python/coverage.xml
@@ -187,7 +192,7 @@ jobs:
 
       - name: Upload web build artifact for inspection
         if: ${{ always() && hashFiles('apps/web/dist/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: web-dist
           path: apps/web/dist
@@ -233,7 +238,7 @@ jobs:
 
       - name: Upload deployable artifacts
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY_PRODUCTION' && inputs.expected_main_sha == github.sha
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: claimguard-deploy-packages
           path: |
@@ -281,17 +286,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: 24
+          node-version: 22
           cache: pnpm
 
       - name: Install JavaScript dependencies
@@ -454,9 +459,10 @@ jobs:
             --filter @claimguard/provisioning-worker \
             exec node \
             --test tests/mysql.integration.test.js
-  
+
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     needs:
       - validate
       - mysql-integration
@@ -469,28 +475,28 @@ jobs:
       id-token: write
     steps:
       - name: Download deployable artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: claimguard-deploy-packages
           path: /tmp/claimguard-deploy-packages
 
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: 24
+          node-version: 22
           cache: pnpm
 
       - name: Install migration dependencies from the lockfile
         run: pnpm install --frozen-lockfile
 
       - name: Azure login with OIDC
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -526,22 +532,8 @@ jobs:
           pnpm --filter @claimguard/control-plane-database migrate
           pnpm --filter @claimguard/database exec node src/migrate.js
 
-      - name: Enable run-from-package for web
-        run: |
-          az webapp config appsettings set \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_WEB" \
-            --settings WEBSITE_RUN_FROM_PACKAGE=1 SCM_DO_BUILD_DURING_DEPLOYMENT=false SENTRY_DSN_WEB="${{ secrets.SENTRY_DSN_WEB }}"
-
-      - name: Enable run-from-package for API
-        run: |
-          az webapp config appsettings set \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_WEBAPP_API" \
-            --settings WEBSITE_RUN_FROM_PACKAGE=1 SCM_DO_BUILD_DURING_DEPLOYMENT=false SENTRY_DSN_API="${{ secrets.SENTRY_DSN_API }}" NEW_RELIC_LICENSE_KEY="${{ secrets.NEW_RELIC_LICENSE_KEY }}" NEW_RELIC_LOG=stdout NEW_RELIC_LOG_LEVEL=info
-
       - name: Deploy web app with retry
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08
         with:
           timeout_minutes: 15
           max_attempts: 3
@@ -557,7 +549,7 @@ jobs:
             --timeout 1800000
 
       - name: Deploy API app with retry
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08
         with:
           timeout_minutes: 15
           max_attempts: 3
@@ -571,6 +563,11 @@ jobs:
             --clean false
             --track-status true
             --timeout 1800000
+
+      - name: Configure production observability boundaries
+        env:
+          CLAIMGUARD_RELEASE: ${{ github.sha }}
+        run: bash infra/configure-app-service-observability.sh
 
       - name: Verify deployment health endpoints
         run: |

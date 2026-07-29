@@ -4,9 +4,9 @@ This document records the current secret-governance model and the known secret/c
 
 ## Governing Model
 
-Preferred flow:
+Preferred production flow:
 
-`Doppler governed source -> approved synchronization/deployment process -> Azure Key Vault runtime boundary -> managed identity / Key Vault reference -> workload`
+`provider rotation -> Azure Key Vault version -> managed identity / Key Vault reference -> workload`
 
 Local development:
 
@@ -35,11 +35,10 @@ CI/CD:
 | `APPROVED_MODEL_DEPLOYMENT_IDS` | allowlist of model deployments permitted for scoring | Platform ML operations | prod-like | config | approved deployment registry | API and report worker | environment | deployment-driven | required by model-selection validation | restore previous allowlist | yes | no |
 | `CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID` | currently promoted ClaimGuard-managed fraud model | Platform ML operations | prod-like | config | ClaimGuard model promotion process | API model-selection boundary | environment | model-promotion driven | schemes cannot override this value | restore previous promoted deployment | no | no |
 | `SCHEME_MODEL_DEPLOYMENTS_JSON` | maps operational tenant IDs to proprietary deployments registered for that scheme | Platform and scheme ML governance | prod-like | sensitive config | approved model ownership registry | API model-selection boundary | environment or generated config reference | registration-driven | fail-closed ownership enforcement | restore previous ownership map | no | replace with model registry |
-| `SENTRY_DSN_API` | API error telemetry | observability | prod-like | secret-ish | live App Service setting / future Doppler | API | env | rarely | live | revert DSN | yes | yes |
-| `SENTRY_DSN_WEB` | web error telemetry | observability | prod-like | secret-ish | live App Service setting / future Doppler | web | env | rarely | live | revert DSN | yes | yes |
-| `NEW_RELIC_LICENSE_KEY` | APM auth | observability | prod-like | secret | live App Service setting / future Doppler | API | env | periodically | live | revert key | yes | yes |
-| `NEW_RELIC_APP_NAME` | APM name | observability | prod-like | config | live App Service setting / future Doppler | API | env | rarely | live | revert name | yes | yes |
-| Application Insights connection | Azure telemetry | observability | prod-like | secret-ish | code/workflow config pending | API/web/worker | env/config | change-driven | referenced in docs/code, not fully inventoried live | revert connection string | unknown | yes |
+| `SENTRY_DSN_API` | API error telemetry | observability | production | secret-ish | Key Vault `claimguard--observability--sentry-api-dsn` | API | managed-identity Key Vault reference | after exposure or provider change | governed alias | restore previous enabled Key Vault version | no | no |
+| `SENTRY_DSN_WEB` | browser error telemetry | observability | production | public client identifier / secret-ish | Key Vault `claimguard--observability--sentry-web-dsn` | web | managed-identity Key Vault reference, then runtime HTML injection | after exposure or provider change | governed alias | restore previous enabled Key Vault version | no | no |
+| `NEW_RELIC_LICENSE_KEY` | API APM ingest authentication | observability | production | secret | Key Vault `claimguard--observability--new-relic-license-key` | API | managed-identity Key Vault reference | periodic and after exposure | governed alias | restore previous enabled Key Vault version | no | no |
+| `NEW_RELIC_APP_NAME` | APM entity name | observability | production | config | deployment configuration | API | App Service setting | change-driven | `ClaimGuard API` | restore prior name | no | no |
 | `AZURE_CLIENT_ID` / tenant / subscription | OIDC deployment identity | CI | CI | identity metadata | workflow env | GitHub Actions | workflow env | change-driven | live values present in workflows | revert workflow env | yes | no |
 
 ## Detection Model Selection
@@ -80,8 +79,8 @@ Model endpoints, credentials and authentication material must not be stored in t
 ### `claimguard-api`
 
 - `MYSQL_URL`
-- `SENTRY_DSN_API`
-- `NEW_RELIC_LICENSE_KEY`
+- `SENTRY_DSN_API` (Key Vault reference)
+- `NEW_RELIC_LICENSE_KEY` (Key Vault reference)
 - `NEW_RELIC_APP_NAME`
 - `NODE_ENV`
 - `COSMOSDB_CONNECTION_STRING`
@@ -100,7 +99,7 @@ Model endpoints, credentials and authentication material must not be stored in t
 
 ### `claimguard-web`
 
-- `SENTRY_DSN_WEB`
+- `SENTRY_DSN_WEB` (Key Vault reference)
 - `NODE_ENV`
 - `CLAIMGUARD_API_BASE_URL`
 - `SCM_DO_BUILD_DURING_DEPLOYMENT`
@@ -114,6 +113,7 @@ Model endpoints, credentials and authentication material must not be stored in t
 - Its managed identity receives read access to exactly the four Key Vault secrets for each provisioned private route; it has no vault-wide secret-read role.
 - New claim producers receive a per-organisation bearer credential from the platform-admin onboarding page. ClaimGuard stores only the credential hash and shows the raw token once.
 - Codecov uploads use GitHub OIDC rather than a repository token.
+- Production telemetry secrets are not copied from GitHub Actions. App Services resolve them directly from Key Vault.
 
 ## Doppler Inventory Status
 
@@ -123,13 +123,13 @@ External Doppler metadata could not be fully enumerated from this environment. T
 
 - Normalize each secret to a single named owner and delivery path.
 - Prefer Key Vault references or managed identity at runtime for Azure workloads.
-- Migrate non-critical telemetry settings before operational database secrets.
+- Rotate observability credentials provider-by-provider and retain the old credential until replacement ingestion is verified.
 - Keep rollback values and validation paths documented before any live cutover.
 
 ## Phase 12A Reconciled Runtime Posture
 
 - API managed identity principal `fd83880b-4452-4bda-9a27-5142b49172fc` retains `Key Vault Secrets User` at vault scope for runtime reads.
-- Web app currently has no managed identity principal and no Key Vault access path.
+- The web app receives a system-assigned managed identity and secret-scoped read access for only the web Sentry DSN through the supported observability configuration operation.
 - Temporary operator write role used during migration was removed after successful cutover.
 - CI run `29609437005` failed in deploy at `Run database migrations`; CI secret-scope read assignment checks for principal `fe7b2935-7f00-4996-a0c6-7f3be2390dbb` returned no matching assignment and require follow-up.
 - Local secret-exposure risk was detected in workstation artifacts (Copilot chat resource files and shell history). No matching leaked string was found in tracked repository files.

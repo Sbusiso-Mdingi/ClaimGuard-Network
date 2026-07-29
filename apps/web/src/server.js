@@ -31,6 +31,7 @@ function injectRuntimeConfiguration(content) {
   return content
     .replaceAll("__SENTRY_DSN_WEB__", scriptString(process.env.SENTRY_DSN_WEB || ""))
     .replaceAll("__NODE_ENV__", scriptString(process.env.NODE_ENV || "development"))
+    .replaceAll("__CLAIMGUARD_RELEASE__", scriptString(process.env.CLAIMGUARD_RELEASE || ""))
     .replaceAll("__CLAIMGUARD_API_BASE_URL__", scriptString(apiBaseUrl))
     .replaceAll("__AUTHENTICATION_MODE__", scriptString(authenticationMode))
     .replaceAll("__PUBLIC_ORGANISATION_URL_SCHEME__", scriptString(process.env.PUBLIC_ORGANISATION_URL_SCHEME || "https"))

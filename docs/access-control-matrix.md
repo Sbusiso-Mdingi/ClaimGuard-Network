@@ -17,8 +17,8 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 
 | Resource | Identity state | Notes |
 | --- | --- | --- |
-| `claimguard-api` | system-assigned managed identity present | no role assignments were returned in the live query |
-| `claimguard-web` | no managed identity | browser-facing only |
+| `claimguard-api` | system-assigned managed identity present | Key Vault runtime reads, report storage read, claim-scoring queue send, and provisioning-job operator roles |
+| `claimguard-web` | system-assigned managed identity | secret-scoped Key Vault read for only the web Sentry DSN |
 | `claimguard-provisioning-worker` | user-assigned managed identity `claimguard-provisioner-identity` | intended for provisioning runtime |
 
 ## Current Application Controls
@@ -41,5 +41,5 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 ## Current Gaps
 
 - A full Azure RBAC review is still required for managed identities and current secret-delivery boundaries.
-- The repository has code-level controls, but some live App Service settings still carry secrets directly.
+- Observability credentials require provider-side rotation evidence after their Key Vault migration.
 - Production-ready access review evidence is not yet present.

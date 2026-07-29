@@ -20,6 +20,15 @@ curl -fsS https://claimguard-api.azurewebsites.net/ready
 
 ## Logging Signals
 
+Production signal ownership is intentionally split:
+
+- Azure Log Analytics: structured application/platform logs and Azure metrics
+- New Relic: API APM and distributed traces
+- Sentry: API and browser errors only
+
+Do not use Sentry transaction data as a latency source, and do not expect
+ClaimGuard application logs in New Relic.
+
 API now emits structured JSON logs for:
 
 - `http_request`
@@ -109,9 +118,8 @@ The deployed report producer is a native Azure Container Apps scheduled job name
 
 ## Current Known Limits (Out of Scope)
 
-- Alert rules are not codified in this repository.
+- Provider alert rules are documented but are not yet fully provisioned as code.
 - Dashboards are not codified in this repository.
-- Managed identity assignment for App Service is not currently enabled.
 - API authorization and rate limiting are not currently enabled.
 
 These are tracked as technical debt and require environment-level policy decisions.

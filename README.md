@@ -40,6 +40,7 @@ Phase 12 production-shaped hardening artifacts:
 Observability deliverables for Phase 6:
 
 - `docs/observability-dashboards.md`
+- `docs/observability-and-credential-rotation.md`
 - `docs/alert-definitions.md`
 
 ## Production Architecture Direction

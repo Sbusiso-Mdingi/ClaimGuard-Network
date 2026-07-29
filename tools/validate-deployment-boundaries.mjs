@@ -11,6 +11,8 @@ const RECOVERY_BOOTSTRAP_SCRIPT_PATH =
   "infra/bootstrap-report-recovery-job.sh";
 const API_HEALTH_SCRIPT_PATH = "infra/verify-api-health.sh";
 const MODEL_READINESS_SCRIPT_PATH = "infra/verify-model-readiness.sh";
+const OBSERVABILITY_SCRIPT_PATH =
+  "infra/configure-app-service-observability.sh";
 const LEGACY_API_PATH = ".github/workflows/main_claimguard-api.yml";
 const ENSEMBLE_STAGE_PATH =
   ".github/workflows/ensemble211-release-stage.yml";
@@ -46,6 +48,7 @@ export function validateDeploymentBoundaries({
   recoveryBootstrapScript,
   apiHealthScript,
   modelReadinessScript,
+  observabilityScript,
   legacyApi,
   ensembleStage,
   ensembleFinalize,
@@ -81,6 +84,76 @@ export function validateDeploymentBoundaries({
     "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
     "CI workflow",
   );
+  for (const required of [
+    "environment: production",
+    "node-version: 22",
+    "bash infra/configure-app-service-observability.sh",
+    "CLAIMGUARD_RELEASE: ${{ github.sha }}",
+  ]) {
+    requireText(ci, required, "CI observability deployment");
+  }
+  for (const forbidden of [
+    "${{ secrets.SENTRY_DSN_API }}",
+    "${{ secrets.SENTRY_DSN_WEB }}",
+    "${{ secrets.NEW_RELIC_LICENSE_KEY }}",
+  ]) {
+    forbidText(ci, forbidden, "CI observability deployment");
+  }
+  const apiDeploymentIndex = ci.indexOf("Deploy API app with retry");
+  const observabilityConfigurationIndex = ci.indexOf(
+    "Configure production observability boundaries",
+  );
+  const healthVerificationIndex = ci.indexOf(
+    "Verify deployment health endpoints",
+  );
+  if (
+    apiDeploymentIndex < 0
+    || observabilityConfigurationIndex <= apiDeploymentIndex
+    || healthVerificationIndex <= observabilityConfigurationIndex
+  ) {
+    fail(
+      "CI observability configuration must run after API deployment and before health verification.",
+    );
+  }
+
+  for (const required of [
+    "896d3c72-d979-4bdc-a37f-060988d12032",
+    "southafricanorth",
+    "claimguard--observability--sentry-api-dsn",
+    "claimguard--observability--sentry-web-dsn",
+    "claimguard--observability--new-relic-license-key",
+    "az webapp identity assign",
+    "ALLOW_OBSERVABILITY_RBAC_CHANGES",
+    '--role "Key Vault Secrets User"',
+    "@Microsoft.KeyVault(SecretUri=",
+    '--startup-file "node --experimental-loader newrelic/esm-loader.mjs -r newrelic src/backend-server.js"',
+    "az monitor diagnostic-settings create",
+    "AppServiceConsoleLogs",
+    "AppServicePlatformLogs",
+    "AllMetrics",
+    "/config/configreferences/appsettings/refresh",
+    "verify_reference",
+  ]) {
+    requireText(
+      observabilityScript,
+      required,
+      "App Service observability configuration",
+    );
+  }
+  for (const forbidden of [
+    "az keyvault secret set",
+    "az webapp config appsettings delete",
+    "az webapp delete",
+    "az monitor diagnostic-settings delete",
+    "az containerapp job start",
+    "--query value",
+  ]) {
+    forbidText(
+      observabilityScript,
+      forbidden,
+      "App Service observability configuration",
+    );
+  }
 
   for (const required of [
     "github.event.workflow_run.conclusion == 'success'",
@@ -405,6 +478,7 @@ export function validateRepositoryDeploymentBoundaries() {
     recoveryBootstrapScript: read(RECOVERY_BOOTSTRAP_SCRIPT_PATH),
     apiHealthScript: read(API_HEALTH_SCRIPT_PATH),
     modelReadinessScript: read(MODEL_READINESS_SCRIPT_PATH),
+    observabilityScript: read(OBSERVABILITY_SCRIPT_PATH),
     legacyApi: read(LEGACY_API_PATH),
     ensembleStage: read(ENSEMBLE_STAGE_PATH),
     ensembleFinalize: read(ENSEMBLE_FINALIZE_PATH),

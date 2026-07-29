@@ -12,6 +12,8 @@ if (window.__CLAIMGUARD_WEB_SENTRY_READY__ !== true) {
     Sentry.init({
       dsn: window.__CLAIMGUARD_WEB_DSN__,
       environment: window.__CLAIMGUARD_WEB_ENV__ || "development",
+      release: window.__CLAIMGUARD_WEB_RELEASE__ || undefined,
+      sendDefaultPii: false,
       tracesSampleRate: 0,
       beforeSend: scrubSentryEvent,
       beforeBreadcrumb: scrubSentryBreadcrumb,

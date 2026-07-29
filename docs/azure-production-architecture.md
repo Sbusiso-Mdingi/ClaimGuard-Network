@@ -26,9 +26,11 @@ flowchart TD
   Blob --> API
 
   Producer -. managed identity .-> Blob
-  Producer -. telemetry .-> AppInsights[(Application Insights)]
-  API -. telemetry .-> AppInsights
-  AppInsights --> LogAnalytics[(Log Analytics Workspace)]
+  Producer -. logs and metrics .-> LogAnalytics[(Log Analytics Workspace)]
+  API -. errors .-> Sentry[(Sentry)]
+  API -. APM .-> NewRelic[(New Relic)]
+  API -. logs and metrics .-> LogAnalytics
+  UI -. errors .-> Sentry
   API -. secrets/config .-> KeyVault[(Azure Key Vault)]
   Producer -. secrets/config .-> KeyVault
 ```
@@ -154,7 +156,7 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 
 | App Service | Startup Command |
 | --- | --- |
-| `claimguard-api` | `node src/backend-server.js` |
+| `claimguard-api` | `node --experimental-loader newrelic/esm-loader.mjs -r newrelic src/backend-server.js` |
 | `claimguard-web` | `node src/server.js` |
 
 ## Deployment History Summary
@@ -180,9 +182,9 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 | Variable | Value |
 | --- | --- |
 | `MYSQL_URL` | redacted |
-| `SENTRY_DSN_API` | redacted |
-| `NEW_RELIC_LICENSE_KEY` | redacted |
-| `NEW_RELIC_APP_NAME` | `ClaimGuard` |
+| `SENTRY_DSN_API` | Key Vault reference |
+| `NEW_RELIC_LICENSE_KEY` | Key Vault reference |
+| `NEW_RELIC_APP_NAME` | `ClaimGuard API` |
 | `NODE_ENV` | `production` |
 | `COSMOSDB_CONNECTION_STRING` | redacted |
 | `REPORT_STORAGE_BACKEND` | `azure_blob` |
@@ -196,7 +198,7 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 
 | Variable | Value |
 | --- | --- |
-| `SENTRY_DSN_WEB` | redacted |
+| `SENTRY_DSN_WEB` | Key Vault reference |
 | `NODE_ENV` | `production` |
 | `CLAIMGUARD_API_BASE_URL` | `https://claimguard-api.azurewebsites.net` |
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` |
@@ -212,7 +214,6 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 | `MYSQL_URL` | redacted |
 | Active route + `worker_routing_status` | authoritative report-worker organisation discovery |
 | Per-route Key Vault role assignments | exact four-secret access for each private tenant route |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | redacted |
 
 ## Production Configuration Summary
 
@@ -221,8 +222,8 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 - App Service plan: `asp-claimguard`
 - Hostname: `claimguard-api.azurewebsites.net`
 - SCM hostname: `claimguard-api.scm.azurewebsites.net`
-- Startup command: `node src/backend-server.js`
-- Managed identity: none
+- Startup command: `node --experimental-loader newrelic/esm-loader.mjs -r newrelic src/backend-server.js`
+- Managed identity: system assigned
 - App authentication: disabled
 - Deployment source: default/source-control metadata only, no active GitHub Action deployment link
 
@@ -232,7 +233,7 @@ The production web app uses OneDeploy and has build-on-deploy enabled:
 - Hostname: `claimguard-web.azurewebsites.net`
 - SCM hostname: `claimguard-web.scm.azurewebsites.net`
 - Startup command: `node src/server.js`
-- Managed identity: none
+- Managed identity: system assigned, with secret-scoped access to the web Sentry DSN
 - App authentication: disabled
 - Deployment source: default/source-control metadata only, no active GitHub Action deployment link
 
@@ -259,7 +260,7 @@ The following checks were completed after removing the obsolete UFS App Services
 - No unused production app settings were identified on `claimguard-api` or `claimguard-web`.
 - No deployment slots exist for the production apps.
 - No custom domains are attached to the production apps beyond the default Azure hostnames.
-- No managed identity is assigned to `claimguard-api`; `claimguard-web` also has no managed identity assigned.
+- Both App Services use system-assigned managed identities for Key Vault references.
 - No Azure Resource Graph references remain outside the resource group for the deleted UFS apps.
 - The retained Key Vault `claimguard-kv-ufs` still contains two role assignments whose principals no longer exist in Entra ID:
   - `Key Vault Secrets User` for principalId `2fde62f3-c77e-4c81-b6f7-736eb38acf78`
@@ -270,8 +271,8 @@ The following checks were completed after removing the obsolete UFS App Services
 
 1. Recreate the production App Service from the documented startup command and current configuration.
 2. Restore the MySQL backup if data loss occurred.
-3. Reapply `MYSQL_URL`, `SENTRY_DSN_API`, `NEW_RELIC_LICENSE_KEY`, `NODE_ENV`, `COSMOSDB_CONNECTION_STRING`, `REPORT_STORAGE_BACKEND`, `REPORT_STORAGE_CONTAINER`, `REPORT_STORAGE_ACCOUNT_URL`, and `REPORT_STORAGE_LATEST_POINTER` to the API.
-4. Reapply `SENTRY_DSN_WEB`, `NODE_ENV`, and `CLAIMGUARD_API_BASE_URL` to the web app.
+3. Restore the API Key Vault references and non-secret runtime settings with `infra/configure-app-service-observability.sh`.
+4. Restore the web Key Vault reference and non-secret runtime settings with the same supported operation.
 5. Reapply producer runtime settings (`REPORT_STORAGE_CONTAINER`, `REPORT_STORAGE_ACCOUNT_URL`, and telemetry settings) to Azure Container Apps Job.
 6. Verify both apps resolve on their default Azure hostnames.
 7. Confirm API and producer runtime logs are healthy before restoring traffic.
@@ -282,7 +283,7 @@ The following checks were completed after removing the obsolete UFS App Services
 - Confirm `claimguard-web` is `Running`.
 - Confirm producer job image revision is healthy in Azure Container Apps.
 - Confirm `CLAIMGUARD_API_BASE_URL` points to `https://claimguard-api.azurewebsites.net`.
-- Confirm the API uses `node src/backend-server.js`.
+- Confirm the API uses the New Relic ESM loader and `-r newrelic` before `src/backend-server.js`.
 - Confirm the web app uses `node src/server.js`.
 - Confirm the App Service plan is `asp-claimguard`.
 - Confirm no deleted UFS app names reappear in deployment scripts or workflow files.
@@ -292,7 +293,7 @@ The following checks were completed after removing the obsolete UFS App Services
 - Monitor API deployment history for new `Push-Deployer` or `OneDeploy` activity.
 - Review API and web app settings after any future secret rotation.
 - Keep deployment targets on the non-UFS hostnames only.
-- Recheck Key Vault access if secret delivery is reintroduced.
+- Recheck Key Vault reference status and diagnostic settings after rotation.
 - Avoid reintroducing UFS-named resources into production paths.
 
 ## Infrastructure Maintenance Notes
@@ -305,9 +306,8 @@ The following checks were completed after removing the obsolete UFS App Services
 
 ## Remaining Technical Debt
 
-- GitHub repository secrets and environment secrets could not be independently enumerated from this workspace because GitHub CLI access was unavailable.
 - `claimguard-kv-ufs` still carries the UFS suffix even though it is now retained as production Key Vault infrastructure.
-- The solution still uses raw app settings for database and observability configuration instead of a fully centralized secret strategy.
+- Provider-side Sentry, New Relic, and legacy Codecov credentials still require their provider-specific rotation audit.
 
 ## Future Infrastructure Recommendations
 

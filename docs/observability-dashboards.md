@@ -1,13 +1,15 @@
-# Phase 6 Dashboard Definitions
+# Production Dashboard Definitions
 
 This document defines production dashboards for the current ClaimGuard runtime using only telemetry already emitted by the application and CI workflows.
 
 ## Data Sources
 
-- API structured logs (events from `apps/api/src/backend.js` and `apps/api/src/backend-server.js`)
-- Producer structured logs (events from `services/report-producer/src/claimguard_report_producer/worker.py` and `cli.py`)
+- Azure Log Analytics API structured logs (events from `apps/api/src/backend.js` and `apps/api/src/backend-server.js`)
+- Azure Log Analytics producer structured logs (events from `services/report-producer/src/claimguard_report_producer/worker.py` and `cli.py`)
+- New Relic API transactions and distributed traces
+- Sentry API and browser error events
 - API health endpoint probes (CI deploy verification)
-- GitHub Actions workflow runs (`ci.yml`, `producer-deploy.yml`)
+- GitHub Actions workflow runs (`ci.yml`, `report-worker-deploy.yml`)
 
 ## Common Log Fields
 
@@ -28,7 +30,7 @@ Widgets:
 - Group by: `path`, `method`
 
 2. API latency p50/p95/p99
-- Source: `event=http_request`
+- Source: New Relic transactions
 - Metric: `durationMs`
 - Group by: `path`
 
@@ -109,7 +111,7 @@ Widgets:
 - Source: `ci.yml` deploy job history
 
 3. Producer deployment history
-- Source: `producer-deploy.yml` run history
+- Source: `report-worker-deploy.yml` run history
 
 4. Post-deploy probe failures
 - Source: CI logs for deployment verification step (`/health`, `/ready`, `/` probes)

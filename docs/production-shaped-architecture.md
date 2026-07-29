@@ -102,7 +102,7 @@ flowchart TD
 
 ### API
 
-- Start: `node src/backend-server.js`
+- Start: `node --experimental-loader newrelic/esm-loader.mjs -r newrelic src/backend-server.js`
 - Health: `GET /health`
 - Liveness: `GET /live`
 - Readiness: `GET /ready`

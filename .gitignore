@@ -11,6 +11,7 @@
 node_modules/
 .pnpm-store/
 .turbo/
+newrelic_agent.log
 
 # Coverage artifacts
 coverage.xml
