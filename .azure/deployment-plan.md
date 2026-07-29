@@ -1,6 +1,6 @@
 # Ensemble 2.1.1 governed production release
 
-> **Status:** Validated — ready for guarded PR and deployment
+> **Status:** Validated — staged resource exact; guarded retry pending approval
 >
 > **Scope:** Azure for Students
 > (`896d3c72-d979-4bdc-a37f-060988d12032`), resource group `ClaimGuard`,
@@ -120,10 +120,40 @@ Validated on 2026-07-28:
 | Worker identity | `7d7b986b-2984-4aba-925c-9a009ee56c67`; exactly one queue-scoped Storage Queue Data Contributor assignment |
 | Azure Policy | Subscription region-restriction policy enforced; ARM validation accepted South Africa North |
 | Production preflight | Baseline API selectors exact; event 0–1; recovery schedule exact; recovery executions 0; release app absent |
+| Cold-start verifier regression | 35/35 focused infrastructure and boundary tests; first-request timeout retry covered |
+| Follow-up workflow YAML | Stage, finalizer, and infrastructure-validation workflows parsed successfully |
+| Follow-up Bicep build | Ensemble production template compiled without errors; infrastructure is unchanged |
+| Follow-up monorepo lint/build/tests | Lint 9/9; build 9/9; tests 12/12 (API 155 pass + 1 expected skip; web 63/63) |
 
 The existing model identity performs only an ACR image pull in this template.
 The worker retains its existing secret-, blob-, and queue-scoped roles; no RBAC
 mutation is part of this release.
+
+## Staging incident and retry gate
+
+Guarded staging run
+[`30439634510`](https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/30439634510)
+deployed the exact release resource, then stopped because its one-shot readiness
+request received no bytes within 30 seconds. Azure system logs show the immutable
+image pull began at `2026-07-29T09:27:50Z`, the container started at
+`09:28:03Z`, and application startup completed at `09:28:08Z`. A subsequent
+readiness request returned `ready` with deployment ID
+`claimguard-claim-fraud-ensemble:2.1.1`.
+
+Read-only post-stop verification confirmed:
+
+- provisioning `Succeeded`, exact release digest, scale `0–2`;
+- the sole model identity is `claimguard-prospective-model-identity`;
+- internal caller restriction remains the exact report-worker principal;
+- event scoring remains `0–1` with baseline primary;
+- recovery remains parked at `0 0 1 1 *` with zero lifetime executions;
+- API selectors remain on the baseline.
+
+The follow-up verifier uses individually bounded 10-second requests, a bounded
+five-minute warm-up window, and a five-second retry interval. Success requires
+both HTTP 200 and the exact `ready` state and deployment ID. It has no Azure or
+GitHub mutation commands. No staging retry, catalogue activation, repository
+selector change, or worker execution was performed after the stop.
 
 ## Rollout and rollback
 

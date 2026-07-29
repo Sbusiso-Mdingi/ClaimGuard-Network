@@ -18,6 +18,7 @@ function repositoryWorkflows() {
     recoveryBootstrap: read("infra/recovery-job-bootstrap.bicep"),
     recoveryBootstrapScript: read("infra/bootstrap-report-recovery-job.sh"),
     apiHealthScript: read("infra/verify-api-health.sh"),
+    modelReadinessScript: read("infra/verify-model-readiness.sh"),
     legacyApi: read(".github/workflows/main_claimguard-api.yml"),
     ensembleStage: read(".github/workflows/ensemble211-release-stage.yml"),
     ensembleFinalize: read(
@@ -207,6 +208,27 @@ test("worker API health verification cannot mutate App Service", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /Post-restart API health script still contains/,
+  );
+});
+
+test("model readiness verification must bound each HTTP request", () => {
+  const workflows = repositoryWorkflows();
+  workflows.modelReadinessScript = workflows.modelReadinessScript.replace(
+    '--max-time "$REQUEST_TIMEOUT_SECONDS"',
+    "--connect-timeout 10",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Model readiness verification script is missing/,
+  );
+});
+
+test("model readiness verification cannot mutate production", () => {
+  const workflows = repositoryWorkflows();
+  workflows.modelReadinessScript += "\n# az containerapp update\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Model readiness verification script still contains/,
   );
 });
 

@@ -45,7 +45,8 @@ jobs:
           node --test \
             tools/tests/bootstrap-report-recovery-job.test.mjs \
             tools/tests/validate-deployment-boundaries.test.mjs \
-            tools/tests/verify-api-health.test.mjs
+            tools/tests/verify-api-health.test.mjs \
+            tools/tests/verify-model-readiness.test.mjs
 
       - name: Validate deployment workflow invariants
         shell: python
@@ -54,6 +55,7 @@ jobs:
 
           workflow = Path('.github/workflows/report-worker-deploy.yml').read_text(encoding='utf-8')
           bootstrap = Path('infra/bootstrap-report-recovery-job.sh').read_text(encoding='utf-8')
+          model_readiness = Path('infra/verify-model-readiness.sh').read_text(encoding='utf-8')
           workflow_required = [
               'infra/event-report-worker.bicep',
               'infra/bootstrap-report-recovery-job.sh',
@@ -85,6 +87,15 @@ jobs:
           missing = [value for value in bootstrap_required if value not in bootstrap]
           if missing:
               raise SystemExit(f'Missing recovery-bootstrap invariants: {missing}')
+          model_readiness_required = [
+              'MODEL_READINESS_DEADLINE_SECONDS',
+              'MODEL_READINESS_REQUEST_TIMEOUT_SECONDS',
+              'MODEL_READINESS_RETRY_SECONDS',
+              'EXPECTED_MODEL_DEPLOYMENT_ID',
+          ]
+          missing = [value for value in model_readiness_required if value not in model_readiness]
+          if missing:
+              raise SystemExit(f'Missing model-readiness invariants: {missing}')
 
           forbidden = [
               'infra/report-worker.bicep',
