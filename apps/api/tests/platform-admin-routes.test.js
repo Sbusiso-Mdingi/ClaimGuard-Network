@@ -3,9 +3,9 @@ import test from "node:test";
 
 import { createBackendApp } from "../src/backend.js";
 
-function platformHeaders() {
+function platformHeaders(userId = "platform-admin-1") {
   return {
-    "x-claimguard-user": "platform-admin-1",
+    "x-claimguard-user": userId,
     "x-claimguard-role": "platform_administrator",
     "x-claimguard-user-tenant": "tenant_platform",
   };
@@ -22,13 +22,17 @@ function investigatorHeaders() {
 function createControlPlaneHarness({
   failModelAudit = false,
   failModelActivationAudit = false,
+  failReleaseAudit = false,
 } = {}) {
   const organisations = new Map();
   const operations = new Map();
   const stepsByOperation = new Map();
   const integrationCredentials = new Map();
   const modelDeployments = new Map();
+  const releases = new Map();
+  const promotionRequests = new Map();
   const audits = [];
+  const reauthenticationAttempts = [];
   let opCounter = 0;
 
   let repositories;
@@ -138,6 +142,71 @@ function createControlPlaneHarness({
         };
       },
     },
+    releaseGovernance: {
+      async listEligibleReleases() {
+        return [...releases.values()];
+      },
+      async listPromotionRequests() {
+        return [...promotionRequests.values()];
+      },
+      async getCurrentDeployment() {
+        return null;
+      },
+      async getReleaseById(releaseId) {
+        return releases.get(releaseId) || null;
+      },
+      async getPromotionRequest(promotionRequestId) {
+        return promotionRequests.get(promotionRequestId) || null;
+      },
+      async createPromotionRequest({
+        releaseId,
+        requestReason,
+        requestedBy,
+        requestedAt,
+        requestReauthenticatedAt,
+      }) {
+        const release = releases.get(releaseId);
+        const promotionRequestId = "44444444-4444-4444-8444-444444444444";
+        const request = {
+          promotionRequestId,
+          releaseId,
+          commitSha: release.commitSha,
+          artifactDigest: release.artifactDigest,
+          targetEnvironment: "production",
+          status: "pending_approval",
+          requestReason,
+          requestedBy,
+          requestedAt,
+          requestReauthenticatedAt,
+          approvedBy: null,
+        };
+        promotionRequests.set(promotionRequestId, request);
+        return request;
+      },
+      async approvePromotionRequest({
+        promotionRequestId,
+        approvedBy,
+        approvedAt,
+        approvalReauthenticatedAt,
+      }) {
+        const request = promotionRequests.get(promotionRequestId);
+        if (request.requestedBy === approvedBy) {
+          const error = new Error("Production promotion requires approval by a different platform administrator.");
+          error.status = 409;
+          error.code = "SECOND_APPROVER_REQUIRED";
+          throw error;
+        }
+        const approved = {
+          ...request,
+          status: "approved",
+          approvedBy,
+          approvedAt,
+          approvalReauthenticatedAt,
+        };
+        promotionRequests.set(promotionRequestId, approved);
+        return approved;
+      },
+    },
     security: {
       async recordPlatformAudit(event) {
         if (
@@ -152,12 +221,19 @@ function createControlPlaneHarness({
         ) {
           throw new Error("Simulated audit failure.");
         }
+        if (
+          failReleaseAudit
+          && event.action === "platform_release.request_promotion"
+        ) {
+          throw new Error("Simulated release audit failure.");
+        }
         audits.push(event);
         return { auditEventId: `audit-${audits.length}` };
       },
     },
     async runInTransaction(operation) {
       const modelSnapshot = new Map(modelDeployments);
+      const promotionSnapshot = new Map(promotionRequests);
       const auditCount = audits.length;
       try {
         return await operation(repositories);
@@ -165,6 +241,10 @@ function createControlPlaneHarness({
         modelDeployments.clear();
         for (const [key, value] of modelSnapshot) {
           modelDeployments.set(key, value);
+        }
+        promotionRequests.clear();
+        for (const [key, value] of promotionSnapshot) {
+          promotionRequests.set(key, value);
         }
         audits.splice(auditCount);
         throw error;
@@ -301,14 +381,33 @@ function createControlPlaneHarness({
     },
   };
 
+  const authenticationService = {
+    async reauthenticate(_resolvedSession, password) {
+      reauthenticationAttempts.push(password);
+      if (password !== "correct-password") {
+        const error = new Error("The credentials could not be verified.");
+        error.status = 401;
+        error.code = "AUTHENTICATION_FAILED";
+        throw error;
+      }
+      return {
+        reauthenticatedAt: new Date("2026-07-29T12:00:00.000Z"),
+      };
+    },
+  };
+
   return {
     repositories,
     service,
+    authenticationService,
     organisations,
     operations,
     integrationCredentials,
     modelDeployments,
+    releases,
+    promotionRequests,
     audits,
+    reauthenticationAttempts,
   };
 }
 
@@ -317,6 +416,7 @@ function createApp(options) {
   const app = createBackendApp({
     controlPlaneRepositories: harness.repositories,
     controlPlaneService: harness.service,
+    authenticationService: harness.authenticationService,
     authenticationConfiguration: {
       mode: "demo_headers",
       deploymentClass: options?.deploymentClass || "demo",
@@ -402,6 +502,129 @@ test("non-platform user cannot mutate onboarding routes", async () => {
   });
 
   assert.equal(response.status, 403);
+});
+
+test("release governance exposes verified provenance and enforces reauthenticated two-person approval", async () => {
+  const { app, harness } = createApp();
+  const releaseId = "11111111-1111-4111-8111-111111111111";
+  harness.releases.set(releaseId, {
+    releaseId,
+    commitSha: "a".repeat(40),
+    sourceRepository: "Sbusiso-Mdingi/ClaimGuard-Network",
+    sourceBranch: "main",
+    artifactDigest: "b".repeat(64),
+    webArtifactDigest: "c".repeat(64),
+    apiArtifactDigest: "d".repeat(64),
+    artifactWorkflowRunId: "1000",
+    artifactWorkflowRunUrl: "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/1000",
+    ciWorkflowRunId: "1001",
+    ciWorkflowRunUrl: "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/1001",
+    securityWorkflowRunId: "1002",
+    securityWorkflowRunUrl: "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/1002",
+    eligibleAt: new Date("2026-07-29T10:00:00.000Z"),
+  });
+
+  const overview = await app.request("http://localhost/admin/platform/releases", {
+    headers: platformHeaders(),
+  });
+  const overviewBody = await overview.json();
+  assert.equal(overview.status, 200);
+  assert.equal(overviewBody.releases[0].requestConfirmation, "PROMOTE aaaaaaaaaaaa TO PRODUCTION");
+  assert.equal(overviewBody.policy.distinctSecondApproverRequired, true);
+  assert.equal(overviewBody.actor.canRequest, true);
+  assert.equal(overviewBody.actor.canApprove, true);
+
+  const requested = await app.request(
+    `http://localhost/admin/platform/releases/${releaseId}/promotion-requests`,
+    {
+      method: "POST",
+      headers: {
+        ...platformHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        password: "correct-password",
+        confirmation: "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
+        reason: "Promote the release after CI and security review.",
+      }),
+    },
+  );
+  const requestedBody = await requested.json();
+  assert.equal(requested.status, 201);
+  assert.equal(requestedBody.promotionRequest.status, "pending_approval");
+  assert.equal(requestedBody.auditEventId, "audit-1");
+  assert.equal(harness.reauthenticationAttempts.length, 1);
+  assert.equal(harness.audits[0].action, "platform_release.request_promotion");
+
+  const requestId = requestedBody.promotionRequest.promotionRequestId;
+  const ownApproval = await app.request(
+    `http://localhost/admin/platform/promotion-requests/${requestId}/approve`,
+    {
+      method: "POST",
+      headers: {
+        ...platformHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        password: "correct-password",
+        confirmation: "APPROVE 44444444",
+      }),
+    },
+  );
+  assert.equal(ownApproval.status, 409);
+  assert.equal((await ownApproval.json()).code, "SECOND_APPROVER_REQUIRED");
+  assert.equal(harness.reauthenticationAttempts.length, 1);
+
+  const approved = await app.request(
+    `http://localhost/admin/platform/promotion-requests/${requestId}/approve`,
+    {
+      method: "POST",
+      headers: {
+        ...platformHeaders("platform-admin-2"),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        password: "correct-password",
+        confirmation: "APPROVE 44444444",
+      }),
+    },
+  );
+  const approvedBody = await approved.json();
+  assert.equal(approved.status, 200);
+  assert.equal(approvedBody.promotionRequest.status, "approved");
+  assert.equal(approvedBody.promotionRequest.approvedBy, "platform-admin-2");
+  assert.equal(harness.audits[1].action, "platform_release.approve_promotion");
+  assert.equal(harness.reauthenticationAttempts.length, 2);
+});
+
+test("release promotion rolls back when its permanent audit cannot be stored", async () => {
+  const { app, harness } = createApp({ failReleaseAudit: true });
+  const releaseId = "11111111-1111-4111-8111-111111111111";
+  harness.releases.set(releaseId, {
+    releaseId,
+    commitSha: "a".repeat(40),
+    artifactDigest: "b".repeat(64),
+  });
+
+  const response = await app.request(
+    `http://localhost/admin/platform/releases/${releaseId}/promotion-requests`,
+    {
+      method: "POST",
+      headers: {
+        ...platformHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        password: "correct-password",
+        confirmation: "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
+        reason: "Promote the release after CI and security review.",
+      }),
+    },
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(harness.promotionRequests.size, 0);
+  assert.equal(harness.audits.length, 0);
 });
 
 test("platform model endpoint reports the deployment-authoritative configuration", async () => {

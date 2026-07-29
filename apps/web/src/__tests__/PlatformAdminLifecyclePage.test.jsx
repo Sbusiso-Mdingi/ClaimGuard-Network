@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 vi.mock("../lib/apiClient", () => ({
   apiJson: vi.fn(),
   ApiError: class ApiError extends Error {},
+  safeApiErrorMessage: (error, fallback) => error?.message || fallback,
 }));
 
 import { apiJson } from "../lib/apiClient";
@@ -19,8 +20,63 @@ const organisations = [{
   status: "active",
 }];
 
+const releaseCommit = "a".repeat(40);
+const releaseId = "11111111-1111-4111-8111-111111111111";
+
 function configureApi() {
   apiJson.mockImplementation((path, options = {}) => {
+    if (path === "/admin/platform/releases") {
+      return Promise.resolve({
+        available: true,
+        actor: {
+          userId: "platform-admin-1",
+          canRequest: true,
+          canApprove: true,
+        },
+        policy: {
+          targetEnvironment: "production",
+          reauthenticationRequired: true,
+          distinctSecondApproverRequired: true,
+          deploymentExecution: "github_actions",
+        },
+        currentDeployment: {
+          releaseId: "22222222-2222-4222-8222-222222222222",
+          promotionRequestId: "33333333-3333-4333-8333-333333333333",
+          commitSha: "b".repeat(40),
+          artifactDigest: "c".repeat(64),
+          deployedAt: "2026-07-28T10:00:00.000Z",
+          deploymentWorkflowRunId: "98765",
+          deploymentWorkflowRunUrl: "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/98765",
+          sourceRepository: "Sbusiso-Mdingi/ClaimGuard-Network",
+        },
+        releases: [{
+          releaseId,
+          commitSha: releaseCommit,
+          sourceRepository: "Sbusiso-Mdingi/ClaimGuard-Network",
+          sourceBranch: "main",
+          artifactDigest: "d".repeat(64),
+          eligibleAt: "2026-07-29T08:00:00.000Z",
+          ciWorkflowRunId: "1001",
+          ciWorkflowRunUrl: "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/1001",
+          securityWorkflowRunId: "1002",
+          securityWorkflowRunUrl: "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/1002",
+          current: false,
+          promotionOpen: false,
+          requestConfirmation: "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
+        }],
+        promotionRequests: [],
+      });
+    }
+    if (
+      path === `/admin/platform/releases/${releaseId}/promotion-requests`
+      && options.method === "POST"
+    ) {
+      return Promise.resolve({
+        available: true,
+        message: "Promotion requested.",
+        auditEventId: "audit-release-1",
+      });
+    }
     if (path === "/admin/platform/global-detection-engine") {
       return Promise.resolve({
         strategy: {
@@ -271,5 +327,47 @@ describe("PlatformAdminLifecyclePage", () => {
       expect(screen.queryByText("Model governance updated"))
         .not.toBeInTheDocument();
     });
+  });
+
+  test("shows immutable production provenance and requests promotion with step-up confirmation", async () => {
+    render(<PlatformAdminPage />);
+    const user = userEvent.setup();
+
+    expect(await screen.findByText("Production deployment")).toBeInTheDocument();
+    expect(screen.getByText("b".repeat(40))).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Run 98765/i })).toHaveAttribute(
+      "href",
+      "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/98765",
+    );
+    expect(screen.getByRole("link", { name: /Passed · run 1001/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Passed · run 1002/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Request promotion" }));
+    await user.type(
+      screen.getByLabelText("Change reason"),
+      "Promote the verified release after release review.",
+    );
+    await user.type(screen.getByLabelText("Current password"), "current-password");
+    await user.type(
+      screen.getByLabelText("Confirmation"),
+      "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
+    );
+    await user.click(screen.getByRole("button", { name: "Record governed action" }));
+
+    await waitFor(() => {
+      expect(apiJson).toHaveBeenCalledWith(
+        `/admin/platform/releases/${releaseId}/promotion-requests`,
+        {
+          method: "POST",
+          skipUnauthorizedHandler: true,
+          body: JSON.stringify({
+            password: "current-password",
+            confirmation: "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
+            reason: "Promote the verified release after release review.",
+          }),
+        },
+      );
+    });
+    expect(await screen.findByText(/Audit event audit-release-1/i)).toBeInTheDocument();
   });
 });

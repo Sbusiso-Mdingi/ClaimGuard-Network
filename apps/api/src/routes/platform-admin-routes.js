@@ -17,6 +17,27 @@ function actorFromContext(c) {
   };
 }
 
+function promotionRequestConfirmation(commitSha) {
+  return `PROMOTE ${String(commitSha || "").slice(0, 12)} TO PRODUCTION`;
+}
+
+function promotionApprovalConfirmation(promotionRequestId) {
+  return `APPROVE ${String(promotionRequestId || "").slice(0, 8)}`;
+}
+
+function releaseGovernanceError(c, error, fallback) {
+  const duplicate = error?.code === "ER_DUP_ENTRY";
+  return c.json({
+    available: false,
+    code: duplicate
+      ? "RELEASE_PROMOTION_ALREADY_OPEN"
+      : error?.code || "RELEASE_GOVERNANCE_OPERATION_FAILED",
+    message: duplicate
+      ? "An open promotion request already exists for this release."
+      : error?.message || fallback,
+  }, duplicate ? 409 : Number.isInteger(error?.status) ? error.status : 400);
+}
+
 function parseAllowedDeploymentClasses(defaultDeploymentClass) {
   return new Set(
     String(
@@ -223,6 +244,7 @@ export function registerPlatformAdminRoutes(
   {
     controlPlaneRepositories,
     controlPlaneService,
+    authenticationService = null,
     deploymentClass = "production",
     startProvisioningJob =
       triggerProvisioningJob,
@@ -231,8 +253,281 @@ export function registerPlatformAdminRoutes(
   const requirePlatformAdmin = createRequirePermissionMiddleware({
     permission: CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
   });
+  const requireReleaseView = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_VIEW,
+  });
+  const requireReleaseRequest = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_REQUEST,
+  });
+  const requireReleaseApproval = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_APPROVE,
+  });
   const allowedDeploymentClasses = parseAllowedDeploymentClasses(
     deploymentClass,
+  );
+
+  app.get("/admin/platform/releases", requireReleaseView, async (c) => {
+    const repository = controlPlaneRepositories?.releaseGovernance;
+    if (
+      !repository?.listEligibleReleases
+      || !repository?.listPromotionRequests
+      || !repository?.getCurrentDeployment
+    ) {
+      return c.json({
+        available: false,
+        code: "RELEASE_GOVERNANCE_NOT_CONFIGURED",
+        message: "Release governance is not configured.",
+      }, 503);
+    }
+    const auth = c.get("authContext") || {};
+    const [currentDeployment, releases, promotionRequests] = await Promise.all([
+      repository.getCurrentDeployment("production"),
+      repository.listEligibleReleases({ limit: 20 }),
+      repository.listPromotionRequests({ limit: 30 }),
+    ]);
+    const currentReleaseId = currentDeployment?.releaseId || null;
+    const openReleaseIds = new Set(
+      promotionRequests
+        .filter((request) =>
+          ["pending_approval", "approved", "deploying"].includes(request.status))
+        .map((request) => request.releaseId),
+    );
+    return c.json({
+      available: true,
+      actor: {
+        userId: auth.user_id || null,
+        canRequest: auth.permissions?.has(
+          CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_REQUEST,
+        ) || false,
+        canApprove: auth.permissions?.has(
+          CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_APPROVE,
+        ) || false,
+      },
+      policy: {
+        targetEnvironment: "production",
+        reauthenticationRequired: true,
+        distinctSecondApproverRequired: true,
+        deploymentExecution: "github_actions",
+      },
+      currentDeployment,
+      releases: releases.map((release) => ({
+        ...release,
+        current: release.releaseId === currentReleaseId,
+        promotionOpen: openReleaseIds.has(release.releaseId),
+        requestConfirmation: promotionRequestConfirmation(release.commitSha),
+      })),
+      promotionRequests: promotionRequests.map((request) => ({
+        ...request,
+        approvalConfirmation: promotionApprovalConfirmation(
+          request.promotionRequestId,
+        ),
+      })),
+    });
+  });
+
+  app.post(
+    "/admin/platform/releases/:releaseId/promotion-requests",
+    requireReleaseRequest,
+    async (c) => {
+      const repository = controlPlaneRepositories?.releaseGovernance;
+      const runInTransaction = controlPlaneRepositories?.runInTransaction;
+      if (
+        !repository?.getReleaseById
+        || typeof runInTransaction !== "function"
+        || typeof authenticationService?.reauthenticate !== "function"
+      ) {
+        return c.json({
+          available: false,
+          code: "RELEASE_GOVERNANCE_NOT_CONFIGURED",
+          message: "Audited release promotion is not configured.",
+        }, 503);
+      }
+      const payload = await c.req.json().catch(() => ({}));
+      const permittedKeys = new Set(["password", "confirmation", "reason"]);
+      if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
+        return c.json({
+          available: false,
+          code: "RELEASE_PROMOTION_INPUT_INVALID",
+          message: "The promotion request contains unsupported fields.",
+        }, 400);
+      }
+      try {
+        const release = await repository.getReleaseById(c.req.param("releaseId"));
+        if (!release) {
+          return c.json({
+            available: false,
+            code: "RELEASE_NOT_FOUND",
+            message: "The eligible release was not found.",
+          }, 404);
+        }
+        if (payload.confirmation !== promotionRequestConfirmation(release.commitSha)) {
+          return c.json({
+            available: false,
+            code: "RELEASE_PROMOTION_CONFIRMATION_MISMATCH",
+            message: "The production confirmation does not match the selected release.",
+          }, 400);
+        }
+        const actor = actorFromContext(c);
+        const stepUp = await authenticationService.reauthenticate(
+          c.get("resolvedSession"),
+          payload.password,
+          c.get("authenticationMetadata") || {},
+        );
+        const result = await runInTransaction(async (repositories) => {
+          const request = await repositories.releaseGovernance
+            .createPromotionRequest({
+              releaseId: release.releaseId,
+              requestReason: payload.reason,
+              requestedBy: actor.id,
+              requestedAt: new Date(),
+              requestReauthenticatedAt: stepUp.reauthenticatedAt,
+            });
+          const audit = await repositories.security.recordPlatformAudit({
+            actorType: actor.type,
+            actorId: actor.id,
+            organisationScopeId: null,
+            action: "platform_release.request_promotion",
+            targetType: "platform_release",
+            targetId: release.releaseId,
+            beforeSummary: null,
+            afterSummary: {
+              promotionRequestId: request.promotionRequestId,
+              commitSha: release.commitSha,
+              artifactDigest: release.artifactDigest,
+              targetEnvironment: "production",
+              status: request.status,
+              reauthenticated: true,
+            },
+            correlationId: actor.correlationId,
+            outcome: "success",
+            source: actor.source,
+          });
+          return { request, audit };
+        });
+        return c.json({
+          available: true,
+          promotionRequest: {
+            ...result.request,
+            approvalConfirmation: promotionApprovalConfirmation(
+              result.request.promotionRequestId,
+            ),
+          },
+          auditEventId: result.audit.auditEventId,
+          message: "Promotion requested. A different platform administrator must approve it before deployment.",
+        }, 201);
+      } catch (error) {
+        return releaseGovernanceError(
+          c,
+          error,
+          "The release promotion request could not be recorded.",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/admin/platform/promotion-requests/:promotionRequestId/approve",
+    requireReleaseApproval,
+    async (c) => {
+      const repository = controlPlaneRepositories?.releaseGovernance;
+      const runInTransaction = controlPlaneRepositories?.runInTransaction;
+      if (
+        !repository?.getPromotionRequest
+        || typeof runInTransaction !== "function"
+        || typeof authenticationService?.reauthenticate !== "function"
+      ) {
+        return c.json({
+          available: false,
+          code: "RELEASE_GOVERNANCE_NOT_CONFIGURED",
+          message: "Audited release approval is not configured.",
+        }, 503);
+      }
+      const payload = await c.req.json().catch(() => ({}));
+      const permittedKeys = new Set(["password", "confirmation"]);
+      if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
+        return c.json({
+          available: false,
+          code: "RELEASE_APPROVAL_INPUT_INVALID",
+          message: "The promotion approval contains unsupported fields.",
+        }, 400);
+      }
+      try {
+        const promotionRequestId = c.req.param("promotionRequestId");
+        const existing = await repository.getPromotionRequest(promotionRequestId);
+        if (!existing) {
+          return c.json({
+            available: false,
+            code: "PROMOTION_REQUEST_NOT_FOUND",
+            message: "The promotion request was not found.",
+          }, 404);
+        }
+        const actor = actorFromContext(c);
+        if (existing.requestedBy === actor.id) {
+          return c.json({
+            available: false,
+            code: "SECOND_APPROVER_REQUIRED",
+            message: "Production promotion requires approval by a different platform administrator.",
+          }, 409);
+        }
+        if (payload.confirmation !== promotionApprovalConfirmation(promotionRequestId)) {
+          return c.json({
+            available: false,
+            code: "RELEASE_APPROVAL_CONFIRMATION_MISMATCH",
+            message: "The approval confirmation does not match this request.",
+          }, 400);
+        }
+        const stepUp = await authenticationService.reauthenticate(
+          c.get("resolvedSession"),
+          payload.password,
+          c.get("authenticationMetadata") || {},
+        );
+        const result = await runInTransaction(async (repositories) => {
+          const request = await repositories.releaseGovernance
+            .approvePromotionRequest({
+              promotionRequestId,
+              approvedBy: actor.id,
+              approvedAt: new Date(),
+              approvalReauthenticatedAt: stepUp.reauthenticatedAt,
+            });
+          const audit = await repositories.security.recordPlatformAudit({
+            actorType: actor.type,
+            actorId: actor.id,
+            organisationScopeId: null,
+            action: "platform_release.approve_promotion",
+            targetType: "platform_release_promotion",
+            targetId: promotionRequestId,
+            beforeSummary: {
+              status: existing.status,
+              requestedBy: existing.requestedBy,
+            },
+            afterSummary: {
+              status: request.status,
+              approvedBy: request.approvedBy,
+              commitSha: request.commitSha,
+              artifactDigest: request.artifactDigest,
+              reauthenticated: true,
+              distinctApprover: true,
+            },
+            correlationId: actor.correlationId,
+            outcome: "success",
+            source: actor.source,
+          });
+          return { request, audit };
+        });
+        return c.json({
+          available: true,
+          promotionRequest: result.request,
+          auditEventId: result.audit.auditEventId,
+          message: "Promotion approved. GitHub Actions may now consume this exact request.",
+        });
+      } catch (error) {
+        return releaseGovernanceError(
+          c,
+          error,
+          "The release promotion approval could not be recorded.",
+        );
+      }
+    },
   );
 
   app.get("/admin/platform/model-deployments", requirePlatformAdmin, async (c) => {

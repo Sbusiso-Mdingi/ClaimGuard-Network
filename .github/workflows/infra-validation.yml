@@ -9,7 +9,11 @@ on:
       - '.github/workflows/report-worker-deploy.yml'
       - '.github/workflows/ensemble211-release-stage.yml'
       - '.github/workflows/ensemble211-release-finalize.yml'
+      - '.github/workflows/release-catalogue.yml'
       - '.github/workflows/infra-validation.yml'
+      - 'tools/create-release-manifest.mjs'
+      - 'tools/package-release-artifacts.sh'
+      - 'tools/tests/release-governance-boundaries.test.mjs'
       - 'tools/validate-deployment-boundaries.mjs'
   push:
     branches: [main]
@@ -20,7 +24,11 @@ on:
       - '.github/workflows/report-worker-deploy.yml'
       - '.github/workflows/ensemble211-release-stage.yml'
       - '.github/workflows/ensemble211-release-finalize.yml'
+      - '.github/workflows/release-catalogue.yml'
       - '.github/workflows/infra-validation.yml'
+      - 'tools/create-release-manifest.mjs'
+      - 'tools/package-release-artifacts.sh'
+      - 'tools/tests/release-governance-boundaries.test.mjs'
       - 'tools/validate-deployment-boundaries.mjs'
 
 permissions:
@@ -44,6 +52,7 @@ jobs:
         run: |
           node --test \
             tools/tests/bootstrap-report-recovery-job.test.mjs \
+            tools/tests/release-governance-boundaries.test.mjs \
             tools/tests/validate-deployment-boundaries.test.mjs \
             tools/tests/verify-api-health.test.mjs \
             tools/tests/verify-model-readiness.test.mjs

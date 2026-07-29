@@ -242,6 +242,7 @@ export function createBackendApp({
     registerPlatformAdminRoutes(app, {
       controlPlaneRepositories,
       controlPlaneService,
+      authenticationService,
       deploymentClass: authenticationConfiguration.deploymentClass,
     });
     registerSchemeAdminRoutes(app, {

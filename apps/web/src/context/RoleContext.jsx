@@ -33,6 +33,7 @@ const DEMO_CAPABILITIES = Object.freeze({
   ]),
   [CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR]: Object.freeze([
     "tenants.manage", "platform_health.view", "telemetry.view",
+    "platform_releases.view", "platform_releases.request", "platform_releases.approve",
   ]),
 });
 

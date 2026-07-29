@@ -112,6 +112,39 @@ test("canonical and alias organisation login creates one hashed server session a
   assert.equal(f.upgrades.length, 1);
 });
 
+test("sensitive actions require a fresh password check bound to the current session identity", async () => {
+  const f = fixture();
+  const login = await f.service.login({
+    organisationSlug: "alpha",
+    username: "investigator",
+    password: "correct",
+  }, metadata);
+  const resolved = await f.service.resolveSession(login.bearerSecret, metadata);
+
+  const reauthenticated = await f.service.reauthenticate(
+    resolved,
+    "correct",
+    metadata,
+  );
+  assert.equal(reauthenticated.userId, "user-1");
+  assert.equal(reauthenticated.credentialId, "credential-1");
+  assert.deepEqual(
+    f.events.slice(-1).map((event) => [event.eventType, event.result]),
+    [["reauthentication_success", "success"]],
+  );
+
+  await assert.rejects(
+    () => f.service.reauthenticate(resolved, "wrong", metadata),
+    (error) =>
+      error instanceof AuthenticationRejectedError
+      && error.code === "AUTHENTICATION_FAILED",
+  );
+  assert.deepEqual(
+    f.events.slice(-1).map((event) => [event.eventType, event.result]),
+    [["reauthentication_failure", "failure"]],
+  );
+});
+
 test("login failures are generic for wrong passwords, unknown, suspended, disabled, and unmapped identities", async () => {
   const cases = [
     [fixture(), { organisationSlug: "alpha", username: "investigator", password: "wrong" }],

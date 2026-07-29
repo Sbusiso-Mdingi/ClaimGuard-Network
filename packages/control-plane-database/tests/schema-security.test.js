@@ -13,6 +13,7 @@ test("control-plane schema contains required foundations and excludes operationa
     "organisation_provisioning_operations", "provisioning_steps", "organisation_schema_status",
     "report_storage_partitions", "worker_routing_status", "login_sessions", "authentication_events",
     "platform_audit_events", "demo_account_catalogue", "organisation_feature_flags", "organisation_branding",
+    "platform_release_candidates", "platform_release_promotion_requests", "platform_release_deployments",
   ];
   for (const table of required) assert.match(sql, new RegExp(`create table if not exists ${table}\\b`));
 
@@ -84,4 +85,15 @@ test("Phase 11C migration adds only hashed CSRF/session authority and durable th
   assert.match(sql, /organisation_slug_hash CHAR\(64\) NOT NULL/);
   assert.match(sql, /username_hash CHAR\(64\) NOT NULL/);
   assert.doesNotMatch(sql, /plaintext|raw_session|password VARCHAR|csrf_token\s/);
+});
+
+test("release governance schema requires successful gates, immutable artifacts, and one open promotion", async () => {
+  const sql = await readFile(new URL("../migrations/0013_release_governance.sql", import.meta.url), "utf8");
+  assert.match(sql, /UNIQUE KEY uq_platform_release_commit \(commit_sha\)/);
+  assert.match(sql, /UNIQUE KEY uq_platform_release_artifact_digest \(artifact_digest\)/);
+  assert.match(sql, /ci_conclusion = 'success' AND security_conclusion = 'success'/);
+  assert.match(sql, /UNIQUE KEY uq_platform_release_open_request \(open_request_slot\)/);
+  assert.match(sql, /FOREIGN KEY \(promotion_request_id\).*ON DELETE RESTRICT/s);
+  assert.match(sql, /\('platform_administrator', 'platform_releases\.approve'\)/);
+  assert.doesNotMatch(sql, /password|claim_id|member_id|patient/i);
 });

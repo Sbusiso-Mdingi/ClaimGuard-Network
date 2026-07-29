@@ -108,6 +108,9 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "scheme_health.view": ["tenant_status.view"],
   "organisation.manage": ["tenants.manage"],
   "platform_health.view": ["platform_health.view"],
+  "platform_releases.view": ["platform_releases.view"],
+  "platform_releases.request": ["platform_releases.request"],
+  "platform_releases.approve": ["platform_releases.approve"],
 });
 
 export function operationalPermissions(controlPermissions, roles = []) {
