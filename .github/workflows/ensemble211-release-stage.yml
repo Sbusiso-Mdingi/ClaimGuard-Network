@@ -163,6 +163,12 @@ jobs:
 
       - name: Verify staged service and unchanged worker safety
         shell: bash
+        env:
+          MODEL_READINESS_URL: https://claimguard-ml-ensemble-211.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io/health/ready
+          EXPECTED_MODEL_DEPLOYMENT_ID: claimguard-claim-fraud-ensemble:2.1.1
+          MODEL_READINESS_DEADLINE_SECONDS: "300"
+          MODEL_READINESS_REQUEST_TIMEOUT_SECONDS: "10"
+          MODEL_READINESS_RETRY_SECONDS: "5"
         run: |
           set -euo pipefail
           RELEASE_APP="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$RELEASE_MODEL_APP_NAME" -o json)"
@@ -171,7 +177,7 @@ jobs:
           test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.minReplicas')" = "0"
           test "$(echo "$RELEASE_APP" | jq -r '.properties.template.scale.maxReplicas')" = "2"
           test "$(echo "$RELEASE_APP" | jq -r '.properties.template.containers[0].env[] | select(.name == "CLAIMGUARD_MODEL_DEPLOYMENT_ID") | .value')" = "$ENSEMBLE_DEPLOYMENT_ID"
-          test "$(curl --fail --silent --show-error --max-time 30 "https://claimguard-ml-ensemble-211.livelydune-39b25d2c.southafricanorth.azurecontainerapps.io/health/ready" | jq -r '.status')" = "ready"
+          bash infra/verify-model-readiness.sh
           test "$(az containerapp job execution list --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" --query 'length(@)' -o tsv)" = "0"
 
           {

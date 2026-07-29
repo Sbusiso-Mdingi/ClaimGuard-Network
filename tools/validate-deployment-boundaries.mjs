@@ -10,6 +10,7 @@ const RECOVERY_BOOTSTRAP_PATH = "infra/recovery-job-bootstrap.bicep";
 const RECOVERY_BOOTSTRAP_SCRIPT_PATH =
   "infra/bootstrap-report-recovery-job.sh";
 const API_HEALTH_SCRIPT_PATH = "infra/verify-api-health.sh";
+const MODEL_READINESS_SCRIPT_PATH = "infra/verify-model-readiness.sh";
 const LEGACY_API_PATH = ".github/workflows/main_claimguard-api.yml";
 const ENSEMBLE_STAGE_PATH =
   ".github/workflows/ensemble211-release-stage.yml";
@@ -44,6 +45,7 @@ export function validateDeploymentBoundaries({
   recoveryBootstrap,
   recoveryBootstrapScript,
   apiHealthScript,
+  modelReadinessScript,
   legacyApi,
   ensembleStage,
   ensembleFinalize,
@@ -162,6 +164,36 @@ export function validateDeploymentBoundaries({
   }
 
   for (const required of [
+    'READINESS_URL="${MODEL_READINESS_URL:?MODEL_READINESS_URL is required}"',
+    "EXPECTED_MODEL_DEPLOYMENT_ID is required",
+    "southafricanorth\\.azurecontainerapps\\.io/health/ready",
+    "DEADLINE_SECONDS >= 1 && DEADLINE_SECONDS <= 300",
+    "REQUEST_TIMEOUT_SECONDS >= 1 && REQUEST_TIMEOUT_SECONDS <= 10",
+    '--max-time "$REQUEST_TIMEOUT_SECONDS"',
+    "--write-out '%{http_code}'",
+    '.status == "ready" and .deploymentId == $deployment_id',
+    "Model readiness passed",
+  ]) {
+    requireText(
+      modelReadinessScript,
+      required,
+      "Model readiness verification script",
+    );
+  }
+  for (const forbidden of [
+    "az webapp",
+    "az containerapp",
+    "az deployment",
+    "gh workflow",
+  ]) {
+    forbidText(
+      modelReadinessScript,
+      forbidden,
+      "Model readiness verification script",
+    );
+  }
+
+  for (const required of [
     "param recoveryJobName string = 'claimguard-report-recovery'",
     "param recoveryScheduleCron string = '0 0 1 1 *'",
     "param ensembleDeploymentId string = 'claimguard-claim-fraud-ensemble:2.1.1'",
@@ -275,6 +307,10 @@ export function validateDeploymentBoundaries({
     "claimguard-claim-fraud-ensemble:2.1.1",
     "sha256:0a4b771e8453b6f891e35b5a2921c2c840325ffd29bf773aa7989f5ef4241b2c",
     "--show-values",
+    "infra/verify-model-readiness.sh",
+    'MODEL_READINESS_DEADLINE_SECONDS: "300"',
+    'MODEL_READINESS_REQUEST_TIMEOUT_SECONDS: "10"',
+    'MODEL_READINESS_RETRY_SECONDS: "5"',
     "0 0 1 1 *",
     "Runtime traffic remains on the baseline",
   ]) {
@@ -289,6 +325,10 @@ export function validateDeploymentBoundaries({
     '[[ "$ACTIVATION_AUDIT_EVENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]',
     'test "$CONFIGURED_APPROVED_MODEL_DEPLOYMENT_IDS" = "$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS"',
     'test "$CONFIGURED_MANAGED_MODEL_DEPLOYMENT_ID" = "$ENSEMBLE_DEPLOYMENT_ID"',
+    "infra/verify-model-readiness.sh",
+    'MODEL_READINESS_DEADLINE_SECONDS: "300"',
+    'MODEL_READINESS_REQUEST_TIMEOUT_SECONDS: "10"',
+    'MODEL_READINESS_RETRY_SECONDS: "5"',
     "APPROVED_MODEL_DEPLOYMENT_IDS=\"$FINAL_APPROVED_MODEL_DEPLOYMENT_IDS\"",
     "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID=\"$ENSEMBLE_DEPLOYMENT_ID\"",
     "0 0 1 1 *",
@@ -346,6 +386,7 @@ export function validateRepositoryDeploymentBoundaries() {
     recoveryBootstrap: read(RECOVERY_BOOTSTRAP_PATH),
     recoveryBootstrapScript: read(RECOVERY_BOOTSTRAP_SCRIPT_PATH),
     apiHealthScript: read(API_HEALTH_SCRIPT_PATH),
+    modelReadinessScript: read(MODEL_READINESS_SCRIPT_PATH),
     legacyApi: read(LEGACY_API_PATH),
     ensembleStage: read(ENSEMBLE_STAGE_PATH),
     ensembleFinalize: read(ENSEMBLE_FINALIZE_PATH),
