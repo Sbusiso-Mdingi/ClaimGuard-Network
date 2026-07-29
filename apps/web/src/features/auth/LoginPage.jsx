@@ -14,16 +14,39 @@ function configuredInitialSlug() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+function isLocalHost(host) {
+  return /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(String(host || ""));
+}
+
+export function organisationSignInUrl(slug, runtime = window) {
+  const normalizedSlug = String(slug || "").trim().toLowerCase();
+  const renderedSlug = normalizedSlug || "<organisation>";
+  const configuredScheme = String(runtime.__CLAIMGUARD_ORGANISATION_URL_SCHEME__ || "").trim();
+  const configuredHost = String(runtime.__CLAIMGUARD_ORGANISATION_HOST__ || "").trim();
+  const currentHost = String(runtime.location?.host || "").trim();
+  const currentProtocol = String(runtime.location?.protocol || "https:").replace(/:$/, "");
+  const configuredHostIsUnsafeFallback = isLocalHost(configuredHost) && !isLocalHost(currentHost);
+
+  if (configuredHost && !configuredHostIsUnsafeFallback) {
+    return `${configuredScheme || "https"}://${renderedSlug}.${configuredHost}`;
+  }
+
+  const origin = runtime.location?.origin
+    || `${currentProtocol || "https"}://${currentHost}`;
+  return `${origin}/o/${renderedSlug}/login`;
+}
+
 export function LoginPage() {
   const { login, error, status } = useRole();
   const [organisationSlug, setOrganisationSlug] = useState(configuredInitialSlug);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [demoAccounts, setDemoAccounts] = useState([]);
-  const scheme = window.__CLAIMGUARD_ORGANISATION_URL_SCHEME__ || "https";
-  const host = window.__CLAIMGUARD_ORGANISATION_HOST__ || window.location.host;
   const normalizedSlug = organisationSlug.trim().toLowerCase();
-  const preview = useMemo(() => normalizedSlug ? `${scheme}://${normalizedSlug}.${host}` : `${scheme}://<organisation>.${host}`, [scheme, host, normalizedSlug]);
+  const preview = useMemo(
+    () => organisationSignInUrl(normalizedSlug),
+    [normalizedSlug],
+  );
 
   useEffect(() => {
     apiJson("/auth/demo-accounts", { cache: "no-store", skipUnauthorizedHandler: true })
@@ -100,9 +123,9 @@ export function LoginPage() {
                   <Input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
                 </label>
                 <div className="rounded-lg border border-border bg-secondary/30 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Organisation URL preview</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Organisation sign-in address</p>
                   <output className="mt-1 block break-all font-mono text-sm">{preview}</output>
-                  <p className="mt-1 text-xs text-muted-foreground">Informational only; this URL never selects a database or grants access.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">This address identifies the organisation at sign-in; server-side routing still controls data access.</p>
                 </div>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 <Button type="submit" disabled={status === "loading"} className="w-full">{status === "loading" ? "Signing in…" : "Sign in"}</Button>

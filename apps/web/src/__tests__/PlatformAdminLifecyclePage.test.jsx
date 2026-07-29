@@ -265,5 +265,11 @@ describe("PlatformAdminLifecyclePage", () => {
     });
     expect(await screen.findByText(/104d8b58-b021-4a40-a5a2-b609a3cc2d0e/))
       .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Model governance updated"))
+        .not.toBeInTheDocument();
+    });
   });
 });

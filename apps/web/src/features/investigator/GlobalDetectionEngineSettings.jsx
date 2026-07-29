@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import { ApiError, apiJson } from "../../lib/apiClient";
+import { apiJson, safeApiErrorMessage } from "../../lib/apiClient";
 import {
   DefinitionList,
   EmptyState,
@@ -48,10 +48,12 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
   const [activatingId, setActivatingId] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
-  const loadConfiguration = useCallback(() => {
+  const loadConfiguration = useCallback(({ clearMessage = false } = {}) => {
     setLoading(true);
     setError("");
+    if (clearMessage) setMessage("");
     return Promise.all([
       apiJson("/admin/platform/global-detection-engine"),
       apiJson("/admin/platform/model-deployments"),
@@ -63,11 +65,13 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
             ? cataloguePayload.models
             : [],
         );
+        setLastUpdatedAt(new Date());
       })
       .catch((requestError) => setError(
-        requestError instanceof ApiError
-          ? requestError.message
-          : "Failed to load the governed model catalogue.",
+        safeApiErrorMessage(
+          requestError,
+          "Failed to load the governed model catalogue.",
+        ),
       ))
       .finally(() => setLoading(false));
   }, []);
@@ -124,9 +128,10 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
       await loadConfiguration();
     } catch (requestError) {
       setError(
-        requestError instanceof ApiError
-          ? requestError.message
-          : "Failed to register the model candidate.",
+        safeApiErrorMessage(
+          requestError,
+          "Failed to register the model candidate.",
+        ),
       );
     } finally {
       setRegistering(false);
@@ -154,22 +159,25 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
         },
       );
       setMessage(
-        `Catalogue activation recorded as ${result.auditEventId}. `
-        + "Complete the guarded runtime finalization before sending new release traffic.",
+        result.runtimeActivationPending === false
+          ? `Activation ${result.auditEventId} is active in the governed catalogue and runtime selection.`
+          : `Catalogue activation recorded as ${result.auditEventId}. `
+            + "Runtime traffic remains unchanged until guarded finalization succeeds.",
       );
       await loadConfiguration();
     } catch (requestError) {
       setError(
-        requestError instanceof ApiError
-          ? requestError.message
-          : "Failed to activate the staged model release.",
+        safeApiErrorMessage(
+          requestError,
+          "Failed to activate the staged model release.",
+        ),
       );
     } finally {
       setActivatingId("");
     }
   }
 
-  if (loading) {
+  if (loading && !strategy && models.length === 0) {
     return (
       <WorkspaceNotice title="Loading managed model configuration">
         ClaimGuard is reading the deployment-authoritative setting and model catalogue.
@@ -213,9 +221,24 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
           />
           <WorkspaceNotice
             title="Promotion remains deployment-controlled"
-            actions={<Button type="button" variant="outline" size="sm" onClick={loadConfiguration}>Refresh</Button>}
+            actions={(
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={loading}
+                onClick={() => loadConfiguration({ clearMessage: true })}
+              >
+                {loading ? "Refreshing…" : "Refresh"}
+              </Button>
+            )}
           >
             Registration records an immutable candidate; it does not activate it. Promotion occurs only after contract validation, worker configuration, canary evidence, and an audited release. Existing claims and historical jobs are never rewritten.
+            {lastUpdatedAt ? (
+              <span className="mt-2 block text-xs text-muted-foreground">
+                Last checked {lastUpdatedAt.toLocaleTimeString()}.
+              </span>
+            ) : null}
           </WorkspaceNotice>
         </>
       ) : null}

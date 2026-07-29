@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Flag from "lucide-react/dist/esm/icons/flag.mjs";
 import FolderOpen from "lucide-react/dist/esm/icons/folder-open.mjs";
 import Search from "lucide-react/dist/esm/icons/search.mjs";
 import UserRound from "lucide-react/dist/esm/icons/user-round.mjs";
 import { useRole } from "../../context/RoleContext";
-import { apiJson, apiRequest, safeApiErrorMessage } from "../../lib/apiClient";
+import { ApiError, apiJson, apiRequest, safeApiErrorMessage } from "../../lib/apiClient";
 import {
   DataTableShell,
   EmptyState,
@@ -48,9 +48,10 @@ export function InvestigationsPage() {
   const [lookupId, setLookupId] = useState("");
   const [lookupError, setLookupError] = useState("");
   const [checking, setChecking] = useState(false);
+  const hasSuccessfulLoad = useRef(false);
 
   const loadQueue = useCallback(async (page = 1) => {
-    setStatus((previous) => previous === "ready" ? "refreshing" : "loading");
+    setStatus((previous) => ["ready", "stale"].includes(previous) ? "refreshing" : "loading");
     setError("");
     try {
       const query = new URLSearchParams({ page: String(page), pageSize: "25", assignment: appliedFilters.assignment });
@@ -60,13 +61,14 @@ export function InvestigationsPage() {
       const result = await apiJson(`/investigations/queue?${query.toString()}`, { cache: "no-store" });
       setInvestigations(result.investigations || []);
       setPagination(result.pagination || { page, total: 0, totalPages: 0, hasNextPage: false, hasPreviousPage: false });
+      hasSuccessfulLoad.current = true;
       setStatus("ready");
     } catch (loadError) {
       setError(safeApiErrorMessage(
         loadError,
         "We couldn't load the investigation queue.",
       ));
-      setStatus("error");
+      setStatus(hasSuccessfulLoad.current ? "stale" : "error");
     }
   }, [appliedFilters]);
 
@@ -100,12 +102,21 @@ export function InvestigationsPage() {
       const response = await apiRequest(`/investigations/${encodeURIComponent(canonicalId)}`);
       const json = await response.json().catch(() => ({}));
       if (!response.ok || !json.available) {
-        setLookupError(json.message || "Investigation not found for the active tenant.");
+        setLookupError(safeApiErrorMessage(
+          new ApiError(
+            json.message || "Investigation not found for the active scheme.",
+            { status: response.status, code: json.code, payload: json },
+          ),
+          "We couldn't open that investigation.",
+        ));
         return;
       }
       window.location.assign(`/investigations/${encodeURIComponent(canonicalId)}`);
-    } catch {
-      setLookupError("Could not reach the API.");
+    } catch (lookupRequestError) {
+      setLookupError(safeApiErrorMessage(
+        lookupRequestError,
+        "We couldn't open that investigation.",
+      ));
     } finally {
       setChecking(false);
     }
@@ -192,14 +203,25 @@ export function InvestigationsPage() {
         ]}
       />
 
-      {status === "error" ? (
-        <WorkspaceNotice title="We couldn't load the investigation queue." tone="danger" actions={<Button variant="outline" size="sm" onClick={() => loadQueue(1)}>Retry</Button>}>
+      {status === "error" || status === "stale" ? (
+        <WorkspaceNotice
+          title={status === "stale" ? "Showing the last loaded investigation queue" : "We couldn't load the investigation queue."}
+          tone={status === "stale" ? "warning" : "danger"}
+          actions={<Button variant="outline" size="sm" onClick={() => loadQueue(pagination.page || 1)}>Retry</Button>}
+        >
           {error}
         </WorkspaceNotice>
       ) : null}
 
       <SectionCard variant="console" title="Tenant cases" description="Cases are read directly from the active operational tenant, not browser storage.">
-        {investigations.length === 0 && status !== "loading" && status !== "error" ? (
+        {status === "error" && investigations.length === 0 ? (
+          <EmptyState
+            icon={Search}
+            title="Investigation queue unavailable"
+            description="Retry the request. No demo or cached cases have been substituted."
+            compact
+          />
+        ) : investigations.length === 0 && status !== "loading" ? (
           <EmptyState icon={Search} title="No investigations found" description={activeFilterCount > 0 ? "No cases match the current filters." : "Escalated claims will appear here automatically."} compact />
         ) : (
           <DataTableShell ariaLabel="Investigation queue" minWidth="900px">
