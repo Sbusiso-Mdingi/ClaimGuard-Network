@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "scripts": {
+    "audit:credential-history": "node tools/audit-credential-history.mjs --fail-on-findings",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "node tools/validate-deployment-boundaries.mjs && turbo run lint",

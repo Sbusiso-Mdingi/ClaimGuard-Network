@@ -1,10 +1,13 @@
-import "newrelic";
 import * as Sentry from "@sentry/node";
 
 if (process.env.SENTRY_DSN_API) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN_API,
-    tracesSampleRate: 1.0,
+    environment: process.env.CLAIMGUARD_ENVIRONMENT || process.env.NODE_ENV || "development",
+    release: process.env.CLAIMGUARD_RELEASE || undefined,
+    sendDefaultPii: false,
+    // New Relic owns API performance tracing. Sentry is deliberately error-only.
+    tracesSampleRate: 0,
   });
 }
 

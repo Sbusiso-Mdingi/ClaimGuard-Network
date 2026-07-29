@@ -19,6 +19,9 @@ function repositoryWorkflows() {
     recoveryBootstrapScript: read("infra/bootstrap-report-recovery-job.sh"),
     apiHealthScript: read("infra/verify-api-health.sh"),
     modelReadinessScript: read("infra/verify-model-readiness.sh"),
+    observabilityScript: read(
+      "infra/configure-app-service-observability.sh",
+    ),
     legacyApi: read(".github/workflows/main_claimguard-api.yml"),
     ensembleStage: read(".github/workflows/ensemble211-release-stage.yml"),
     ensembleFinalize: read(
@@ -68,6 +71,57 @@ test("ordinary main pushes cannot regain a deploy condition", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /found 4/,
+  );
+});
+
+test("production deployment cannot copy telemetry secrets from GitHub", () => {
+  const workflows = repositoryWorkflows();
+  workflows.ci += "\n# ${{ secrets.NEW_RELIC_LICENSE_KEY }}\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /CI observability deployment still contains/,
+  );
+});
+
+test("production deployment must retain its protected environment", () => {
+  const workflows = repositoryWorkflows();
+  workflows.ci = workflows.ci.replace(
+    "environment: production",
+    "environment: unprotected",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /CI observability deployment is missing/,
+  );
+});
+
+test("observability startup changes cannot precede API deployment", () => {
+  const workflows = repositoryWorkflows();
+  workflows.ci = workflows.ci
+    .replace(
+      "Deploy API app with retry",
+      "TEMPORARY_STEP_NAME",
+    )
+    .replace(
+      "Configure production observability boundaries",
+      "Deploy API app with retry",
+    )
+    .replace(
+      "TEMPORARY_STEP_NAME",
+      "Configure production observability boundaries",
+    );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /must run after API deployment/,
+  );
+});
+
+test("observability configuration cannot write Key Vault secrets", () => {
+  const workflows = repositoryWorkflows();
+  workflows.observabilityScript += "\n# az keyvault secret set\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /App Service observability configuration still contains/,
   );
 });
 

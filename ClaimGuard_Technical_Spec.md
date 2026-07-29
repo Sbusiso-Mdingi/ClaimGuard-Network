@@ -7,6 +7,10 @@
 
 **Revision notes (v1.2):** replaced the in-repository generated-data workflow with authenticated external claim ingestion, atomic reference/claim persistence, and durable outbox-driven report production.
 
+> Platform names in this historical design include intended capabilities and
+> are not evidence of a live integration. The authoritative production
+> integration inventory is `docs/observability-and-credential-rotation.md`.
+
 ---
 
 ## 1. Overview
