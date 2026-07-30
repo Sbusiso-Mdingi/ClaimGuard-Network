@@ -67,6 +67,25 @@ function configureApi() {
         promotionRequests: [],
       });
     }
+    if (path === "/admin/platform/administrators") {
+      return Promise.resolve({
+        available: true,
+        organisation: {
+          organisationId: "org-platform",
+          displayName: "ClaimGuard",
+          organisationType: "platform",
+        },
+        administrators: [{
+          userId: "platform-admin-1",
+          displayName: "Primary Administrator",
+          canonicalContact: "primary@example.com",
+          userStatus: "active",
+          membershipStatus: "active",
+          roles: ["platform_administrator"],
+        }],
+        invitations: [],
+      });
+    }
     if (
       path === `/admin/platform/releases/${releaseId}/promotion-requests`
       && options.method === "POST"

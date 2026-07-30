@@ -56,12 +56,13 @@ export function SignupPage() {
 
   async function submit(event) {
     event.preventDefault();
+    const passwordMinLength = Number(invitation?.passwordMinLength || 8);
     if (password !== confirmPassword) {
       setErrorMsg("Passwords do not match.");
       return;
     }
-    if (password.length < 8) {
-      setErrorMsg("Password must be at least 8 characters.");
+    if (password.length < passwordMinLength) {
+      setErrorMsg(`Password must be at least ${passwordMinLength} characters.`);
       return;
     }
 
@@ -123,7 +124,10 @@ export function SignupPage() {
         <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle>Account Created</CardTitle>
-            <CardDescription>Your administrator account has been set up successfully.</CardDescription>
+            <CardDescription>
+              Your {invitation.roleLabel || "administrator"} account has been
+              set up successfully.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="mb-4 text-sm">You can now sign in to your organisation.</p>
@@ -142,7 +146,9 @@ export function SignupPage() {
         <CardHeader>
           <CardTitle>Complete Your Setup</CardTitle>
           <CardDescription>
-            You have been invited to manage <strong>{invitation.organisationName}</strong>.
+            You have been invited as a{" "}
+            <strong>{invitation.roleLabel || "Scheme Administrator"}</strong>{" "}
+            for <strong>{invitation.organisationName}</strong>.
             <br />
             Invited email: {invitation.email}
           </CardDescription>
@@ -175,7 +181,7 @@ export function SignupPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={8}
+                minLength={Number(invitation.passwordMinLength || 8)}
               />
             </label>
             <label className="block text-sm font-medium">Confirm Password
@@ -186,7 +192,7 @@ export function SignupPage() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                minLength={8}
+                minLength={Number(invitation.passwordMinLength || 8)}
               />
             </label>
             {errorMsg ? <p role="alert" className="text-sm text-destructive">{errorMsg}</p> : null}

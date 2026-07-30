@@ -97,3 +97,33 @@ test("release governance schema requires successful gates, immutable artifacts, 
   assert.match(sql, /\('platform_administrator', 'platform_releases\.approve'\)/);
   assert.doesNotMatch(sql, /password|claim_id|member_id|patient/i);
 });
+
+test("platform administrator invitations are typed, one-use, and narrowly granted", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0014_platform_administrator_invitations.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    sql,
+    /invitation_type VARCHAR\(32\) NOT NULL DEFAULT 'scheme_administrator'/,
+  );
+  assert.match(
+    sql,
+    /invitation_type IN \('scheme_administrator', 'platform_administrator'\)/,
+  );
+  assert.match(
+    sql,
+    /platform_open_email[\s\S]*status = 'pending'[\s\S]*UNIQUE KEY uq_platform_administrator_open_invitation/,
+  );
+  assert.match(sql, /revoked_at TIMESTAMP\(3\) NULL/);
+  assert.match(sql, /revoked_by CHAR\(36\) NULL/);
+  assert.match(
+    sql,
+    /\('platform_administrator', 'platform_administrators\.manage'\)/,
+  );
+  assert.doesNotMatch(
+    sql,
+    /\('scheme_administrator', 'platform_administrators\.manage'\)/,
+  );
+  assert.doesNotMatch(sql, /password|raw_token|claim_id|member_id|patient/i);
+});

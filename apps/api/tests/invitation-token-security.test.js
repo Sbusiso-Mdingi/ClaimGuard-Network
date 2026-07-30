@@ -8,7 +8,7 @@ import { scrubSentryEvent } from "../src/sentry-scrub.js";
 
 const SECRET = "INVITE_TOKEN_MUST_NEVER_LEAK_123";
 
-function createApp() {
+function createApp(invitationOverrides = {}) {
   const app = new Hono();
 
   registerAuthRoutes(app, {
@@ -33,6 +33,7 @@ function createApp() {
           organisationName: "Ubuntu Medical Scheme",
           canonicalSlug: "ubuntu",
           email: "admin@ubuntu.example",
+          ...invitationOverrides,
         };
       },
     },
@@ -55,6 +56,32 @@ test("invitation validation accepts the token only in a POST body", async () => 
 
   const legacyResponse = await app.request(`/auth/invitation/${SECRET}`);
   assert.equal(legacyResponse.status, 404);
+});
+
+test("platform invitation validation exposes role-aware signup constraints without the token", async () => {
+  const app = createApp({
+    organisationName: "ClaimGuard",
+    canonicalSlug: "claimguard",
+    organisationType: "platform",
+    invitationType: "platform_administrator",
+    roleKey: "platform_administrator",
+    email: "second@example.com",
+  });
+
+  const response = await app.request("/auth/invitation/validate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: SECRET }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.invitationType, "platform_administrator");
+  assert.equal(body.roleKey, "platform_administrator");
+  assert.equal(body.roleLabel, "ClaimGuard Platform Administrator");
+  assert.equal(body.passwordMinLength, 12);
+  assert.equal("token" in body, false);
+  assert.equal(JSON.stringify(body).includes(SECRET), false);
 });
 
 test("API telemetry redaction removes invitation and authentication secrets", () => {

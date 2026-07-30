@@ -14,6 +14,7 @@ import {
   formatEnumLabel,
 } from "./InvestigatorUI";
 import { GlobalDetectionEngineSettings } from "./GlobalDetectionEngineSettings";
+import { PlatformAdministratorAccessPanel } from "./PlatformAdministratorAccessPanel";
 import { ReleaseGovernancePanel } from "./ReleaseGovernancePanel";
 import { usePlatformAdminLifecycle } from "./usePlatformAdminLifecycle";
 
@@ -68,6 +69,8 @@ export function PlatformAdminLifecyclePage() {
       {message ? <WorkspaceNotice title={message} tone="success" /> : null}
 
       <ReleaseGovernancePanel />
+
+      <PlatformAdministratorAccessPanel />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <SectionCard title="Medical scheme inventory" description="Select an organisation to manage its lifecycle and access configuration.">
