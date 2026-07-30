@@ -25,6 +25,38 @@ function promotionApprovalConfirmation(promotionRequestId) {
   return `APPROVE ${String(promotionRequestId || "").slice(0, 8)}`;
 }
 
+function normalizePlatformAdministratorEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function platformAdministratorInvitationConfirmation(email) {
+  return `INVITE ${normalizePlatformAdministratorEmail(email)} AS PLATFORM ADMINISTRATOR`;
+}
+
+function platformAdministratorRevocationConfirmation(invitationId) {
+  return `REVOKE ${String(invitationId || "").slice(0, 8)}`;
+}
+
+function platformAdministratorAccessError(c, error, fallback) {
+  const duplicate = error?.code === "ER_DUP_ENTRY";
+  const status = duplicate
+    ? 409
+    : Number.isInteger(error?.status)
+      ? error.status
+      : 500;
+  return c.json({
+    available: false,
+    code: duplicate
+      ? "PLATFORM_ADMINISTRATOR_INVITATION_ALREADY_OPEN"
+      : error?.code || "PLATFORM_ADMINISTRATOR_ACCESS_OPERATION_FAILED",
+    message: duplicate
+      ? "A pending platform administrator invitation already exists for this email."
+      : Number.isInteger(error?.status)
+        ? error.message
+        : fallback,
+  }, status);
+}
+
 function releaseGovernanceError(c, error, fallback) {
   const duplicate = error?.code === "ER_DUP_ENTRY";
   return c.json({
@@ -261,6 +293,9 @@ export function registerPlatformAdminRoutes(
   });
   const requireReleaseApproval = createRequirePermissionMiddleware({
     permission: CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_APPROVE,
+  });
+  const requirePlatformAdministratorManage = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.PLATFORM_ADMINISTRATORS_MANAGE,
   });
   const allowedDeploymentClasses = parseAllowedDeploymentClasses(
     deploymentClass,
@@ -525,6 +560,201 @@ export function registerPlatformAdminRoutes(
           c,
           error,
           "The release promotion approval could not be recorded.",
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/admin/platform/administrators",
+    requirePlatformAdministratorManage,
+    async (c) => {
+      if (
+        typeof controlPlaneService?.getPlatformAdministratorAccess !== "function"
+      ) {
+        return c.json({
+          available: false,
+          code: "PLATFORM_ADMINISTRATOR_ACCESS_NOT_CONFIGURED",
+          message: "Platform administrator access management is not configured.",
+        }, 503);
+      }
+      try {
+        const access = await controlPlaneService.getPlatformAdministratorAccess();
+        return c.json({
+          available: true,
+          actor: {
+            userId: c.get("authContext")?.user_id || null,
+          },
+          policy: {
+            invitationType: "platform_administrator",
+            invitationLifetimeHours: 24,
+            oneUse: true,
+            reauthenticationRequired: true,
+            distinctIdentityRequired: true,
+            rawTokenStored: false,
+          },
+          organisation: access.organisation,
+          administrators: access.administrators,
+          invitations: access.invitations.map((invitation) => ({
+            ...invitation,
+            revocationConfirmation:
+              platformAdministratorRevocationConfirmation(
+                invitation.invitationId,
+              ),
+          })),
+        });
+      } catch (error) {
+        return platformAdministratorAccessError(
+          c,
+          error,
+          "Platform administrator access could not be loaded.",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/admin/platform/administrators/invitations",
+    requirePlatformAdministratorManage,
+    async (c) => {
+      if (
+        typeof controlPlaneService?.createPlatformAdministratorInvitation
+          !== "function"
+        || typeof authenticationService?.reauthenticate !== "function"
+      ) {
+        return c.json({
+          available: false,
+          code: "PLATFORM_ADMINISTRATOR_ACCESS_NOT_CONFIGURED",
+          message: "Audited platform administrator invitations are not configured.",
+        }, 503);
+      }
+      const payload = await c.req.json().catch(() => ({}));
+      const permittedKeys = new Set(["email", "password", "confirmation"]);
+      if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
+        return c.json({
+          available: false,
+          code: "PLATFORM_ADMINISTRATOR_INVITATION_INPUT_INVALID",
+          message: "The platform administrator invitation contains unsupported fields.",
+        }, 400);
+      }
+      const email = normalizePlatformAdministratorEmail(payload.email);
+      if (
+        !email
+        || email.length > 320
+        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+      ) {
+        return c.json({
+          available: false,
+          code: "INVALID_ADMINISTRATOR_EMAIL",
+          message: "A valid administrator email address is required.",
+        }, 400);
+      }
+      if (
+        payload.confirmation
+          !== platformAdministratorInvitationConfirmation(email)
+      ) {
+        return c.json({
+          available: false,
+          code: "PLATFORM_ADMINISTRATOR_INVITATION_CONFIRMATION_MISMATCH",
+          message: "The invitation confirmation does not match the requested identity.",
+        }, 400);
+      }
+      try {
+        const actor = actorFromContext(c);
+        const stepUp = await authenticationService.reauthenticate(
+          c.get("resolvedSession"),
+          payload.password,
+          c.get("authenticationMetadata") || {},
+        );
+        const result = await controlPlaneService
+          .createPlatformAdministratorInvitation(
+            {
+              email,
+              invitedBy: actor.id,
+              reauthenticatedAt: stepUp.reauthenticatedAt,
+              expiresInHours: 24,
+            },
+            actor,
+          );
+        return c.json({
+          available: true,
+          invitation: result.invitation,
+          token: result.token,
+          auditEventId: result.auditEventId,
+          message: "Platform administrator invitation created. Copy the one-time link now.",
+        }, 201);
+      } catch (error) {
+        return platformAdministratorAccessError(
+          c,
+          error,
+          "The platform administrator invitation could not be created.",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/admin/platform/administrators/invitations/:invitationId/revoke",
+    requirePlatformAdministratorManage,
+    async (c) => {
+      if (
+        typeof controlPlaneService?.revokePlatformAdministratorInvitation
+          !== "function"
+        || typeof authenticationService?.reauthenticate !== "function"
+      ) {
+        return c.json({
+          available: false,
+          code: "PLATFORM_ADMINISTRATOR_ACCESS_NOT_CONFIGURED",
+          message: "Audited platform administrator invitation revocation is not configured.",
+        }, 503);
+      }
+      const payload = await c.req.json().catch(() => ({}));
+      const permittedKeys = new Set(["password", "confirmation"]);
+      if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
+        return c.json({
+          available: false,
+          code: "PLATFORM_ADMINISTRATOR_REVOCATION_INPUT_INVALID",
+          message: "The invitation revocation contains unsupported fields.",
+        }, 400);
+      }
+      const invitationId = c.req.param("invitationId");
+      if (
+        payload.confirmation
+          !== platformAdministratorRevocationConfirmation(invitationId)
+      ) {
+        return c.json({
+          available: false,
+          code: "PLATFORM_ADMINISTRATOR_REVOCATION_CONFIRMATION_MISMATCH",
+          message: "The revocation confirmation does not match this invitation.",
+        }, 400);
+      }
+      try {
+        const actor = actorFromContext(c);
+        const stepUp = await authenticationService.reauthenticate(
+          c.get("resolvedSession"),
+          payload.password,
+          c.get("authenticationMetadata") || {},
+        );
+        const result = await controlPlaneService
+          .revokePlatformAdministratorInvitation(
+            {
+              invitationId,
+              revokedBy: actor.id,
+              reauthenticatedAt: stepUp.reauthenticatedAt,
+            },
+            actor,
+          );
+        return c.json({
+          available: true,
+          invitation: result.invitation,
+          auditEventId: result.auditEventId,
+          message: "Platform administrator invitation revoked.",
+        });
+      } catch (error) {
+        return platformAdministratorAccessError(
+          c,
+          error,
+          "The platform administrator invitation could not be revoked.",
         );
       }
     },

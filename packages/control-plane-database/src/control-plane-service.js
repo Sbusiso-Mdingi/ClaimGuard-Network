@@ -28,6 +28,73 @@ const PROVISIONING_TRANSITIONS = Object.freeze({
 const CANONICAL_PRIVATE_SCHEMA_VERSION =
   "14";
 
+const ADMIN_INVITATION_TYPES = Object.freeze({
+  SCHEME: "scheme_administrator",
+  PLATFORM: "platform_administrator",
+});
+
+function normalizeInvitationEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (
+    !email
+    || email.length > 320
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ) {
+    throw new ControlPlaneValidationError(
+      "A valid administrator email address is required.",
+      "INVALID_ADMINISTRATOR_EMAIL",
+    );
+  }
+  return email;
+}
+
+function invitationType(row) {
+  return row?.invitation_type || ADMIN_INVITATION_TYPES.SCHEME;
+}
+
+function invitationRoleKey(row) {
+  return invitationType(row) === ADMIN_INVITATION_TYPES.PLATFORM
+    ? "platform_administrator"
+    : "scheme_administrator";
+}
+
+function mapSafeInvitation(row) {
+  if (!row) return null;
+  const effectiveStatus =
+    row.status === "pending"
+    && new Date(row.expires_at).getTime() < Date.now()
+      ? "expired"
+      : row.status;
+  return {
+    invitationId: row.invitation_id,
+    organisationId: row.organisation_id,
+    invitationType: invitationType(row),
+    email: row.email,
+    status: effectiveStatus,
+    invitedBy: row.invited_by || null,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at || null,
+    consumedByUserId: row.consumed_by_user_id || null,
+    revokedAt: row.revoked_at || null,
+    revokedBy: row.revoked_by || null,
+  };
+}
+
+async function requirePlatformOrganisation(repositories, executor) {
+  const organisations = await repositories.organisations.list({ executor });
+  const platformOrganisations = organisations.filter(
+    (organisation) => organisation.organisationType === "platform",
+  );
+  if (platformOrganisations.length !== 1) {
+    throw new ControlPlaneConflictError(
+      "Exactly one ClaimGuard platform organisation is required.",
+      "PLATFORM_ORGANISATION_STATE_INVALID",
+    );
+  }
+  return platformOrganisations[0];
+}
+
 export function createControlPlaneService({ pool, repositories }) {
   if (!pool || !repositories) throw new TypeError("Control-plane pool and repositories are required.");
 
@@ -470,36 +537,319 @@ export function createControlPlaneService({ pool, repositories }) {
     async createAdminInvitation({ organisationId, email, invitedBy = null, expiresInHours = 72 }, actor) {
       return withControlPlaneTransaction(pool, async (executor) => {
         const organisation = await repositories.organisations.getById(organisationId, { executor });
-        if (!organisation) throw new ControlPlaneNotFoundError("Organisation was not found.", "ORGANISATION_NOT_FOUND");
+        if (!organisation || organisation.organisationType !== "medical_scheme") {
+          throw new ControlPlaneNotFoundError(
+            "Medical-scheme organisation was not found.",
+            "ORGANISATION_NOT_FOUND",
+          );
+        }
 
+        const normalizedEmail = normalizeInvitationEmail(email);
         const rawToken = crypto.randomBytes(32).toString("base64url");
         const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
         const invitationId = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + expiresInHours * 3600_000);
 
         await executor.execute(
-          `INSERT INTO admin_invitations (invitation_id, organisation_id, email, token_hash, status, invited_by, expires_at)
-           VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
-          [invitationId, organisationId, email.trim().toLowerCase(), tokenHash, invitedBy, expiresAt],
+          `INSERT INTO admin_invitations
+            (invitation_id, organisation_id, email, token_hash, invitation_type,
+             status, invited_by, expires_at)
+           VALUES (?, ?, ?, ?, 'scheme_administrator', 'pending', ?, ?)`,
+          [invitationId, organisationId, normalizedEmail, tokenHash, invitedBy, expiresAt],
         );
 
         await audit(executor, {
           actorType: actor?.type || "user", actorId: actor?.id || null,
           organisationScopeId: organisationId, action: "admin_invitation.create",
           targetType: "admin_invitation", targetId: invitationId,
-          afterSummary: { email: email.trim().toLowerCase(), expiresAt: expiresAt.toISOString() },
+          afterSummary: {
+            email: normalizedEmail,
+            invitationType: ADMIN_INVITATION_TYPES.SCHEME,
+            expiresAt: expiresAt.toISOString(),
+          },
           correlationId: actor?.correlationId || null, outcome: "success",
           source: actor?.source || "control-plane-service",
         });
 
-        return { invitationId, token: rawToken, email: email.trim().toLowerCase(), expiresAt };
+        return {
+          invitationId,
+          token: rawToken,
+          email: normalizedEmail,
+          invitationType: ADMIN_INVITATION_TYPES.SCHEME,
+          expiresAt,
+        };
+      });
+    },
+
+    async createPlatformAdministratorInvitation(
+      {
+        email,
+        invitedBy,
+        reauthenticatedAt,
+        expiresInHours = 24,
+      },
+      actor,
+    ) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const organisation = await requirePlatformOrganisation(
+          repositories,
+          executor,
+        );
+        const normalizedEmail = normalizeInvitationEmail(email);
+        const inviter = await repositories.identity.getSafeUser(
+          invitedBy,
+          { executor },
+        );
+        if (!inviter) {
+          throw new ControlPlaneNotFoundError(
+            "The inviting platform administrator was not found.",
+            "PLATFORM_ADMINISTRATOR_NOT_FOUND",
+          );
+        }
+        if (inviter.canonicalContact === normalizedEmail) {
+          throw new ControlPlaneConflictError(
+            "A platform administrator cannot invite their own identity.",
+            "DISTINCT_PLATFORM_ADMINISTRATOR_REQUIRED",
+          );
+        }
+
+        const administrators = await repositories.identity
+          .listUsersByOrganisation(organisation.organisationId, { executor });
+        const invitingAdministrator = administrators.find(
+          (candidate) =>
+            candidate.userId === invitedBy
+            && candidate.userStatus === "active"
+            && candidate.membershipStatus === "active"
+            && candidate.roles.includes("platform_administrator"),
+        );
+        if (!invitingAdministrator) {
+          throw new ControlPlaneConflictError(
+            "The inviting administrator no longer has active platform authority.",
+            "PLATFORM_ADMINISTRATOR_INVITER_INACTIVE",
+          );
+        }
+        const existingAdministrator = administrators.find(
+          (candidate) =>
+            candidate.canonicalContact === normalizedEmail
+            && candidate.userStatus === "active"
+            && candidate.membershipStatus === "active"
+            && candidate.roles.includes("platform_administrator"),
+        );
+        if (existingAdministrator) {
+          throw new ControlPlaneConflictError(
+            "This identity is already an active platform administrator.",
+            "PLATFORM_ADMINISTRATOR_ALREADY_ACTIVE",
+          );
+        }
+
+        const [openRows] = await executor.execute(
+          `SELECT invitation_id, expires_at
+           FROM admin_invitations
+           WHERE invitation_type = 'platform_administrator'
+             AND email = ?
+             AND status = 'pending'
+           LIMIT 1
+           FOR UPDATE`,
+          [normalizedEmail],
+        );
+        const openInvitation = openRows?.[0] || null;
+        if (openInvitation && new Date(openInvitation.expires_at) >= new Date()) {
+          throw new ControlPlaneConflictError(
+            "A pending platform administrator invitation already exists for this email.",
+            "PLATFORM_ADMINISTRATOR_INVITATION_ALREADY_OPEN",
+          );
+        }
+        if (openInvitation) {
+          await executor.execute(
+            `UPDATE admin_invitations
+             SET status = 'expired'
+             WHERE invitation_id = ?
+               AND status = 'pending'`,
+            [openInvitation.invitation_id],
+          );
+          await audit(executor, {
+            actorType: actor?.type || "user",
+            actorId: actor?.id || invitedBy,
+            organisationScopeId: organisation.organisationId,
+            action: "platform_administrator.invitation_expire",
+            targetType: "admin_invitation",
+            targetId: openInvitation.invitation_id,
+            beforeSummary: { status: "pending" },
+            afterSummary: { status: "expired" },
+            correlationId: actor?.correlationId || null,
+            outcome: "success",
+            source: actor?.source || "control-plane-service",
+          });
+        }
+
+        const rawToken = crypto.randomBytes(32).toString("base64url");
+        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+        const invitationId = crypto.randomUUID();
+        const lifetimeHours = Math.min(
+          24,
+          Math.max(1, Number(expiresInHours) || 24),
+        );
+        const expiresAt = new Date(Date.now() + lifetimeHours * 3600_000);
+        await executor.execute(
+          `INSERT INTO admin_invitations
+            (invitation_id, organisation_id, email, token_hash, invitation_type,
+             status, invited_by, expires_at)
+           VALUES (?, ?, ?, ?, 'platform_administrator', 'pending', ?, ?)`,
+          [
+            invitationId,
+            organisation.organisationId,
+            normalizedEmail,
+            tokenHash,
+            invitedBy,
+            expiresAt,
+          ],
+        );
+        const auditEvent = await audit(executor, {
+          actorType: actor?.type || "user",
+          actorId: actor?.id || invitedBy,
+          organisationScopeId: organisation.organisationId,
+          action: "platform_administrator.invitation_create",
+          targetType: "admin_invitation",
+          targetId: invitationId,
+          afterSummary: {
+            email: normalizedEmail,
+            invitationType: ADMIN_INVITATION_TYPES.PLATFORM,
+            status: "pending",
+            expiresAt: expiresAt.toISOString(),
+            reauthenticated: Boolean(reauthenticatedAt),
+          },
+          correlationId: actor?.correlationId || null,
+          outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+        return {
+          invitation: {
+            invitationId,
+            organisationId: organisation.organisationId,
+            invitationType: ADMIN_INVITATION_TYPES.PLATFORM,
+            email: normalizedEmail,
+            status: "pending",
+            invitedBy,
+            expiresAt,
+          },
+          token: rawToken,
+          auditEventId: auditEvent.auditEventId,
+        };
+      });
+    },
+
+    async getPlatformAdministratorAccess() {
+      const organisation = await requirePlatformOrganisation(
+        repositories,
+        null,
+      );
+      const administrators = (
+        await repositories.identity.listUsersByOrganisation(
+          organisation.organisationId,
+        )
+      ).filter((candidate) =>
+        candidate.userStatus === "active"
+        && candidate.membershipStatus === "active"
+        && candidate.roles.includes("platform_administrator"));
+      const [rows] = await pool.execute(
+        `SELECT invitation_id, organisation_id, invitation_type, email, status,
+                invited_by, created_at, expires_at, consumed_at,
+                consumed_by_user_id, revoked_at, revoked_by
+         FROM admin_invitations
+         WHERE organisation_id = ?
+           AND invitation_type = 'platform_administrator'
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        [organisation.organisationId],
+      );
+      return {
+        organisation,
+        administrators,
+        invitations: (rows || []).map(mapSafeInvitation),
+      };
+    },
+
+    async revokePlatformAdministratorInvitation(
+      {
+        invitationId,
+        revokedBy,
+        reauthenticatedAt,
+      },
+      actor,
+    ) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const organisation = await requirePlatformOrganisation(
+          repositories,
+          executor,
+        );
+        const [rows] = await executor.execute(
+          `SELECT *
+           FROM admin_invitations
+           WHERE invitation_id = ?
+             AND organisation_id = ?
+             AND invitation_type = 'platform_administrator'
+           LIMIT 1
+           FOR UPDATE`,
+          [invitationId, organisation.organisationId],
+        );
+        const existing = rows?.[0] || null;
+        if (!existing) {
+          throw new ControlPlaneNotFoundError(
+            "The platform administrator invitation was not found.",
+            "PLATFORM_ADMINISTRATOR_INVITATION_NOT_FOUND",
+          );
+        }
+        if (existing.status !== "pending") {
+          throw new ControlPlaneConflictError(
+            "Only a pending platform administrator invitation can be revoked.",
+            "PLATFORM_ADMINISTRATOR_INVITATION_NOT_PENDING",
+          );
+        }
+        await executor.execute(
+          `UPDATE admin_invitations
+           SET status = 'revoked',
+               revoked_at = UTC_TIMESTAMP(3),
+               revoked_by = ?
+           WHERE invitation_id = ?
+             AND status = 'pending'`,
+          [revokedBy, invitationId],
+        );
+        const auditEvent = await audit(executor, {
+          actorType: actor?.type || "user",
+          actorId: actor?.id || revokedBy,
+          organisationScopeId: organisation.organisationId,
+          action: "platform_administrator.invitation_revoke",
+          targetType: "admin_invitation",
+          targetId: invitationId,
+          beforeSummary: {
+            email: existing.email,
+            status: existing.status,
+          },
+          afterSummary: {
+            email: existing.email,
+            status: "revoked",
+            reauthenticated: Boolean(reauthenticatedAt),
+          },
+          correlationId: actor?.correlationId || null,
+          outcome: "success",
+          source: actor?.source || "control-plane-service",
+        });
+        return {
+          invitation: {
+            ...mapSafeInvitation(existing),
+            status: "revoked",
+            revokedBy,
+          },
+          auditEventId: auditEvent.auditEventId,
+        };
       });
     },
 
     async getInvitationByToken(rawToken) {
       const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
       const [rows] = await pool.execute(
-        `SELECT i.*, o.display_name AS organisation_name, o.canonical_slug
+        `SELECT i.*, o.display_name AS organisation_name, o.canonical_slug,
+                o.organisation_type
          FROM admin_invitations i
          JOIN organisations o ON o.organisation_id = i.organisation_id
          WHERE i.token_hash = ? LIMIT 1`,
@@ -512,6 +862,9 @@ export function createControlPlaneService({ pool, repositories }) {
         organisationId: row.organisation_id,
         organisationName: row.organisation_name,
         canonicalSlug: row.canonical_slug,
+        organisationType: row.organisation_type,
+        invitationType: invitationType(row),
+        roleKey: invitationRoleKey(row),
         email: row.email,
         status: row.status,
         expiresAt: row.expires_at,
@@ -521,18 +874,13 @@ export function createControlPlaneService({ pool, repositories }) {
 
     async listInvitations(organisationId) {
       const [rows] = await pool.execute(
-        `SELECT invitation_id, email, status, created_at, expires_at, consumed_at
+        `SELECT invitation_id, organisation_id, invitation_type, email, status,
+                invited_by, created_at, expires_at, consumed_at,
+                consumed_by_user_id, revoked_at, revoked_by
          FROM admin_invitations WHERE organisation_id = ? ORDER BY created_at DESC`,
         [organisationId],
       );
-      return (rows || []).map((row) => ({
-        invitationId: row.invitation_id,
-        email: row.email,
-        status: row.status,
-        createdAt: row.created_at,
-        expiresAt: row.expires_at,
-        consumedAt: row.consumed_at,
-      }));
+      return (rows || []).map(mapSafeInvitation);
     },
 
     async signupWithInvitation({ token, displayName, username, password }, actor) {
@@ -553,6 +901,73 @@ export function createControlPlaneService({ pool, repositories }) {
         }
 
         const organisationId = invitation.organisation_id;
+        const roleKey = invitationRoleKey(invitation);
+        const isPlatformInvitation =
+          invitationType(invitation) === ADMIN_INVITATION_TYPES.PLATFORM;
+        const expectedOrganisationType = isPlatformInvitation
+          ? "platform"
+          : "medical_scheme";
+        const organisation = isPlatformInvitation
+          ? await repositories.organisations.getById(
+              organisationId,
+              { executor },
+            )
+          : null;
+        if (
+          isPlatformInvitation
+          && (!organisation || organisation.organisationType !== expectedOrganisationType)
+        ) {
+          throw new ControlPlaneConflictError(
+            "The invitation does not match its organisation scope.",
+            "ADMINISTRATOR_INVITATION_SCOPE_MISMATCH",
+          );
+        }
+        if (isPlatformInvitation && String(password || "").length < 12) {
+          throw new ControlPlaneValidationError(
+            "Platform administrator passwords must be at least 12 characters.",
+            "WEAK_PLATFORM_ADMINISTRATOR_PASSWORD",
+          );
+        }
+        if (isPlatformInvitation) {
+          if (!invitation.invited_by) {
+            throw new ControlPlaneConflictError(
+              "The platform administrator invitation has no accountable inviter.",
+              "PLATFORM_ADMINISTRATOR_INVITER_REQUIRED",
+            );
+          }
+          const inviter = await repositories.identity.getSafeUser(
+            invitation.invited_by,
+            { executor },
+          );
+          const inviterMembership = await repositories.identity
+            .getMembershipForUserOrganisation(
+              {
+                userId: invitation.invited_by,
+                organisationId,
+              },
+              {
+                executor,
+                lockForUpdate: true,
+              },
+            );
+          const inviterRoles = inviterMembership
+            ? await repositories.identity.listMembershipRoles(
+                inviterMembership.membershipId,
+                { executor },
+              )
+            : [];
+          if (
+            !inviter
+            || inviter.status !== "active"
+            || inviterMembership?.status !== "active"
+            || !inviterRoles.includes("platform_administrator")
+          ) {
+            throw new ControlPlaneConflictError(
+              "The inviting administrator no longer has active platform authority.",
+              "PLATFORM_ADMINISTRATOR_INVITER_INACTIVE",
+            );
+          }
+        }
 
         // Draft onboarding may already have created the administrator's
         // platform-level user identity. Reuse that identity instead of
@@ -567,6 +982,19 @@ export function createControlPlaneService({ pool, repositories }) {
                   true,
               },
             );
+
+        if (isPlatformInvitation && user?.userId === invitation.invited_by) {
+          throw new ControlPlaneConflictError(
+            "A platform administrator invitation must create a distinct identity.",
+            "DISTINCT_PLATFORM_ADMINISTRATOR_REQUIRED",
+          );
+        }
+        if (isPlatformInvitation && user && user.status !== "active") {
+          throw new ControlPlaneConflictError(
+            "The invited identity is not active and requires explicit remediation.",
+            "PLATFORM_ADMINISTRATOR_IDENTITY_NOT_ACTIVE",
+          );
+        }
 
         if (!user) {
           user =
@@ -637,16 +1065,35 @@ export function createControlPlaneService({ pool, repositories }) {
                 },
               );
         }
-
-        // Assign scheme_administrator role
-        const role = await repositories.identity.resolveRole("scheme_administrator", { executor });
-        if (role) {
-          await repositories.identity.assignRole({
-            membershipId: membership.membershipId,
-            roleId: role.roleId,
-            assignedBy: invitation.invited_by,
-          }, { executor });
+        if (
+          isPlatformInvitation
+          && membership
+          && membership.status !== "active"
+        ) {
+          throw new ControlPlaneConflictError(
+            "The invited identity has a non-active platform membership.",
+            "PLATFORM_ADMINISTRATOR_MEMBERSHIP_NOT_ACTIVE",
+          );
         }
+
+        const role = await repositories.identity.resolveRole(roleKey, { executor });
+        if (!role) {
+          throw new ControlPlaneNotFoundError(
+            "The required administrator role was not found.",
+            "ROLE_NOT_FOUND",
+          );
+        }
+        if (role.organisationScope !== expectedOrganisationType) {
+          throw new ControlPlaneValidationError(
+            "Role scope does not match the invitation organisation.",
+            "ROLE_SCOPE_MISMATCH",
+          );
+        }
+        await repositories.identity.assignRole({
+          membershipId: membership.membershipId,
+          roleId: role.roleId,
+          assignedBy: invitation.invited_by,
+        }, { executor });
 
         // Consume the invitation
         await executor.execute(
@@ -656,14 +1103,28 @@ export function createControlPlaneService({ pool, repositories }) {
 
         await audit(executor, {
           actorType: "user", actorId: user.userId,
-          organisationScopeId: organisationId, action: "admin_invitation.consumed",
+          organisationScopeId: organisationId,
+          action: isPlatformInvitation
+            ? "platform_administrator.invitation_accept"
+            : "admin_invitation.consumed",
           targetType: "admin_invitation", targetId: invitation.invitation_id,
-          afterSummary: { userId: user.userId, username: normalizeUsername(username) },
+          afterSummary: {
+            userId: user.userId,
+            username: normalizeUsername(username),
+            invitationType: invitationType(invitation),
+            roleKey,
+          },
           correlationId: actor?.correlationId || null, outcome: "success",
           source: "signup",
         });
 
-        return { user, membership, organisationId };
+        return {
+          user,
+          membership,
+          organisationId,
+          invitationType: invitationType(invitation),
+          roleKey,
+        };
       });
     },
 

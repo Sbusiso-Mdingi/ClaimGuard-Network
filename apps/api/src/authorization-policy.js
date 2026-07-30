@@ -37,6 +37,7 @@ export const CLAIMGUARD_PERMISSIONS = Object.freeze({
   PLATFORM_RELEASES_VIEW: "platform_releases.view",
   PLATFORM_RELEASES_REQUEST: "platform_releases.request",
   PLATFORM_RELEASES_APPROVE: "platform_releases.approve",
+  PLATFORM_ADMINISTRATORS_MANAGE: "platform_administrators.manage",
 });
 
 const rolePermissionMap = Object.freeze({
@@ -109,6 +110,7 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_VIEW,
     CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_REQUEST,
     CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_APPROVE,
+    CLAIMGUARD_PERMISSIONS.PLATFORM_ADMINISTRATORS_MANAGE,
   ]),
 });
 

@@ -119,10 +119,19 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
       if (new Date(invitation.expiresAt) < new Date()) {
         return c.json({ available: false, code: "INVITATION_EXPIRED", message: "This invitation has expired." }, 410);
       }
+      const platformAdministrator =
+        invitation.invitationType === "platform_administrator";
       return c.json({
         available: true,
         organisationName: invitation.organisationName,
         canonicalSlug: invitation.canonicalSlug,
+        organisationType: invitation.organisationType,
+        invitationType: invitation.invitationType || "scheme_administrator",
+        roleKey: invitation.roleKey || "scheme_administrator",
+        roleLabel: platformAdministrator
+          ? "ClaimGuard Platform Administrator"
+          : "Scheme Administrator",
+        passwordMinLength: platformAdministrator ? 12 : 8,
         email: invitation.email,
       });
     } catch {
@@ -147,7 +156,11 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
       const result = await controlPlaneService.signupWithInvitation({ token, displayName, username, password }, {});
       return c.json({
         available: true,
-        message: "Account created successfully. You can now sign in.",
+        message: result.invitationType === "platform_administrator"
+          ? "Platform administrator account created successfully. You can now sign in."
+          : "Account created successfully. You can now sign in.",
+        invitationType: result.invitationType || "scheme_administrator",
+        roleKey: result.roleKey || "scheme_administrator",
         user: { userId: result.user.userId, displayName: result.user.displayName },
       }, 201);
     } catch (error) {
