@@ -68,6 +68,23 @@ test("session capability translation applies role overlays during migration roll
   ]));
 });
 
+test("platform administrator sessions retain administrator-management authority", () => {
+  const context = sessionContext("platform_administrator", [
+    "platform_releases.view",
+    "platform_releases.request",
+    "platform_releases.approve",
+    "platform_administrators.manage",
+  ]);
+
+  assert.equal(
+    hasPermission(
+      context,
+      CLAIMGUARD_PERMISSIONS.PLATFORM_ADMINISTRATORS_MANAGE,
+    ),
+    true,
+  );
+});
+
 test("demo-header rollback authority mirrors effective session visibility", () => {
   const investigator = headerContext("investigator");
   const schemeAdministrator = headerContext("scheme_administrator");
