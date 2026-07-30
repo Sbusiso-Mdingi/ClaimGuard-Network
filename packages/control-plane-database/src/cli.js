@@ -11,6 +11,11 @@ import {
 } from "./config.js";
 import { createControlPlaneService } from "./control-plane-service.js";
 import { provisionDemoAccounts } from "./demo-provisioning.js";
+import {
+  bootstrapDevelopmentPlatformAdministrator,
+  DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
+  getDevelopmentPlatformAdminBootstrapStatus,
+} from "./development-platform-admin-bootstrap.js";
 import { getShadowDiagnostics } from "./diagnostics.js";
 import {
   applyUnambiguousLegacyMappings,
@@ -101,6 +106,45 @@ async function runDemoProvisioning({ values }) {
     });
   } finally {
     await Promise.all([controlPool.end(), operationalPool.end()]);
+  }
+}
+
+async function runDevelopmentPlatformAdminBootstrap(command, { values }) {
+  const pool = createControlPlanePool(requireControlPlaneDatabaseUrl());
+  try {
+    const repositories = createControlPlaneRepositories(pool);
+    if (command === "development-platform-admin-bootstrap-status") {
+      json(await getDevelopmentPlatformAdminBootstrapStatus({ repositories }));
+      return;
+    }
+    const result = await bootstrapDevelopmentPlatformAdministrator(
+      {
+        allowDevelopmentBootstrap:
+          process.env.CLAIMGUARD_ALLOW_DEVELOPMENT_ADMIN_BOOTSTRAP === "true",
+        confirmation: values.get("confirm"),
+        expectedExistingAdministratorId: requiredArgument(
+          values,
+          "expected-existing-administrator-id",
+        ),
+        displayName: requiredArgument(values, "display-name"),
+        email: requiredArgument(values, "email"),
+        username: requiredArgument(values, "username"),
+        password:
+          process.env.CLAIMGUARD_DEVELOPMENT_PLATFORM_ADMIN_PASSWORD,
+        reason: requiredArgument(values, "reason"),
+        actor: values.get("actor") || "development-bootstrap-operator",
+        correlationId: values.get("correlation-id") || null,
+      },
+      { repositories },
+    );
+    json({
+      ...result,
+      confirmation:
+        DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
+      passwordReturned: false,
+    });
+  } finally {
+    await pool.end();
   }
 }
 
@@ -275,6 +319,12 @@ export async function runControlPlaneCli(argv = process.argv.slice(2)) {
   const args = parseArguments(argv.slice(1));
   if (command === "inventory") return runInventory(args);
   if (command === "provision-demo") return runDemoProvisioning(args);
+  if ([
+    "development-platform-admin-bootstrap-status",
+    "development-platform-admin-bootstrap",
+  ].includes(command)) {
+    return runDevelopmentPlatformAdminBootstrap(command, args);
+  }
   if ([
     "release-status",
     "release-register",

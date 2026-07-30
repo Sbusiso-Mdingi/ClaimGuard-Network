@@ -15,6 +15,11 @@ export {
 export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
 export { getShadowDiagnostics } from "./diagnostics.js";
 export { provisionDemoAccounts } from "./demo-provisioning.js";
+export {
+  bootstrapDevelopmentPlatformAdministrator,
+  DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
+  getDevelopmentPlatformAdminBootstrapStatus,
+} from "./development-platform-admin-bootstrap.js";
 export * from "./errors.js";
 export {
   applyUnambiguousLegacyMappings,
