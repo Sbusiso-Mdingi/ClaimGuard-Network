@@ -167,6 +167,78 @@ test("users are platform-level and one user can hold memberships in multiple org
   assert.notEqual(first.organisationId, second.organisationId);
 });
 
+test("future active membership repair is exact and uses database UTC", async () => {
+  const membership = {
+    membership_id: "membership-2",
+    user_id: "user-2",
+    organisation_id: "org-platform",
+    status: "active",
+    valid_from: new Date(
+      "2026-07-30T06:49:36.719Z",
+    ),
+  };
+  const calls = [];
+  const db =
+    executor(async (sql, params) => {
+      calls.push({
+        sql,
+        params,
+      });
+      if (
+        sql.startsWith(
+          "UPDATE organisation_memberships SET valid_from = UTC_TIMESTAMP(3)",
+        )
+      ) {
+        membership.valid_from =
+          new Date(
+            "2026-07-30T05:15:00.000Z",
+          );
+        return [{
+          affectedRows: 1,
+        }, []];
+      }
+      if (
+        sql.startsWith(
+          "SELECT * FROM organisation_memberships",
+        )
+      ) {
+        return [[membership], []];
+      }
+      throw new Error(
+        `Unexpected SQL: ${sql}`,
+      );
+    });
+
+  const repaired =
+    await createControlPlaneRepositories(db)
+      .identity
+      .repairFutureActiveMembershipStart({
+        membershipId:
+          membership.membership_id,
+        userId:
+          membership.user_id,
+        organisationId:
+          membership.organisation_id,
+      });
+
+  assert.equal(
+    repaired.validFrom.toISOString(),
+    "2026-07-30T05:15:00.000Z",
+  );
+  assert.match(
+    calls[0].sql,
+    /valid_from > UTC_TIMESTAMP\(3\)/,
+  );
+  assert.deepEqual(
+    calls[0].params,
+    [
+      "membership-2",
+      "user-2",
+      "org-platform",
+    ],
+  );
+});
+
 test("identity repository resolves an existing invitation user and organisation membership", async () => {
   const calls = [];
 

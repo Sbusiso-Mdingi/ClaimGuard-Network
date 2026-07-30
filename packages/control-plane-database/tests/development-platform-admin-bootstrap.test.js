@@ -4,13 +4,21 @@ import test from "node:test";
 import {
   bootstrapDevelopmentPlatformAdministrator,
   DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
+  DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION,
   getDevelopmentPlatformAdminBootstrapStatus,
+  repairDevelopmentPlatformAdministratorMembership,
 } from "../src/development-platform-admin-bootstrap.js";
 
 function fixture({ administratorCount = 1 } = {}) {
   const credentials = [];
   const assignments = [];
   const audits = [];
+  const repairs = [];
+  const futureValidFrom =
+    new Date(
+      Date.now()
+      + 60 * 60 * 1000,
+    );
   const administrators = Array.from(
     { length: administratorCount },
     (_, index) => ({
@@ -19,6 +27,8 @@ function fixture({ administratorCount = 1 } = {}) {
       canonicalContact: `admin${index + 1}@example.com`,
       username: `admin.${index + 1}`,
       userStatus: "active",
+      membershipId:
+        `membership-platform-admin-${index + 1}`,
       membershipStatus: "active",
       credentialStatus: "active",
       roles: ["platform_administrator"],
@@ -72,6 +82,48 @@ function fixture({ administratorCount = 1 } = {}) {
         assignments.push(input);
         return input;
       },
+      async getMembership(membershipId) {
+        const administrator =
+          administrators.find(
+            (candidate) =>
+              candidate.membershipId
+              === membershipId,
+          );
+        return administrator
+          ? {
+            membershipId,
+            userId:
+              administrator.userId,
+            organisationId:
+              "org-platform",
+            status:
+              "active",
+            validFrom:
+              administrator.userId
+                === "platform-admin-2"
+                ? futureValidFrom
+                : new Date(
+                  Date.now()
+                  - 60 * 60 * 1000,
+                ),
+          }
+          : null;
+      },
+      async repairFutureActiveMembershipStart(input) {
+        repairs.push(input);
+        return {
+          membershipId:
+            input.membershipId,
+          userId:
+            input.userId,
+          organisationId:
+            input.organisationId,
+          status:
+            "active",
+          validFrom:
+            new Date(),
+        };
+      },
     },
     security: {
       async recordPlatformAudit(input) {
@@ -83,7 +135,14 @@ function fixture({ administratorCount = 1 } = {}) {
       return operation(repositories);
     },
   };
-  return { repositories, credentials, assignments, audits };
+  return {
+    repositories,
+    credentials,
+    assignments,
+    audits,
+    repairs,
+    futureValidFrom,
+  };
 }
 
 test("development bootstrap status is read-only and requires one usable existing administrator", async () => {
@@ -156,5 +215,113 @@ test("development bootstrap fails closed without its gate or with an unexpected 
       { repositories: fixture({ administratorCount: 2 }).repositories },
     ),
     /exactly the expected single active platform administrator/,
+  );
+});
+
+test("development bootstrap membership repair is exact, transactional, and audited", async () => {
+  const {
+    repositories,
+    repairs,
+    audits,
+    futureValidFrom,
+  } =
+    fixture({
+      administratorCount: 2,
+    });
+  const result =
+    await repairDevelopmentPlatformAdministratorMembership(
+      {
+        allowDevelopmentBootstrap:
+          true,
+        confirmation:
+          DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION,
+        expectedExistingAdministratorId:
+          "platform-admin-1",
+        targetAdministratorId:
+          "platform-admin-2",
+        targetMembershipId:
+          "membership-platform-admin-2",
+        targetUsername:
+          "admin.2",
+        reason:
+          "Correct the local-time bootstrap timestamp to database UTC.",
+        actor:
+          "Sbusiso-Mdingi",
+        correlationId:
+          "development-bootstrap-repair-test",
+      },
+      {
+        repositories,
+      },
+    );
+
+  assert.equal(
+    result.repaired,
+    true,
+  );
+  assert.deepEqual(
+    repairs,
+    [{
+      membershipId:
+        "membership-platform-admin-2",
+      userId:
+        "platform-admin-2",
+      organisationId:
+        "org-platform",
+    }],
+  );
+  assert.equal(
+    audits[0].action,
+    "platform_administrator.development_bootstrap_membership_repair",
+  );
+  assert.equal(
+    audits[0].beforeSummary.validFrom,
+    futureValidFrom.toISOString(),
+  );
+  assert.equal(
+    audits[0].afterSummary.timezoneCorrection,
+    "utc",
+  );
+});
+
+test("development bootstrap membership repair fails closed for a mismatched target", async () => {
+  const {
+    repositories,
+    repairs,
+  } =
+    fixture({
+      administratorCount: 2,
+    });
+
+  await assert.rejects(
+    () =>
+      repairDevelopmentPlatformAdministratorMembership(
+        {
+          allowDevelopmentBootstrap:
+            true,
+          confirmation:
+            DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION,
+          expectedExistingAdministratorId:
+            "platform-admin-1",
+          targetAdministratorId:
+            "platform-admin-2",
+          targetMembershipId:
+            "unexpected-membership",
+          targetUsername:
+            "admin.2",
+          reason:
+            "Correct the local-time bootstrap timestamp to database UTC.",
+          actor:
+            "Sbusiso-Mdingi",
+        },
+        {
+          repositories,
+        },
+      ),
+    /does not match the exact configured second platform administrator/,
+  );
+  assert.equal(
+    repairs.length,
+    0,
   );
 });

@@ -7,6 +7,8 @@ import { normalizeUsername } from "./validation.js";
 
 export const DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION =
   "BOOTSTRAP_DEVELOPMENT_PLATFORM_ADMINISTRATOR";
+export const DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION =
+  "REPAIR_DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_VALID_FROM";
 
 function requiredText(value, name, maximumLength) {
   const normalized = String(value || "").trim();
@@ -203,6 +205,200 @@ export async function bootstrapDevelopmentPlatformAdministrator(
       roleKey: "platform_administrator",
       temporaryDevelopmentAccess: true,
       auditEventId: audit.auditEventId,
+    };
+  });
+}
+
+export async function repairDevelopmentPlatformAdministratorMembership(
+  {
+    allowDevelopmentBootstrap,
+    confirmation,
+    expectedExistingAdministratorId,
+    targetAdministratorId,
+    targetMembershipId,
+    targetUsername,
+    reason,
+    actor,
+    correlationId = null,
+  },
+  {
+    repositories,
+  },
+) {
+  if (allowDevelopmentBootstrap !== true) {
+    throw new Error(
+      "Development platform administrator membership repair is disabled.",
+    );
+  }
+  if (
+    confirmation
+    !== DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION
+  ) {
+    throw new Error(
+      `Membership repair requires confirmation ${DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION}.`,
+    );
+  }
+  const expectedAdministratorId = requiredText(
+    expectedExistingAdministratorId,
+    "expectedExistingAdministratorId",
+    36,
+  );
+  const canonicalTargetAdministratorId = requiredText(
+    targetAdministratorId,
+    "targetAdministratorId",
+    36,
+  );
+  const canonicalTargetMembershipId = requiredText(
+    targetMembershipId,
+    "targetMembershipId",
+    36,
+  );
+  const canonicalTargetUsername = normalizeUsername(
+    requiredText(
+      targetUsername,
+      "targetUsername",
+      255,
+    ),
+  );
+  const canonicalReason = requiredText(
+    reason,
+    "reason",
+    512,
+  );
+  if (canonicalReason.length < 20) {
+    throw new TypeError("reason must contain at least 20 characters.");
+  }
+  const canonicalActor = requiredText(
+    actor,
+    "actor",
+    255,
+  );
+
+  return repositories.runInTransaction(async (transaction) => {
+    const {
+      organisation,
+      administrators,
+    } = await platformState(transaction);
+    if (administrators.length !== 2) {
+      throw new Error(
+        "Membership repair requires exactly two configured active platform administrators.",
+      );
+    }
+    const existingAdministrator =
+      administrators.find(
+        (administrator) =>
+          administrator.userId
+          === expectedAdministratorId,
+      );
+    const targetAdministrator =
+      administrators.find(
+        (administrator) =>
+          administrator.userId
+          === canonicalTargetAdministratorId,
+      );
+    if (
+      !existingAdministrator
+      || !targetAdministrator
+      || targetAdministrator.userId
+        === existingAdministrator.userId
+      || targetAdministrator.membershipId
+        !== canonicalTargetMembershipId
+      || targetAdministrator.username
+        !== canonicalTargetUsername
+    ) {
+      throw new Error(
+        "Membership repair target does not match the exact configured second platform administrator.",
+      );
+    }
+
+    const membership =
+      await transaction.identity.getMembership(
+        canonicalTargetMembershipId,
+      );
+    const now = new Date();
+    if (
+      !membership
+      || membership.userId
+        !== canonicalTargetAdministratorId
+      || membership.organisationId
+        !== organisation.organisationId
+      || membership.status !== "active"
+      || !(membership.validFrom instanceof Date)
+      || membership.validFrom.getTime() <= now.getTime()
+    ) {
+      throw new Error(
+        "Membership repair requires the exact active membership to have a future valid-from timestamp.",
+      );
+    }
+
+    const repairedMembership =
+      await transaction.identity
+        .repairFutureActiveMembershipStart({
+          membershipId:
+            canonicalTargetMembershipId,
+          userId:
+            canonicalTargetAdministratorId,
+          organisationId:
+            organisation.organisationId,
+        });
+    const audit =
+      await transaction.security.recordPlatformAudit({
+        actorType: "user",
+        actorId: expectedAdministratorId,
+        organisationScopeId:
+          organisation.organisationId,
+        action:
+          "platform_administrator.development_bootstrap_membership_repair",
+        targetType: "membership",
+        targetId:
+          canonicalTargetMembershipId,
+        beforeSummary: {
+          userId:
+            canonicalTargetAdministratorId,
+          validFrom:
+            membership.validFrom.toISOString(),
+          status:
+            membership.status,
+        },
+        afterSummary: {
+          userId:
+            canonicalTargetAdministratorId,
+          validFrom:
+            repairedMembership.validFrom
+              ?.toISOString?.()
+              || repairedMembership.validFrom,
+          status:
+            repairedMembership.status,
+          reason:
+            canonicalReason,
+          requestedBy:
+            canonicalActor,
+          timezoneCorrection:
+            "utc",
+        },
+        correlationId,
+        outcome: "success",
+        source:
+          "development-platform-admin-bootstrap",
+      });
+
+    return {
+      organisation: {
+        organisationId:
+          organisation.organisationId,
+        displayName:
+          organisation.displayName,
+      },
+      membership:
+        repairedMembership,
+      targetAdministratorId:
+        canonicalTargetAdministratorId,
+      targetUsername:
+        canonicalTargetUsername,
+      auditEventId:
+        audit.auditEventId,
+      repaired:
+        true,
     };
   });
 }
