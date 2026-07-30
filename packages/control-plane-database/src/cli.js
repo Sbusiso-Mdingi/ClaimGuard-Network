@@ -14,7 +14,9 @@ import { provisionDemoAccounts } from "./demo-provisioning.js";
 import {
   bootstrapDevelopmentPlatformAdministrator,
   DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
+  DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION,
   getDevelopmentPlatformAdminBootstrapStatus,
+  repairDevelopmentPlatformAdministratorMembership,
 } from "./development-platform-admin-bootstrap.js";
 import { getShadowDiagnostics } from "./diagnostics.js";
 import {
@@ -115,6 +117,61 @@ async function runDevelopmentPlatformAdminBootstrap(command, { values }) {
     const repositories = createControlPlaneRepositories(pool);
     if (command === "development-platform-admin-bootstrap-status") {
       json(await getDevelopmentPlatformAdminBootstrapStatus({ repositories }));
+      return;
+    }
+    if (
+      command
+      === "development-platform-admin-membership-repair"
+    ) {
+      const result =
+        await repairDevelopmentPlatformAdministratorMembership(
+          {
+            allowDevelopmentBootstrap:
+              process.env.CLAIMGUARD_ALLOW_DEVELOPMENT_ADMIN_BOOTSTRAP
+              === "true",
+            confirmation:
+              values.get("confirm"),
+            expectedExistingAdministratorId:
+              requiredArgument(
+                values,
+                "expected-existing-administrator-id",
+              ),
+            targetAdministratorId:
+              requiredArgument(
+                values,
+                "target-administrator-id",
+              ),
+            targetMembershipId:
+              requiredArgument(
+                values,
+                "target-membership-id",
+              ),
+            targetUsername:
+              requiredArgument(
+                values,
+                "target-username",
+              ),
+            reason:
+              requiredArgument(
+                values,
+                "reason",
+              ),
+            actor:
+              values.get("actor")
+              || "development-bootstrap-operator",
+            correlationId:
+              values.get("correlation-id")
+              || null,
+          },
+          {
+            repositories,
+          },
+        );
+      json({
+        ...result,
+        confirmation:
+          DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION,
+      });
       return;
     }
     const result = await bootstrapDevelopmentPlatformAdministrator(
@@ -322,6 +379,7 @@ export async function runControlPlaneCli(argv = process.argv.slice(2)) {
   if ([
     "development-platform-admin-bootstrap-status",
     "development-platform-admin-bootstrap",
+    "development-platform-admin-membership-repair",
   ].includes(command)) {
     return runDevelopmentPlatformAdminBootstrap(command, args);
   }

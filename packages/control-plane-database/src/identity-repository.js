@@ -163,6 +163,50 @@ export function createIdentityRepository(defaultExecutor) {
       return mapMembership(rows?.[0]);
     },
 
+    async repairFutureActiveMembershipStart(
+      {
+        membershipId,
+        userId,
+        organisationId,
+      },
+      {
+        executor,
+      } = {},
+    ) {
+      const db = executorOr(
+        defaultExecutor,
+        executor,
+      );
+      const [result] =
+        await db.execute(
+          `UPDATE organisation_memberships
+           SET valid_from = UTC_TIMESTAMP(3),
+               updated_at = UTC_TIMESTAMP(3)
+           WHERE membership_id = ?
+             AND user_id = ?
+             AND organisation_id = ?
+             AND status = 'active'
+             AND valid_from > UTC_TIMESTAMP(3)`,
+          [
+            membershipId,
+            userId,
+            organisationId,
+          ],
+        );
+      if (result.affectedRows !== 1) {
+        throw new ControlPlaneConflictError(
+          "The exact active membership is not eligible for future-start repair.",
+          "MEMBERSHIP_FUTURE_START_REPAIR_NOT_ELIGIBLE",
+        );
+      }
+      return this.getMembership(
+        membershipId,
+        {
+          executor: db,
+        },
+      );
+    },
+
     async getMembershipForUserOrganisation(
       {
         userId,

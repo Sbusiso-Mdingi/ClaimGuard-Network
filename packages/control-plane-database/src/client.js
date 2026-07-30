@@ -23,6 +23,10 @@ export function buildControlPlaneConnectionOptions(databaseUrl) {
     user: decodeURIComponent(parsed.username),
     password: decodeURIComponent(parsed.password),
     database,
+    // Control-plane timestamps are UTC. Pin mysql2 explicitly so local
+    // administrative commands do not serialize Date values in the operator's
+    // workstation timezone.
+    timezone: "Z",
     connectionLimit: 5,
     namedPlaceholders: false,
   };

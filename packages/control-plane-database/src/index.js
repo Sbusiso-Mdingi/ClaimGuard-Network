@@ -18,7 +18,9 @@ export { provisionDemoAccounts } from "./demo-provisioning.js";
 export {
   bootstrapDevelopmentPlatformAdministrator,
   DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
+  DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION,
   getDevelopmentPlatformAdminBootstrapStatus,
+  repairDevelopmentPlatformAdministratorMembership,
 } from "./development-platform-admin-bootstrap.js";
 export * from "./errors.js";
 export {
