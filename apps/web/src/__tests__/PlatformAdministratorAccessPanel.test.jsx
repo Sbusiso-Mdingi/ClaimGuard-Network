@@ -132,4 +132,28 @@ describe("PlatformAdministratorAccessPanel", () => {
     expect(await screen.findByText("second@example.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
   });
+
+  test("does not render false administrator inventory when access is forbidden", async () => {
+    apiJson.mockRejectedValueOnce(
+      new Error("You do not have permission to perform this operation."),
+    );
+
+    render(<PlatformAdministratorAccessPanel />);
+
+    expect(
+      await screen.findByText("Platform administrator access unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("You do not have permission to perform this operation."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No platform administrators found"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Review invitation" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retry access" }),
+    ).toBeInTheDocument();
+  });
 });

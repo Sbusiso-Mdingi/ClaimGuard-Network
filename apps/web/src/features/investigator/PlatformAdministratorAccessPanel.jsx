@@ -259,6 +259,31 @@ export function PlatformAdministratorAccessPanel() {
     );
   }
 
+  if (!access) {
+    return (
+      <SectionCard
+        title="Platform administrator access"
+        description="Invite the separate administrator required for two-person production approvals. Azure access is not required."
+        actions={(
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={loadAccess}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Retry access
+          </Button>
+        )}
+      >
+        <WorkspaceNotice title="Platform administrator access unavailable" tone="danger">
+          {error || "Platform administrator access could not be loaded."}
+        </WorkspaceNotice>
+      </SectionCard>
+    );
+  }
+
   return (
     <SectionCard
       title="Platform administrator access"
