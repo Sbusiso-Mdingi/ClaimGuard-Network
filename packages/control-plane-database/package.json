@@ -18,7 +18,6 @@
     "status": "node src/cli.js status",
     "diagnose": "node src/cli.js diagnose",
     "inventory": "node src/cli.js inventory",
-    "provision-demo": "node src/cli.js provision-demo",
     "release-status": "node src/cli.js release-status"
   }
 }
