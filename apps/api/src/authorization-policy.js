@@ -138,122 +138,57 @@ const canonicalRoleByAlias = Object.freeze({
 });
 
 export function normalizeRole(roleValue) {
-  if (typeof roleValue !== "string") {
-    return null;
-  }
-
+  if (typeof roleValue !== "string") return null;
   const normalized = roleValue.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-
+  if (!normalized) return null;
   const withUnderscores = normalized.replace(/[\s-]+/g, "_");
   return canonicalRoleByAlias[normalized] || canonicalRoleByAlias[withUnderscores] || null;
 }
 
 export function parseRoles(roleHeaderValue) {
-  if (typeof roleHeaderValue !== "string") {
-    return [];
-  }
-
-  const normalizedRoles = roleHeaderValue
-    .split(",")
-    .map((role) => normalizeRole(role))
-    .filter(Boolean);
-
+  if (typeof roleHeaderValue !== "string") return [];
+  const normalizedRoles = roleHeaderValue.split(",").map((role) => normalizeRole(role)).filter(Boolean);
   return [...new Set(normalizedRoles)];
 }
 
 export function getPermissionsForRoles(roles) {
   const permissionSet = new Set();
-
   for (const role of roles || []) {
     const rolePermissions = rolePermissionMap[role] || [];
-    for (const permission of rolePermissions) {
-      permissionSet.add(permission);
-    }
+    for (const permission of rolePermissions) permissionSet.add(permission);
   }
-
   return permissionSet;
 }
 
 export function hasPermission(authContext, permission) {
-  if (!authContext || !permission) {
-    return false;
-  }
-
+  if (!authContext || !permission) return false;
   return authContext.permissions instanceof Set && authContext.permissions.has(permission);
 }
 
 export function isPlatformAdministrator(authContext) {
-  return Boolean(
-    authContext?.roles?.includes(CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR),
-  );
+  return Boolean(authContext?.roles?.includes(CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR));
 }
 
 function normalizeDistinctNonEmpty(values) {
-  const cleaned = values
-    .filter((value) => typeof value === "string")
-    .map((value) => value.trim())
-    .filter(Boolean);
-
+  const cleaned = values.filter((value) => typeof value === "string").map((value) => value.trim()).filter(Boolean);
   return [...new Set(cleaned)];
 }
 
-export function evaluateTenantAccess({
-  authContext,
-  tenantContext,
-  resourceTenantIds = [],
-  resourceSchemeIds = [],
-} = {}) {
+export function evaluateTenantAccess({ authContext, tenantContext, resourceTenantIds = [], resourceSchemeIds = [] } = {}) {
   const normalizedResourceTenantIds = normalizeDistinctNonEmpty(resourceTenantIds);
   const normalizedResourceSchemeIds = normalizeDistinctNonEmpty(resourceSchemeIds);
-
   const authTenantId = authContext?.tenant_id || null;
   const contextTenantId = tenantContext?.tenant_id || null;
   const contextSchemeId = tenantContext?.scheme_id || null;
-
-  if (!authTenantId || !contextTenantId) {
-    return {
-      allowed: false,
-      bypass: false,
-      reason: "tenant_context_unavailable",
-    };
-  }
-
-  if (authTenantId !== contextTenantId) {
-    return {
-      allowed: false,
-      bypass: false,
-      reason: "tenant_mismatch",
-    };
-  }
-
+  if (!authTenantId || !contextTenantId) return { allowed: false, bypass: false, reason: "tenant_context_unavailable" };
+  if (authTenantId !== contextTenantId) return { allowed: false, bypass: false, reason: "tenant_mismatch" };
   if (normalizedResourceTenantIds.length > 0 && normalizedResourceTenantIds.some((id) => id !== contextTenantId)) {
-    return {
-      allowed: false,
-      bypass: false,
-      reason: "resource_tenant_mismatch",
-    };
+    return { allowed: false, bypass: false, reason: "resource_tenant_mismatch" };
   }
-
-  if (
-    contextSchemeId &&
-    normalizedResourceSchemeIds.length > 0 &&
-    normalizedResourceSchemeIds.some((schemeId) => schemeId !== contextSchemeId)
-  ) {
-    return {
-      allowed: false,
-      bypass: false,
-      reason: "resource_scheme_mismatch",
-    };
+  if (contextSchemeId && normalizedResourceSchemeIds.length > 0 && normalizedResourceSchemeIds.some((schemeId) => schemeId !== contextSchemeId)) {
+    return { allowed: false, bypass: false, reason: "resource_scheme_mismatch" };
   }
-
-  return {
-    allowed: true,
-    bypass: false,
-    reason: "tenant_scoped",
-  };
+  return { allowed: true, bypass: false, reason: "tenant_scoped" };
 }
 
 export const OPERATIONAL_ROUTE_IDS = Object.freeze({
@@ -282,12 +217,7 @@ export const OPERATIONAL_ROUTE_IDS = Object.freeze({
 });
 
 export const OPERATIONAL_ROUTE_PREFIXES = Object.freeze([
-  "/claims",
-  "/investigations",
-  "/detection",
-  "/ledger",
-  "/registry",
-  "/internal/data-plane",
+  "/claims", "/investigations", "/detection", "/ledger", "/registry", "/internal/data-plane",
 ]);
 
 function normalizeRequestPath(path) {
@@ -305,7 +235,6 @@ function patternMatchesPath(pathPattern, requestPath) {
   const patternSegments = String(pathPattern || "").split("/").filter(Boolean);
   const pathSegments = String(requestPath || "").split("/").filter(Boolean);
   if (patternSegments.length !== pathSegments.length) return false;
-
   for (let index = 0; index < patternSegments.length; index += 1) {
     const patternSegment = patternSegments[index];
     const pathSegment = pathSegments[index];
@@ -315,51 +244,15 @@ function patternMatchesPath(pathPattern, requestPath) {
     }
     if (patternSegment !== pathSegment) return false;
   }
-
   return true;
 }
 
 const operationalRoutePolicyEntries = [
-  {
-    id: OPERATIONAL_ROUTE_IDS.CLAIMS_LIST,
-    method: "GET",
-    pathPattern: "/claims",
-    permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.CLAIMS_DETAIL,
-    method: "GET",
-    pathPattern: "/claims/:claimId",
-    permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.CLAIMS_INGEST,
-    method: "POST",
-    pathPattern: "/claims/ingest",
-    permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CREATE,
-    method: "POST",
-    pathPattern: "/investigations",
-    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_VIEW,
-    method: "GET",
-    pathPattern: "/investigations/:id",
-    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
+  { id: OPERATIONAL_ROUTE_IDS.CLAIMS_LIST, method: "GET", pathPattern: "/claims", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.CLAIMS_DETAIL, method: "GET", pathPattern: "/claims/:claimId", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.CLAIMS_INGEST, method: "POST", pathPattern: "/claims/ingest", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CREATE, method: "POST", pathPattern: "/investigations", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_VIEW, method: "GET", pathPattern: "/investigations/:id", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW], permissionMode: "all", requiresOperationalDataPlane: true },
   {
     id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_PATCH,
     method: "PATCH",
@@ -369,163 +262,31 @@ const operationalRoutePolicyEntries = [
     resolvePermissionRequirement({ payload } = {}) {
       const hasStatus = Boolean(payload && Object.hasOwn(payload, "status"));
       const hasPriority = Boolean(payload && Object.hasOwn(payload, "priority"));
-      if (hasStatus && hasPriority) {
-        return {
-          permissions: [
-            CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS,
-            CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY,
-          ],
-          mode: "all",
-        };
-      }
-      if (hasStatus) {
-        return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS], mode: "all" };
-      }
-      if (hasPriority) {
-        return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "all" };
-      }
-      return {
-        permissions: [
-          CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS,
-          CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY,
-        ],
-        mode: "any",
-      };
+      if (hasStatus && hasPriority) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "all" };
+      if (hasStatus) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS], mode: "all" };
+      if (hasPriority) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "all" };
+      return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "any" };
     },
   },
-  {
-    id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_ADD_NOTE,
-    method: "POST",
-    pathPattern: "/investigations/:id/notes",
-    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_UPLOAD_EVIDENCE,
-    method: "POST",
-    pathPattern: "/investigations/:id/evidence",
-    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CONFIRM_FRAUD,
-    method: "POST",
-    pathPattern: "/investigations/confirm-fraud",
-    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_REVERSE_FRAUD,
-    method: "POST",
-    pathPattern: "/investigations/reverse-fraud",
-    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.DETECTION_REPORT,
-    method: "GET",
-    pathPattern: "/detection/report",
-    permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.DETECTION_STATUS,
-    method: "GET",
-    pathPattern: "/detection/status",
-    permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.DETECTION_GRAPH,
-    method: "GET",
-    pathPattern: "/detection/graph",
-    permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.DETECTION_RISK,
-    method: "GET",
-    pathPattern: "/detection/risk",
-    permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.LEDGER_PREVIEW,
-    method: "GET",
-    pathPattern: "/ledger/preview",
-    permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.LEDGER_LATEST,
-    method: "GET",
-    pathPattern: "/ledger/latest",
-    permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.REGISTRY_SEARCH,
-    method: "GET",
-    pathPattern: "/registry/search",
-    permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.REGISTRY_HISTORY,
-    method: "GET",
-    pathPattern: "/registry/history/:subjectToken",
-    permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.REGISTRY_DETAIL,
-    method: "GET",
-    pathPattern: "/registry/:id",
-    permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH,
-    method: "GET",
-    pathPattern: "/internal/data-plane/health",
-    permissions: [CLAIMGUARD_PERMISSIONS.PLATFORM_HEALTH_VIEW],
-    permissionMode: "all",
-    requiresOperationalDataPlane: false,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_VIEW,
-    method: "GET",
-    pathPattern: "/detection/strategy",
-    permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
-  {
-    id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_UPDATE,
-    method: "PUT",
-    pathPattern: "/detection/strategy",
-    permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT],
-    permissionMode: "all",
-    requiresOperationalDataPlane: true,
-  },
+  { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_ADD_NOTE, method: "POST", pathPattern: "/investigations/:id/notes", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_UPLOAD_EVIDENCE, method: "POST", pathPattern: "/investigations/:id/evidence", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CONFIRM_FRAUD, method: "POST", pathPattern: "/investigations/confirm-fraud", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_REVERSE_FRAUD, method: "POST", pathPattern: "/investigations/reverse-fraud", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DETECTION_REPORT, method: "GET", pathPattern: "/detection/report", permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DETECTION_STATUS, method: "GET", pathPattern: "/detection/status", permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DETECTION_GRAPH, method: "GET", pathPattern: "/detection/graph", permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DETECTION_RISK, method: "GET", pathPattern: "/detection/risk", permissions: [CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.LEDGER_PREVIEW, method: "GET", pathPattern: "/ledger/preview", permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.LEDGER_LATEST, method: "GET", pathPattern: "/ledger/latest", permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.REGISTRY_SEARCH, method: "GET", pathPattern: "/registry/search", permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.REGISTRY_HISTORY, method: "GET", pathPattern: "/registry/history/:subjectToken", permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.REGISTRY_DETAIL, method: "GET", pathPattern: "/registry/:id", permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH, method: "GET", pathPattern: "/internal/data-plane/health", permissions: [CLAIMGUARD_PERMISSIONS.PLATFORM_HEALTH_VIEW], permissionMode: "all", requiresOperationalDataPlane: false },
+  { id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_VIEW, method: "GET", pathPattern: "/detection/strategy", permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_UPDATE, method: "PUT", pathPattern: "/detection/strategy", permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT], permissionMode: "all", requiresOperationalDataPlane: true },
 ];
 
-export const OPERATIONAL_ROUTE_POLICIES = Object.freeze(
-  operationalRoutePolicyEntries.map((entry) => Object.freeze(entry)),
-);
+export const OPERATIONAL_ROUTE_POLICIES = Object.freeze(operationalRoutePolicyEntries.map((entry) => Object.freeze(entry)));
 
 export function isOperationalRoutePath(path) {
   const normalizedPath = normalizeRequestPath(path);
@@ -539,24 +300,25 @@ export function getOperationalRoutePolicyById(routeId) {
 export function resolveOperationalRoutePolicy({ path, method } = {}) {
   const normalizedPath = normalizeRequestPath(path);
   if (!isOperationalRoutePath(normalizedPath)) return null;
-
   const normalizedMethod = normalizeRequestMethod(method);
   if (normalizedMethod === "OPTIONS") {
-    return Object.freeze({
-      id: "operational.options.bypass",
-      method: "OPTIONS",
-      pathPattern: normalizedPath,
-      requiresOperationalDataPlane: false,
-      bypassAuthorization: true,
-      permissions: [],
-      permissionMode: "all",
-    });
+    return Object.freeze({ id: "operational.options.bypass", method: "OPTIONS", pathPattern: normalizedPath, requiresOperationalDataPlane: false, bypassAuthorization: true, permissions: [], permissionMode: "all" });
   }
-
   for (const entry of OPERATIONAL_ROUTE_POLICIES) {
     if (entry.method !== normalizedMethod) continue;
     if (patternMatchesPath(entry.pathPattern, normalizedPath)) return entry;
   }
-
   return undefined;
+}
+
+export function resolveOperationalRoutePermissionRequirement({ routePolicy, payload } = {}) {
+  if (!routePolicy) return Object.freeze({ permissions: [], mode: "all" });
+  const resolved = typeof routePolicy.resolvePermissionRequirement === "function"
+    ? routePolicy.resolvePermissionRequirement({ payload })
+    : { permissions: routePolicy.permissions || [], mode: routePolicy.permissionMode || "all" };
+  const permissions = (resolved?.permissions || [])
+    .filter((permission) => typeof permission === "string" && permission.trim())
+    .map((permission) => permission.trim());
+  const mode = resolved?.mode === "any" ? "any" : "all";
+  return Object.freeze({ permissions, mode });
 }
