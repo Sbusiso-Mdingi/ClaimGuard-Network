@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CLAIMGUARD_ROLES } from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
+import { createStaticAuthenticationProvider } from "./helpers/authentication-provider.js";
 
-const ledgerHeaders = {
-  "x-claimguard-user": "investigator-default",
-  "x-claimguard-role": "investigator",
-  "x-claimguard-user-tenant": "tenant_default",
-  "x-claimguard-tenant": "tenant_default",
-};
+function createLedgerAuthenticationProvider() {
+  return createStaticAuthenticationProvider({
+    userId: "investigator-default",
+    roles: [CLAIMGUARD_ROLES.INVESTIGATOR],
+    tenantId: "tenant_default",
+  });
+}
 
 function createLedgerRepositoryStub(entry) {
   return {
@@ -19,8 +22,8 @@ function createLedgerRepositoryStub(entry) {
 }
 
 test("latest ledger endpoint returns 503 when mysql is unavailable", async () => {
-  const app = createBackendApp();
-  const response = await app.request("http://localhost/ledger/latest", { headers: ledgerHeaders });
+  const app = createBackendApp({ authenticationProvider: createLedgerAuthenticationProvider() });
+  const response = await app.request("http://localhost/ledger/latest");
   const json = await response.json();
 
   assert.equal(response.status, 503);
@@ -29,6 +32,7 @@ test("latest ledger endpoint returns 503 when mysql is unavailable", async () =>
 
 test("latest ledger endpoint returns the repository entry when mysql is available", async () => {
   const app = createBackendApp({
+    authenticationProvider: createLedgerAuthenticationProvider(),
     ledgerRepository: createLedgerRepositoryStub({
       sequenceNumber: 12,
       entryType: "DATA_SEEDED",
@@ -38,7 +42,7 @@ test("latest ledger endpoint returns the repository entry when mysql is availabl
     }),
   });
 
-  const response = await app.request("http://localhost/ledger/latest", { headers: ledgerHeaders });
+  const response = await app.request("http://localhost/ledger/latest");
   const json = await response.json();
 
   assert.equal(response.status, 200);
