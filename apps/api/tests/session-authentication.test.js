@@ -10,7 +10,6 @@ function configuration(overrides = {}) {
     cookie: { name: "__Host-cg_session", secure: true, sameSite: "Lax", path: "/", httpOnly: true },
     idleTimeoutMs: 1_800_000, absoluteTimeoutMs: 28_800_000,
     allowedOrigins: ["http://localhost"], trustProxy: false,
-    demoCredentialsVisible: false, demoCredentials: [],
     ...overrides,
   };
 }
@@ -75,16 +74,19 @@ function sessionApp(options = {}) {
   return { app, service };
 }
 
-test("authentication configuration defaults to session and rejects production header or demo exposure modes", () => {
+test("authentication configuration is session-only and rejects demo credential exposure", () => {
   const session = resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control" });
   assert.equal(session.mode, "session");
   assert.equal(Object.hasOwn(session, "internalServiceToken"), false);
   assert.equal(Object.hasOwn(session, "internalServiceOrganisationIds"), false);
   assert.equal(Object.hasOwn(session, "internalServiceAllowedRoles"), false);
+  assert.equal(Object.hasOwn(session, "demoCredentialsVisible"), false);
+  assert.equal(Object.hasOwn(session, "demoCredentials"), false);
   assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "hybrid" }), /session or demo_headers/);
-  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "demo_headers", DEPLOYMENT_CLASS: "production" }), /refuses/);
+  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "demo_headers" }), /refuses/);
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production" }), /AUTH_ALLOWED_ORIGINS/);
-  assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production", DEMO_CREDENTIALS_VISIBLE: "true" }), /DEMO_CREDENTIALS_VISIBLE|demo credential exposure/);
+  assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEMO_CREDENTIALS_VISIBLE: "true" }), /no longer supported/);
+  assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEMO_CREDENTIALS_JSON: "[]" }), /no longer supported/);
 });
 
 test("login issues a secure opaque cookie and safe session response", async () => {
@@ -149,36 +151,13 @@ test("CSRF requires both allowed Origin and the session-bound token while GET re
 });
 
 test("backend construction fails closed without a session service or explicit provider", () => {
-  assert.throws(
-    () => createBackendApp(),
-    /authenticationProvider is required when authenticationService is not supplied/,
-  );
+  assert.throws(() => createBackendApp(), TypeError);
 });
 
-test("demo account endpoint is fail-closed and returns only safe catalogue entries joined to ephemeral deployment secrets", async () => {
-  const hidden = sessionApp();
-  assert.equal((await hidden.app.request("http://localhost/auth/demo-accounts")).status, 404);
-
-  const catalogueEntry = {
-    catalogueEntryId: "catalogue-1", organisationId: "org-1", membershipId: "membership-1",
-    displayLabel: "Investigator — Alpha", roleLabel: "Investigator", usernameDisplayValue: "investigator.demo",
-    organisationSlug: "alpha", organisationName: "Alpha",
-  };
-  const app = createBackendApp({
-    authenticationConfiguration: configuration({
-      demoCredentialsVisible: true,
-      demoCredentials: [{ organisationSlug: "alpha", username: "investigator.demo", password: "deployment-only-value" }],
-    }),
-    authenticationService: authService(), tenantRepository,
-    controlPlaneConfigurationRepository: { async listSafeEnabledDemoCatalogueAll() { return [catalogueEntry]; } },
-  });
+test("demo account endpoint is not registered", async () => {
+  const { app } = sessionApp();
   const response = await app.request("http://localhost/auth/demo-accounts");
-  const payload = await response.json();
-  assert.equal(response.status, 200);
-  assert.equal(payload.accounts.length, 1);
-  assert.equal(payload.accounts[0].password, "deployment-only-value");
-  assert.equal(Object.hasOwn(payload.accounts[0], "secretReference"), false);
-  assert.match(payload.warning, /DEMO-ONLY/);
+  assert.equal(response.status, 404);
 });
 
 test("shared internal service tokens and asserted service identity headers are rejected", async () => {
