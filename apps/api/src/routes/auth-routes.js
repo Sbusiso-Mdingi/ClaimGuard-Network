@@ -71,7 +71,7 @@ async function loginHandler(c, { authenticationService, configuration }) {
   }
 }
 
-export function registerAuthRoutes(app, { authenticationService, configuration, configurationRepository = null, controlPlaneService = null }) {
+export function registerAuthRoutes(app, { authenticationService, configuration, controlPlaneService = null }) {
   app.post("/auth/login", (c) => loginHandler(c, { authenticationService, configuration }));
   app.post("/o/:organisationSlug/login", (c) => loginHandler(c, { authenticationService, configuration }));
 
@@ -168,25 +168,6 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
       const code = error?.code || "SIGNUP_FAILED";
       return c.json({ available: false, code, message: error?.message || "Signup failed." }, status);
     }
-  });
-
-  app.get("/auth/demo-accounts", async (c) => {
-    if (!configuration.demoCredentialsVisible || configuration.deploymentClass !== "demo" || !configurationRepository) {
-      return c.json({ available: false, code: "NOT_FOUND", message: "Not found." }, 404);
-    }
-    const catalogue = await configurationRepository.listSafeEnabledDemoCatalogueAll();
-    const secrets = new Map(
-      configuration.demoCredentials
-        .map((entry) => {
-          const username = entry.usernameDisplayValue || entry.username || null;
-          return username ? [`${entry.organisationSlug}:${username}`, entry.password] : null;
-        })
-        .filter(Boolean),
-    );
-    const accounts = catalogue
-      .map((entry) => ({ ...entry, password: secrets.get(`${entry.organisationSlug}:${entry.usernameDisplayValue}`) || null }))
-      .filter((entry) => entry.password);
-    return c.json({ available: true, warning: "DEMO-ONLY CREDENTIALS — never use for real accounts.", accounts });
   });
 }
 
