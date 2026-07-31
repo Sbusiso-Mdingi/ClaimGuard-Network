@@ -49,7 +49,6 @@ function authenticatedContext(tenantId = alphaTenant.tenant_id) {
 
 test("resolveTenantContext derives the immutable tenant from authenticated membership", async () => {
   const tenantContext = await resolveTenantContext({
-    request: new Request("http://localhost/detection/report"),
     authContext: authenticatedContext("tenant_alpha"),
     tenantRepository: createTenantRepositoryStub(),
   });
@@ -63,7 +62,6 @@ test("resolveTenantContext derives the immutable tenant from authenticated membe
 
 test("resolveTenantContext leaves anonymous health requests tenant-neutral", async () => {
   const tenantContext = await resolveTenantContext({
-    request: new Request("http://localhost/health"),
     authContext: { is_authenticated: false },
     tenantRepository: createTenantRepositoryStub(),
   });
@@ -73,27 +71,14 @@ test("resolveTenantContext leaves anonymous health requests tenant-neutral", asy
   assert.equal(tenantContext.source, "anonymous");
 });
 
-test("session membership remains authoritative when a contradictory tenant header is supplied", async () => {
-  const tenantContext = await resolveTenantContext({
-    request: new Request("http://localhost/detection/report", {
-      headers: { "x-claimguard-tenant": betaTenant.tenant_id },
-    }),
-    authContext: authenticatedContext(alphaTenant.tenant_id),
-    tenantRepository: createTenantRepositoryStub(),
-  });
-
-  assert.equal(tenantContext.tenant_id, alphaTenant.tenant_id);
-  assert.equal(tenantContext.tenant_slug, alphaTenant.tenant_slug);
-});
-
-test("tenant middleware canonicalizes auth, request, and async tenant context", async () => {
+test("tenant middleware ignores contradictory request tenant headers for explicit test providers", async () => {
   const app = new Hono();
   app.use("*", createAuthenticationMiddleware({
     authenticationProvider: createStaticAuthenticationProvider({
       userId: "user-alpha",
       roles: ["scheme_user"],
       tenantId: alphaTenant.tenant_slug,
-      source: "session",
+      source: "test_provider",
     }),
   }));
   app.use("*", createTenantContextMiddleware({ tenantRepository: createTenantRepositoryStub() }));
@@ -109,9 +94,10 @@ test("tenant middleware canonicalizes auth, request, and async tenant context", 
   const json = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(json.tenantContext.tenant_id, "tenant_alpha");
-  assert.equal(json.authContext.tenant_id, "tenant_alpha");
-  assert.equal(json.requestTenantContext.tenant_slug, "alpha");
+  assert.equal(json.tenantContext.tenant_id, alphaTenant.tenant_id);
+  assert.equal(json.tenantContext.tenant_slug, alphaTenant.tenant_slug);
+  assert.equal(json.authContext.tenant_id, alphaTenant.tenant_id);
+  assert.equal(json.requestTenantContext.tenant_slug, alphaTenant.tenant_slug);
 });
 
 test("session control routes use the already verified membership when no routed repository bundle exists", async () => {
