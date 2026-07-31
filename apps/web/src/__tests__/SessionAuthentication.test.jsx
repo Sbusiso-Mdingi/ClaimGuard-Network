@@ -38,6 +38,8 @@ test("unauthenticated users see organisation login and configured URL preview", 
   await user.type(screen.getByLabelText("Organisation"), "Alpha-Health");
   expect(screen.getByText("https://alpha-health.claimguard.example")).toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /demo identity/i })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Demo Accounts/i)).not.toBeInTheDocument();
+  expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("demo-accounts"), expect.anything());
 });
 
 test("never advertises a localhost sign-in address from a production host", () => {
@@ -57,7 +59,6 @@ test("successful login uses cookies, stores CSRF only in memory, and sends no au
   global.fetch = vi.fn((url) => {
     const value = String(url);
     if (value.endsWith("/api/auth/session")) return Promise.resolve({ ok: true, status: 200, json: async () => authenticated ? safeSession : { authenticated: false } });
-    if (value.endsWith("/api/auth/demo-accounts")) return Promise.resolve({ ok: false, status: 404, json: async () => ({ message: "Not found." }) });
     if (value.endsWith("/api/auth/login")) {
       authenticated = true;
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...safeSession, csrfToken: "csrf-memory-only" }) });
