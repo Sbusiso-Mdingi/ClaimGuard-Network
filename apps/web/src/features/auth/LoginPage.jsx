@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Activity from "lucide-react/dist/esm/icons/activity.mjs";
 import Building2 from "lucide-react/dist/esm/icons/building-2.mjs";
 import Network from "lucide-react/dist/esm/icons/network.mjs";
@@ -7,7 +7,6 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { useRole } from "../../context/RoleContext";
-import { apiJson } from "../../lib/apiClient";
 
 function configuredInitialSlug() {
   const match = window.location.pathname.match(/^\/o\/([^/]+)\/login\/?$/);
@@ -41,18 +40,11 @@ export function LoginPage() {
   const [organisationSlug, setOrganisationSlug] = useState(configuredInitialSlug);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [demoAccounts, setDemoAccounts] = useState([]);
   const normalizedSlug = organisationSlug.trim().toLowerCase();
   const preview = useMemo(
     () => organisationSignInUrl(normalizedSlug),
     [normalizedSlug],
   );
-
-  useEffect(() => {
-    apiJson("/auth/demo-accounts", { cache: "no-store", skipUnauthorizedHandler: true })
-      .then((payload) => setDemoAccounts(payload.accounts || []))
-      .catch(() => setDemoAccounts([]));
-  }, []);
 
   async function submit(event) {
     event.preventDefault();
@@ -132,21 +124,6 @@ export function LoginPage() {
               </form>
             </CardContent>
           </Card>
-          {demoAccounts.length > 0 ? (
-            <Card className="border-amber-500/40 bg-amber-500/5 shadow-none">
-              <CardHeader><CardTitle>Demo Accounts</CardTitle><CardDescription>DEMO ONLY — these credentials must never be used for real accounts.</CardDescription></CardHeader>
-              <CardContent className="space-y-3">
-                {demoAccounts.map((account) => (
-                  <button key={account.catalogueEntryId} type="button" className="w-full rounded-lg border border-border p-3 text-left" onClick={() => {
-                    setOrganisationSlug(account.organisationSlug); setUsername(account.usernameDisplayValue); setPassword(account.password);
-                  }}>
-                    <strong className="block text-sm">{account.organisationName} · {account.roleLabel}</strong>
-                    <span className="block font-mono text-xs">{account.usernameDisplayValue} / {account.password}</span>
-                  </button>
-                ))}
-              </CardContent>
-            </Card>
-          ) : null}
         </div>
       </div>
     </main>
