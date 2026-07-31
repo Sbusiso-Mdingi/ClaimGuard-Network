@@ -15,9 +15,6 @@ export {
 export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
 export { getShadowDiagnostics } from "./diagnostics.js";
 export {
-  provisionPhase11dFixtures as provisionDemoAccounts,
-} from "../test-support/phase11d-fixtures.js";
-export {
   bootstrapDevelopmentPlatformAdministrator,
   DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
   DEVELOPMENT_PLATFORM_ADMIN_MEMBERSHIP_REPAIR_CONFIRMATION,
