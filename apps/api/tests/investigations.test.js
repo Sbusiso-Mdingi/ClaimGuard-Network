@@ -9,7 +9,9 @@ import {
   InvestigationNotFoundError,
 } from "@claimguard/database";
 
+import { CLAIMGUARD_ROLES } from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
+import { createStaticAuthenticationProvider } from "./helpers/authentication-provider.js";
 import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
 
 const alphaTenant = {
@@ -27,6 +29,20 @@ const betaTenant = {
   scheme_id: "scheme_beta",
   status: "active",
 };
+
+const platformOrganisation = Object.freeze({
+  organisationId: "org-platform",
+  organisationType: "platform",
+  displayName: "ClaimGuard Platform",
+});
+
+function schemeOrganisation(tenant) {
+  return Object.freeze({
+    organisationId: `org-${tenant.tenant_slug}`,
+    organisationType: "medical_scheme",
+    displayName: tenant.tenant_name,
+  });
+}
 
 function createTenantRepositoryStub() {
   const tenants = new Map([
@@ -50,18 +66,30 @@ function createTenantRepositoryStub() {
   };
 }
 
-function authHeaders({
-  user = "user-alpha",
+function createActorApp({
+  userId,
   role,
-  tenantId = alphaTenant.tenant_id,
-  requestTenantId = tenantId,
-} = {}) {
+  tenant = alphaTenant,
+  organisation = schemeOrganisation(tenant),
+  ...dependencies
+}) {
+  return createBackendApp({
+    ...dependencies,
+    authenticationProvider: createStaticAuthenticationProvider({
+      userId,
+      roles: [role],
+      tenantId: tenant?.tenant_id || null,
+      organisationId: organisation.organisationId,
+      organisation,
+    }),
+  });
+}
+
+function jsonRequest(body, method = "POST") {
   return {
-    "content-type": "application/json",
-    "x-claimguard-user": user,
-    "x-claimguard-role": role,
-    "x-claimguard-user-tenant": tenantId,
-    "x-claimguard-tenant": requestTenantId,
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   };
 }
 
@@ -113,10 +141,7 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
     },
     async getInvestigationDetails(investigationId) {
       const investigation = findForActiveTenant(investigationId);
-      if (!investigation) {
-        return null;
-      }
-
+      if (!investigation) return null;
       return {
         ...investigation,
         notes: notes.filter((note) => note.investigationId === investigationId).map((note) => ({ ...note })),
@@ -133,9 +158,7 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
           investigation.closedAt = new Date().toISOString();
         }
       }
-      if (priority !== undefined) {
-        investigation.priority = priority.trim().toUpperCase();
-      }
+      if (priority !== undefined) investigation.priority = priority.trim().toUpperCase();
       investigation.updatedAt = new Date().toISOString();
       return { ...investigation };
     },
@@ -179,23 +202,6 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
   };
 }
 
-function createLedgerRepositoryStub() {
-  const writes = [];
-  return {
-    writes,
-    async createConfirmedFraudEntry(payload) {
-      writes.push(payload);
-      return {
-        sequenceNumber: writes.length,
-        entryType: "INVESTIGATOR_CONFIRMED_FRAUD",
-        previousHash: "a".repeat(64),
-        entryHash: "b".repeat(64),
-        payload,
-      };
-    },
-  };
-}
-
 function createLifecycleFraudWorkflowStub(investigationRepository) {
   return createFraudWorkflowRepositoryStub({
     async confirm(input, helpers) {
@@ -228,20 +234,29 @@ function createLifecycleFraudWorkflowStub(investigationRepository) {
 
 test("investigation endpoints create, progress, annotate, and retrieve the lifecycle", async () => {
   const investigationRepository = createInvestigationRepositoryStub();
-  const app = createBackendApp({
+  const dependencies = {
     investigationRepository,
     tenantRepository: createTenantRepositoryStub(),
+  };
+  const analystApp = createActorApp({
+    userId: "analyst-alpha",
+    role: CLAIMGUARD_ROLES.FRAUD_ANALYST,
+    ...dependencies,
+  });
+  const investigatorApp = createActorApp({
+    userId: "investigator-alpha",
+    role: CLAIMGUARD_ROLES.INVESTIGATOR,
+    ...dependencies,
   });
 
-  const createdResponse = await app.request("http://localhost/investigations", {
-    method: "POST",
-    headers: authHeaders({ user: "analyst-alpha", role: "fraud_analyst" }),
-    body: JSON.stringify({
+  const createdResponse = await analystApp.request(
+    "http://localhost/investigations",
+    jsonRequest({
       claimId: "claim-alpha-100",
       assignedInvestigator: "investigator-alpha",
       priority: "critical",
     }),
-  });
+  );
   const created = await createdResponse.json();
   const investigationId = created.investigation.investigationId;
 
@@ -250,45 +265,41 @@ test("investigation endpoints create, progress, annotate, and retrieve the lifec
   assert.equal(created.investigation.status, "OPEN");
   assert.equal(created.investigation.priority, "CRITICAL");
 
-  const statusResponse = await app.request(`http://localhost/investigations/${investigationId}`, {
-    method: "PATCH",
-    headers: authHeaders({ user: "investigator-alpha", role: "investigator" }),
-    body: JSON.stringify({ status: "UNDER_REVIEW" }),
-  });
+  const statusResponse = await investigatorApp.request(
+    `http://localhost/investigations/${investigationId}`,
+    jsonRequest({ status: "UNDER_REVIEW" }, "PATCH"),
+  );
   assert.equal(statusResponse.status, 200);
   assert.equal((await statusResponse.json()).investigation.status, "UNDER_REVIEW");
 
-  const priorityResponse = await app.request(`http://localhost/investigations/${investigationId}`, {
-    method: "PATCH",
-    headers: authHeaders({ user: "analyst-alpha", role: "fraud_analyst" }),
-    body: JSON.stringify({ priority: "high" }),
-  });
+  const priorityResponse = await analystApp.request(
+    `http://localhost/investigations/${investigationId}`,
+    jsonRequest({ priority: "high" }, "PATCH"),
+  );
   assert.equal(priorityResponse.status, 200);
   assert.equal((await priorityResponse.json()).investigation.priority, "HIGH");
 
-  const noteResponse = await app.request(`http://localhost/investigations/${investigationId}/notes`, {
-    method: "POST",
-    headers: authHeaders({ user: "analyst-alpha", role: "fraud_analyst" }),
-    body: JSON.stringify({ text: "Provider review requested.", noteType: "Provider Review" }),
-  });
+  const noteResponse = await analystApp.request(
+    `http://localhost/investigations/${investigationId}/notes`,
+    jsonRequest({ text: "Provider review requested.", noteType: "Provider Review" }),
+  );
   assert.equal(noteResponse.status, 201);
   assert.equal((await noteResponse.json()).note.noteType, "PROVIDER_REVIEW");
 
-  const evidenceResponse = await app.request(`http://localhost/investigations/${investigationId}/evidence`, {
-    method: "POST",
-    headers: authHeaders({ user: "investigator-alpha", role: "investigator" }),
-    body: JSON.stringify({
+  const evidenceResponse = await investigatorApp.request(
+    `http://localhost/investigations/${investigationId}/evidence`,
+    jsonRequest({
       filename: "provider-invoice.pdf",
       description: "Invoice used for provider review.",
       evidenceType: "provider invoice",
     }),
-  });
+  );
   assert.equal(evidenceResponse.status, 201);
   assert.equal((await evidenceResponse.json()).evidence.evidenceType, "PROVIDER_INVOICE");
 
-  const retrievedResponse = await app.request(`http://localhost/investigations/${investigationId}`, {
-    headers: authHeaders({ user: "investigator-alpha", role: "investigator" }),
-  });
+  const retrievedResponse = await investigatorApp.request(
+    `http://localhost/investigations/${investigationId}`,
+  );
   const retrieved = await retrievedResponse.json();
 
   assert.equal(retrievedResponse.status, 200);
@@ -314,52 +325,53 @@ test("investigation APIs enforce status transitions and investigator or analyst 
       },
     ],
   });
-  const app = createBackendApp({
+  const dependencies = {
     investigationRepository,
     tenantRepository: createTenantRepositoryStub(),
+  };
+  const investigatorApp = createActorApp({ userId: "investigator-alpha", role: CLAIMGUARD_ROLES.INVESTIGATOR, ...dependencies });
+  const analystApp = createActorApp({ userId: "analyst-alpha", role: CLAIMGUARD_ROLES.FRAUD_ANALYST, ...dependencies });
+  const schemeUserApp = createActorApp({ userId: "scheme-user-alpha", role: CLAIMGUARD_ROLES.SCHEME_USER, ...dependencies });
+  const platformApp = createActorApp({
+    userId: "platform-admin",
+    role: CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR,
+    tenant: null,
+    organisation: platformOrganisation,
+    ...dependencies,
   });
   const url = "http://localhost/investigations/investigation-authorization";
 
-  const invalidTransition = await app.request(url, {
-    method: "PATCH",
-    headers: authHeaders({ user: "investigator-alpha", role: "investigator" }),
-    body: JSON.stringify({ status: "CONFIRMED_FRAUD" }),
-  });
+  const invalidTransition = await investigatorApp.request(
+    url,
+    jsonRequest({ status: "CONFIRMED_FRAUD" }, "PATCH"),
+  );
   assert.equal(invalidTransition.status, 409);
 
-  const analystStatus = await app.request(url, {
-    method: "PATCH",
-    headers: authHeaders({ user: "analyst-alpha", role: "fraud_analyst" }),
-    body: JSON.stringify({ status: "UNDER_REVIEW" }),
-  });
+  const analystStatus = await analystApp.request(
+    url,
+    jsonRequest({ status: "UNDER_REVIEW" }, "PATCH"),
+  );
   assert.equal(analystStatus.status, 403);
 
-  const schemeUserCreate = await app.request("http://localhost/investigations", {
-    method: "POST",
-    headers: authHeaders({ user: "scheme-user-alpha", role: "scheme_user" }),
-    body: JSON.stringify({ claimId: "claim-alpha-authorization" }),
-  });
-  const schemeUserRead = await app.request(url, {
-    headers: authHeaders({ user: "scheme-user-alpha", role: "scheme_user" }),
-  });
-  const schemeUserEvidence = await app.request(`${url}/evidence`, {
-    method: "POST",
-    headers: authHeaders({ user: "scheme-user-alpha", role: "scheme_user" }),
-    body: JSON.stringify({ filename: "blocked.pdf", evidenceType: "document" }),
-  });
+  const schemeUserCreate = await schemeUserApp.request(
+    "http://localhost/investigations",
+    jsonRequest({ claimId: "claim-alpha-authorization" }),
+  );
+  const schemeUserRead = await schemeUserApp.request(url);
+  const schemeUserEvidence = await schemeUserApp.request(
+    `${url}/evidence`,
+    jsonRequest({ filename: "blocked.pdf", evidenceType: "document" }),
+  );
 
   assert.equal(schemeUserCreate.status, 403);
   assert.equal(schemeUserRead.status, 403);
   assert.equal(schemeUserEvidence.status, 403);
 
-  const platformRead = await app.request(url, {
-    headers: authHeaders({ user: "platform-admin", role: "platform_administrator" }),
-  });
-  const platformUpdate = await app.request(url, {
-    method: "PATCH",
-    headers: authHeaders({ user: "platform-admin", role: "platform_administrator" }),
-    body: JSON.stringify({ priority: "LOW" }),
-  });
+  const platformRead = await platformApp.request(url);
+  const platformUpdate = await platformApp.request(
+    url,
+    jsonRequest({ priority: "LOW" }, "PATCH"),
+  );
 
   assert.equal(platformRead.status, 403);
   assert.equal(platformUpdate.status, 403);
@@ -384,36 +396,31 @@ test("investigation resources are isolated to the active tenant", async () => {
     ],
   });
   const fraudWorkflowRepository = createLifecycleFraudWorkflowStub(investigationRepository);
-  const app = createBackendApp({
+  const betaApp = createActorApp({
+    userId: "investigator-beta",
+    role: CLAIMGUARD_ROLES.INVESTIGATOR,
+    tenant: betaTenant,
     investigationRepository,
     fraudWorkflowRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
-  const betaHeaders = authHeaders({
-    user: "investigator-beta",
-    role: "investigator",
-    tenantId: betaTenant.tenant_id,
-    requestTenantId: betaTenant.tenant_id,
-  });
 
-  const getResponse = await app.request("http://localhost/investigations/investigation-alpha-only", {
-    headers: betaHeaders,
-  });
-  const noteResponse = await app.request("http://localhost/investigations/investigation-alpha-only/notes", {
-    method: "POST",
-    headers: betaHeaders,
-    body: JSON.stringify({ text: "Cross-tenant access must fail." }),
-  });
-  const confirmResponse = await app.request("http://localhost/investigations/confirm-fraud", {
-    method: "POST",
-    headers: betaHeaders,
-    body: JSON.stringify({
+  const getResponse = await betaApp.request(
+    "http://localhost/investigations/investigation-alpha-only",
+  );
+  const noteResponse = await betaApp.request(
+    "http://localhost/investigations/investigation-alpha-only/notes",
+    jsonRequest({ text: "Cross-tenant access must fail." }),
+  );
+  const confirmResponse = await betaApp.request(
+    "http://localhost/investigations/confirm-fraud",
+    jsonRequest({
       investigationId: "investigation-alpha-only",
       claimId: "claim-alpha-isolated",
       investigatorId: "investigator-beta",
       reason: "Cross-tenant confirmation must fail.",
     }),
-  });
+  );
 
   assert.equal(getResponse.status, 404);
   assert.equal(noteResponse.status, 404);
@@ -453,37 +460,35 @@ test("confirmation requires an existing CONFIRMED_FRAUD investigation and retain
     ],
   });
   const fraudWorkflowRepository = createLifecycleFraudWorkflowStub(investigationRepository);
-  const app = createBackendApp({
+  const app = createActorApp({
+    userId: "investigator-alpha",
+    role: CLAIMGUARD_ROLES.INVESTIGATOR,
     investigationRepository,
     fraudWorkflowRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
-  const headers = authHeaders({ user: "investigator-alpha", role: "investigator" });
 
-  const missingResponse = await app.request("http://localhost/investigations/confirm-fraud", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
+  const missingResponse = await app.request(
+    "http://localhost/investigations/confirm-fraud",
+    jsonRequest({
       investigationId: "missing-investigation",
       claimId: "claim-alpha-missing",
       investigatorId: "investigator-alpha",
       reason: "This investigation does not exist.",
     }),
-  });
-  const underReviewResponse = await app.request("http://localhost/investigations/confirm-fraud", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
+  );
+  const underReviewResponse = await app.request(
+    "http://localhost/investigations/confirm-fraud",
+    jsonRequest({
       investigationId: "investigation-review",
       claimId: "claim-alpha-review",
       investigatorId: "investigator-alpha",
       reason: "The investigation must be completed first.",
     }),
-  });
-  const confirmedResponse = await app.request("http://localhost/investigations/confirm-fraud", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
+  );
+  const confirmedResponse = await app.request(
+    "http://localhost/investigations/confirm-fraud",
+    jsonRequest({
       investigationId: "investigation-confirmed",
       claimId: "claim-alpha-confirmed",
       investigatorId: "investigator-alpha",
@@ -491,7 +496,7 @@ test("confirmation requires an existing CONFIRMED_FRAUD investigation and retain
       schemeId: alphaTenant.scheme_id,
       reportVersion: "v20260714",
     }),
-  });
+  );
   const confirmed = await confirmedResponse.json();
 
   assert.equal(missingResponse.status, 404);
