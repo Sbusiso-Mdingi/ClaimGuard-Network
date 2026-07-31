@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch:
-    if: github.actor == 'Sbusiso-Mdingi' || github.actor == 'openai'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
