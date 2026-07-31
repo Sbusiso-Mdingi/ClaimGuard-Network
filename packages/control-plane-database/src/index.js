@@ -14,7 +14,9 @@ export {
 } from "./credential-guarded-control-plane-service.js";
 export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
 export { getShadowDiagnostics } from "./diagnostics.js";
-export { provisionDemoAccounts } from "./demo-provisioning.js";
+export {
+  provisionPhase11dFixtures as provisionDemoAccounts,
+} from "../test-support/phase11d-fixtures.js";
 export {
   bootstrapDevelopmentPlatformAdministrator,
   DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
