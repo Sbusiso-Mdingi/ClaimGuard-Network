@@ -76,7 +76,10 @@ test("platform administrator sessions retain administrator-management authority"
 test("explicit authenticated contexts preserve effective role visibility", () => {
   const investigator = sessionContext("investigator");
   const schemeAdministrator = sessionContext("scheme_administrator");
-  const committeeMember = sessionContext("applications_committee_member");
+  const committeeMember = sessionContext("applications_committee_member", [
+    "registry.search",
+    "registry.review_history",
+  ]);
 
   assert.equal(hasPermission(investigator, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
   assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN), true);
