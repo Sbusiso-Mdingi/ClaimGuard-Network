@@ -78,7 +78,9 @@ function sessionApp(options = {}) {
 test("authentication configuration defaults to session and rejects production header or demo exposure modes", () => {
   const session = resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control" });
   assert.equal(session.mode, "session");
-  assert.deepEqual(session.internalServiceAllowedRoles, ["claims_analyst"]);
+  assert.equal(Object.hasOwn(session, "internalServiceToken"), false);
+  assert.equal(Object.hasOwn(session, "internalServiceOrganisationIds"), false);
+  assert.equal(Object.hasOwn(session, "internalServiceAllowedRoles"), false);
   assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "hybrid" }), /session or demo_headers/);
   assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "demo_headers", DEPLOYMENT_CLASS: "production" }), /refuses/);
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production" }), /AUTH_ALLOWED_ORIGINS/);
@@ -178,35 +180,27 @@ test("demo account endpoint is fail-closed and returns only safe catalogue entri
   assert.match(payload.warning, /DEMO-ONLY/);
 });
 
-test("internal service authentication uses its dedicated bearer mechanism and rejects browser authority headers", async () => {
-  const token = "i".repeat(32);
-  const { app } = sessionApp({ configuration: { internalServiceToken: token, internalServiceOrganisationIds: ["org-1"] } });
-  const accepted = await app.request("http://localhost/health", { headers: {
-    authorization: `Bearer ${token}`,
+test("shared internal service tokens and asserted service identity headers are rejected", async () => {
+  const service = authService();
+  service.resolveIntegrationCredential = async () => null;
+  const { app } = sessionApp({
+    service,
+    configuration: {
+      internalServiceToken: "i".repeat(32),
+      internalServiceOrganisationIds: ["org-1"],
+      internalServiceAllowedRoles: ["claims_analyst"],
+    },
+  });
+  const response = await app.request("http://localhost/health", { headers: {
+    authorization: `Bearer ${"i".repeat(32)}`,
     "x-cg-service-actor": "medical-aid-desktop",
     "x-cg-service-role": "claims_analyst",
     "x-cg-service-tenant": "tenant-alpha",
     "x-cg-service-organisation": "org-1",
   } });
-  assert.equal(accepted.status, 200);
-  const outsideScope = await app.request("http://localhost/health", { headers: {
-    authorization: `Bearer ${token}`,
-    "x-cg-service-actor": "medical-aid-desktop",
-    "x-cg-service-role": "claims_analyst",
-    "x-cg-service-tenant": "tenant-beta",
-    "x-cg-service-organisation": "org-beta",
-  } });
-  assert.equal(outsideScope.status, 403);
-  const rejected = await app.request("http://localhost/health", { headers: {
-    authorization: `Bearer ${token}`,
-    "x-cg-service-actor": "medical-aid-desktop",
-    "x-cg-service-role": "claims_analyst",
-    "x-cg-service-tenant": "tenant-alpha",
-    "x-cg-service-organisation": "org-1",
-    "x-claimguard-role": "investigator",
-  } });
-  assert.equal(rejected.status, 403);
-  assert.equal((await rejected.json()).code, "IDENTITY_HEADER_REJECTED");
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, "IDENTITY_HEADER_REJECTED");
+  assert.equal(service.calls.events.some(([type]) => type === "header_spoof_attempt"), true);
 });
 
 test("per-medical-aid integration token derives server, tenant, role, and organisation authority", async () => {
@@ -226,6 +220,15 @@ test("per-medical-aid integration token derives server, tenant, role, and organi
     headers: { authorization: "Bearer cg_live_valid_integration_token_value_123456" },
   });
   assert.equal(accepted.status, 200);
+
+  const assertedIdentity = await app.request("http://localhost/health", {
+    headers: {
+      authorization: "Bearer cg_live_valid_integration_token_value_123456",
+      "x-cg-service-role": "platform_administrator",
+    },
+  });
+  assert.equal(assertedIdentity.status, 403);
+  assert.equal((await assertedIdentity.json()).code, "IDENTITY_HEADER_REJECTED");
 
   const rejected = await app.request("http://localhost/health", {
     headers: { authorization: "Bearer cg_live_unknown_integration_token_123456789" },

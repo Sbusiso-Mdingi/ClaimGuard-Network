@@ -19,7 +19,7 @@ Production uses session authentication for people and a separate bearer credenti
 - The raw token is returned once and ClaimGuard stores only its SHA-256 hash.
 - Each credential is bound to one active medical aid, one stable service actor, and the least-privilege `claims_analyst` role.
 - Credentials expire, can be revoked independently, and do not require an Azure configuration change.
-- `INTERNAL_SERVICE_TOKEN` remains a temporary compatibility path for an existing producer and should not be issued to new medical aids.
+- Shared internal service tokens and caller-asserted service identity headers are not accepted.
 
 The producer sends:
 
@@ -27,7 +27,7 @@ The producer sends:
 - `Content-Type: application/json`
 - a unique `x-request-id` for trace correlation
 
-The server derives the service actor, role, organisation, tenant, and recorded ingestion source from the credential. A medical-aid server cannot expand its scope with request headers. Browser identity headers are rejected in session mode.
+The server derives the service actor, role, organisation, tenant, and recorded ingestion source from the credential. A medical-aid server cannot expand its scope with request headers. Browser identity headers and legacy `x-cg-service-*` identity headers are rejected in session mode.
 
 ## Batch contract
 

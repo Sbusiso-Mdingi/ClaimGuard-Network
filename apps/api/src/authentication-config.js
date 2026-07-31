@@ -72,21 +72,11 @@ export function resolveAuthenticationConfiguration(env = process.env) {
     }),
     allowedOrigins: Object.freeze(allowedOrigins),
     trustProxy: booleanValue(env.TRUST_PROXY, false),
-    internalServiceToken: validateInternalServiceToken(env.INTERNAL_SERVICE_TOKEN),
-    internalServiceOrganisationIds: Object.freeze(String(env.INTERNAL_SERVICE_ORGANISATION_IDS || "").split(",").map((value) => value.trim()).filter(Boolean)),
-    internalServiceAllowedRoles: Object.freeze(String(env.INTERNAL_SERVICE_ALLOWED_ROLES || "claims_analyst").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)),
     demoCredentialsVisible,
     demoCredentials: parseDemoCredentials(env.DEMO_CREDENTIALS_JSON, { enabled: demoCredentialsVisible }),
     publicOrganisationUrlScheme: String(env.PUBLIC_ORGANISATION_URL_SCHEME || "https").trim().toLowerCase(),
     publicOrganisationHost: String(env.PUBLIC_ORGANISATION_HOST || "localhost:3002").trim().toLowerCase(),
   });
-}
-
-function validateInternalServiceToken(value) {
-  if (!value) return null;
-  const token = String(value);
-  if (token.length < 32) throw new Error("INTERNAL_SERVICE_TOKEN must contain at least 256 bits of unguessable material.");
-  return token;
 }
 
 export function parseDemoCredentials(value, { enabled = false } = {}) {
