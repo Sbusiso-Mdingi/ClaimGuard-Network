@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { createOperationalRepositories } from "@claimguard/database";
 
 import { FileReportStorage } from "./report-storage.js";
-import { createSessionAuthenticationProvider } from "./middleware/auth-context.js";
+import { createHeaderAuthenticationProvider, createSessionAuthenticationProvider } from "./middleware/auth-context.js";
 import { createAuthenticationMiddleware } from "./middleware/authorization-middleware.js";
 import { createTenantContextMiddleware } from "./middleware/tenant-context-middleware.js";
 import { createDataPlaneMiddleware } from "./middleware/data-plane-middleware.js";
@@ -162,7 +162,7 @@ export function createBackendApp({
   const resolvedAuthenticationProvider = authenticationProvider || (
     authenticationConfiguration.mode === "session"
       ? createSessionAuthenticationProvider({ authenticationService, configuration: authenticationConfiguration })
-      : undefined
+      : createHeaderAuthenticationProvider()
   );
 
   app.use(
