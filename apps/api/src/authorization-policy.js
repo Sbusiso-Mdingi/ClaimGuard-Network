@@ -26,6 +26,7 @@ export const CLAIMGUARD_PERMISSIONS = Object.freeze({
   INVESTIGATIONS_UPLOAD_EVIDENCE: "investigations.upload_evidence",
   INVESTIGATIONS_SUBMIT_FINDINGS: "investigations.submit_findings",
   INVESTIGATIONS_CONFIRM_FRAUD: "investigations.confirm_fraud",
+  INVESTIGATIONS_REVERSE_FRAUD: "investigations.reverse_fraud",
   FRAUD_REGISTRY_SEARCH: "fraud_registry.search",
   FRAUD_REGISTRY_VIEW: "fraud_registry.view",
   FRAUD_REGISTRY_REVIEW_HISTORY: "fraud_registry.review_history",
@@ -81,6 +82,7 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_SUBMIT_FINDINGS,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD,
+    CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
@@ -419,7 +421,7 @@ const operationalRoutePolicyEntries = [
     id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_REVERSE_FRAUD,
     method: "POST",
     pathPattern: "/investigations/reverse-fraud",
-    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD],
+    permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD],
     permissionMode: "all",
     requiresOperationalDataPlane: true,
   },
@@ -557,21 +559,4 @@ export function resolveOperationalRoutePolicy({ path, method } = {}) {
   }
 
   return undefined;
-}
-
-export function resolveOperationalRoutePermissionRequirement({ routePolicy, payload } = {}) {
-  if (!routePolicy) return Object.freeze({ permissions: [], mode: "all" });
-
-  const resolved = typeof routePolicy.resolvePermissionRequirement === "function"
-    ? routePolicy.resolvePermissionRequirement({ payload })
-    : {
-      permissions: routePolicy.permissions || [],
-      mode: routePolicy.permissionMode || "all",
-    };
-
-  const permissions = (resolved?.permissions || [])
-    .filter((permission) => typeof permission === "string" && permission.trim())
-    .map((permission) => permission.trim());
-  const mode = resolved?.mode === "any" ? "any" : "all";
-  return Object.freeze({ permissions, mode });
 }
