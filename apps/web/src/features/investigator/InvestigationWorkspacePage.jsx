@@ -95,7 +95,7 @@ export function InvestigationWorkspacePage() {
   const canConfirmFraud = hasCapability(identity, "investigations.confirm_fraud")
     && investigation.status === "CONFIRMED_FRAUD"
     && !investigation.fraudConfirmedAt;
-  const canReverseFraud = hasCapability(identity, "investigations.confirm_fraud")
+  const canReverseFraud = hasCapability(identity, "investigations.reverse_fraud")
     && Boolean(investigation.fraudConfirmedAt)
     && !investigation.reversedAt;
   const nextStatuses = NEXT_STATUS_OPTIONS[investigation.status] || [];
