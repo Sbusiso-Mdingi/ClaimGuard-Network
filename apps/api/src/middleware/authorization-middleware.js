@@ -1,4 +1,3 @@
-import { createHeaderAuthenticationProvider } from "./auth-context.js";
 import {
   evaluateTenantAccess,
   getOperationalRoutePolicyById,
@@ -50,9 +49,11 @@ async function resolveResourceTenantIds({ tenantRepository, resourceSchemeIds })
   };
 }
 
-export function createAuthenticationMiddleware({
-  authenticationProvider = createHeaderAuthenticationProvider(),
-} = {}) {
+export function createAuthenticationMiddleware({ authenticationProvider } = {}) {
+  if (!authenticationProvider || typeof authenticationProvider.resolveAuthContext !== "function") {
+    throw new TypeError("authenticationProvider with resolveAuthContext() is required.");
+  }
+
   return async (c, next) => {
     try {
       const resolved = await authenticationProvider.resolveAuthContext({ request: c.req.raw, tenantContext: null });
