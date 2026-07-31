@@ -1,5 +1,3 @@
-const MODES = new Set(["session", "demo_headers"]);
-
 function booleanValue(value, fallback = false) {
   if (value == null || value === "") return fallback;
   const normalized = String(value).trim().toLowerCase();
@@ -27,11 +25,14 @@ function origins(value, fallback = []) {
 
 export function resolveAuthenticationConfiguration(env = process.env) {
   const mode = String(env.AUTHENTICATION_MODE || "session").trim().toLowerCase();
-  if (!MODES.has(mode)) throw new Error("AUTHENTICATION_MODE must be exactly session or demo_headers.");
+  if (mode !== "session") {
+    throw new Error(
+      "ClaimGuard refuses unsupported authentication modes: AUTHENTICATION_MODE must be exactly session; session or demo_headers switching is no longer supported.",
+    );
+  }
   const deploymentClass = String(env.DEPLOYMENT_CLASS || (env.NODE_ENV === "production" ? "production" : "local")).trim().toLowerCase();
   const production = deploymentClass === "production" || env.NODE_ENV === "production";
-  if (production && mode === "demo_headers") throw new Error("Production refuses AUTHENTICATION_MODE=demo_headers.");
-  if (mode === "session" && !env.CONTROL_PLANE_MYSQL_URL?.trim()) {
+  if (!env.CONTROL_PLANE_MYSQL_URL?.trim()) {
     throw new Error("CONTROL_PLANE_MYSQL_URL is required in session authentication mode.");
   }
   const demoCredentialsVisible = booleanValue(env.DEMO_CREDENTIALS_VISIBLE, false);
@@ -47,7 +48,7 @@ export function resolveAuthenticationConfiguration(env = process.env) {
     env.AUTH_ALLOWED_ORIGINS,
     production ? [] : ["http://localhost:3002", "http://127.0.0.1:3002", "http://localhost"],
   );
-  if (mode === "session" && production && allowedOrigins.length === 0) {
+  if (production && allowedOrigins.length === 0) {
     throw new Error("AUTH_ALLOWED_ORIGINS is required for production session mode.");
   }
   return Object.freeze({
