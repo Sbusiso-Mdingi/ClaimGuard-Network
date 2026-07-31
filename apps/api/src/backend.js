@@ -90,7 +90,6 @@ export function createBackendApp({
   authenticationProvider = null,
   authenticationConfiguration = Object.freeze({ mode: "session" }),
   authenticationService = null,
-  controlPlaneConfigurationRepository = null,
   controlPlaneRepositories = null,
   controlPlaneService = null,
   reportStorage = null,
@@ -232,7 +231,6 @@ export function createBackendApp({
     registerAuthRoutes(app, {
       authenticationService,
       configuration: authenticationConfiguration,
-      configurationRepository: controlPlaneConfigurationRepository,
       controlPlaneService,
     });
   }
