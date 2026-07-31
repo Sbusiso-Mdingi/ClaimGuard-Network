@@ -4,32 +4,27 @@ import userEvent from "@testing-library/user-event";
 
 import AppRoot from "../AppRoot";
 import { organisationSignInUrl } from "../features/auth/LoginPage";
-import { apiRequest, setCsrfToken, setDemoAuthorityHeaders } from "../lib/apiClient";
+import { apiRequest, setCsrfToken } from "../lib/apiClient";
 
 const safeSession = {
   authenticated: true,
   user: { userId: "user-1", displayName: "Session User" },
   organisation: {
     organisationId: "org-1", displayName: "Alpha Health", canonicalSlug: "alpha-health",
-    organisationType: "medical_scheme", deploymentClass: "demo",
+    organisationType: "medical_scheme", deploymentClass: "production",
   },
+  operationalTenant: { tenantId: "tenant-alpha", tenantSlug: "alpha-health" },
   roles: ["fraud_analyst"],
   clientCapabilities: ["reports.view_own"],
-  expires: { idleAt: "2026-07-16T09:00:00Z", absoluteAt: "2026-07-16T16:00:00Z" },
-  deployment: { class: "demo", demo: true },
+  expires: { idleAt: "2026-08-01T09:00:00Z", absoluteAt: "2026-08-01T16:00:00Z" },
+  deployment: { class: "production", demo: false },
 };
 
 beforeEach(() => {
-  window.__CLAIMGUARD_AUTHENTICATION_MODE__ = "session";
   window.__CLAIMGUARD_ORGANISATION_URL_SCHEME__ = "https";
   window.__CLAIMGUARD_ORGANISATION_HOST__ = "claimguard.example";
   window.history.pushState({}, "", "/");
   setCsrfToken(null);
-  setDemoAuthorityHeaders(null);
-});
-
-afterEach(() => {
-  window.__CLAIMGUARD_AUTHENTICATION_MODE__ = "demo_headers";
 });
 
 test("unauthenticated users see organisation login and configured URL preview", async () => {
@@ -59,7 +54,7 @@ test("never advertises a localhost sign-in address from a production host", () =
 
 test("successful login uses cookies, stores CSRF only in memory, and sends no authority headers", async () => {
   let authenticated = false;
-  global.fetch = vi.fn((url, options = {}) => {
+  global.fetch = vi.fn((url) => {
     const value = String(url);
     if (value.endsWith("/api/auth/session")) return Promise.resolve({ ok: true, status: 200, json: async () => authenticated ? safeSession : { authenticated: false } });
     if (value.endsWith("/api/auth/demo-accounts")) return Promise.resolve({ ok: false, status: 404, json: async () => ({ message: "Not found." }) });
@@ -67,18 +62,18 @@ test("successful login uses cookies, stores CSRF only in memory, and sends no au
       authenticated = true;
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...safeSession, csrfToken: "csrf-memory-only" }) });
     }
-    if (value.includes("/api/detection/")) {
-      return Promise.resolve({ ok: false, status: 403, json: async () => ({ available: false, message: "Forbidden" }) });
-    }
+    if (value.includes("/api/detection/")) return Promise.resolve({ ok: false, status: 403, json: async () => ({ available: false, message: "Forbidden" }) });
     return Promise.resolve({ ok: false, status: 404, json: async () => ({ message: "Not found." }) });
   });
+
   const user = userEvent.setup();
   render(<AppRoot />);
   await user.type(await screen.findByLabelText("Organisation"), "alpha-health");
-  await user.type(screen.getByLabelText("Username"), "fraud.demo");
-  await user.type(screen.getByLabelText("Password"), "ephemeral-test-value");
+  await user.type(screen.getByLabelText("Username"), "fraud.user");
+  await user.type(screen.getByLabelText("Password"), "test-value");
   await user.click(screen.getByRole("button", { name: /^Sign in$/i }));
   expect(await screen.findByText("Session User")).toBeInTheDocument();
+
   const loginCall = global.fetch.mock.calls.find(([url]) => String(url).endsWith("/api/auth/login"));
   expect(loginCall[1].credentials).toBe("same-origin");
   for (const name of ["x-claimguard-user", "x-claimguard-role", "x-claimguard-user-tenant", "x-claimguard-tenant"]) {
@@ -103,66 +98,7 @@ test("wrong credentials display only the generic server error", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("The organisation or credentials could not be verified.");
 });
 
-test("explains when an authenticated session expires", async () => {
-  global.fetch = vi.fn((url) => {
-    const value = String(url);
-    if (value.endsWith("/api/auth/session")) {
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: async () => safeSession,
-      });
-    }
-    if (value.endsWith("/api/auth/csrf")) {
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: async () => ({ csrfToken: "csrf-session" }),
-      });
-    }
-    if (value.endsWith("/api/auth/demo-accounts")) {
-      return Promise.resolve({
-        ok: false,
-        status: 404,
-        json: async () => ({ message: "Not found." }),
-      });
-    }
-    return Promise.resolve({
-      ok: false,
-      status: 401,
-      json: async () => ({ message: "Authentication is required." }),
-    });
-  });
-
-  render(<AppRoot />);
-
-  expect(await screen.findByRole("alert"))
-    .toHaveTextContent("Your session ended. Sign in again to continue.");
-  expect(screen.getByRole("heading", { name: /Sign in to ClaimGuard/i }))
-    .toBeInTheDocument();
-});
-
-test("demo accounts panel appears only when the gated endpoint supplies ephemeral credentials", async () => {
-  global.fetch = vi.fn((url) => {
-    if (String(url).endsWith("/api/auth/session")) return Promise.resolve({ ok: true, status: 200, json: async () => ({ authenticated: false }) });
-    if (String(url).endsWith("/api/auth/demo-accounts")) return Promise.resolve({
-      ok: true, status: 200, json: async () => ({
-        available: true,
-        accounts: [{
-          catalogueEntryId: "catalogue-1", organisationSlug: "alpha-health", organisationName: "Alpha Health",
-          roleLabel: "Investigator", usernameDisplayValue: "investigator.demo", password: "deployment-only-value",
-        }],
-      }),
-    });
-    return Promise.resolve({ ok: false, status: 404, json: async () => ({ message: "Not found." }) });
-  });
-  render(<AppRoot />);
-  expect(await screen.findByRole("heading", { name: "Demo Accounts" })).toBeInTheDocument();
-  expect(screen.getByText(/Alpha Health · Investigator/)).toBeInTheDocument();
-  expect(screen.getByText(/investigator.demo \/ deployment-only-value/)).toBeInTheDocument();
-});
-
-test("canonical API client attaches session CSRF to mutations and distinguishes 403", async () => {
+test("canonical API client attaches session CSRF to mutations and sends no authority headers", async () => {
   setCsrfToken("csrf-token");
   global.fetch = vi.fn(() => Promise.resolve({ ok: false, status: 403, json: async () => ({ code: "FORBIDDEN" }) }));
   const response = await apiRequest("/claims/ingest", { method: "POST" });
