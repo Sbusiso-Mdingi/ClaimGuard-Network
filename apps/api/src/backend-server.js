@@ -16,14 +16,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  createClaimIngestionRepository,
-  createClaimProcessingOutboxRepository,
-  createDatabase,
-  createInvestigationRepository,
-  createFraudWorkflowRepository,
-  createLedgerRepository,
-  createSharedFraudRegistryRepository,
-  createTenantRepository,
   createLegacySharedAdapter,
   createTenantConnectionManager,
 } from "@claimguard/database";
@@ -54,118 +46,87 @@ const supportedDataPlaneSchemaVersions = String(
   .map((value) => value.trim())
   .filter(Boolean);
 
-let ledgerRepository = null;
-let investigationRepository = null;
-let sharedFraudRegistryRepository = null;
-let fraudWorkflowRepository = null;
-let claimIngestionService = null;
-let generationRepository = null;
-let tenantRepository = null;
-let databasePool = null;
-let controlPlanePool = null;
-let controlPlaneRepositories = null;
-let authenticationService = null;
-let dataPlaneRuntime = null;
-let controlPlaneService = null;
-
-if (databaseUrl && authenticationConfiguration.mode === "demo_headers") {
-  const database = createDatabase(databaseUrl);
-  ledgerRepository = createLedgerRepository(database.db, database.pool, { allowLegacyTenantContext: true });
-  investigationRepository = createInvestigationRepository(database.pool, { allowLegacyTenantContext: true });
-  sharedFraudRegistryRepository = createSharedFraudRegistryRepository(database.pool);
-  fraudWorkflowRepository = createFraudWorkflowRepository(database.pool);
-  claimIngestionService = createClaimIngestionRepository(database.pool, { allowLegacyTenantContext: true });
-  generationRepository = createClaimProcessingOutboxRepository(database.pool);
-  tenantRepository = createTenantRepository(database.pool, { allowLegacyDefault: true });
-  databasePool = database.pool;
+if (!databaseUrl) {
+  throw new Error("MYSQL_URL is required by the explicit legacy_shared route adapter.");
 }
 
-if (authenticationConfiguration.mode === "session") {
-  if (!databaseUrl) {
-    throw new Error("MYSQL_URL is required by the explicit legacy_shared route adapter in session mode.");
-  }
-  assertDistinctDatabaseUrls(process.env.CONTROL_PLANE_MYSQL_URL, databaseUrl);
-  controlPlanePool = createControlPlanePool(process.env.CONTROL_PLANE_MYSQL_URL);
-  controlPlaneRepositories = createControlPlaneRepositories(controlPlanePool);
-  const baseControlPlaneService = createControlPlaneService({
-    pool: controlPlanePool,
-    repositories: controlPlaneRepositories,
-  });
-  controlPlaneService = Object.freeze({
-    ...baseControlPlaneService,
-    async listUsersByOrganisation(organisationId) {
-      return controlPlaneRepositories.identity.listUsersByOrganisation(organisationId);
-    },
-  });
-  authenticationService = createControlPlaneAuthenticationService({
-    authenticationRepository: controlPlaneRepositories.authentication,
-    integrationCredentialsRepository: controlPlaneRepositories.integrationCredentials,
-    idleTimeoutMs: authenticationConfiguration.idleTimeoutMs,
-    absoluteTimeoutMs: authenticationConfiguration.absoluteTimeoutMs,
-    throttleWindowMs: authenticationConfiguration.throttle.windowMs,
-    throttleMaxAttempts: authenticationConfiguration.throttle.maxAttempts,
-    throttleBaseDelayMs: authenticationConfiguration.throttle.baseDelayMs,
-    throttleMaxDelayMs: authenticationConfiguration.throttle.maxDelayMs,
-    throttleLockoutMs: authenticationConfiguration.throttle.lockoutMs,
-  });
+assertDistinctDatabaseUrls(process.env.CONTROL_PLANE_MYSQL_URL, databaseUrl);
+const controlPlanePool = createControlPlanePool(process.env.CONTROL_PLANE_MYSQL_URL);
+const controlPlaneRepositories = createControlPlaneRepositories(controlPlanePool);
+const baseControlPlaneService = createControlPlaneService({
+  pool: controlPlanePool,
+  repositories: controlPlaneRepositories,
+});
+const controlPlaneService = Object.freeze({
+  ...baseControlPlaneService,
+  async listUsersByOrganisation(organisationId) {
+    return controlPlaneRepositories.identity.listUsersByOrganisation(organisationId);
+  },
+});
+const authenticationService = createControlPlaneAuthenticationService({
+  authenticationRepository: controlPlaneRepositories.authentication,
+  integrationCredentialsRepository: controlPlaneRepositories.integrationCredentials,
+  idleTimeoutMs: authenticationConfiguration.idleTimeoutMs,
+  absoluteTimeoutMs: authenticationConfiguration.absoluteTimeoutMs,
+  throttleWindowMs: authenticationConfiguration.throttle.windowMs,
+  throttleMaxAttempts: authenticationConfiguration.throttle.maxAttempts,
+  throttleBaseDelayMs: authenticationConfiguration.throttle.baseDelayMs,
+  throttleMaxDelayMs: authenticationConfiguration.throttle.maxDelayMs,
+  throttleLockoutMs: authenticationConfiguration.throttle.lockoutMs,
+});
 
-  const routeResolver =
-    createControlPlaneDataPlaneRouteResolver({
-      repositories:
-        controlPlaneRepositories,
+const routeResolver = createControlPlaneDataPlaneRouteResolver({
+  repositories: controlPlaneRepositories,
+  supportedSchemaVersions: supportedDataPlaneSchemaVersions,
+});
 
-      supportedSchemaVersions:
-        supportedDataPlaneSchemaVersions,
-    });
-  
-  const legacySharedAdapter = createLegacySharedAdapter({
-    databaseUrl,
-    expectedEnvironment: process.env.DATA_PLANE_ENVIRONMENT || "legacy",
-    supportedSchemaVersions: supportedDataPlaneSchemaVersions,
-    connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
-  });
-  const connectionManager = createTenantConnectionManager({
-    adapters: {
-      legacy_shared: legacySharedAdapter,
-      private_database: createPrivateDatabaseAdapter({
-        expectedEnvironment: process.env.DATA_PLANE_PRIVATE_ENVIRONMENT || "production",
-        supportedSchemaVersions: supportedDataPlaneSchemaVersions,
-        connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
-      }),
-    },
-    maxPools: Number(process.env.DATA_PLANE_MAX_POOLS || 32),
-    idleTimeoutMs: Number(process.env.DATA_PLANE_POOL_IDLE_MS || 600_000),
-    creationTimeoutMs: Number(process.env.DATA_PLANE_POOL_CREATION_TIMEOUT_MS || 10_000),
-    drainTimeoutMs: Number(process.env.DATA_PLANE_POOL_DRAIN_TIMEOUT_MS || 10_000),
-    logger: logEvent,
-  });
-  dataPlaneRuntime = {
-    routeResolver,
-    connectionManager,
-    logger: logEvent,
-    async checkReadiness() {
-      const checks = {
-        controlPlaneReachable: false,
-        legacySharedBaselineReachable: false,
-        schemaCompatible: false,
-      };
-      try {
-        await controlPlanePool.execute("SELECT 1");
-        checks.controlPlaneReachable = true;
-      } catch {
-        // Fail closed.
-      }
-      try {
-        const baseline = await legacySharedAdapter.checkBaseline();
-        checks.legacySharedBaselineReachable = baseline.reachable;
-        checks.schemaCompatible = baseline.schemaCompatible;
-      } catch {
-        // Fail closed.
-      }
-      return { ready: Object.values(checks).every(Boolean), checks };
-    },
-  };
-}
+const legacySharedAdapter = createLegacySharedAdapter({
+  databaseUrl,
+  expectedEnvironment: process.env.DATA_PLANE_ENVIRONMENT || "legacy",
+  supportedSchemaVersions: supportedDataPlaneSchemaVersions,
+  connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
+});
+const connectionManager = createTenantConnectionManager({
+  adapters: {
+    legacy_shared: legacySharedAdapter,
+    private_database: createPrivateDatabaseAdapter({
+      expectedEnvironment: process.env.DATA_PLANE_PRIVATE_ENVIRONMENT || "production",
+      supportedSchemaVersions: supportedDataPlaneSchemaVersions,
+      connectionLimit: Number(process.env.DATA_PLANE_POOL_CONNECTION_LIMIT || 5),
+    }),
+  },
+  maxPools: Number(process.env.DATA_PLANE_MAX_POOLS || 32),
+  idleTimeoutMs: Number(process.env.DATA_PLANE_POOL_IDLE_MS || 600_000),
+  creationTimeoutMs: Number(process.env.DATA_PLANE_POOL_CREATION_TIMEOUT_MS || 10_000),
+  drainTimeoutMs: Number(process.env.DATA_PLANE_POOL_DRAIN_TIMEOUT_MS || 10_000),
+  logger: logEvent,
+});
+const dataPlaneRuntime = {
+  routeResolver,
+  connectionManager,
+  logger: logEvent,
+  async checkReadiness() {
+    const checks = {
+      controlPlaneReachable: false,
+      legacySharedBaselineReachable: false,
+      schemaCompatible: false,
+    };
+    try {
+      await controlPlanePool.execute("SELECT 1");
+      checks.controlPlaneReachable = true;
+    } catch {
+      // Fail closed.
+    }
+    try {
+      const baseline = await legacySharedAdapter.checkBaseline();
+      checks.legacySharedBaselineReachable = baseline.reachable;
+      checks.schemaCompatible = baseline.schemaCompatible;
+    } catch {
+      // Fail closed.
+    }
+    return { ready: Object.values(checks).every(Boolean), checks };
+  },
+};
 
 const reportStorage = await createReportStorageFromEnvironment({
   reportStorageBackend: process.env.REPORT_STORAGE_BACKEND,
@@ -174,17 +135,10 @@ const reportStorage = await createReportStorageFromEnvironment({
 });
 
 const app = createBackendApp({
-  ledgerRepository,
-  investigationRepository,
-  sharedFraudRegistryRepository,
-  fraudWorkflowRepository,
-  claimIngestionService,
-  generationRepository,
-  tenantRepository,
   reportStorage,
   authenticationConfiguration,
   authenticationService,
-  controlPlaneConfigurationRepository: controlPlaneRepositories?.configuration || null,
+  controlPlaneConfigurationRepository: controlPlaneRepositories.configuration,
   controlPlaneRepositories,
   controlPlaneService,
   dataPlaneRuntime,
@@ -202,11 +156,11 @@ console.log(
     service: "api",
     event: "api_server_started",
     port,
-    hasDatabase: Boolean(databasePool),
-    hasTenantRepository: Boolean(tenantRepository),
+    hasDatabase: true,
+    hasTenantRepository: true,
     reportStorageBackend: (process.env.REPORT_STORAGE_BACKEND || "file").toLowerCase(),
     authenticationMode: authenticationConfiguration.mode,
-    explicitDataPlaneRouting: Boolean(dataPlaneRuntime),
+    explicitDataPlaneRouting: true,
     supportedDataPlaneSchemaVersions,
   }),
 );
@@ -235,9 +189,7 @@ process.on("uncaughtException", (error) => {
   );
 });
 
-if (databasePool || controlPlanePool) {
-  process.on("SIGINT", async () => {
-    await Promise.all([databasePool?.end(), controlPlanePool?.end()].filter(Boolean));
-    process.exit(0);
-  });
-}
+process.on("SIGINT", async () => {
+  await controlPlanePool.end();
+  process.exit(0);
+});
