@@ -106,7 +106,7 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "investigations.create": ["investigations.create"],
   "investigations.manage": ["investigations.view", "investigations.update_status", "investigations.add_note", "investigations.change_priority", "investigations.open", "investigations.complete", "investigations.upload_evidence", "investigations.submit_findings"],
   "investigations.confirm": ["investigations.confirm_fraud"],
-  "investigations.reverse": ["investigations.confirm_fraud"],
+  "investigations.reverse": ["investigations.reverse_fraud"],
   "registry.search": ["fraud_registry.search", "fraud_registry.view"],
   "registry.review_history": ["fraud_registry.review_history"],
   "scheme_users.manage": ["users.manage_tenant"],

@@ -21,7 +21,7 @@ const DEMO_CAPABILITIES = Object.freeze({
     "claims.view_own", "reports.view_own", "investigations.create", "investigations.view",
     "investigations.update_status", "investigations.add_note", "investigations.open",
     "investigations.complete", "investigations.upload_evidence", "investigations.submit_findings",
-    "investigations.confirm_fraud", "fraud_registry.search", "fraud_registry.view",
+    "investigations.confirm_fraud", "investigations.reverse_fraud", "fraud_registry.search", "fraud_registry.view",
     "fraud_registry.review_history",
   ]),
   [CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER]: Object.freeze([
