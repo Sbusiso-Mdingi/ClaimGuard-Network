@@ -3,10 +3,10 @@ import test from "node:test";
 
 import { Hono } from "hono";
 
-import { TenantMismatchError } from "../src/application-errors.js";
 import { createAuthenticationMiddleware } from "../src/middleware/authorization-middleware.js";
 import { createTenantContextMiddleware } from "../src/tenant-context-middleware.js";
 import { resolveTenantContext } from "../src/tenant-context.js";
+import { createStaticAuthenticationProvider } from "./helpers/authentication-provider.js";
 
 const alphaTenant = {
   tenant_id: "tenant_alpha",
@@ -43,15 +43,13 @@ function authenticatedContext(tenantId = alphaTenant.tenant_id) {
     roles: ["scheme_user"],
     permissions: new Set(),
     tenant_id: tenantId,
-    source: "header",
+    source: "session",
   };
 }
 
 test("resolveTenantContext derives the immutable tenant from authenticated membership", async () => {
   const tenantContext = await resolveTenantContext({
-    request: new Request("http://localhost/detection/report", {
-      headers: { "x-claimguard-tenant": "alpha" },
-    }),
+    request: new Request("http://localhost/detection/report"),
     authContext: authenticatedContext("tenant_alpha"),
     tenantRepository: createTenantRepositoryStub(),
   });
@@ -68,7 +66,6 @@ test("resolveTenantContext leaves anonymous health requests tenant-neutral", asy
     request: new Request("http://localhost/health"),
     authContext: { is_authenticated: false },
     tenantRepository: createTenantRepositoryStub(),
-    defaultTenantId: "tenant_alpha",
   });
 
   assert.equal(tenantContext.tenant_id, null);
@@ -76,22 +73,29 @@ test("resolveTenantContext leaves anonymous health requests tenant-neutral", asy
   assert.equal(tenantContext.source, "anonymous");
 });
 
-test("resolveTenantContext fails closed on contradictory tenant headers", async () => {
-  await assert.rejects(
-    () => resolveTenantContext({
-      request: new Request("http://localhost/detection/report", {
-        headers: { "x-claimguard-tenant": "tenant_beta" },
-      }),
-      authContext: authenticatedContext("tenant_alpha"),
-      tenantRepository: createTenantRepositoryStub(),
+test("session membership remains authoritative when a contradictory tenant header is supplied", async () => {
+  const tenantContext = await resolveTenantContext({
+    request: new Request("http://localhost/detection/report", {
+      headers: { "x-claimguard-tenant": betaTenant.tenant_id },
     }),
-    TenantMismatchError,
-  );
+    authContext: authenticatedContext(alphaTenant.tenant_id),
+    tenantRepository: createTenantRepositoryStub(),
+  });
+
+  assert.equal(tenantContext.tenant_id, alphaTenant.tenant_id);
+  assert.equal(tenantContext.tenant_slug, alphaTenant.tenant_slug);
 });
 
 test("tenant middleware canonicalizes auth, request, and async tenant context", async () => {
   const app = new Hono();
-  app.use("*", createAuthenticationMiddleware());
+  app.use("*", createAuthenticationMiddleware({
+    authenticationProvider: createStaticAuthenticationProvider({
+      userId: "user-alpha",
+      roles: ["scheme_user"],
+      tenantId: alphaTenant.tenant_slug,
+      source: "session",
+    }),
+  }));
   app.use("*", createTenantContextMiddleware({ tenantRepository: createTenantRepositoryStub() }));
   app.get("/context", (c) => c.json({
     tenantContext: c.get("tenantContext"),
@@ -100,12 +104,7 @@ test("tenant middleware canonicalizes auth, request, and async tenant context", 
   }));
 
   const response = await app.request("http://localhost/context", {
-    headers: {
-      "x-claimguard-user": "user-alpha",
-      "x-claimguard-role": "scheme_user",
-      "x-claimguard-user-tenant": "alpha",
-      "x-claimguard-tenant": "tenant_alpha",
-    },
+    headers: { "x-claimguard-tenant": betaTenant.tenant_id },
   });
   const json = await response.json();
 
