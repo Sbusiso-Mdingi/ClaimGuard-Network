@@ -11,7 +11,7 @@
     "mysql2": "^3.12.0"
   },
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp -R src migrations dist/",
+    "build": "rm -rf dist && mkdir -p dist && cp -R src migrations test-support dist/",
     "lint": "node -e \"import('./src/index.js')\" && node --check src/cli.js",
     "test": "node --test",
     "migrate": "node src/cli.js migrate",
