@@ -2,13 +2,19 @@ import { sha256 } from "@claimguard/control-plane-database";
 
 import { getPermissionsForRoles, parseRoles } from "../authorization-policy.js";
 import { ForbiddenError } from "../application-errors.js";
-import crypto from "node:crypto";
 
 export const IDENTITY_AUTHORITY_HEADERS = Object.freeze([
   "x-claimguard-user",
   "x-claimguard-role",
   "x-claimguard-user-tenant",
   "x-claimguard-tenant",
+]);
+
+export const LEGACY_SERVICE_IDENTITY_HEADERS = Object.freeze([
+  "x-cg-service-actor",
+  "x-cg-service-role",
+  "x-cg-service-tenant",
+  "x-cg-service-organisation",
 ]);
 
 function normalizeHeaderValue(value) {
@@ -136,7 +142,8 @@ export function createSessionAuthenticationProvider({ authenticationService, con
   return {
     mode: "session",
     async resolveAuthContext({ request }) {
-      const spoofed = IDENTITY_AUTHORITY_HEADERS.filter((name) => request.headers.has(name));
+      const spoofed = [...IDENTITY_AUTHORITY_HEADERS, ...LEGACY_SERVICE_IDENTITY_HEADERS]
+        .filter((name) => request.headers.has(name));
       const metadata = requestMetadata(request, configuration);
       if (spoofed.length > 0) {
         await authenticationService.recordSecurityEvent("header_spoof_attempt", "failure", metadata, {}, "identity_authority_header");
@@ -147,49 +154,23 @@ export function createSessionAuthenticationProvider({ authenticationService, con
       const authorization = request.headers.get("authorization") || "";
       if (authorization) {
         const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-        const expected = configuration.internalServiceToken || "";
-        const suppliedBuffer = Buffer.from(supplied);
-        const expectedBuffer = Buffer.from(expected);
-        const validLegacyToken = suppliedBuffer.length === expectedBuffer.length
-          && suppliedBuffer.length > 0
-          && crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
-        if (!validLegacyToken) {
-          const integration = await authenticationService.resolveIntegrationCredential?.(supplied, metadata);
-          if (integration) {
-            return {
-              authContext: createAuthenticatedAuthContext({
-                userId: integration.serviceActorId,
-                roles: [integration.roleKey],
-                tenantId: integration.tenantId,
-                organisationId: integration.organisationId,
-                source: "internal_service",
-              }),
-              resolvedSession: null,
-              metadata,
-            };
-          }
-          const error = new ForbiddenError("Internal service authentication failed.");
-          error.code = "INTERNAL_SERVICE_AUTHENTICATION_FAILED";
-          throw error;
+        const integration = await authenticationService.resolveIntegrationCredential?.(supplied, metadata);
+        if (integration) {
+          return {
+            authContext: createAuthenticatedAuthContext({
+              userId: integration.serviceActorId,
+              roles: [integration.roleKey],
+              tenantId: integration.tenantId,
+              organisationId: integration.organisationId,
+              source: "internal_service",
+            }),
+            resolvedSession: null,
+            metadata,
+          };
         }
-        const userId = normalizeHeaderValue(request.headers.get("x-cg-service-actor"));
-        const roleHeader = normalizeHeaderValue(request.headers.get("x-cg-service-role"));
-        const tenantId = normalizeHeaderValue(request.headers.get("x-cg-service-tenant"));
-        const organisationId = normalizeHeaderValue(request.headers.get("x-cg-service-organisation"));
-        const roles = parseRoles(roleHeader || "");
-        const allowedOrganisations = configuration.internalServiceOrganisationIds || [];
-        const allowedRoles = new Set(parseRoles((configuration.internalServiceAllowedRoles || ["claims_analyst"]).join(",")));
-        const rolesAllowed = roles.length > 0 && roles.every((role) => allowedRoles.has(role));
-        if (!userId || !tenantId || !organisationId || !rolesAllowed || !allowedOrganisations.includes(organisationId)) {
-          const error = new ForbiddenError("Internal service identity is incomplete.");
-          error.code = "INTERNAL_SERVICE_IDENTITY_INVALID";
-          throw error;
-        }
-        return {
-          authContext: createAuthenticatedAuthContext({ userId, roles, tenantId, organisationId, source: "internal_service" }),
-          resolvedSession: null,
-          metadata,
-        };
+        const error = new ForbiddenError("Internal service authentication failed.");
+        error.code = "INTERNAL_SERVICE_AUTHENTICATION_FAILED";
+        throw error;
       }
       const bearerSecret = parseCookieHeader(request.headers.get("cookie")).get(configuration.cookie.name) || null;
       if (!bearerSecret) return { authContext: createAnonymousAuthContext(), resolvedSession: null, metadata };
