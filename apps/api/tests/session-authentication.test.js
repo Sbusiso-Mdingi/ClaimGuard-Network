@@ -148,10 +148,11 @@ test("CSRF requires both allowed Origin and the session-bound token while GET re
   assert.match(valid.headers.get("set-cookie"), /Max-Age=0/);
 });
 
-test("header rollback mode ignores session cookies and does not expose session endpoints", async () => {
-  const app = createBackendApp();
-  const response = await app.request("http://localhost/auth/session", { headers: { cookie: `__Host-cg_session=${"s".repeat(43)}` } });
-  assert.equal(response.status, 404);
+test("backend construction fails closed without a session service or explicit provider", () => {
+  assert.throws(
+    () => createBackendApp(),
+    /authenticationProvider is required when authenticationService is not supplied/,
+  );
 });
 
 test("demo account endpoint is fail-closed and returns only safe catalogue entries joined to ephemeral deployment secrets", async () => {
