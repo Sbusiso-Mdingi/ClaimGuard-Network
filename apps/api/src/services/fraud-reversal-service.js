@@ -19,6 +19,7 @@ export function createFraudReversalService({ fraudWorkflowRepository = null, log
         investigationId: input.investigationId,
         actorId: input.actorId,
         actorRole: input.actorRole,
+        auditAction: "investigations.reverse_fraud",
         ledgerSequenceNumber: result.entry.sequenceNumber,
         registryEntryId: result.registryEntry.registryEntryId,
       });
