@@ -38,7 +38,6 @@ export {
 } from "./migrate.js";
 export {
   projectSafeCredential,
-  projectSafeDemoCatalogueEntry,
   projectSafeRoute,
   projectSafeSession,
   projectSafeUser,
