@@ -30,17 +30,13 @@ export function resolveAuthenticationConfiguration(env = process.env) {
       "ClaimGuard refuses unsupported authentication modes: AUTHENTICATION_MODE must be exactly session; session or demo_headers switching is no longer supported.",
     );
   }
+  if (env.DEMO_CREDENTIALS_VISIBLE || env.DEMO_CREDENTIALS_JSON) {
+    throw new Error("Demo credential exposure configuration is no longer supported.");
+  }
   const deploymentClass = String(env.DEPLOYMENT_CLASS || (env.NODE_ENV === "production" ? "production" : "local")).trim().toLowerCase();
   const production = deploymentClass === "production" || env.NODE_ENV === "production";
   if (!env.CONTROL_PLANE_MYSQL_URL?.trim()) {
     throw new Error("CONTROL_PLANE_MYSQL_URL is required in session authentication mode.");
-  }
-  const demoCredentialsVisible = booleanValue(env.DEMO_CREDENTIALS_VISIBLE, false);
-  if (demoCredentialsVisible && deploymentClass !== "demo") {
-    throw new Error("DEMO_CREDENTIALS_VISIBLE=true is permitted only when DEPLOYMENT_CLASS=demo.");
-  }
-  if (production && (demoCredentialsVisible || env.DEMO_CREDENTIALS_JSON)) {
-    throw new Error("Production refuses demo credential exposure configuration.");
   }
   const cookieSecure = booleanValue(env.SESSION_COOKIE_SECURE, production || deploymentClass !== "local");
   if (production && !cookieSecure) throw new Error("Production session cookies must be Secure.");
@@ -73,23 +69,9 @@ export function resolveAuthenticationConfiguration(env = process.env) {
     }),
     allowedOrigins: Object.freeze(allowedOrigins),
     trustProxy: booleanValue(env.TRUST_PROXY, false),
-    demoCredentialsVisible,
-    demoCredentials: parseDemoCredentials(env.DEMO_CREDENTIALS_JSON, { enabled: demoCredentialsVisible }),
     publicOrganisationUrlScheme: String(env.PUBLIC_ORGANISATION_URL_SCHEME || "https").trim().toLowerCase(),
     publicOrganisationHost: String(env.PUBLIC_ORGANISATION_HOST || "localhost:3002").trim().toLowerCase(),
   });
-}
-
-export function parseDemoCredentials(value, { enabled = false } = {}) {
-  if (!enabled || !value) return Object.freeze([]);
-  let parsed;
-  try { parsed = JSON.parse(value); } catch { throw new Error("DEMO_CREDENTIALS_JSON must be valid JSON."); }
-  if (!Array.isArray(parsed)) throw new Error("DEMO_CREDENTIALS_JSON must be an array.");
-  return Object.freeze(parsed.map((entry) => Object.freeze({
-    organisationSlug: String(entry.organisationSlug || "").trim().toLowerCase(),
-    username: String(entry.username || "").trim().toLowerCase(),
-    password: String(entry.password || ""),
-  })));
 }
 
 export function isAllowedOrigin(request, configuration) {
