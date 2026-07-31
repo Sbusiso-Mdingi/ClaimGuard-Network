@@ -83,6 +83,7 @@ export function RoleProvider({ children }) {
   const identity = state.session ? sessionIdentity(state.session) : null;
   const value = useMemo(() => ({
     ...state,
+    mode: "session",
     authenticated: state.status === "authenticated",
     identity,
     login,
