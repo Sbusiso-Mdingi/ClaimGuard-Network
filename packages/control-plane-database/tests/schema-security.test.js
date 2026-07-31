@@ -12,7 +12,7 @@ test("control-plane schema contains required foundations and excludes operationa
     "roles", "permissions", "role_permissions", "membership_roles", "data_plane_routes", "legacy_tenant_mappings",
     "organisation_provisioning_operations", "provisioning_steps", "organisation_schema_status",
     "report_storage_partitions", "worker_routing_status", "login_sessions", "authentication_events",
-    "platform_audit_events", "demo_account_catalogue", "organisation_feature_flags", "organisation_branding",
+    "platform_audit_events", "organisation_feature_flags", "organisation_branding",
     "platform_release_candidates", "platform_release_promotion_requests", "platform_release_deployments",
   ];
   for (const table of required) assert.match(sql, new RegExp(`create table if not exists ${table}\\b`));
@@ -20,6 +20,7 @@ test("control-plane schema contains required foundations and excludes operationa
   for (const table of ["claims", "members", "providers", "investigations", "investigation_notes", "investigation_evidence", "ledger_entries", "shared_fraud_registry_entries", "simulation_instances"]) {
     assert.doesNotMatch(sql, new RegExp(`create table if not exists ${table}\\b`));
   }
+  assert.match(sql, /drop table if exists demo_account_catalogue/);
   assert.doesNotMatch(sql, /plaintext_password\s/);
   assert.doesNotMatch(sql, /raw_session_token\s/);
   assert.doesNotMatch(sql, /connection_string\s/);
