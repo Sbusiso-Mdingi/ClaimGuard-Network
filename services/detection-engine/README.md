@@ -1,12 +1,12 @@
 # ClaimGuard Detection Engine
 
-Phase 4 detection slice for the ClaimGuard Network monorepo.
+[![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 
-This service analyzes tenant-scoped claim snapshots and produces a structured
-detection report with graph entities, graph relationships, modular rule hits,
-and deterministic risk scoring. Production snapshots are loaded from the operational database by `services/report-producer`.
+Tenant-scoped fraud detection service for the ClaimGuard Network monorepo.
 
-## Quick start
+This service analyzes tenant-scoped claim snapshots and produces a structured detection report with graph entities, graph relationships, modular rule hits, and deterministic risk scoring. Production snapshots are loaded from the operational database by `services/report-producer`.
+
+## Quick Start
 
 ```bash
 uv sync
@@ -17,33 +17,37 @@ uv run python -m unittest discover -s tests -p 'test_*.py'
 
 The report worker invokes the engine with one authoritative tenant snapshot and receives:
 
-- provider findings ranked by anomaly score
-- member findings ranked by anomaly score
-- summary metrics for the scheme
-- detection pipeline output:
-	- entities
-	- relationships
-	- triggered rules
-	- risk score (0-100)
-	- evidence
-	- graph summary
-	- ledger reference placeholder
+- Provider findings ranked by anomaly score
+- Member findings ranked by anomaly score
+- Summary metrics for the scheme
+- Detection pipeline output:
+  - Entities
+  - Relationships
+  - Triggered rules
+  - Risk score (0–100)
+  - Evidence
+  - Graph summary
+  - Ledger reference placeholder
 
 ## Modules
 
-- `loader.py`: validates and adapts authoritative tenant snapshot records into typed records.
-- `analytics.py`: scheme-level provider/member scoring and network evaluation.
-- `pipeline.py`: raw-claim normalization, entity extraction, relationship graph construction, and detection report assembly.
-- `rule_engine.py`: modular detection rules (shared devices, shared addresses, reused bank accounts, reused phone numbers, reused emails, suspicious chains, unusually connected entities, repeat offenders, circular relationships).
-- `graph_store.py`: storage abstraction (`InMemoryGraphStore`, `GremlinGraphStore`) so detection logic is not coupled to a concrete graph database implementation.
+| Module | Description |
+|--------|-------------|
+| `loader.py` | Validates and adapts authoritative tenant snapshot records into typed `DataBundle` records |
+| `analytics.py` | Scheme-level provider/member scoring, network evaluation, and anomaly detection |
+| `pipeline.py` | Raw-claim normalization, entity extraction, relationship graph construction, and detection report assembly |
+| `rule_engine.py` | Modular detection rules: shared devices, shared addresses, reused bank accounts, reused phone numbers, reused emails, suspicious chains, unusually connected entities, repeat offenders, circular relationships |
+| `graph_store.py` | Storage abstraction (`InMemoryGraphStore`, `GremlinGraphStore`) so detection logic is not coupled to a concrete graph database |
+| `orchestration.py` | End-to-end detection run orchestration. Defines `DetectionSnapshot`, severity classification, and full report assembly with contract versioning |
+| `reference_data.py` | Static reference data: billing codes, specialty definitions (GP, Dentist, Radiology, etc.), claim/provider share ratios, and severity distributions |
 
 ## Determinism
 
 Given the same input claims, the detection pipeline returns byte-for-byte identical JSON content for:
 
-- normalized entities and relationships
-- triggered rules
-- risk score and severity
-- evidence ordering
+- Normalized entities and relationships
+- Triggered rules
+- Risk score and severity
+- Evidence ordering
 
 This supports reproducible test runs and stable CI assertions.

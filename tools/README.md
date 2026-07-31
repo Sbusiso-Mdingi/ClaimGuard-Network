@@ -1,14 +1,12 @@
 # ClaimGuard Tools
 
-Utility scripts for operating and testing the ClaimGuard Network.
+Utility scripts for operating, verifying, and testing the ClaimGuard Network in production and development environments.
 
 ## Desktop Simulator (`simulate_medical_aids.py`)
 
-Simulates multiple South African medical aid schemes submitting claims to the
-ClaimGuard API.  Designed to run on a separate machine (e.g. an old desktop)
-that acts as the claims servers for demonstration purposes.
+Simulates multiple South African medical aid schemes submitting claims to the ClaimGuard API. Designed to run on a separate machine (e.g. an old desktop) that acts as the claims server for demonstration purposes.
 
-### Quick start
+### Quick Start
 
 ```bash
 # 1. Set bearer tokens (created via Platform Admin → Integration Credentials)
@@ -37,7 +35,7 @@ python simulate_medical_aids.py \
     --dry-run
 ```
 
-### Included medical aids
+### Included Medical Aids
 
 | Scheme | Env Variable | Members | Providers |
 |--------|-------------|---------|-----------|
@@ -45,17 +43,15 @@ python simulate_medical_aids.py \
 | Discovery Health | `CLAIMGUARD_DISCOVERY_TOKEN` | 3 | 2 |
 | GEMS | `CLAIMGUARD_GEMS_TOKEN` | 2 | 1 |
 
-## Guarded prospective-production verification
+---
 
-`prospective-production-verification.mjs` is a fail-closed, scheme-neutral
-production operator. It pins the expected Azure subscription, private-route
-type, schema, approved model deployment, and parked worker cron. The target
-organisation, canonical slug, scheme ID, and synthetic claim prefix are
-explicit command-line inputs. The expected model deployment is also explicit,
-so the same guardrails can be reused for a later approved deployment.
+## Production Verification & Operations
 
-Resolve the target through the control plane first. This read-only phase
-returns the canonical slug that must be supplied to every later phase:
+### Guarded Prospective-Production Verification (`prospective-production-verification.mjs`)
+
+Fail-closed, scheme-neutral production operator. Pins the expected Azure subscription, private-route type, schema, approved model deployment, and parked worker cron. The target organisation, canonical slug, scheme ID, and synthetic claim prefix are explicit command-line inputs.
+
+Resolve the target through the control plane first:
 
 ```bash
 node tools/prospective-production-verification.mjs resolve \
@@ -74,49 +70,139 @@ node tools/prospective-production-verification.mjs <phase> \
   --model-deployment-id <name:version>
 ```
 
-`<phase>` is one of `audit`, `inspect`, `activate`, `ingest`, `verify-job`,
-`start-worker`, `recover-worker`, `worker-status`, or `verify-results`.
+`<phase>` is one of `audit`, `inspect`, `activate`, `ingest`, `verify-job`, `start-worker`, `recover-worker`, `worker-status`, or `verify-results`.
 
-The read-only `audit` phase additionally requires
-`--expected-current-model-deployment-id`. It returns strategy history, outbox
-counts grouped by pinned deployment, and organisation-scoped control-plane
-audit metadata without returning secrets or claim payloads.
+The read-only `audit` phase additionally requires `--expected-current-model-deployment-id`. It returns strategy history, outbox counts grouped by pinned deployment, and organisation-scoped control-plane audit metadata without returning secrets or claim payloads.
 
-The `activate` phase requires both
-`--expected-current-strategy-id` and
-`--expected-current-model-deployment-id`. The repository locks the active row
-and rejects the transition if either expectation is stale.
+The `activate` phase requires both `--expected-current-strategy-id` and `--expected-current-model-deployment-id`. The repository locks the active row and rejects the transition if either expectation is stale.
 
-The ingestion phase creates exactly three fresh claims through the production
-API using an audited, one-hour integration credential that is revoked
-immediately after the request. The worker phase submits an execution-only
-template for the existing Container Apps Job with:
+The ingestion phase creates exactly three fresh claims through the production API using an audited, one-hour integration credential that is revoked immediately after the request. The worker phase submits an execution-only template for the existing Container Apps Job with:
 
-- the explicitly selected organisation as the only route;
-- the same organisation as the internal-service identity allowlist;
-- `worker once`;
-- `REPORT_WORKER_BATCH_SIZE=1`;
-- `REPORT_WORKER_MAX_BATCHES_PER_RUN=1`.
+- the explicitly selected organisation as the only route
+- the same organisation as the internal-service identity allowlist
+- `worker once`
+- `REPORT_WORKER_BATCH_SIZE=1`
+- `REPORT_WORKER_MAX_BATCHES_PER_RUN=1`
 
-It does not update the recurring job definition or modify historical outbox
-rows. The ordinary start phase cannot launch a second execution. Local run
-state contains only record identifiers, is isolated by organisation and
-scheme, and is ignored by Git.
+`recover-worker` is a narrow exception for an execution that failed before leasing its exact job because the single-route service-identity allowlist was missing.
 
-`recover-worker` is a narrow exception for an execution that failed before
-leasing its exact job because the single-route service-identity allowlist was
-missing. It requires the prior execution to be failed, the allowlist to be
-absent from that execution, and the job to remain pending at attempt zero. It
-can be used only once and does not permit a second processed batch.
+---
 
-### Privacy compliance (POPIA / GDPR / HIPAA)
+### Deployment Boundary Validation (`validate-deployment-boundaries.mjs`)
 
-All PII is tokenized **locally** using HMAC-SHA256 before leaving the desktop.
-No raw names, ID numbers, or banking details are transmitted.
+Validates architectural deployment boundaries across the monorepo. Runs automatically as part of `pnpm lint` to enforce separation between apps, services, and packages.
 
-- Names → `HMAC(name, key, "NAME")`
-- ID numbers → `HMAC(id, key, "ID")`
-- Banking details → `HMAC(bank, key, "BANK")`
-- Practice numbers → `HMAC(pcns, key, "PCNS")`
-- Date of birth → minimized to `YYYY-01-01`
-- GPS coordinates → rounded to 1 decimal (~11 km)
+```bash
+node tools/validate-deployment-boundaries.mjs
+```
+
+---
+
+### Credential History Audit (`audit-credential-history.mjs`)
+
+Audits integration credential lifecycle history for compliance. Runs as a workspace-level command:
+
+```bash
+pnpm audit:credential-history
+# or directly:
+node tools/audit-credential-history.mjs --fail-on-findings
+```
+
+---
+
+## Ensemble & Model Verification
+
+### Ensemble Canary Verification (`verify-ensemble2-canary.mjs`)
+
+Verifies ensemble v2 canary deployments by running structured validation against the canary endpoint. Includes test coverage in `verify-ensemble2-canary.test.mjs`.
+
+```bash
+node tools/verify-ensemble2-canary.mjs
+```
+
+---
+
+### Production Model Candidate Verification (`verify-production-model-candidate.mjs`)
+
+Validates a model candidate before it is approved for production activation. Checks deployment configuration, endpoint readiness, and contract compatibility.
+
+```bash
+node tools/verify-production-model-candidate.mjs \
+  --deployment-id <name:version>
+```
+
+---
+
+### Production Model Activation Verification (`verify-production-model-activation.mjs`)
+
+Verifies that a model activation completed correctly by checking the active strategy, deployment state, and worker readiness.
+
+```bash
+node tools/verify-production-model-activation.mjs \
+  --deployment-id <name:version>
+```
+
+---
+
+## Diagnostics
+
+### Investigation Queue Diagnostics (`diagnose-investigation-queue.mjs`)
+
+Diagnoses the investigation queue state, identifying stuck items, stale locks, or processing anomalies.
+
+```bash
+node tools/diagnose-investigation-queue.mjs
+```
+
+---
+
+### Container Apps Canary Diagnostic (`containerapp-canary-diagnostic.py`)
+
+Python diagnostic script for Azure Container Apps canary deployments. Used alongside `containerapp-canary-exec.exp` (Expect script for interactive canary execution).
+
+```bash
+python tools/containerapp-canary-diagnostic.py
+```
+
+---
+
+## Release & Packaging
+
+### Release Manifest (`create-release-manifest.mjs`)
+
+Creates a structured release manifest for versioned deployments.
+
+```bash
+node tools/create-release-manifest.mjs
+```
+
+---
+
+### Package Release Artifacts (`package-release-artifacts.sh`)
+
+Shell script that packages release artifacts for distribution.
+
+```bash
+bash tools/package-release-artifacts.sh
+```
+
+---
+
+## Scheme Simulator (`tools/scheme-simulator/`)
+
+Subdirectory containing the scheme simulation framework for end-to-end testing scenarios.
+
+---
+
+## Privacy Compliance (POPIA / GDPR / HIPAA)
+
+All PII in the simulator and SDK is tokenized **locally** using HMAC-SHA256 before leaving the desktop. No raw names, ID numbers, or banking details are transmitted.
+
+| Field | Transformation |
+|-------|---------------|
+| Names | `HMAC(name, key, "NAME")` |
+| ID numbers | `HMAC(id, key, "ID")` |
+| Banking details | `HMAC(bank, key, "BANK")` |
+| Practice numbers | `HMAC(pcns, key, "PCNS")` |
+| Date of birth | Minimized to `YYYY-01-01` |
+| GPS coordinates | Rounded to 1 decimal (~11 km) |
