@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { createOperationalRepositories } from "@claimguard/database";
 
 import { FileReportStorage } from "./report-storage.js";
-import { createHeaderAuthenticationProvider, createSessionAuthenticationProvider } from "./middleware/auth-context.js";
+import { createSessionAuthenticationProvider } from "./middleware/auth-context.js";
 import { createAuthenticationMiddleware } from "./middleware/authorization-middleware.js";
 import { createTenantContextMiddleware } from "./middleware/tenant-context-middleware.js";
 import { createDataPlaneMiddleware } from "./middleware/data-plane-middleware.js";
@@ -88,7 +88,7 @@ export function createBackendApp({
   generationRepository = null,
   tenantRepository = null,
   authenticationProvider = null,
-  authenticationConfiguration = Object.freeze({ mode: "demo_headers" }),
+  authenticationConfiguration = Object.freeze({ mode: "session" }),
   authenticationService = null,
   controlPlaneConfigurationRepository = null,
   controlPlaneRepositories = null,
@@ -97,6 +97,17 @@ export function createBackendApp({
   detectionReportPath = null,
   dataPlaneRuntime = null,
 } = {}) {
+  if (authenticationConfiguration.mode !== "session") {
+    throw new TypeError("Only session authentication mode is supported.");
+  }
+
+  const usesSessionAuthentication = !authenticationProvider;
+  if (usesSessionAuthentication && !authenticationService) {
+    throw new TypeError(
+      "createBackendApp requires authenticationService or an explicit authenticationProvider.",
+    );
+  }
+
   const resolvedReportStorage =
     reportStorage ||
     new FileReportStorage({
@@ -155,15 +166,11 @@ export function createBackendApp({
     }
   });
 
-  if (authenticationConfiguration.mode === "session" && !authenticationService) {
-    throw new TypeError("Session authentication mode requires authenticationService.");
-  }
-
-  const resolvedAuthenticationProvider = authenticationProvider || (
-    authenticationConfiguration.mode === "session"
-      ? createSessionAuthenticationProvider({ authenticationService, configuration: authenticationConfiguration })
-      : createHeaderAuthenticationProvider()
-  );
+  const resolvedAuthenticationProvider = authenticationProvider ||
+    createSessionAuthenticationProvider({
+      authenticationService,
+      configuration: authenticationConfiguration,
+    });
 
   app.use(
     "*",
@@ -172,7 +179,7 @@ export function createBackendApp({
     }),
   );
 
-  if (authenticationConfiguration.mode === "session") {
+  if (usesSessionAuthentication) {
     app.use("*", createSessionCsrfMiddleware({ authenticationService, configuration: authenticationConfiguration }));
   }
 
@@ -221,7 +228,7 @@ export function createBackendApp({
     }),
   );
 
-  if (authenticationConfiguration.mode === "session") {
+  if (usesSessionAuthentication) {
     registerAuthRoutes(app, {
       authenticationService,
       configuration: authenticationConfiguration,
