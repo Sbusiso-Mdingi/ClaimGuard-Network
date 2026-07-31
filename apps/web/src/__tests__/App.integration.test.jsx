@@ -2,6 +2,7 @@ import React from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
+import { createSessionFetch, SESSION_FIXTURES } from "./helpers/sessionFixtures";
 
 const reportPayload = {
   available: true,
@@ -142,44 +143,49 @@ const investigationsPayload = {
   },
 };
 
-function mockFetch() {
-  global.fetch = vi.fn((url) => {
-    if (String(url).includes("/api/detection/report")) return Promise.resolve({ ok: true, json: async () => reportPayload });
-    if (String(url).includes("/api/detection/graph")) return Promise.resolve({ ok: true, json: async () => graphPayload });
-    if (String(url).includes("/api/detection/risk")) return Promise.resolve({ ok: true, json: async () => riskPayload });
-    if (String(url).includes("/api/investigations/missing-case")) {
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
-          available: false,
-          message: "Investigation not found for the active tenant.",
-        }),
-      });
-    }
-    if (String(url).includes("/api/investigations/queue")) {
-      return Promise.resolve({ ok: true, json: async () => investigationsPayload });
-    }
-    if (String(url).includes("/api/claims/C-1")) return Promise.resolve({ ok: true, json: async () => claimDetailPayload });
-    if (String(url).includes("/api/claims")) return Promise.resolve({ ok: true, json: async () => claimsPayload });
-    return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
-  });
+let activeSession = SESSION_FIXTURES.analyst;
+
+function operationalResponse(requestUrl) {
+  if (requestUrl.includes("/api/detection/report")) return Promise.resolve({ ok: true, status: 200, json: async () => reportPayload });
+  if (requestUrl.includes("/api/detection/graph")) return Promise.resolve({ ok: true, status: 200, json: async () => graphPayload });
+  if (requestUrl.includes("/api/detection/risk")) return Promise.resolve({ ok: true, status: 200, json: async () => riskPayload });
+  if (requestUrl.includes("/api/investigations/missing-case")) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        available: false,
+        message: "Investigation not found for the active tenant.",
+      }),
+    });
+  }
+  if (requestUrl.includes("/api/investigations/queue")) {
+    return Promise.resolve({ ok: true, status: 200, json: async () => investigationsPayload });
+  }
+  if (requestUrl.includes("/api/claims/C-1")) return Promise.resolve({ ok: true, status: 200, json: async () => claimDetailPayload });
+  if (requestUrl.includes("/api/claims")) return Promise.resolve({ ok: true, status: 200, json: async () => claimsPayload });
+  return Promise.resolve({ ok: false, status: 404, json: async () => ({ available: false, message: "not found" }) });
 }
 
-function mockFetchFailure() {
-  global.fetch = vi.fn((url) => {
-    if (String(url).includes("/api/detection/report")) {
-      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Report unavailable (503)" }) });
+function mockFetch(session = activeSession) {
+  global.fetch = createSessionFetch(session, operationalResponse);
+}
+
+function mockFetchFailure(session = activeSession) {
+  global.fetch = createSessionFetch(session, (requestUrl) => {
+    if (requestUrl.includes("/api/detection/report")) {
+      return Promise.resolve({ ok: false, status: 503, json: async () => ({ available: false, message: "Report unavailable (503)" }) });
     }
-    if (String(url).includes("/api/detection/graph")) {
-      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Graph unavailable (503)" }) });
+    if (requestUrl.includes("/api/detection/graph")) {
+      return Promise.resolve({ ok: false, status: 503, json: async () => ({ available: false, message: "Graph unavailable (503)" }) });
     }
-    if (String(url).includes("/api/detection/risk")) {
-      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Risk unavailable (503)" }) });
+    if (requestUrl.includes("/api/detection/risk")) {
+      return Promise.resolve({ ok: false, status: 503, json: async () => ({ available: false, message: "Risk unavailable (503)" }) });
     }
-    if (String(url).includes("/api/claims")) {
-      return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "Claims unavailable (503)" }) });
+    if (requestUrl.includes("/api/claims")) {
+      return Promise.resolve({ ok: false, status: 503, json: async () => ({ available: false, message: "Claims unavailable (503)" }) });
     }
-    return Promise.resolve({ ok: false, json: async () => ({ available: false, message: "not found" }) });
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ available: false, message: "not found" }) });
   });
 }
 
@@ -188,8 +194,8 @@ function claimsNavigationLink() {
 }
 
 beforeEach(() => {
+  activeSession = SESSION_FIXTURES.analyst;
   window.history.pushState({}, "", "/dashboard");
-  window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
   vi.useRealTimers();
   mockFetch();
 });
@@ -211,11 +217,14 @@ test("renders dashboard and routes to claim details", async () => {
   ).toBeInTheDocument();
   expect(screen.getByText(/Claims Screened/i)).toBeInTheDocument();
 
-  for (const [, requestOptions] of global.fetch.mock.calls.slice(0, 3)) {
-    expect(requestOptions.headers.get("x-claimguard-user")).toBe("analyst-alpha");
-    expect(requestOptions.headers.get("x-claimguard-role")).toBe("fraud_analyst");
-    expect(requestOptions.headers.get("x-claimguard-user-tenant")).toBe("tenant_alpha");
-    expect(requestOptions.headers.get("x-claimguard-tenant")).toBe("tenant_alpha");
+  const operationalCalls = global.fetch.mock.calls.filter(([url]) => {
+    const requestUrl = String(url);
+    return requestUrl.includes("/api/detection/") || requestUrl.includes("/api/claims");
+  });
+  for (const [, requestOptions] of operationalCalls.slice(0, 3)) {
+    for (const name of ["x-claimguard-user", "x-claimguard-role", "x-claimguard-user-tenant", "x-claimguard-tenant"]) {
+      expect(requestOptions.headers.has(name)).toBe(false);
+    }
   }
 
   await user.click(claimsNavigationLink());
@@ -284,7 +293,8 @@ test("shows unavailable state without substituting demo analytics when backend A
 
 test("renders the tenant investigation queue and applies operational filters", async () => {
   const user = userEvent.setup();
-  window.localStorage.setItem("claimguard-dev-identity", "investigator-alpha");
+  activeSession = SESSION_FIXTURES.investigator;
+  mockFetch(activeSession);
   window.history.pushState({}, "", "/investigations");
 
   render(<AppRoot />);
