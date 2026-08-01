@@ -12,12 +12,12 @@ export function formatEnumLabel(value, fallback = "Unknown") {
 
 export function PageFrame({ eyebrow, title, description, actions, children }) {
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-border/70 pb-5 lg:flex-row lg:items-center lg:justify-between">
+    <div className="space-y-7">
+      <header className="flex flex-col gap-4 border-b border-border pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-1.5">
           {eyebrow ? <p className="font-data text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{eyebrow}</p> : null}
-          <h1 className="font-display text-[1.7rem] font-semibold leading-tight tracking-tight text-foreground sm:text-[1.85rem] lg:text-[2.05rem]">{title}</h1>
-          {description ? <p className="max-w-3xl text-[13px] leading-6 text-muted-foreground sm:text-sm">{description}</p> : null}
+          <h1 className="font-display text-[1.85rem] font-bold leading-tight tracking-tight text-foreground sm:text-[2rem] lg:text-[2.15rem]">{title}</h1>
+          {description ? <p className="max-w-4xl text-sm leading-6 text-muted-foreground sm:text-[15px]">{description}</p> : null}
         </div>
         {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
       </header>
@@ -84,12 +84,12 @@ export function StatCard({ title, value, description, icon: Icon, tone = "defaul
 
   if (isConsole) {
     return (
-      <Card className={`relative min-h-[116px] overflow-hidden rounded-xl border bg-card p-4 shadow-sm ${styles.border}`}>
+      <Card className="relative min-h-[132px] overflow-hidden rounded-xl border border-border/90 bg-card p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-medium text-muted-foreground">{title}</span>
-          {Icon ? <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${styles.chip}`}><Icon className="h-4 w-4" /></span> : null}
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</span>
+          {Icon ? <Icon className={`h-4 w-4 ${styles.value}`} aria-hidden="true" /> : null}
         </div>
-        <div className={`mt-4 font-data text-3xl font-semibold tracking-tight ${styles.value}`}>{value}</div>
+        <div className={`mt-4 font-display text-[2rem] font-bold leading-none tracking-tight ${styles.value}`}>{value}</div>
         {description ? <div className="mt-2 text-xs leading-5 text-muted-foreground">{description}</div> : null}
       </Card>
     );

@@ -96,7 +96,7 @@ export function InvestigatorLayout({ ledgerStatus }) {
   const accountInitials = initialsFromLabel(effectiveIdentity.label);
 
   const [theme, setTheme] = useState(
-    () => window.localStorage.getItem("claimguard-theme") || "dark",
+    () => window.localStorage.getItem("claimguard-theme") || "light",
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -222,7 +222,7 @@ export function InvestigatorLayout({ ledgerStatus }) {
               <span className={`min-w-0 ${sidebarCollapsed ? "lg:hidden" : ""}`}>
                 <span className="block truncate text-sm font-semibold tracking-tight">ClaimGuard</span>
                 <span className="mt-0.5 block truncate text-[10px] text-[hsl(var(--sidebar-foreground)/0.58)]">
-                  {workspaceLabel}
+                  {isPlatformWorkspace ? workspaceLabel : "Network · Fraud Detection"}
                 </span>
               </span>
             </Link>
@@ -303,33 +303,22 @@ export function InvestigatorLayout({ ledgerStatus }) {
                   <LogOut className="h-4 w-4" />
                 </Button>
               ) : (
-                <div className="rounded-lg border border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-accent)/0.45)] p-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[hsl(var(--sidebar-primary)/0.18)] text-xs font-semibold text-[hsl(var(--sidebar-primary))]">
-                      {accountInitials}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-semibold">{effectiveIdentity.label}</p>
-                      <p className="mt-0.5 truncate text-[10px] text-[hsl(var(--sidebar-foreground)/0.55)]">{roleLabel}</p>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="mt-2.5 h-8 w-full justify-start text-xs text-[hsl(var(--sidebar-foreground)/0.7)] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-foreground))]"
-                    onClick={logout}
-                  >
-                    <LogOut className="mr-2 h-3.5 w-3.5" /> Sign out
-                  </Button>
-                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-10 w-full justify-start text-xs text-[hsl(var(--sidebar-foreground)/0.7)] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-foreground))]"
+                  onClick={logout}
+                >
+                  <LogOut className="mr-2 h-3.5 w-3.5" /> Sign out
+                </Button>
               )}
             </div>
           ) : null}
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-20 hidden min-h-14 items-center gap-3 border-b border-border bg-card/95 px-4 lg:flex">
+          <header className="sticky top-0 z-20 hidden min-h-16 items-center gap-3 border-b border-border bg-card px-5 lg:flex">
             <Button
               variant="ghost"
               size="sm"
@@ -341,17 +330,17 @@ export function InvestigatorLayout({ ledgerStatus }) {
             </Button>
 
             {canSearchClaims ? (
-              <Button asChild variant="outline" size="sm" className="h-9 min-w-[170px] justify-start text-muted-foreground">
+              <Button asChild variant="outline" size="sm" className="h-10 w-full max-w-[520px] justify-start rounded-lg bg-background/60 text-muted-foreground shadow-sm">
                 <Link to="/claims">
-                  <Search className="mr-2 h-4 w-4" /> Search claims
+                  <Search className="mr-2.5 h-4 w-4" /> Search claims, providers, cases…
                 </Link>
               </Button>
             ) : null}
 
             <div className="ml-auto flex min-w-0 items-center gap-2">
-              <div className="hidden min-w-0 items-center gap-1.5 rounded-md border border-border bg-secondary/45 px-2.5 py-1.5 xl:flex">
+              <div className="hidden h-10 min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 shadow-sm xl:flex">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{contextLabel}</span>
-                <span className="max-w-[190px] truncate text-xs font-semibold">{contextValue}</span>
+                <span className="max-w-[210px] truncate text-sm font-medium">{contextValue}</span>
               </div>
               <div className="hidden items-center gap-1.5 rounded-md border border-border bg-secondary/45 px-2.5 py-1.5 2xl:flex">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Role:</span>
@@ -366,13 +355,17 @@ export function InvestigatorLayout({ ledgerStatus }) {
               <Button variant="ghost" size="sm" className="h-9 w-9" onClick={toggleTheme} aria-label="Toggle theme">
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </Button>
-              <span className="grid h-8 w-8 place-items-center rounded-full bg-primary/12 text-xs font-semibold text-primary" title={effectiveIdentity.label}>
+              <span className="grid h-9 w-9 place-items-center rounded-full bg-primary/12 text-xs font-semibold text-primary" title={effectiveIdentity.label}>
                 {accountInitials}
               </span>
+              <div className="hidden min-w-0 2xl:block">
+                <p className="max-w-[160px] truncate text-xs font-semibold">{effectiveIdentity.label}</p>
+                <p className="mt-0.5 max-w-[160px] truncate text-[10px] text-muted-foreground">{roleLabel}</p>
+              </div>
             </div>
           </header>
 
-          <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 p-4 outline-none sm:p-6 xl:p-8">
+          <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 bg-background p-4 outline-none sm:p-6 xl:p-8">
             <div className="mb-4 flex flex-wrap items-center gap-2 lg:hidden">
               <div className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{contextLabel}</span>

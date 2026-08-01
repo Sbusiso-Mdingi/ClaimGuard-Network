@@ -205,6 +205,32 @@ function ActivityFeed({ items = [] }) {
   );
 }
 
+function RiskDistributionChart({ distribution, highestBand }) {
+  return (
+    <div className="px-5 pt-5">
+      <div className="flex h-36 items-end gap-3 border-b border-border/80 px-1" aria-label="Risk distribution chart">
+        {distribution.map((band) => {
+          const height = band.count > 0
+            ? Math.max(10, (band.count / highestBand) * 100)
+            : 3;
+          return (
+            <div key={band.severity} className="flex h-full min-w-0 flex-1 items-end">
+              <span
+                className={`block w-full rounded-t-md ${band.tone}`}
+                style={{ height: `${height}%` }}
+                title={`${band.severity}: ${band.count}`}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-4 gap-3 px-1 pt-2 text-center text-[10px] text-muted-foreground">
+        {distribution.map((band) => <span key={band.severity}>{band.severity}</span>)}
+      </div>
+    </div>
+  );
+}
+
 function DashboardSkeleton() {
   return (
     <div className="space-y-6">
@@ -293,17 +319,18 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
 
   return (
     <PageFrame
-      eyebrow="Investigator workspace"
-      title="Claims risk intelligence"
-      description="Fraud detection, investigation prioritisation, and suspicious relationship monitoring for the active scheme partition."
+      eyebrow="Scheme intelligence"
+      title="Executive dashboard"
+      description="Scheme-wide fraud, waste and abuse posture across screened claims, active investigations, and suspicious relationship signals."
       actions={[
+        <MetricPill key="scheme" label="Scheme" value={identity?.tenantLabel || identity?.tenantSlug || "Active scheme"} />,
         <MetricPill key="ledger" label="Ledger" value={metrics?.ledgerStatus || "Unknown"} tone={metrics?.ledgerStatus === "Connected" ? "success" : "warning"} />,
         <MetricPill key="refresh" label="Refreshed" value={lastRefresh ? new Date(lastRefresh).toLocaleTimeString("en-GB") : "Waiting"} />,
       ]}
     >
       <section aria-label="Detection summary" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard variant="console" title="Claims screened" value={totalClaims} description="Total volume represented by the current operational snapshot." icon={FileText} />
-        <StatCard variant="console" title="Priority alerts" value={highRiskClaims} description="Scored claims currently above the high-risk threshold." icon={ShieldAlert} tone="danger" />
+        <StatCard variant="console" title="Flagged for review" value={highRiskClaims} description="Scored claims currently above the high-risk threshold." icon={ShieldAlert} tone="danger" />
         <StatCard variant="console" title="Average risk score" value={averageRiskScore} description="Mean persisted detection score for the current snapshot." icon={AlertTriangle} tone={riskScoreTone(averageRiskScore)} />
         <StatCard variant="console" title="Active networks" value={activeNetworks} description="Suspicious linked-entity clusters identified by the graph projection." icon={Radar} />
       </section>
@@ -323,6 +350,7 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
           title="Risk distribution"
           description="Current claim severity distribution in the active workspace."
         >
+          <RiskDistributionChart distribution={distribution} highestBand={highestBand} />
           <div className="space-y-4 p-5">
             {distribution.map((band) => (
               <div key={band.severity} className="space-y-1.5">
