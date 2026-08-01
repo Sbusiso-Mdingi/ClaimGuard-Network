@@ -1,5 +1,5 @@
 import React, { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Button } from "./components/ui/button";
 import { useInvestigatorData } from "./hooks/useInvestigatorData";
@@ -33,6 +33,7 @@ const InvestigationWorkspacePage = lazyNamed(() => import("./features/investigat
 const CommitteeRegistryPage = lazyNamed(() => import("./features/investigator/CommitteeRegistryPage"), "CommitteeRegistryPage");
 const SchemeAdminPage = lazyNamed(() => import("./features/investigator/SchemeAdminPage"), "SchemeAdminPage");
 const PlatformAdminPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformAdminPage");
+const ProfilePage = lazyNamed(() => import("./features/auth/ProfilePage"), "ProfilePage");
 
 function StatusScreen({ title, description, actionLabel, onAction }) {
   return (
@@ -52,11 +53,17 @@ function RoleLanding() {
 
 function InvestigatorRoutes() {
   const { identity } = useRole();
+  const location = useLocation();
   const operationalWorkspaceEnabled = identity.organisationType !== "platform" && hasAnyCapability(identity, [
     "claims.view_own", "reports.view_own", "investigations.view",
   ]);
-  const data = useInvestigatorData({ enabled: operationalWorkspaceEnabled });
-  const ledger = useLedgerStatus({ enabled: operationalWorkspaceEnabled });
+  const needsSharedOperationalData = location.pathname === "/dashboard"
+    || location.pathname.startsWith("/claims")
+    || location.pathname === "/network"
+    || location.pathname === "/risk"
+    || location.pathname === "/history";
+  const data = useInvestigatorData({ enabled: operationalWorkspaceEnabled && needsSharedOperationalData });
+  const ledger = useLedgerStatus({ enabled: operationalWorkspaceEnabled && needsSharedOperationalData });
 
   function renderResourceContent(readyElement, { status, error, loadingTitle, loadingDescription, errorTitle, errorDescription }) {
     if (status === "loading") return <StatusScreen title={loadingTitle} description={loadingDescription || "Fetching tenant-scoped operational data..."} />;
@@ -80,6 +87,7 @@ function InvestigatorRoutes() {
           <Route path="committee" element={<RequireRoleAccess navKey="committee"><CommitteeRegistryPage /></RequireRoleAccess>} />
           <Route path="admin/scheme" element={<RequireRoleAccess navKey="scheme-admin"><SchemeAdminPage /></RequireRoleAccess>} />
           <Route path="admin/platform" element={<RequireRoleAccess navKey="platform-admin"><PlatformAdminPage /></RequireRoleAccess>} />
+          <Route path="profile" element={<ProfilePage />} />
           <Route path="access" element={<StatusScreen title="No workspace access" description="This account is authenticated but has no ClaimGuard workspace capabilities. Ask an administrator to review its organisation membership and roles." />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

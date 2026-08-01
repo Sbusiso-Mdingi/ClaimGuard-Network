@@ -232,6 +232,16 @@ export function createAuthenticationRepository(defaultExecutor) {
       return Number(result.affectedRows || 0);
     },
 
+    async revokeOtherSessionsByCredential(credentialId, currentSessionId, reason, { executor } = {}) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE login_sessions
+         SET revoked_at = UTC_TIMESTAMP(3), revocation_reason = ?
+         WHERE credential_id = ? AND session_id <> ? AND revoked_at IS NULL`,
+        [reason, credentialId, currentSessionId],
+      );
+      return Number(result.affectedRows || 0);
+    },
+
     async getThrottleBucket(bucketKey, { executor } = {}) {
       const [rows] = await executorOr(defaultExecutor, executor).execute(
         "SELECT * FROM login_throttle_buckets WHERE bucket_key = ? LIMIT 1",

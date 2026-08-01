@@ -73,7 +73,7 @@ test("successful login uses cookies, stores CSRF only in memory, and sends no au
   await user.type(screen.getByLabelText("Username"), "fraud.user");
   await user.type(screen.getByLabelText("Password"), "test-value");
   await user.click(screen.getByRole("button", { name: /^Sign in$/i }));
-  expect(await screen.findByText("Session User")).toBeInTheDocument();
+  expect(await screen.findAllByRole("button", { name: "Open account menu for Session User" })).not.toHaveLength(0);
 
   const loginCall = global.fetch.mock.calls.find(([url]) => String(url).endsWith("/api/auth/login"));
   expect(loginCall[1].credentials).toBe("same-origin");
