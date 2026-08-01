@@ -121,5 +121,5 @@ test("prospective ML detection is presented without retrospective ensemble field
   assert.equal(claim.detection.modelVersion, "1.0.0");
   assert.equal(claim.detection.ensembleId, null);
   assert.equal(claim.detection.ensembleVersion, null);
-  assert.match(claim.evidence[0], /Prospective ML model classified/);
+  assert.match(claim.evidence[0], /screening signal, not a fraud finding/);
 });

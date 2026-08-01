@@ -53,10 +53,10 @@ function rulePresentation(rule, claim) {
     const probability = percentageLabel(score.fraudProbability);
     const threshold = percentageLabel(score.threshold);
     return {
-      label: "ML review threshold met",
+      label: "Fraud-risk review recommended",
       explanation: probability && threshold
-        ? `Fraud probability ${probability} exceeded the fitted review threshold of ${threshold}.`
-        : "The prospective fraud model crossed its fitted review threshold and recommended human review.",
+        ? `The model-estimated risk of ${probability} met the configured ${threshold} review threshold. This recommends human review; it does not establish fraud.`
+        : "The prospective model recommended human review. This screening outcome does not establish fraud.",
     };
   }
   if (rule === "MODEL_REVIEW_RECOMMENDED") {
@@ -109,6 +109,26 @@ function RiskPanel({ claim, ledgerReference }) {
   const modelThreshold = percentageLabel(
     score.threshold ?? score.baselineThreshold,
   );
+  const inputDrift = claim?.detection?.inputDrift || null;
+  const driftStatus = inputDrift?.status || "NOT_ASSESSED";
+  const driftLabel = {
+    IN_DISTRIBUTION: "No drift detected",
+    WATCH: "Drift watch",
+    OUT_OF_DISTRIBUTION: "Outside known inputs",
+    PROFILE_UNAVAILABLE: "Profile unavailable",
+    NOT_ASSESSED: "Not assessed",
+  }[driftStatus] || driftStatus;
+  const driftTone = driftStatus === "OUT_OF_DISTRIBUTION"
+    ? "danger"
+    : driftStatus === "WATCH" || driftStatus === "PROFILE_UNAVAILABLE"
+      ? "warning"
+      : driftStatus === "IN_DISTRIBUTION"
+        ? "success"
+        : "info";
+  const driftSignals = Array.isArray(inputDrift?.signals) ? inputDrift.signals : [];
+  const reviewDecision = score.reviewRecommended === true
+    || claim.triggeredRules?.includes("PROSPECTIVE_ML_REVIEW_RECOMMENDED")
+    || score.compositeReviewRecommended === true;
 
   return (
     <SectionCard title="Risk summary" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
@@ -151,11 +171,34 @@ function RiskPanel({ claim, ledgerReference }) {
         <div className="rounded-xl border border-border/70 px-4 py-3">
           <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Model assessment</p>
           <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div><dt className="text-xs text-muted-foreground">Decision</dt><dd className="mt-1 font-medium">{score.predictedClass || score.baselinePredictedClass || (claim.triggeredRules?.length ? "Review recommended" : "No review")}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Fraud probability</dt><dd className="mt-1 font-data font-medium">{modelProbability || "Not supplied"}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Review outcome</dt><dd className="mt-1 font-medium">{reviewDecision ? "Human review recommended" : "No review recommended"}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Model-estimated fraud risk</dt><dd className="mt-1 font-data font-medium">{modelProbability || "Not supplied"}</dd></div>
             <div><dt className="text-xs text-muted-foreground">Review threshold</dt><dd className="mt-1 font-data font-medium">{modelThreshold || "Not supplied"}</dd></div>
             <div><dt className="text-xs text-muted-foreground">Model</dt><dd className="mt-1 break-all font-data text-xs font-medium">{claim.detection?.modelDeploymentId || claim.detection?.modelId || "Configured rules"}</dd></div>
           </dl>
+        </div>
+
+        <div className="rounded-xl border border-border/70 px-4 py-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Input drift check</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {inputDrift?.message || "This score predates the current drift profile or was produced by a model without one."}
+              </p>
+            </div>
+            <StatusIndicator tone={driftTone}>{driftLabel}</StatusIndicator>
+          </div>
+          {driftSignals.length > 0 ? (
+            <ul className="mt-3 space-y-2">
+              {driftSignals.slice(0, 6).map((signal, index) => (
+                <li key={`${signal.feature}-${index}`} className="rounded-lg bg-secondary/30 px-3 py-2 text-xs leading-5">
+                  <span className="font-semibold">{String(signal.feature || "Input").replaceAll("_", " ")}</span>
+                  {": "}{signal.observed === null || signal.observed === undefined ? "missing" : String(signal.observed)}
+                  <span className="text-muted-foreground"> · expected {signal.expected || "a known training value"}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       </div>
     </SectionCard>

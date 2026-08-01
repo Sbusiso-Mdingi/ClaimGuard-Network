@@ -32,6 +32,18 @@ export function NetworkPage({ graph }) {
             relationship.review_recommended === true
             || (Number.isFinite(relationship.risk_score) && relationship.risk_score >= 75)
           )).length,
+      networks: Number.isFinite(graph?.summary?.active_cluster_count)
+        ? graph.summary.active_cluster_count
+        : 0,
+      representedClaims: Number.isFinite(graph?.summary?.represented_claim_count)
+        ? graph.summary.represented_claim_count
+        : relationships.length,
+      isolatedSignals: Number.isFinite(graph?.summary?.isolated_review_claim_count)
+        ? graph.summary.isolated_review_claim_count
+        : 0,
+      refreshSeconds: Number.isFinite(graph?.summary?.refresh_interval_seconds)
+        ? graph.summary.refresh_interval_seconds
+        : 15,
       truncated: graph?.summary?.truncated === true,
     };
   }, [graph, selectedDetails]);
@@ -39,23 +51,22 @@ export function NetworkPage({ graph }) {
   return (
     <PageFrame
       eyebrow="Network Intelligence"
-      title="Scheme relationship network"
-      description="Trace real member-to-provider claim links, identify repeated connections, and open the claims behind elevated-risk relationships."
+      title="Fraud network candidates"
+      description="Connected review signals only: a candidate needs at least three flagged claims spanning two members and two providers before it appears here."
       actions={[
-        <MetricPill key="entities" label="Entities" value={graphStats.entities} />,
-        <MetricPill key="relationships" label="Relationships" value={graphStats.relationships} />,
-        <MetricPill key="providers" label="Providers" value={graphStats.providers} />,
-        <MetricPill key="members" label="Members" value={graphStats.members} />,
+        <MetricPill key="networks" label="Candidate networks" value={graphStats.networks} />,
+        <MetricPill key="claims" label="Linked claims" value={graphStats.representedClaims} />,
+        <MetricPill key="refresh" label="Refresh" value={`~${graphStats.refreshSeconds}s`} />,
       ]}
     >
       {graphStats.entities === 0 ? (
-        <WorkspaceNotice title="No network data available" tone="warning">
-          Entity-relationship data has not been returned in this snapshot yet.
+        <WorkspaceNotice title="No connected fraud-network candidate currently" tone="success">
+          Isolated claim review signals remain in Claims Explorer. This view stays empty until a connected multi-member, multi-provider pattern meets the candidate rule.
         </WorkspaceNotice>
       ) : null}
       {graphStats.truncated ? (
         <WorkspaceNotice title="Showing the highest-priority 500 claim relationships" tone="warning">
-          The scheme contains more graphable claims than the interactive view can safely render at once. Counts remain scheme-wide; the graph prioritises higher-risk and newer links.
+          The scheme contains more connected review signals than the interactive view can safely render at once. Counts remain scheme-wide; the graph prioritises higher-risk and newer links.
         </WorkspaceNotice>
       ) : null}
 
@@ -63,34 +74,33 @@ export function NetworkPage({ graph }) {
         ariaLabel="Network summary"
         items={[
           {
-            key: "entities",
-            label: "Entities",
-            value: graphStats.entities,
-            description: "Nodes in current projection",
-            icon: Users,
+            key: "networks",
+            label: "Candidate networks",
+            value: graphStats.networks,
+            description: "Connected multi-claim clusters",
+            icon: Radar,
           },
           {
-            key: "relationships",
-            label: "Relationships",
-            value: graphStats.relationships,
-            description: "Links between entities",
+            key: "linked-claims",
+            label: "Linked claims",
+            value: graphStats.representedClaims,
+            description: "Flagged claims represented below",
             icon: Network,
           },
           {
             key: "review-signals",
             label: "Review signals",
             value: graphStats.reviewSignals,
-            description: "Relationships with model review recommendations",
+            description: "All graph-eligible review signals",
             icon: ShieldAlert,
             iconClassName: graphStats.reviewSignals > 0 ? "text-rose-500" : "text-muted-foreground",
           },
           {
-            key: "selected",
-            label: "Selected links",
-            value: graphStats.selectedLinks,
-            description: "Connections tied to selected node",
-            icon: Radar,
-            iconClassName: selectedNodeId ? "text-primary" : "text-muted-foreground",
+            key: "isolated",
+            label: "Isolated signals",
+            value: graphStats.isolatedSignals,
+            description: "Flagged claims excluded from networks",
+            icon: Users,
           },
         ]}
       />
@@ -98,14 +108,14 @@ export function NetworkPage({ graph }) {
       <div className="grid gap-4 xl:grid-cols-[1.65fr_0.95fr]">
         <SectionCard
           variant="console"
-          title="Network graph"
-          description="Zoom, pan, and select a member or provider. Red links contain a model review recommendation; amber links carry a medium-or-higher score."
+          title="Suspicious connected claims"
+          description={`Near-real-time projection, refreshed about every ${graphStats.refreshSeconds} seconds after scores are saved. Zoom, pan, and select a member or provider.`}
           actions={[
             <StatusIndicator key="selected" variant="badge">{selectedNodeId ? "Node selected" : "No node selected"}</StatusIndicator>,
           ]}
         >
           {graphStats.entities === 0 ? (
-            <EmptyState compact icon={Network} title="Graph unavailable" description="No graph entities are available for rendering in this view." />
+            <EmptyState compact icon={Network} title="No connected candidate" description="No three-claim, multi-member, multi-provider review pattern meets the projection rule yet." />
           ) : (
             <NetworkGraph
               graph={graph}
@@ -118,7 +128,7 @@ export function NetworkPage({ graph }) {
         <SectionCard
           variant="console"
           title="Graph details"
-          description="Selected node context, relationship count, and local cluster metadata."
+          description="Selected node context and the review-recommended claims in its candidate network."
         >
           <div className="space-y-4 p-5">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
@@ -150,7 +160,7 @@ export function NetworkPage({ graph }) {
                     ) : selectedDetails.links.slice(0, 20).map((rel, idx) => (
                       <div key={`${rel.source_entity_id}-${rel.target_entity_id}-${rel.claim_id || idx}`} className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-3 text-xs leading-5">
                         <p className="break-all">{rel.source_entity_id} → {rel.target_entity_id}</p>
-                        <p className="mt-1 text-muted-foreground">Risk {Number.isFinite(rel.risk_score) ? rel.risk_score : "awaiting score"} · {rel.review_recommended ? "review recommended" : "no review signal"}</p>
+                        <p className="mt-1 text-muted-foreground">Risk {Number.isFinite(rel.risk_score) ? rel.risk_score : "awaiting score"} · human review recommended</p>
                         {rel.claim_id ? <Link to={`/claims/${encodeURIComponent(rel.claim_id)}`} className="mt-2 inline-flex font-semibold text-primary hover:underline">Open claim {rel.claim_id}</Link> : null}
                       </div>
                     ))}

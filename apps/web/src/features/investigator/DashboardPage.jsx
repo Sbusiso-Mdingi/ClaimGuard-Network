@@ -283,6 +283,9 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
   const scoredClaims = Number.isFinite(metrics?.scoredClaims) ? metrics.scoredClaims : null;
   const unscoredClaims = Number.isFinite(metrics?.unscoredClaims) ? metrics.unscoredClaims : null;
   const activeNetworks = Number.isFinite(metrics?.activeFraudSchemes) ? metrics.activeFraudSchemes : "Unavailable";
+  const driftAttentionCount = metrics?.inputDrift
+    ? Number(metrics.inputDrift.watch || 0) + Number(metrics.inputDrift.outOfDistribution || 0)
+    : null;
   const trend = buildDetectionTrend(allClaims);
   const distribution = buildSchemeRiskDistribution(metrics?.riskDistribution)
     || buildRiskDistribution(allClaims);
@@ -342,8 +345,9 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
       actions={[
         <MetricPill key="scheme" label="Scheme" value={identity?.tenantLabel || identity?.tenantSlug || "Active scheme"} />,
         <MetricPill key="ledger" label="Ledger" value={metrics?.ledgerStatus || "Unknown"} tone={metrics?.ledgerStatus === "Connected" ? "success" : "warning"} />,
+        driftAttentionCount !== null && <MetricPill key="drift" label="Drift watch" value={driftAttentionCount} tone={driftAttentionCount > 0 ? "warning" : "success"} />,
         <MetricPill key="refresh" label="Refreshed" value={lastRefresh ? new Date(lastRefresh).toLocaleTimeString("en-GB") : "Waiting"} />,
-      ]}
+      ].filter(Boolean)}
     >
       <section aria-label="Detection summary" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
