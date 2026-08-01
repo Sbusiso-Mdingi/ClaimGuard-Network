@@ -43,7 +43,7 @@ Do not put the private key, pepper, cursor secret, session material, or database
 
 1. Generate and escrow the activation pepper, cursor secret, and Ed25519 enrollment key under the production operator boundary.
 2. Add the three secrets to the production Key Vault and bind version-pinned Key Vault references plus the public origin/key ID to `claimguard-api` as one reviewed change.
-3. Mark PR 117 ready, obtain the required independent approval, and merge it to `main`.
+3. Obtain the required independent approval for the pending desktop-readiness pull request and merge it to `main`.
 4. Run the governed production deployment for the exact reviewed main SHA. It applies control-plane migration `0016_desktop_device_enrollment.sql`, deploys the API, and requires desktop readiness to become true.
 5. Create the protected `desktop-pilot` GitHub environment with required reviewers and these public variables:
    - `DESKTOP_ACTIVATION_ORIGIN=https://claimguard-api.azurewebsites.net`
