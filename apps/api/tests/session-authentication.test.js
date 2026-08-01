@@ -16,7 +16,7 @@ function configuration(overrides = {}) {
 
 function actor({ platform = false } = {}) {
   return {
-    user: { userId: "user-1", displayName: "Investigator" },
+    user: { userId: "user-1", displayName: "Investigator", canonicalContact: "investigator@alpha.test", status: "active" },
     organisation: {
       organisationId: platform ? "platform-org" : "org-1",
       displayName: platform ? "ClaimGuard" : "Alpha",
@@ -24,21 +24,22 @@ function actor({ platform = false } = {}) {
       organisationType: platform ? "platform" : "medical_scheme",
       deploymentClass: "demo",
     },
-    membership: { membershipId: "membership-1" },
-    credential: { credentialId: "credential-1" },
+    membership: { membershipId: "membership-1", status: "active" },
+    credential: { credentialId: "credential-1", authenticationProvider: "local_password", normalizedUsername: "investigator", status: "active" },
     roles: [platform ? "platform_administrator" : "investigator"],
     permissions: platform ? ["organisation.manage", "platform_health.view"] : ["reports.view_own", "investigations.manage"],
     legacyTenant: platform ? null : { tenantId: "tenant-alpha", tenantSlug: "alpha" },
   };
 }
 
-function authService({ loginFailure = false, platform = false } = {}) {
-  const calls = { events: [], logout: 0, login: 0 };
+function authService({ loginFailure = false, platform = false, passwordChangeFailure = null } = {}) {
+  const calls = { events: [], logout: 0, login: 0, passwordChanges: [] };
   const resolved = {
     actor: actor({ platform }),
     session: {
       sessionId: "session-1", organisationId: platform ? "platform-org" : "org-1",
       userId: "user-1", membershipId: "membership-1", credentialId: "credential-1",
+      issuedAt: new Date("2026-07-16T08:00:00Z"), lastActivityAt: new Date("2026-07-16T08:10:00Z"),
       idleExpiresAt: new Date("2026-07-16T09:00:00Z"), absoluteExpiresAt: new Date("2026-07-16T16:00:00Z"),
       csrfTokenHash: "hash",
     },
@@ -55,6 +56,11 @@ function authService({ loginFailure = false, platform = false } = {}) {
     verifyCsrf(_session, token) { return token === "csrf-token"; },
     async rotateCsrf() { return "csrf-token"; },
     async logout() { calls.logout += 1; return true; },
+    async changePassword(_resolved, input) {
+      calls.passwordChanges.push(input);
+      if (passwordChangeFailure) throw passwordChangeFailure;
+      return { changed: true, changedAt: new Date("2026-07-16T08:20:00Z"), otherSessionsRevoked: 2 };
+    },
     async recordSecurityEvent(...args) { calls.events.push(args); },
   };
 }
@@ -148,6 +154,40 @@ test("CSRF requires both allowed Origin and the session-bound token while GET re
   assert.equal(wrongOrigin.status, 403);
   assert.equal(valid.status, 200);
   assert.match(valid.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("authenticated users can change a local password and revoke their other sessions", async () => {
+  const { app, service } = sessionApp();
+  const response = await app.request("http://localhost/auth/password/change", {
+    method: "POST",
+    headers: {
+      cookie: `__Host-cg_session=${"s".repeat(43)}`,
+      origin: "http://localhost",
+      "x-csrf-token": "csrf-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ currentPassword: "current-password", newPassword: "new-password-value" }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(service.calls.passwordChanges, [{ currentPassword: "current-password", newPassword: "new-password-value" }]);
+  assert.equal((await response.json()).otherSessionsRevoked, 2);
+});
+
+test("password change enforces the stricter platform administrator minimum", async () => {
+  const { app, service } = sessionApp({ platform: true });
+  const response = await app.request("http://localhost/auth/password/change", {
+    method: "POST",
+    headers: {
+      cookie: `__Host-cg_session=${"s".repeat(43)}`,
+      origin: "http://localhost",
+      "x-csrf-token": "csrf-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ currentPassword: "current-password", newPassword: "short-pass" }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "WEAK_PASSWORD");
+  assert.equal(service.calls.passwordChanges.length, 0);
 });
 
 test("backend construction fails closed without a session service or explicit provider", () => {

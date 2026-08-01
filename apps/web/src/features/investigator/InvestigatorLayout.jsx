@@ -20,6 +20,7 @@ import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { useRole } from "../../context/RoleContext";
+import { AccountMenu } from "../auth/AccountMenu";
 import { canAccessNavItem, NAV_GROUPS } from "../../lib/roleNav";
 import {
   defaultRouteForIdentity,
@@ -35,14 +36,6 @@ function isLiveDetectionRoute(pathname) {
     pathname === "/risk" ||
     pathname === "/history"
   );
-}
-
-function initialsFromLabel(label) {
-  const words = String(label || "Account")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  return words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join("") || "CG";
 }
 
 const NAV_ICONS = Object.freeze({
@@ -93,7 +86,6 @@ export function InvestigatorLayout({ ledgerStatus }) {
   const contextLabel = isPlatformWorkspace ? "Organisation:" : "Scheme:";
   const contextValue = effectiveIdentity.tenantLabel || effectiveIdentity.tenantId || "Unknown";
   const roleLabel = formatIdentityRoles(effectiveIdentity);
-  const accountInitials = initialsFromLabel(effectiveIdentity.label);
 
   const [theme, setTheme] = useState(
     () => window.localStorage.getItem("claimguard-theme") || "light",
@@ -177,15 +169,18 @@ export function InvestigatorLayout({ ledgerStatus }) {
             <p className="mt-1 truncate text-[10px] text-muted-foreground">{workspaceLabel}</p>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-11 w-11 rounded-md"
-          onClick={toggleTheme}
-          aria-label="Toggle theme on mobile"
-        >
-          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-11 w-11 rounded-md"
+            onClick={toggleTheme}
+            aria-label="Toggle theme on mobile"
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+          <AccountMenu identity={effectiveIdentity} roleLabel={roleLabel} onLogout={logout} compact />
+        </div>
       </div>
 
       {sidebarOpen ? (
@@ -355,13 +350,7 @@ export function InvestigatorLayout({ ledgerStatus }) {
               <Button variant="ghost" size="sm" className="h-9 w-9" onClick={toggleTheme} aria-label="Toggle theme">
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </Button>
-              <span className="grid h-9 w-9 place-items-center rounded-full bg-primary/12 text-xs font-semibold text-primary" title={effectiveIdentity.label}>
-                {accountInitials}
-              </span>
-              <div className="hidden min-w-0 2xl:block">
-                <p className="max-w-[160px] truncate text-xs font-semibold">{effectiveIdentity.label}</p>
-                <p className="mt-0.5 max-w-[160px] truncate text-[10px] text-muted-foreground">{roleLabel}</p>
-              </div>
+              <AccountMenu identity={effectiveIdentity} roleLabel={roleLabel} onLogout={logout} />
             </div>
           </header>
 

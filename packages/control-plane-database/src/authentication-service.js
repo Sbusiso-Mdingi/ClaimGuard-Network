@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 
-import { AuthenticationRejectedError, SessionRejectedError } from "./errors.js";
+import {
+  AuthenticationRejectedError,
+  ControlPlaneConflictError,
+  ControlPlaneValidationError,
+  SessionRejectedError,
+} from "./errors.js";
 import {
   ARGON2ID_VERSION,
   DEFAULT_ARGON2ID_PARAMETERS,
@@ -69,7 +74,12 @@ function validLegacyBridge(organisation, bridge) {
 
 function actorProjection({ organisation, user, membership, credential, authorization, bridge }) {
   return {
-    user: { userId: user.userId, displayName: user.displayName },
+    user: {
+      userId: user.userId,
+      displayName: user.displayName,
+      canonicalContact: user.canonicalContact || null,
+      status: user.status,
+    },
     organisation: {
       organisationId: organisation.organisationId,
       displayName: organisation.displayName,
@@ -77,8 +87,16 @@ function actorProjection({ organisation, user, membership, credential, authoriza
       organisationType: organisation.organisationType,
       deploymentClass: organisation.deploymentClass,
     },
-    membership: { membershipId: membership.membershipId },
-    credential: { credentialId: credential.credentialId },
+    membership: {
+      membershipId: membership.membershipId,
+      status: membership.status,
+    },
+    credential: {
+      credentialId: credential.credentialId,
+      authenticationProvider: credential.authenticationProvider || null,
+      normalizedUsername: credential.normalizedUsername || null,
+      status: credential.status || null,
+    },
     roles: Object.freeze([...authorization.roles]),
     permissions: Object.freeze([...authorization.permissions]),
     authorizationVersion: user.authenticationVersion,
@@ -395,6 +413,106 @@ export function createControlPlaneAuthenticationService({
         userId: references.userId,
         credentialId,
         reauthenticatedAt,
+      };
+    },
+
+    async changePassword(resolvedSession, { currentPassword, newPassword } = {}, metadata = {}) {
+      const session = resolvedSession?.session || null;
+      const actor = resolvedSession?.actor || null;
+      const credentialId = session?.credentialId || actor?.credential?.credentialId || null;
+      const references = {
+        organisationId: session?.organisationId || actor?.organisation?.organisationId || null,
+        userId: session?.userId || actor?.user?.userId || null,
+        credentialId,
+      };
+      const reject = async (failureCategory, error) => {
+        await recordEvent("password_changed", "failure", metadata, references, failureCategory);
+        throw error;
+      };
+
+      if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+        return reject(
+          "invalid_input",
+          new ControlPlaneValidationError(
+            "The current and new passwords are required.",
+            "PASSWORD_CHANGE_INVALID_INPUT",
+          ),
+        );
+      }
+
+      const credential = credentialId
+        ? await authenticationRepository.getCredentialById(credentialId)
+        : null;
+      const validCredential = Boolean(
+        credential
+        && credential.authenticationProvider === "local_password"
+        && credential.passwordHash
+        && credential.status === "active"
+        && credential.userId === references.userId
+        && credential.organisationId === references.organisationId,
+      );
+      const currentMatches = Boolean(
+        validCredential
+        && await passwordHasher.verify(credential.passwordHash, currentPassword),
+      );
+      if (!currentMatches) {
+        return reject(
+          "invalid_current_password",
+          new AuthenticationRejectedError("invalid_current_password"),
+        );
+      }
+
+      if (await passwordHasher.verify(credential.passwordHash, newPassword)) {
+        return reject(
+          "password_reuse",
+          new ControlPlaneValidationError(
+            "The new password must be different from the current password.",
+            "PASSWORD_REUSE",
+          ),
+        );
+      }
+
+      const minimumLength = actor?.organisation?.organisationType === "platform" ? 12 : 8;
+      if (newPassword.length < minimumLength || newPassword.length > 128) {
+        return reject(
+          "password_policy",
+          new ControlPlaneValidationError(
+            `Password must be between ${minimumLength} and 128 characters.`,
+            "WEAK_PASSWORD",
+          ),
+        );
+      }
+
+      const passwordHash = await passwordHasher.hash(newPassword, argon2Parameters);
+      const changed = await authenticationRepository.upgradePasswordHash({
+        credentialId,
+        previousHash: credential.passwordHash,
+        passwordHash,
+        parameters: passwordParametersRecord(argon2Parameters),
+        version: ARGON2ID_VERSION,
+      });
+      if (!changed) {
+        return reject(
+          "credential_changed_concurrently",
+          new ControlPlaneConflictError(
+            "The credential changed while the password update was being completed. Try again.",
+            "PASSWORD_CHANGE_CONFLICT",
+          ),
+        );
+      }
+
+      const otherSessionsRevoked = authenticationRepository.revokeOtherSessionsByCredential
+        ? await authenticationRepository.revokeOtherSessionsByCredential(
+          credentialId,
+          session.sessionId,
+          "password_changed",
+        )
+        : 0;
+      await recordEvent("password_changed", "success", metadata, references);
+      return {
+        changed: true,
+        changedAt: now(),
+        otherSessionsRevoked,
       };
     },
 
