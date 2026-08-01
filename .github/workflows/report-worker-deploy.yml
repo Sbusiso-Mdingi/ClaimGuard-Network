@@ -160,7 +160,7 @@ jobs:
             --output json)"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.triggerType')" = "Event"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
-          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "1"
+          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "2"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
 
@@ -343,10 +343,18 @@ jobs:
           set -euo pipefail
           EVENT_JOB="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_JOB_NAME" --output json)"
           RECOVERY_JOB="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_RECOVERY_JOB_NAME" --output json)"
+          EVENT_SCALE_RULE="$(echo "$EVENT_JOB" | jq -c '.properties.configuration.eventTriggerConfig.scale.rules[0]')"
+          WORKER_ID="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_WORKER_IDENTITY_NAME" --query id -o tsv)"
+          EXPECTED_WORKER_ID="$(echo "$WORKER_ID" | tr '[:upper:]' '[:lower:]')"
 
           test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.triggerType')" = "Event"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
-          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "1"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "2"
+          test "$(echo "$EVENT_SCALE_RULE" | jq -r '.type')" = "azure-queue"
+          test "$(echo "$EVENT_SCALE_RULE" | jq -r '.metadata.accountName')" = "$REPORT_STORAGE_ACCOUNT_NAME"
+          test "$(echo "$EVENT_SCALE_RULE" | jq -r '.metadata.queueName')" = "$CLAIM_SCORING_QUEUE_NAME"
+          test "$(echo "$EVENT_SCALE_RULE" | jq -r '.metadata.queueLength')" = "1"
+          test "$(echo "$EVENT_SCALE_RULE" | jq -r '.identity | ascii_downcase')" = "$EXPECTED_WORKER_ID"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].image')" = "$REPORT_WORKER_IMAGE"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
