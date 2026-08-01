@@ -7,9 +7,11 @@ import { hasCapability } from "../../lib/capabilities";
 import {
   EmptyState,
   FormField,
+  MetricPill,
   PageFrame,
   SectionCard,
   StatusIndicator,
+  SummaryRail,
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
@@ -75,15 +77,47 @@ export function CommitteeRegistryPage() {
   }
 
   const hasSearched = results !== null;
+  const activeFindings = Array.isArray(results)
+    ? results.filter((entry) => entry.status === "ACTIVE").length
+    : 0;
 
   return (
     <PageFrame
       eyebrow="Applications committee"
       title="Shared fraud registry"
       description={`${identity.label} can review confirmed fraud publications and reversals only. Claim records, model scores, and investigation notes are intentionally excluded.`}
+      actions={[
+        <MetricPill key="capability-search" label="Search" value={canSearch ? "Enabled" : "Restricted"} tone={canSearch ? "success" : "warning"} variant="console" />,
+        <MetricPill key="capability-history" label="History" value={canViewHistory ? "Enabled" : "Restricted"} tone={canViewHistory ? "success" : "warning"} variant="console" />,
+      ]}
     >
-      <SectionCard title="Registry search" description="Search using the member or provider subject token supplied through the authorised applications workflow.">
-        <form onSubmit={search} className="grid gap-4 lg:grid-cols-[minmax(0,28rem)_auto] lg:items-end">
+      <p role="status" aria-live="polite" className="sr-only">
+        {loading ? "Registry request in progress." : hasSearched ? `${results.length} registry results loaded.` : "Registry search ready."}
+      </p>
+
+      <SummaryRail
+        ariaLabel="Registry summary"
+        items={[
+          {
+            key: "active",
+            label: "Active findings",
+            value: hasSearched ? activeFindings : "—",
+            description: "Matching current token",
+            icon: Search,
+            iconClassName: activeFindings > 0 ? "text-rose-500" : "text-emerald-500",
+          },
+          {
+            key: "history",
+            label: "History entries",
+            value: Array.isArray(history) ? history.length : "—",
+            description: "Publication and reversal events",
+            icon: History,
+          },
+        ]}
+      />
+
+      <SectionCard variant="console" title="Registry search" description="Search using the member or provider subject token supplied through the authorised applications workflow.">
+        <form onSubmit={search} className="grid gap-4 p-5 lg:grid-cols-[minmax(0,28rem)_auto] lg:items-end">
           <FormField label="Member or provider token" htmlFor="registry-subject-token" hint="Use the exact subject token; partial-name searches are not supported.">
             <Input
               id="registry-subject-token"
@@ -111,7 +145,7 @@ export function CommitteeRegistryPage() {
         {error ? <div className="mt-4"><WorkspaceNotice title="Registry request failed" tone="danger">{error}</WorkspaceNotice></div> : null}
       </SectionCard>
 
-      <SectionCard title="Active findings" description="Current unreversed fraud publications matching the searched subject token.">
+      <SectionCard variant="console" title="Active findings" description="Current unreversed fraud publications matching the searched subject token.">
         {!hasSearched ? (
           <EmptyState icon={Search} title="Search the registry" description="Enter a subject token above to retrieve current active findings." />
         ) : results.length === 0 ? (
@@ -148,11 +182,11 @@ export function CommitteeRegistryPage() {
       </SectionCard>
 
       {history !== null ? (
-        <SectionCard title="Registry history" description="Publication history for the searched token, including reversals.">
+        <SectionCard variant="console" title="Registry history" description="Publication history for the searched token, including reversals.">
           {history.length === 0 ? (
             <EmptyState compact icon={History} title="No registry history" description="No publication or reversal history is available for this subject token." />
           ) : (
-            <ol className="space-y-3">
+            <ol className="space-y-3 p-5">
               {history.map((entry) => (
                 <li key={entry.registryEntryId} className="rounded-xl border border-border/70 bg-background/40 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">

@@ -15,9 +15,9 @@ export function PageFrame({ eyebrow, title, description, actions, children }) {
     <div className="space-y-6">
       <header className="flex flex-col gap-4 border-b border-border/70 pb-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 space-y-1.5">
-          {eyebrow ? <p className="font-data text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">{eyebrow}</p> : null}
-          <h1 className="font-display text-[1.85rem] font-semibold leading-tight tracking-tight text-foreground lg:text-[2.15rem]">{title}</h1>
-          {description ? <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
+          {eyebrow ? <p className="font-data text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{eyebrow}</p> : null}
+          <h1 className="font-display text-[1.7rem] font-semibold leading-tight tracking-tight text-foreground sm:text-[1.85rem] lg:text-[2.05rem]">{title}</h1>
+          {description ? <p className="max-w-3xl text-[13px] leading-6 text-muted-foreground sm:text-sm">{description}</p> : null}
         </div>
         {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
       </header>
@@ -41,8 +41,8 @@ export function SectionCard({
       <CardHeader className={`${isConsole ? "border-b border-border/70 px-5 py-4" : "space-y-2 pb-4"}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <CardTitle className={isConsole ? "font-display text-lg font-semibold" : "font-display text-base font-semibold tracking-tight"}>{title}</CardTitle>
-            {description ? <CardDescription className="max-w-3xl text-sm leading-6">{description}</CardDescription> : null}
+            <CardTitle className={isConsole ? "font-display text-[1.05rem] font-semibold leading-snug" : "font-display text-base font-semibold tracking-tight"}>{title}</CardTitle>
+            {description ? <CardDescription className="max-w-3xl text-[13px] leading-5 sm:text-sm sm:leading-6">{description}</CardDescription> : null}
           </div>
           {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
         </div>
@@ -141,9 +141,9 @@ export function SummaryRail({ items = [], ariaLabel = "Workspace summary" }) {
               </span>
             ) : null}
             <div className="min-w-0">
-              <p className="text-[11px] font-medium text-muted-foreground">{item.label}</p>
-              <p className="font-data mt-0.5 text-xl font-semibold leading-none text-foreground">{item.value}</p>
-              {item.description ? <p className="mt-1 truncate text-[11px] text-muted-foreground">{item.description}</p> : null}
+              <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">{item.label}</p>
+              <p className="font-data mt-1 text-[1.1rem] font-semibold leading-none text-foreground sm:text-xl">{item.value}</p>
+              {item.description ? <p className="mt-1 truncate text-[10px] text-muted-foreground sm:text-[11px]">{item.description}</p> : null}
             </div>
           </div>
         );
@@ -255,7 +255,7 @@ export function FormField({ label, htmlFor, hint, error, children }) {
 
   return (
     <div className="grid gap-2 text-sm font-medium text-foreground">
-      <label htmlFor={controlId}>{label}</label>
+      <label htmlFor={controlId} className="text-[13px]">{label}</label>
       {control}
       {error ? <span id={descriptionId} className="text-xs font-normal text-destructive">{error}</span> : hint ? <span id={descriptionId} className="text-xs font-normal leading-5 text-muted-foreground">{hint}</span> : null}
     </div>

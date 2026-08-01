@@ -133,6 +133,7 @@ export function InvestigationsPage() {
 
   return (
     <PageFrame
+      eyebrow="Casework"
       title="Investigation queue"
       description={`Authoritative tenant-scoped cases for ${identity.tenantLabel || identity.tenantId}, ordered by most recent activity.`}
       actions={[
@@ -141,9 +142,16 @@ export function InvestigationsPage() {
         </Button>,
       ]}
     >
-      <section aria-labelledby="investigation-filters-heading" className="rounded-xl border border-border/80 bg-card p-4 shadow-sm">
-        <h2 id="investigation-filters-heading" className="sr-only">Filter cases</h2>
-        <form onSubmit={applyFilters} className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_1fr_1fr_1fr_auto] xl:items-end">
+      <p role="status" aria-live="polite" className="sr-only">
+        {status === "loading" ? "Loading investigation queue." : status === "refreshing" ? "Refreshing investigation queue." : `Showing ${investigations.length} visible investigations.`}
+      </p>
+
+      <SectionCard
+        variant="console"
+        title="Queue filters"
+        description="Apply authoritative server-side filters to narrow your active queue."
+      >
+        <form onSubmit={applyFilters} className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_1fr_1fr_1fr_auto] xl:items-end">
           <FormField label="Search">
             <Input className="h-10" value={filters.search} onChange={(event) => setFilters((previous) => ({ ...previous, search: event.target.value }))} placeholder="Investigation or claim ID" />
           </FormField>
@@ -172,7 +180,7 @@ export function InvestigationsPage() {
             <Button type="button" variant="outline" className="h-10" onClick={clearFilters} disabled={activeFilterCount === 0}>Clear</Button>
           </div>
         </form>
-      </section>
+      </SectionCard>
 
       <SummaryRail
         ariaLabel="Visible investigation queue summary"
@@ -263,7 +271,7 @@ export function InvestigationsPage() {
         ) : null}
       </SectionCard>
 
-      <SectionCard title="Open by investigation ID" description="Use direct lookup when you have an ID that is outside the current filter or page.">
+      <SectionCard variant="console" title="Open by investigation ID" description="Use direct lookup when you have an ID that is outside the current filter or page.">
         <form onSubmit={handleOpenById} className="flex flex-wrap gap-3">
           <Input aria-label="Investigation ID" value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="investigation-id" className="max-w-xs" />
           <Button type="submit" disabled={checking || !lookupId.trim()}>{checking ? "Checking..." : "Open investigation"}</Button>

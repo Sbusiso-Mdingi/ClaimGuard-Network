@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { Badge } from "../../components/ui/badge";
-import { PageFrame, SectionCard, MetricPill, StatusIndicator } from "./InvestigatorUI";
+import Network from "lucide-react/dist/esm/icons/network.mjs";
+import Radar from "lucide-react/dist/esm/icons/radar.mjs";
+import Users from "lucide-react/dist/esm/icons/users.mjs";
+import { EmptyState, PageFrame, SectionCard, MetricPill, StatusIndicator, SummaryRail, WorkspaceNotice } from "./InvestigatorUI";
 import { NetworkGraph } from "./NetworkGraph";
 
 export function NetworkPage({ graph }) {
@@ -26,7 +28,7 @@ export function NetworkPage({ graph }) {
 
   return (
     <PageFrame
-      eyebrow="Network Graph"
+      eyebrow="Network Intelligence"
       title="Relationship intelligence"
       description="Inspect entity connections, trace high-risk clusters, and review the graph with supporting statistics."
       actions={[
@@ -35,26 +37,66 @@ export function NetworkPage({ graph }) {
         <MetricPill key="providers" label="Providers" value={graphStats.providers} />,
       ]}
     >
+      {graphStats.entities === 0 ? (
+        <WorkspaceNotice title="No network data available" tone="warning">
+          Entity-relationship data has not been returned in this snapshot yet.
+        </WorkspaceNotice>
+      ) : null}
+
+      <SummaryRail
+        ariaLabel="Network summary"
+        items={[
+          {
+            key: "entities",
+            label: "Entities",
+            value: graphStats.entities,
+            description: "Nodes in current projection",
+            icon: Users,
+          },
+          {
+            key: "relationships",
+            label: "Relationships",
+            value: graphStats.relationships,
+            description: "Links between entities",
+            icon: Network,
+          },
+          {
+            key: "selected",
+            label: "Selected links",
+            value: graphStats.selectedLinks,
+            description: "Connections tied to selected node",
+            icon: Radar,
+            iconClassName: selectedNodeId ? "text-primary" : "text-muted-foreground",
+          },
+        ]}
+      />
+
       <div className="grid gap-4 xl:grid-cols-[1.65fr_0.95fr]">
         <SectionCard
+          variant="console"
           title="Network graph"
           description="Zoom, pan, and select nodes. High-risk relationships are emphasized when a node is selected."
           actions={[
             <StatusIndicator key="selected" variant="badge">{selectedNodeId ? "Node selected" : "No node selected"}</StatusIndicator>,
           ]}
         >
-          <NetworkGraph 
-            graph={graph} 
-            selectedNodeId={selectedNodeId} 
-            onNodeSelect={setSelectedNodeId} 
-          />
+          {graphStats.entities === 0 ? (
+            <EmptyState compact icon={Network} title="Graph unavailable" description="No graph entities are available for rendering in this view." />
+          ) : (
+            <NetworkGraph
+              graph={graph}
+              selectedNodeId={selectedNodeId}
+              onNodeSelect={setSelectedNodeId}
+            />
+          )}
         </SectionCard>
 
         <SectionCard
+          variant="console"
           title="Graph details"
           description="Selected node context, relationship count, and local cluster metadata."
         >
-          <div className="space-y-4">
+          <div className="space-y-4 p-5">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
               <div className="rounded-xl border border-border/70 px-4 py-3">
                 <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Selected links</p>
@@ -77,7 +119,11 @@ export function NetworkPage({ graph }) {
                 <div className="rounded-2xl border border-border/70 p-4">
                   <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Connected relationships</p>
                   <div className="mt-3 space-y-2">
-                    {selectedDetails.links.map((rel, idx) => (
+                    {selectedDetails.links.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                        This entity currently has no connected relationships in the loaded graph.
+                      </p>
+                    ) : selectedDetails.links.map((rel, idx) => (
                       <div key={`${rel.source_entity_id}-${rel.target_entity_id}-${idx}`} className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-3 text-xs leading-5">
                         {rel.source_entity_id} → {rel.target_entity_id}
                       </div>

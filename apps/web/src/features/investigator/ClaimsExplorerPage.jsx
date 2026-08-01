@@ -202,6 +202,7 @@ export function ClaimsExplorerPage({
 
   return (
     <PageFrame
+      eyebrow="Casework"
       title="Claims"
       description="Submitted claims with current processing, scoring, and investigation state."
       actions={[
@@ -218,9 +219,16 @@ export function ClaimsExplorerPage({
         </Button>,
       ]}
     >
-      <section aria-labelledby="claim-filters-heading" className="rounded-xl border border-border/80 bg-card p-4 shadow-sm">
-        <h2 id="claim-filters-heading" className="sr-only">Filter claims</h2>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_1fr_1fr_1fr_auto] xl:items-end">
+      <p role="status" aria-live="polite" className="sr-only">
+        {loading ? "Loading claims." : refreshing ? "Refreshing claims." : `Showing ${rows.length} filtered claims.`}
+      </p>
+
+      <SectionCard
+        variant="console"
+        title="Queue filters"
+        description="Refine claims by identity, processing state, investigation state, and risk band."
+      >
+        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_1fr_1fr_1fr_auto] xl:items-end">
           <label className="grid gap-2 text-sm font-medium">
             <span>Search claims</span>
             <span className="relative">
@@ -282,7 +290,7 @@ export function ClaimsExplorerPage({
             Clear
           </Button>
         </div>
-      </section>
+      </SectionCard>
 
       <SummaryRail
         ariaLabel="Claims summary"
@@ -342,7 +350,7 @@ export function ClaimsExplorerPage({
 
       <SectionCard
         variant="console"
-        title="Claims table"
+        title="Claims queue"
         description="Processing state is shown separately from investigation status and risk output."
       >
         <DataTableShell ariaLabel="Claims table" minWidth="1180px">
