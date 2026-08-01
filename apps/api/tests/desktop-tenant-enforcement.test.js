@@ -38,12 +38,29 @@ test("desktop login renews signed offline grace before returning the session", a
           bearerSecret: "session-secret",
           csrfToken: "csrf-token",
           actor: {
-            user: { userId: "user-alpha", displayName: "Analyst" },
-            organisation: { organisationId: "org-alpha", organisationType: "medical_scheme" },
+            user: {
+              userId: "user-alpha",
+              displayName: "Analyst",
+              canonicalContact: "analyst@alpha.example",
+              status: "active",
+            },
+            organisation: {
+              organisationId: "org-alpha",
+              organisationType: "medical_scheme",
+              canonicalSlug: "alpha-medical",
+            },
+            membership: { status: "active" },
+            credential: {
+              normalizedUsername: "analyst",
+              status: "active",
+              authenticationProvider: "local_password",
+            },
             roles: ["claims_analyst"],
             permissions: ["claims.view_own"],
           },
           session: {
+            issuedAt: "2026-08-01T00:00:00.000Z",
+            lastActivityAt: "2026-08-01T00:00:00.000Z",
             idleExpiresAt: "2026-08-01T01:00:00.000Z",
             absoluteExpiresAt: "2026-08-02T00:00:00.000Z",
           },
