@@ -363,17 +363,9 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
         );
       }
 
-      const now = new Date().toISOString();
-      return {
-        ...investigation,
-        status: nextStatus,
-        priority: nextPriority,
-        updatedAt: now,
-        closedAt:
-          nextStatus === INVESTIGATION_STATUS.CLOSED
-            ? investigation.closedAt || now
-            : investigation.closedAt,
-      };
+      const updated = await this.getInvestigationById(investigation.investigationId);
+      if (!updated) throw new InvestigationNotFoundError();
+      return updated;
     },
 
     async addNote({ investigationId, author, text, noteType = INVESTIGATION_NOTE_TYPE.INTERNAL_NOTE }) {

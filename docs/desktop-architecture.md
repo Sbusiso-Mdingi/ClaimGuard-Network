@@ -22,7 +22,7 @@ flowchart LR
   API -->|bounded changes + signed cursor| D
   D -->|AES-256-GCM records| SQ[(Per-user SQLite cache)]
   D -->|private key, cache key, enrollment, session| CM[Windows Credential Manager]
-  W[Bundled React WebView] -->|eight named commands only| D
+  W[Bundled React WebView] -->|ten named commands only| D
 ```
 
 The WebView has `connect-src 'none'` and no Tauri HTTP, filesystem, shell, process, or updater permission. It can invoke only:
@@ -34,9 +34,11 @@ The WebView has `connect-src 'none'` and no Tauri HTTP, filesystem, shell, proce
 - `lock_desktop`
 - `synchronize_desktop`
 - `desktop_claim_details`
+- `desktop_investigation_details`
+- `desktop_update_investigation`
 - `reset_desktop`
 
-All network access, proof creation, enrollment verification, cache encryption, and secret storage happen in Rust.
+All network access, proof creation, enrollment verification, cache encryption, and secret storage happen in Rust. The investigation update command is restricted to status and priority fields and always sends the last authoritative `updatedAt` value as `If-Match`.
 
 ## Organisation Boundary
 
@@ -54,7 +56,7 @@ The API consumes each proof nonce once, checks enrollment status and expiry, and
 
 ## Storage Boundary
 
-The SQLite file is in Tauri's per-Windows-user local app-data directory. Record IDs are SHA-256-derived lookup keys; JSON record bodies and sync metadata are AES-256-GCM ciphertext with random nonces and organisation/resource/version AAD. The AES key, Ed25519 private seed, signed enrollment, installation ID, and session cookie are stored separately through the OS-native keyring (Windows Credential Manager).
+The SQLite file is in Tauri's per-Windows-user local app-data directory. Record IDs are SHA-256-derived lookup keys; JSON record bodies and sync metadata are AES-256-GCM ciphertext with random nonces and organisation/resource/version AAD. The AES key, Ed25519 private seed, signed enrollment, installation ID, session cookie, and minimum session capability profile are stored separately through the OS-native keyring (Windows Credential Manager).
 
 This is record-level authenticated encryption, not full-database page encryption. SQLite table names, resource types, encrypted record counts, versions, and update timestamps remain metadata. Use BitLocker/device encryption to protect the full volume, swap/pagefile, and filesystem metadata at rest.
 
@@ -91,5 +93,7 @@ The corresponding private keys are never compiled into the application.
 ## Permission Model
 
 `desktop.devices.manage` is used only by the browser application and its API boundary; it is never exposed as a Tauri command. Scheme administrators can use the Windows client for their enrolled medical scheme and remain hard-bound to that organisation. Platform administrators manage platform/enrollment metadata on the web, are rejected as desktop users, and do not gain operational claim access. Issuance and revocation require recent password reauthentication plus an exact typed confirmation; raw keys are shown once and never returned by list APIs.
+
+Desktop navigation and controls are capability driven. `investigations.view` enables the investigation queue and encrypted on-demand case detail. `investigations.update_status` and `investigations.change_priority` independently enable their corresponding connected-only controls. Rust rechecks those capabilities before returning online or cached records through IPC, which prevents a lower-privileged scheme account using the same Windows profile from inheriting a prior user's investigation view. Notes and evidence are currently review-only in the desktop; creating cases, adding notes/evidence, assignment, and final fraud workflow actions remain on the web until each write has an explicit optimistic-concurrency contract.
 
 See [desktop-sync-protocol.md](desktop-sync-protocol.md), [desktop-cache-retention.md](desktop-cache-retention.md), and [desktop-security-and-threat-model.md](desktop-security-and-threat-model.md).

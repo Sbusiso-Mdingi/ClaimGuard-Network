@@ -12,6 +12,8 @@
     "allow-lock-desktop",
     "allow-synchronize-desktop",
     "allow-desktop-claim-details",
+    "allow-desktop-investigation-details",
+    "allow-desktop-update-investigation",
     "allow-reset-desktop"
   ]
 }

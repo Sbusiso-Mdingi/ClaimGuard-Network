@@ -8,6 +8,8 @@ fn main() {
             "lock_desktop",
             "synchronize_desktop",
             "desktop_claim_details",
+            "desktop_investigation_details",
+            "desktop_update_investigation",
             "reset_desktop",
         ]),
     ))

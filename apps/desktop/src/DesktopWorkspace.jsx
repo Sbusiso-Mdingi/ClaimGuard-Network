@@ -1,0 +1,428 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Activity from "lucide-react/dist/esm/icons/activity.mjs";
+import AlertTriangle from "lucide-react/dist/esm/icons/alert-triangle.mjs";
+import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.mjs";
+import Clock3 from "lucide-react/dist/esm/icons/clock-3.mjs";
+import FileSearch from "lucide-react/dist/esm/icons/file-search.mjs";
+import LockKeyhole from "lucide-react/dist/esm/icons/lock-keyhole.mjs";
+import LogOut from "lucide-react/dist/esm/icons/log-out.mjs";
+import Network from "lucide-react/dist/esm/icons/network.mjs";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
+import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw.mjs";
+import Search from "lucide-react/dist/esm/icons/search.mjs";
+import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
+import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
+import WifiOff from "lucide-react/dist/esm/icons/wifi-off.mjs";
+import X from "lucide-react/dist/esm/icons/x.mjs";
+
+import { Button } from "../../web/src/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../web/src/components/ui/card";
+import { Input } from "../../web/src/components/ui/input";
+import { desktopBridge, nextBackoff, operationalWriteAllowed } from "./desktopBridge";
+
+const AUTO_LOCK_MS = 15 * 60_000;
+const PRIORITIES = ["LOW", "NORMAL", "HIGH", "CRITICAL"];
+const STATUS_TRANSITIONS = Object.freeze({
+  OPEN: ["OPEN", "UNDER_REVIEW", "AWAITING_EVIDENCE", "CLOSED"],
+  UNDER_REVIEW: ["UNDER_REVIEW", "AWAITING_EVIDENCE", "CONFIRMED_FRAUD", "NO_FRAUD_FOUND", "CLOSED"],
+  AWAITING_EVIDENCE: ["AWAITING_EVIDENCE", "UNDER_REVIEW", "CLOSED"],
+  CONFIRMED_FRAUD: ["CONFIRMED_FRAUD", "CLOSED"],
+  REVERSED: ["REVERSED", "CLOSED"],
+  NO_FRAUD_FOUND: ["NO_FRAUD_FOUND", "CLOSED"],
+  CLOSED: ["CLOSED"],
+});
+
+function displayDate(value, options = {}) {
+  if (!value) return "Never";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "Unknown" : parsed.toLocaleString("en-ZA", options);
+}
+
+function money(value) {
+  return Number.isFinite(Number(value))
+    ? new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" }).format(Number(value))
+    : "Not available";
+}
+
+function enumLabel(value) {
+  return String(value || "Not set")
+    .toLowerCase()
+    .split("_")
+    .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
+    .join(" ");
+}
+
+function freshnessClasses(freshness) {
+  if (freshness === "Fresh") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (freshness === "Synchronizing") return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  if (freshness === "Offline") return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300";
+  return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+}
+
+function toneClasses(tone) {
+  if (tone === "danger") return "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300";
+  if (tone === "warning") return "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  if (tone === "success") return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (tone === "info") return "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  return "border-border bg-secondary/50 text-muted-foreground";
+}
+
+function statusTone(status) {
+  if (["CONFIRMED_FRAUD", "CRITICAL", "PROCESSING_FAILED"].includes(status)) return "danger";
+  if (["AWAITING_EVIDENCE", "HIGH", "FLAGGED"].includes(status)) return "warning";
+  if (["NO_FRAUD_FOUND", "CLOSED", "LOW", "SCORED"].includes(status)) return "success";
+  if (["UNDER_REVIEW", "OPEN", "NORMAL"].includes(status)) return "info";
+  return "neutral";
+}
+
+function StatusPill({ value, tone = statusTone(value) }) {
+  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] ${toneClasses(tone)}`}>{enumLabel(value)}</span>;
+}
+
+function RiskLabel({ score }) {
+  const value = Number(score);
+  const tone = value >= 70 ? "danger" : value >= 40 ? "warning" : Number.isFinite(value) ? "success" : "neutral";
+  return <span className={`inline-flex rounded-md border px-2 py-1 font-data text-xs font-semibold ${toneClasses(tone)}`}>{Number.isFinite(value) ? `${value.toFixed(1)} risk` : "Unscored"}</span>;
+}
+
+function WorkspaceBrand() {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm"><ShieldCheck className="h-5 w-5" /></span>
+      <div><p className="font-display text-base font-semibold">ClaimGuard</p><p className="font-data text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Scheme operations</p></div>
+    </div>
+  );
+}
+
+function StatCard({ title, value, description, icon: Icon }) {
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
+        <div><CardDescription>{title}</CardDescription><CardTitle className="mt-1 font-data text-3xl">{value}</CardTitle></div>
+        {Icon ? <span className="rounded-lg bg-secondary p-2 text-muted-foreground"><Icon className="h-4 w-4" /></span> : null}
+      </CardHeader>
+      <CardContent className="text-xs text-muted-foreground">{description}</CardContent>
+    </Card>
+  );
+}
+
+function EmptyState({ icon: Icon = Activity, title, description }) {
+  return <div className="grid place-items-center gap-2 p-12 text-center"><Icon className="h-7 w-7 text-muted-foreground" /><p className="font-semibold">{title}</p><p className="max-w-md text-sm text-muted-foreground">{description}</p></div>;
+}
+
+function SearchField({ value, onChange, label, placeholder }) {
+  return (
+    <label className="relative block min-w-0 flex-1">
+      <span className="sr-only">{label}</span>
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <Input aria-label={label} className="pl-9" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+    </label>
+  );
+}
+
+function Overview({ claims, investigations, summary, network, openClaim, openInvestigation, canViewInvestigations }) {
+  const highRisk = claims
+    .filter((claim) => Number(claim.riskScore) >= 70)
+    .sort((left, right) => Number(right.riskScore) - Number(left.riskScore))
+    .slice(0, 6);
+  const urgentInvestigations = investigations
+    .slice()
+    .sort((left, right) => PRIORITIES.indexOf(right.priority) - PRIORITIES.indexOf(left.priority))
+    .slice(0, 5);
+  return (
+    <div className="space-y-6">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard title="Cached claims" value={claims.length} description="Most recent 90 days plus active investigations" icon={FileSearch} />
+        <StatCard title="Total scheme claims" value={summary.totalClaims ?? "—"} description="Current server aggregate, not a local recount" icon={BarChart3} />
+        <StatCard title="High-risk claims" value={summary.highRiskClaims ?? "—"} description="Screening signals requiring human review" icon={ShieldAlert} />
+        <StatCard title="Active investigations" value={canViewInvestigations ? investigations.length : "—"} description={canViewInvestigations ? `${investigations.filter((item) => item.priority === "CRITICAL").length} critical priority` : "Requires investigation-view permission"} icon={AlertTriangle} />
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.85fr]">
+        <Card>
+          <CardHeader><CardTitle>Cached claim summaries</CardTitle><CardDescription>Highest-risk records in the current bounded cache. Open a claim for authoritative detail.</CardDescription></CardHeader>
+          <CardContent className="p-0">
+            {highRisk.length ? <div className="divide-y divide-border/70">{highRisk.map((claim) => <button type="button" key={claim.claimId} onClick={() => openClaim(claim)} className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-secondary/40"><div className="min-w-0 flex-1"><p className="truncate font-data text-xs font-semibold">{claim.claimId}</p><p className="mt-1 text-xs text-muted-foreground">{claim.serviceDate || "No service date"} · {money(claim.billedAmount)} · {claim.billingCode || "No billing code"}</p></div><RiskLabel score={claim.riskScore} /></button>)}</div> : <EmptyState title="No high-risk cached claims" description="The bounded cache does not currently contain a claim above the high-risk threshold." />}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Operational attention</CardTitle><CardDescription>{canViewInvestigations ? "Active cases ordered by priority." : "Investigation data is capability restricted."}</CardDescription></CardHeader>
+          <CardContent className="p-0">
+            {canViewInvestigations && urgentInvestigations.length ? <div className="divide-y divide-border/70">{urgentInvestigations.map((item) => <button type="button" key={item.investigationId} onClick={() => openInvestigation(item)} className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-secondary/40"><div className="min-w-0"><p className="truncate font-data text-xs font-semibold">{item.investigationId}</p><p className="mt-1 text-xs text-muted-foreground">Claim {item.claimId} · {enumLabel(item.status)}</p></div><StatusPill value={item.priority} /></button>)}</div> : <EmptyState icon={AlertTriangle} title={canViewInvestigations ? "No active investigations" : "Investigation access not assigned"} description={canViewInvestigations ? "New and updated investigations will appear after synchronization." : "Your current account can still work with the claims permitted by the scheme."} />}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between"><div><CardTitle>Suspicious-network projection</CardTitle><CardDescription>Precomputed multi-claim review candidates; these are signals, not fraud findings.</CardDescription></div><Network className="h-5 w-5 text-muted-foreground" /></CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">Active clusters</p><p className="mt-1 font-data text-2xl font-semibold">{network?.summary?.active_cluster_count ?? 0}</p></div><div><p className="text-xs text-muted-foreground">Represented claims</p><p className="mt-1 font-data text-2xl font-semibold">{network?.summary?.represented_claim_count ?? 0}</p></div><div><p className="text-xs text-muted-foreground">Linked entities</p><p className="mt-1 font-data text-2xl font-semibold">{network?.summary?.entity_count ?? 0}</p></div></CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function ClaimDetail({ payload, loading, onClose, onOpenInvestigation, canViewInvestigations }) {
+  if (!payload && !loading) return null;
+  const claim = payload?.claim || null;
+  return (
+    <Card className="border-primary/20 shadow-lg">
+      <CardHeader className="flex-row items-start justify-between gap-4">
+        <div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Authoritative claim detail</p><CardTitle className="mt-2">{claim?.claimId || "Loading claim…"}</CardTitle><CardDescription>{payload?.fetchedAt ? `Fetched ${displayDate(payload.fetchedAt)}` : "Requesting minimum-necessary detail from the scheme data plane."}</CardDescription></div>
+        <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close claim detail</span></Button>
+      </CardHeader>
+      <CardContent>
+        {loading && !claim ? <div className="flex items-center gap-3 py-10 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" />Loading claim detail…</div> : null}
+        {claim ? <div className="space-y-6">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Billed amount</p><p className="mt-1 font-data text-lg font-semibold">{money(claim.billedAmount)}</p></div><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Risk</p><div className="mt-2"><RiskLabel score={claim.riskScore} /></div></div><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Workflow</p><p className="mt-1 text-sm font-semibold">{enumLabel(claim.status)}</p></div><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Processing</p><p className="mt-1 text-sm font-semibold">{enumLabel(claim.processingStatus)}</p></div></div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section><h3 className="text-sm font-semibold">Claim information</h3><dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm"><dt className="text-muted-foreground">Service date</dt><dd>{claim.serviceDate || "—"}</dd><dt className="text-muted-foreground">Submitted</dt><dd>{displayDate(claim.submittedAt)}</dd><dt className="text-muted-foreground">Billing code</dt><dd className="font-data text-xs">{claim.billingCode || "—"}</dd><dt className="text-muted-foreground">Member token</dt><dd className="break-all font-data text-xs">{claim.memberId || "—"}</dd><dt className="text-muted-foreground">Provider token</dt><dd className="break-all font-data text-xs">{claim.providerId || "—"}</dd><dt className="text-muted-foreground">Version</dt><dd>{claim.currentClaimVersion ?? "—"}</dd></dl></section>
+            <section><h3 className="text-sm font-semibold">Detection rationale</h3>{claim.evidence?.length ? <ul className="mt-3 space-y-2">{claim.evidence.map((item) => <li key={item} className="rounded-lg border border-border bg-secondary/20 p-3 text-sm leading-6">{item}</li>)}</ul> : <p className="mt-3 text-sm text-muted-foreground">No persisted detection rationale is available for this claim version.</p>}{claim.triggeredRules?.length ? <div className="mt-3 flex flex-wrap gap-2">{claim.triggeredRules.map((rule) => <StatusPill key={rule} value={rule} tone="warning" />)}</div> : null}</section>
+          </div>
+          {claim.investigation ? <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold">Linked investigation</p><p className="mt-1 font-data text-xs text-muted-foreground">{claim.investigation.investigationId}</p></div><div className="flex items-center gap-2"><StatusPill value={claim.investigation.status} />{canViewInvestigations ? <Button variant="outline" size="sm" onClick={() => onOpenInvestigation(claim.investigation)}>Open case</Button> : null}</div></div> : null}
+        </div> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ClaimsView({ claims, selectedClaim, loading, openClaim, closeClaim, openInvestigation, canViewInvestigations }) {
+  const [search, setSearch] = useState("");
+  const [risk, setRisk] = useState("all");
+  const filtered = useMemo(() => claims.filter((claim) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || [claim.claimId, claim.billingCode, claim.status].some((value) => String(value || "").toLowerCase().includes(query));
+    const score = Number(claim.riskScore);
+    const bucket = !Number.isFinite(score) ? "unscored" : score >= 70 ? "high" : score >= 40 ? "medium" : "low";
+    return matchesSearch && (risk === "all" || risk === bucket);
+  }), [claims, risk, search]);
+  return <div className="space-y-6">
+    <Card><CardHeader><CardTitle>Claims queue</CardTitle><CardDescription>Search the bounded local cache. Opening a claim refreshes its authoritative detail when connected.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-3 sm:flex-row"><SearchField label="Search claims" placeholder="Claim ID, billing code, or status" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Risk band</span><select aria-label="Risk band" className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={risk} onChange={(event) => setRisk(event.target.value)}><option value="all">All risk bands</option><option value="high">High risk</option><option value="medium">Medium risk</option><option value="low">Low risk</option><option value="unscored">Unscored</option></select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {claims.length} cached claims</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[860px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Service date</th><th className="px-5 py-3">Amount</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Risk</th><th className="px-5 py-3">Investigation</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((claim) => <tr key={claim.claimId}><td className="px-5 py-4 font-data text-xs font-semibold">{claim.claimId}</td><td className="px-5 py-4">{claim.serviceDate || "—"}</td><td className="px-5 py-4 font-data">{money(claim.billedAmount)}</td><td className="px-5 py-4"><StatusPill value={claim.status} /></td><td className="px-5 py-4"><RiskLabel score={claim.riskScore} /></td><td className="px-5 py-4">{claim.investigation ? <StatusPill value={claim.investigation.priority} /> : <span className="text-xs text-muted-foreground">None</span>}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openClaim(claim)}>Open</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={FileSearch} title="No matching claims" description="Adjust the search or risk filter. Older claims remain available through the web application." /> : null}</CardContent></Card>
+    <ClaimDetail payload={selectedClaim} loading={loading} onClose={closeClaim} onOpenInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} />
+  </div>;
+}
+
+function InvestigationWorkspace({ compact, detail, loading, writesAllowed, canUpdateStatus, canChangePriority, onSave, onClose, onOpenClaim }) {
+  const record = detail?.investigation || compact;
+  const [draftStatus, setDraftStatus] = useState(record?.status || "OPEN");
+  const [draftPriority, setDraftPriority] = useState(record?.priority || "NORMAL");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDraftStatus(record?.status || "OPEN");
+    setDraftPriority(record?.priority || "NORMAL");
+  }, [record?.investigationId, record?.priority, record?.status, record?.updatedAt]);
+
+  if (!record && !loading) return null;
+  const changedStatus = canUpdateStatus && draftStatus !== record?.status;
+  const changedPriority = canChangePriority && draftPriority !== record?.priority;
+  async function save() {
+    setSaving(true);
+    try {
+      await onSave(record, {
+        ...(changedStatus ? { status: draftStatus } : {}),
+        ...(changedPriority ? { priority: draftPriority } : {}),
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+  return <Card className="border-primary/20 shadow-lg"><CardHeader className="flex-row items-start justify-between gap-4"><div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Investigation workspace</p><CardTitle className="mt-2">{record?.investigationId || "Loading investigation…"}</CardTitle><CardDescription>Claim {record?.claimId || "—"} · version {displayDate(record?.updatedAt)}</CardDescription></div><Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close investigation workspace</span></Button></CardHeader><CardContent className="space-y-6">
+    {loading && !detail ? <div className="flex items-center gap-3 py-4 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" />Loading notes and evidence…</div> : null}
+    <div className="grid gap-4 lg:grid-cols-[1fr_1fr_auto]"><label className="grid gap-2 text-sm font-medium">Status<select aria-label="Investigation status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftStatus} onChange={(event) => setDraftStatus(event.target.value)} disabled={!writesAllowed || !canUpdateStatus}>{(STATUS_TRANSITIONS[record?.status] || [record?.status]).map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Priority<select aria-label="Investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftPriority} onChange={(event) => setDraftPriority(event.target.value)} disabled={!writesAllowed || !canChangePriority}>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><div className="flex items-end"><Button onClick={save} disabled={saving || !writesAllowed || (!changedStatus && !changedPriority)}>{saving ? "Saving…" : "Save changes"}</Button></div></div>
+    {!writesAllowed ? <p className="text-sm text-amber-700 dark:text-amber-300">Reconnect and synchronize before changing authoritative case state.</p> : null}
+    {writesAllowed && !canUpdateStatus && !canChangePriority ? <p className="text-sm text-muted-foreground">This account can review the case but does not have case-update capabilities.</p> : null}
+    <div className="grid gap-6 lg:grid-cols-2"><section><h3 className="text-sm font-semibold">Case information</h3><dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm"><dt className="text-muted-foreground">Status</dt><dd><StatusPill value={record?.status} /></dd><dt className="text-muted-foreground">Priority</dt><dd><StatusPill value={record?.priority} /></dd><dt className="text-muted-foreground">Assigned to</dt><dd>{record?.assignedInvestigator || "Unassigned"}</dd><dt className="text-muted-foreground">Opened by</dt><dd>{record?.assignedBy || "—"}</dd><dt className="text-muted-foreground">Opened</dt><dd>{displayDate(record?.createdAt)}</dd></dl><Button variant="outline" size="sm" className="mt-4" onClick={() => onOpenClaim(record?.claimId)}>Open related claim</Button></section><section><h3 className="text-sm font-semibold">Recorded milestones</h3><div className="mt-3 space-y-2 text-sm"><p className="rounded-lg border border-border p-3"><span className="text-muted-foreground">Last updated</span><br />{displayDate(record?.updatedAt)}</p>{record?.fraudConfirmedAt ? <p className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3"><span className="text-muted-foreground">Fraud confirmed</span><br />{displayDate(record.fraudConfirmedAt)}</p> : null}{record?.closedAt ? <p className="rounded-lg border border-border p-3"><span className="text-muted-foreground">Closed</span><br />{displayDate(record.closedAt)}</p> : null}</div></section></div>
+    <div className="grid gap-6 xl:grid-cols-2"><section><h3 className="text-sm font-semibold">Investigation notes</h3>{detail?.investigation?.notes?.length ? <div className="mt-3 space-y-3">{detail.investigation.notes.map((note) => <article key={note.noteId} className="rounded-xl border border-border bg-secondary/20 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><StatusPill value={note.noteType} /><time className="text-xs text-muted-foreground">{displayDate(note.timestamp)}</time></div><p className="mt-3 whitespace-pre-wrap text-sm leading-6">{note.text}</p><p className="mt-2 text-xs text-muted-foreground">Author {note.author}</p></article>)}</div> : <p className="mt-3 text-sm text-muted-foreground">No notes are recorded for this investigation.</p>}</section><section><h3 className="text-sm font-semibold">Evidence register</h3>{detail?.investigation?.evidence?.length ? <div className="mt-3 divide-y divide-border rounded-xl border border-border">{detail.investigation.evidence.map((item) => <article key={item.evidenceId} className="p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{item.filename}</p><StatusPill value={item.evidenceType} /></div><p className="mt-2 text-sm text-muted-foreground">{item.description || "No description supplied."}</p><p className="mt-2 text-xs text-muted-foreground">Registered {displayDate(item.uploadedAt)} by {item.uploadedBy}</p></article>)}</div> : <p className="mt-3 text-sm text-muted-foreground">No evidence metadata is recorded for this investigation.</p>}</section></div>
+  </CardContent></Card>;
+}
+
+function InvestigationsView({ investigations, selection, detail, loading, writesAllowed, capabilities, openInvestigation, closeInvestigation, updateInvestigation, openClaimById }) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const filtered = useMemo(() => investigations.filter((item) => {
+    const query = search.trim().toLowerCase();
+    return (!query || [item.investigationId, item.claimId, item.assignedInvestigator].some((value) => String(value || "").toLowerCase().includes(query)))
+      && (statusFilter === "all" || item.status === statusFilter)
+      && (priorityFilter === "all" || item.priority === priorityFilter);
+  }), [investigations, priorityFilter, search, statusFilter]);
+  return <div className="space-y-6"><Card><CardHeader><CardTitle>Investigation queue</CardTitle><CardDescription>All active cases in the organisation-bound cache, including investigations older than the 90-day claim window.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]"><SearchField label="Search investigations" placeholder="Investigation, claim, or assignee" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Status</span><select aria-label="Filter investigation status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{Object.keys(STATUS_TRANSITIONS).filter((value) => value !== "CLOSED").map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-1 text-xs text-muted-foreground"><span>Priority</span><select aria-label="Filter investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}><option value="all">All priorities</option>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {investigations.length} active investigations</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[900px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Investigation</th><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Priority</th><th className="px-5 py-3">Assigned investigator</th><th className="px-5 py-3">Updated</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((item) => <tr key={item.investigationId} className={selection?.investigationId === item.investigationId ? "bg-primary/5" : ""}><td className="px-5 py-4 font-data text-xs font-semibold">{item.investigationId}</td><td className="px-5 py-4 font-data text-xs">{item.claimId}</td><td className="px-5 py-4"><StatusPill value={item.status} /></td><td className="px-5 py-4"><StatusPill value={item.priority} /></td><td className="px-5 py-4">{item.assignedInvestigator || "Unassigned"}</td><td className="px-5 py-4 text-xs text-muted-foreground">{displayDate(item.updatedAt)}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openInvestigation(item)}>Open case</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={AlertTriangle} title="No matching investigations" description="Adjust the filters or synchronize to receive current active cases." /> : null}</CardContent></Card><InvestigationWorkspace compact={selection} detail={detail} loading={loading} writesAllowed={writesAllowed} canUpdateStatus={capabilities.includes("investigations.update_status")} canChangePriority={capabilities.includes("investigations.change_priority")} onSave={updateInvestigation} onClose={closeInvestigation} onOpenClaim={openClaimById} /></div>;
+}
+
+function RiskSignalsView({ network, openClaimById }) {
+  const summary = network?.summary || {};
+  const nodes = (network?.nodes || []).slice().sort((left, right) => Number(right.max_risk_score || 0) - Number(left.max_risk_score || 0)).slice(0, 12);
+  const edges = (network?.edges || []).slice().sort((left, right) => Number(right.risk_score || 0) - Number(left.risk_score || 0)).slice(0, 12);
+  return <div className="space-y-6"><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard title="Active clusters" value={summary.active_cluster_count ?? 0} description="Multi-claim review candidates" icon={Network} /><StatCard title="Linked entities" value={summary.entity_count ?? 0} description={`${summary.member_count ?? 0} members · ${summary.provider_count ?? 0} providers`} icon={Activity} /><StatCard title="Represented claims" value={summary.represented_claim_count ?? 0} description="Claims inside qualifying networks" icon={FileSearch} /><StatCard title="Isolated signals" value={summary.isolated_review_claim_count ?? 0} description="Review signals not forming a network" icon={ShieldAlert} /></section><div className="grid gap-6 xl:grid-cols-2"><Card><CardHeader><CardTitle>Highest-risk linked entities</CardTitle><CardDescription>Tokenised identifiers from the current server projection.</CardDescription></CardHeader><CardContent className="p-0">{nodes.length ? <div className="divide-y divide-border/70">{nodes.map((node) => <div key={node.entity_id} className="flex items-center justify-between gap-4 px-5 py-4"><div className="min-w-0"><p className="truncate font-data text-xs font-semibold">{node.value}</p><p className="mt-1 text-xs text-muted-foreground">{enumLabel(node.entity_type)} · {node.flagged_claim_count} flagged claims</p></div><RiskLabel score={node.max_risk_score} /></div>)}</div> : <EmptyState icon={Network} title="No qualifying network" description="No connected multi-claim review candidate meets the current projection rule." />}</CardContent></Card><Card><CardHeader><CardTitle>Claims in suspicious networks</CardTitle><CardDescription>Open the claim for authoritative evidence before making a decision.</CardDescription></CardHeader><CardContent className="p-0">{edges.length ? <div className="divide-y divide-border/70">{edges.map((edge) => <button type="button" key={`${edge.cluster_id}:${edge.claim_id}`} onClick={() => openClaimById(edge.claim_id)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-secondary/40"><div><p className="font-data text-xs font-semibold">{edge.claim_id}</p><p className="mt-1 text-xs text-muted-foreground">{money(edge.billed_amount)} · {edge.cluster_id}</p></div><RiskLabel score={edge.risk_score} /></button>)}</div> : <EmptyState icon={ShieldAlert} title="No network claims" description="This projection currently contains no qualifying connected claims." />}</CardContent></Card></div><div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-800 dark:text-sky-200"><p className="font-semibold">Human review remains mandatory</p><p className="mt-1 leading-6">Network membership and risk scores prioritize work. They do not confirm fraud or replace an investigation.</p></div></div>;
+}
+
+export function DesktopWorkspace({ status, onStatus, onError }) {
+  const [activeView, setActiveView] = useState("overview");
+  const [selectedClaim, setSelectedClaim] = useState(null);
+  const [claimLoading, setClaimLoading] = useState(false);
+  const [selectedInvestigation, setSelectedInvestigation] = useState(null);
+  const [investigationDetail, setInvestigationDetail] = useState(null);
+  const [investigationLoading, setInvestigationLoading] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const syncAttempt = useRef(0);
+  const syncingRef = useRef(false);
+  const initialSyncStarted = useRef(false);
+  const claims = status.cache?.claims || [];
+  const investigations = status.cache?.investigations || [];
+  const summary = status.cache?.dashboard?.summary || {};
+  const network = status.cache?.suspiciousNetwork || {};
+  const capabilities = status.session?.clientCapabilities || [];
+  const canViewInvestigations = capabilities.includes("investigations.view");
+  const writesAllowed = operationalWriteAllowed(status);
+
+  const syncNow = useCallback(async () => {
+    if (syncingRef.current || !status.authenticated || status.locked) return null;
+    syncingRef.current = true;
+    setSyncing(true);
+    onStatus((previous) => ({ ...previous, cache: { ...previous.cache, freshness: "Synchronizing" } }));
+    try {
+      const next = await desktopBridge.sync();
+      syncAttempt.current = 0;
+      onStatus(next);
+      return next;
+    } catch (error) {
+      syncAttempt.current += 1;
+      onError(error?.message || "Synchronization failed. Cached data remains read-only.", true);
+      return null;
+    } finally {
+      syncingRef.current = false;
+      setSyncing(false);
+    }
+  }, [onError, onStatus, status.authenticated, status.locked]);
+
+  useEffect(() => {
+    if (initialSyncStarted.current) return undefined;
+    initialSyncStarted.current = true;
+    const initial = window.setTimeout(syncNow, 0);
+    return () => window.clearTimeout(initial);
+  }, [syncNow]);
+
+  useEffect(() => {
+    const delay = status.syncHasMore ? 250 : nextBackoff(syncAttempt.current, { active: document.visibilityState === "visible" });
+    const timer = window.setTimeout(syncNow, delay);
+    return () => window.clearTimeout(timer);
+  }, [status.cache?.lastSuccessfulSyncAt, status.error, status.syncHasMore, syncNow]);
+
+  useEffect(() => {
+    let timer;
+    const arm = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(async () => {
+        await desktopBridge.lock();
+        onStatus((previous) => ({ ...previous, locked: true, lockReason: "automatic_lock" }));
+      }, AUTO_LOCK_MS);
+    };
+    const events = ["pointerdown", "keydown", "focus"];
+    events.forEach((event) => window.addEventListener(event, arm, { passive: true }));
+    arm();
+    return () => { window.clearTimeout(timer); events.forEach((event) => window.removeEventListener(event, arm)); };
+  }, [onStatus]);
+
+  const openClaim = useCallback(async (claimOrId) => {
+    const claimId = typeof claimOrId === "string" ? claimOrId : claimOrId?.claimId;
+    if (!claimId) return;
+    const cached = claims.find((claim) => claim.claimId === claimId) || (typeof claimOrId === "object" ? claimOrId : null);
+    setActiveView("claims");
+    setSelectedClaim(cached ? { claim: cached } : null);
+    setClaimLoading(true);
+    try {
+      setSelectedClaim(await desktopBridge.claimDetails(claimId));
+    } catch (error) {
+      onError(error?.message || "Claim details are unavailable.", status.cache?.freshness === "Offline");
+    } finally {
+      setClaimLoading(false);
+    }
+  }, [claims, onError, status.cache?.freshness]);
+
+  const openInvestigation = useCallback(async (compact) => {
+    const investigationId = compact?.investigationId;
+    if (!investigationId) return;
+    const cached = investigations.find((item) => item.investigationId === investigationId) || compact;
+    setActiveView("investigations");
+    setSelectedInvestigation(cached);
+    setInvestigationDetail(null);
+    setInvestigationLoading(true);
+    try {
+      setInvestigationDetail(await desktopBridge.investigationDetails(investigationId));
+    } catch (error) {
+      onError(error?.message || "Investigation details are unavailable.", status.cache?.freshness === "Offline");
+    } finally {
+      setInvestigationLoading(false);
+    }
+  }, [investigations, onError, status.cache?.freshness]);
+
+  const updateInvestigation = useCallback(async (record, changes) => {
+    try {
+      const result = await desktopBridge.updateInvestigation(record.investigationId, record.updatedAt, changes);
+      onStatus(result.status);
+      if (result.investigation.status === "CLOSED") {
+        setSelectedInvestigation(null);
+        setInvestigationDetail(null);
+      } else {
+        setSelectedInvestigation(result.investigation);
+        setInvestigationDetail((previous) => previous ? {
+          ...previous,
+          investigation: { ...previous.investigation, ...result.investigation },
+        } : { available: true, investigation: result.investigation });
+      }
+    } catch (error) {
+      const message = error?.message || "The investigation could not be updated.";
+      if (message.includes("STALE_RECORD_VERSION")) {
+        await syncNow();
+        try {
+          const refreshed = await desktopBridge.investigationDetails(record.investigationId);
+          setInvestigationDetail(refreshed);
+          setSelectedInvestigation(refreshed.investigation);
+        } catch {
+          setSelectedInvestigation(null);
+          setInvestigationDetail(null);
+        }
+        onError("The investigation changed on the server. The queue was refreshed; review it before trying again.");
+      } else {
+        onError(message, message.toLowerCase().includes("unavailable"));
+      }
+    }
+  }, [onError, onStatus, syncNow]);
+
+  async function signOut() {
+    await desktopBridge.logout();
+    onStatus(await desktopBridge.status());
+  }
+
+  async function lock() {
+    await desktopBridge.lock();
+    onStatus((previous) => ({ ...previous, locked: true, lockReason: "manual_lock" }));
+  }
+
+  async function reset() {
+    await desktopBridge.reset(resetConfirmation);
+    onStatus(await desktopBridge.status());
+  }
+
+  const navigation = [
+    { id: "overview", label: "Overview", icon: BarChart3 },
+    { id: "claims", label: "Claims", icon: FileSearch },
+    ...(canViewInvestigations ? [{ id: "investigations", label: "Investigations", icon: AlertTriangle, count: investigations.length }] : []),
+    { id: "risk", label: "Risk signals", icon: Network },
+  ];
+
+  return <div className="min-h-screen bg-background text-foreground"><header className="desktop-drag-region sticky top-0 z-30 border-b border-border bg-card"><div className="flex min-h-16 items-center gap-4 px-5"><WorkspaceBrand /><nav aria-label="Desktop workspace" className="desktop-no-drag hidden items-center gap-1 lg:flex">{navigation.map(({ id, label, icon: Icon, count }) => <button type="button" key={id} onClick={() => setActiveView(id)} className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium ${activeView === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}><Icon className="h-4 w-4" />{label}{count !== undefined ? <span className={`rounded-full px-1.5 py-0.5 font-data text-[10px] ${activeView === id ? "bg-primary-foreground/15" : "bg-background"}`}>{count}</span> : null}</button>)}</nav><div className="desktop-no-drag ml-auto flex items-center gap-2"><div className="hidden rounded-lg border border-border bg-background px-3 py-2 xl:block"><span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Licensed to </span><span className="text-sm font-semibold" data-testid="licensed-organisation">{status.enrollment.organisationDisplayName}</span></div><div className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 ${freshnessClasses(status.cache?.freshness)}`}><span className="h-2 w-2 rounded-full bg-current" /><span className="text-xs font-semibold">{status.cache?.freshness || "Stale"}</span></div><Button variant="outline" size="sm" onClick={syncNow} disabled={syncing}><RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />Sync</Button><Button variant="ghost" size="sm" onClick={lock}><LockKeyhole className="h-4 w-4" /><span className="sr-only">Lock</span></Button><Button variant="ghost" size="sm" onClick={signOut}><LogOut className="h-4 w-4" /><span className="sr-only">Sign out</span></Button></div></div><nav aria-label="Desktop workspace mobile" className="desktop-no-drag flex gap-1 overflow-x-auto border-t border-border px-3 py-2 lg:hidden">{navigation.map(({ id, label, icon: Icon, count }) => <button type="button" key={id} onClick={() => setActiveView(id)} className={`inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${activeView === id ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}><Icon className="h-4 w-4" />{label}{count !== undefined ? ` ${count}` : ""}</button>)}</nav></header>
+
+    <main className="mx-auto max-w-[1500px] space-y-6 p-5 sm:p-7"><section className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="font-data text-xs font-semibold uppercase tracking-[0.18em] text-primary">Scheme intelligence</p><h1 className="mt-2 font-display text-3xl font-semibold">{navigation.find((item) => item.id === activeView)?.label || "Overview"}</h1><p className="mt-2 text-sm text-muted-foreground">Cached records render immediately; authoritative changes require a verified connection.</p></div><div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="h-4 w-4" />Last successful sync {displayDate(status.cache?.lastSuccessfulSyncAt)}</div></section>
+      {status.error ? <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-700 dark:text-rose-300">{status.error}</div> : null}
+      {!writesAllowed ? <div className="flex gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200"><WifiOff className="h-5 w-5 shrink-0" /><div><p className="font-semibold">Offline data is read-only</p><p className="mt-1">Investigation creation, notes, evidence, status transitions, and fraud decisions are blocked until authoritative connectivity returns. Scheme device and activation-key management remains on the ClaimGuard web application.</p></div></div> : null}
+      {activeView === "overview" ? <Overview claims={claims} investigations={investigations} summary={summary} network={network} openClaim={openClaim} openInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} /> : null}
+      {activeView === "claims" ? <ClaimsView claims={claims} selectedClaim={selectedClaim} loading={claimLoading} openClaim={openClaim} closeClaim={() => setSelectedClaim(null)} openInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} /> : null}
+      {activeView === "investigations" && canViewInvestigations ? <InvestigationsView investigations={investigations} selection={selectedInvestigation} detail={investigationDetail} loading={investigationLoading} writesAllowed={writesAllowed} capabilities={capabilities} openInvestigation={openInvestigation} closeInvestigation={() => { setSelectedInvestigation(null); setInvestigationDetail(null); }} updateInvestigation={updateInvestigation} openClaimById={openClaim} /> : null}
+      {activeView === "risk" ? <RiskSignalsView network={network} openClaimById={openClaim} /> : null}
+      <details className="rounded-xl border border-border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Reset this device</summary><div className="mt-4 max-w-xl space-y-3"><p className="text-sm text-muted-foreground">This local recovery action permanently deletes this Windows user’s encrypted cache, session material, device key, and organisation enrollment. A web administrator must issue a new activation key.</p><label className="grid gap-2 text-sm font-medium">Type RESET CLAIMGUARD<Input value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} /></label><Button variant="destructive" onClick={reset} disabled={resetConfirmation !== "RESET CLAIMGUARD"}><RotateCcw className="mr-2 h-4 w-4" />Delete cache and reset organisation</Button></div></details>
+    </main>
+  </div>;
+}

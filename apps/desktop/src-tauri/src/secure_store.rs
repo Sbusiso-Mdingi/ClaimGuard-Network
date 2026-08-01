@@ -9,6 +9,7 @@ pub const DEVICE_PRIVATE_KEY: &str = "device-ed25519-private-key";
 pub const ENROLLMENT_DOCUMENT: &str = "signed-enrollment-document";
 pub const CACHE_KEY: &str = "cache-aes-256-key";
 pub const SESSION_COOKIE: &str = "session-cookie";
+pub const SESSION_PROFILE: &str = "session-profile";
 
 #[derive(Clone, Default)]
 pub struct SecureStore;
@@ -42,6 +43,7 @@ impl SecureStore {
     pub fn delete_all(&self) -> DesktopResult<()> {
         for name in [
             SESSION_COOKIE,
+            SESSION_PROFILE,
             ENROLLMENT_DOCUMENT,
             DEVICE_PRIVATE_KEY,
             CACHE_KEY,

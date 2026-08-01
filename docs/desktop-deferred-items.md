@@ -15,6 +15,7 @@ The following are intentionally outside this implementation and must not be repr
 - full-database page encryption; payloads are record-level AEAD and require BitLocker for whole-volume coverage;
 - background Windows service/push synchronization; the app uses foreground/background jittered polling;
 - broad offline workflows or mutation queues; offline remains read-only by policy;
+- desktop case creation, assignment, note/evidence writes, and final fraud confirmation/reversal; the current desktop workspace reviews notes/evidence and performs only optimistic status/priority updates;
 - accessibility, privacy/POPIA, independent penetration, SmartScreen reputation, managed-software-distribution, and incident exercises;
 - production Windows end-to-end activation/sync/update tests against a dedicated non-production scheme;
 - updater key transition support beyond the current single pinned key.

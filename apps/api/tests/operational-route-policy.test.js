@@ -9,6 +9,7 @@ import {
   OPERATIONAL_ROUTE_IDS,
   OPERATIONAL_ROUTE_POLICIES,
   isOperationalRoutePath,
+  resolveOperationalRoutePermissionRequirement,
   resolveOperationalRoutePolicy,
 } from "../src/authorization-policy.js";
 import { createAnonymousAuthenticationProvider } from "./helpers/authentication-provider.js";
@@ -119,6 +120,26 @@ test("matcher handles specific-vs-parameterized edge cases for claims and invest
   assert.equal(investigationsConfirmGet?.id, OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_VIEW);
   assert.equal(noteRoute?.id, OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_ADD_NOTE);
   assert.equal(evidenceRoute?.id, OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_UPLOAD_EVIDENCE);
+});
+
+test("desktop investigation reads and mutations use capability-specific policy", () => {
+  const detail = resolveOperationalRoutePolicy({ method: "GET", path: "/desktop/investigations/INV-1" });
+  const patch = resolveOperationalRoutePolicy({ method: "PATCH", path: "/desktop/investigations/INV-1" });
+
+  assert.equal(detail?.id, OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_DETAIL);
+  assert.deepEqual(detail.permissions, ["investigations.view"]);
+  assert.deepEqual(
+    resolveOperationalRoutePermissionRequirement({ routePolicy: patch, payload: { status: "UNDER_REVIEW" } }),
+    { permissions: ["investigations.update_status"], mode: "all" },
+  );
+  assert.deepEqual(
+    resolveOperationalRoutePermissionRequirement({ routePolicy: patch, payload: { priority: "HIGH" } }),
+    { permissions: ["investigations.change_priority"], mode: "all" },
+  );
+  assert.deepEqual(
+    resolveOperationalRoutePermissionRequirement({ routePolicy: patch, payload: { status: "UNDER_REVIEW", priority: "HIGH" } }),
+    { permissions: ["investigations.update_status", "investigations.change_priority"], mode: "all" },
+  );
 });
 
 test("operational routes rely on canonical route ids rather than local permission arrays", () => {

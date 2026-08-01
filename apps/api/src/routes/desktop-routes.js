@@ -47,6 +47,16 @@ function rejectRoutingOverrides(c) {
   return null;
 }
 
+function minimumNecessaryInvestigation(investigation) {
+  if (!investigation || typeof investigation !== "object") return investigation;
+  const { tenantId: _tenantId, notes = [], evidence = [], ...record } = investigation;
+  return {
+    ...record,
+    notes: notes.map(({ tenantId: _noteTenantId, ...note }) => note),
+    evidence: evidence.map(({ tenantId: _evidenceTenantId, ...item }) => item),
+  };
+}
+
 export function registerDesktopRoutes(app, {
   desktopEnrollmentService = null,
   desktopSyncService = null,
@@ -153,6 +163,9 @@ export function registerDesktopRoutes(app, {
   const requireDesktopClaimDetail = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_CLAIM_DETAIL,
   });
+  const requireDesktopInvestigationDetail = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_DETAIL,
+  });
   const requireDesktopInvestigationPatch = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_PATCH,
   });
@@ -213,6 +226,28 @@ export function registerDesktopRoutes(app, {
     }
   });
 
+  app.get("/desktop/investigations/:id", requireDesktopInvestigationDetail, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    if (!investigationService?.getInvestigationDetails) {
+      return c.json({ available: false, code: "DESKTOP_INVESTIGATION_UNAVAILABLE", message: "Investigation details are temporarily unavailable." }, 503);
+    }
+    try {
+      const investigation = await investigationService.getInvestigationDetails(c.req.param("id"));
+      if (!investigation) {
+        return c.json({ available: false, code: "INVESTIGATION_NOT_FOUND", message: "The investigation was not found in the licensed organisation." }, 404);
+      }
+      c.header("ETag", `W/\"${investigation.updatedAt}\"`);
+      return c.json({
+        available: true,
+        investigation: minimumNecessaryInvestigation(investigation),
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      return desktopError(c, error, "Investigation details are temporarily unavailable.", "DESKTOP_INVESTIGATION_FETCH_FAILED");
+    }
+  });
+
   app.patch("/desktop/investigations/:id", requireDesktopInvestigationPatch, async (c) => {
     const override = rejectRoutingOverrides(c);
     if (override) return override;
@@ -232,7 +267,7 @@ export function registerDesktopRoutes(app, {
         expectedUpdatedAt: ifMatch,
       });
       c.header("ETag", `W/\"${investigation.updatedAt}\"`);
-      return c.json({ available: true, investigation });
+      return c.json({ available: true, investigation: minimumNecessaryInvestigation(investigation) });
     } catch (error) {
       const stale = error?.code === "stale_record_version";
       return c.json({
