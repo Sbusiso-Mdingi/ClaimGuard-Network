@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/react";
 import App from "./AppRoot";
 import { scrubSentryBreadcrumb, scrubSentryEvent } from "./lib/sentryScrub";
 import "./styles.css";
+import "./workspace-polish.css";
 
 if (window.__CLAIMGUARD_WEB_SENTRY_READY__ !== true) {
   window.__CLAIMGUARD_WEB_SENTRY_READY__ = true;
