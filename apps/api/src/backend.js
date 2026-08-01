@@ -273,6 +273,7 @@ export function createBackendApp({
   registerAdminRoutes(app, {
     reportService: services.reportService,
     dataPlaneRuntime,
+    desktopEnrollmentConfigured: Boolean(desktopEnrollmentService),
     detectionStrategyRepository: dependencies.detectionStrategyRepository,
     tenantRepository: dependencies.tenantRepository,
     modelDeploymentRepository: controlPlaneRepositories?.modelDeployments || null,

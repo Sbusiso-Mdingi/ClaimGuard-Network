@@ -6,6 +6,8 @@
 
 The desktop is a universal application. Organisation identity comes only from a signed device enrollment; there is no per-scheme binary, editable tenant slug, database selector, or API-origin selector.
 
+The desktop is distributed to medical-scheme organisations. Scheme administrators are valid desktop users for their enrolled scheme, subject to the same server-authorised operational permissions as any other user. ClaimGuard platform administrators are web-only identities and are rejected by desktop authentication. Device-fleet management remains on the web: the desktop has no role-management, activation-key issuance, device-policy, fleet-revocation, audit-management, or platform-governance surface. Its reset command is local recovery that deletes this Windows user's cache and enrollment; re-enrollment still requires a key issued from the web application.
+
 ## Trust and Data Flow
 
 ```mermaid
@@ -88,6 +90,6 @@ The corresponding private keys are never compiled into the application.
 
 ## Permission Model
 
-`desktop.devices.manage` is granted to scheme and platform administrators. Scheme administrators are hard-bound to their own organisation. Platform administrators may manage enrollment metadata for an explicit organisation but do not gain operational claim access. Issuance and revocation require recent password reauthentication plus an exact typed confirmation; raw keys are shown once and never returned by list APIs.
+`desktop.devices.manage` is used only by the browser application and its API boundary; it is never exposed as a Tauri command. Scheme administrators can use the Windows client for their enrolled medical scheme and remain hard-bound to that organisation. Platform administrators manage platform/enrollment metadata on the web, are rejected as desktop users, and do not gain operational claim access. Issuance and revocation require recent password reauthentication plus an exact typed confirmation; raw keys are shown once and never returned by list APIs.
 
 See [desktop-sync-protocol.md](desktop-sync-protocol.md), [desktop-cache-retention.md](desktop-cache-retention.md), and [desktop-security-and-threat-model.md](desktop-security-and-threat-model.md).

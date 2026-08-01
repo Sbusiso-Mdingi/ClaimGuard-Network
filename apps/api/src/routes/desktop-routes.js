@@ -91,6 +91,11 @@ export function registerDesktopRoutes(app, {
         password: payload.password,
         requiredOrganisationId: device.organisationId,
       }, c.get("authenticationMetadata") || {});
+      const platformIdentity = result.actor?.organisation?.organisationType === "platform"
+        || result.actor?.roles?.includes("platform_administrator");
+      if (platformIdentity) {
+        throw new Error("Platform administration is not a desktop identity.");
+      }
       const enrollment = await desktopEnrollmentService.renewEnrollment(device);
       const previous = c.get("resolvedSession") || null;
       if (previous) await authenticationService.logout(previous, c.get("authenticationMetadata") || {});

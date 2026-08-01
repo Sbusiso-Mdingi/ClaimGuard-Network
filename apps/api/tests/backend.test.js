@@ -117,6 +117,7 @@ test("live endpoint returns liveness payload", async () => {
 
 test("ready endpoint returns readiness details when dependencies are healthy", async () => {
   const app = createBackendApp({
+    desktopEnrollmentService: {},
     reportStorage: createReportStorageStub({
       detection: {
         risk_score: {
@@ -144,6 +145,7 @@ test("ready endpoint returns readiness details when dependencies are healthy", a
   assert.equal(json.status, "ok");
   assert.equal(json.checks.reportStorageReachable, true);
   assert.equal(json.checks.databaseReachable, true);
+  assert.equal(json.checks.desktopEnrollmentConfigured, true);
 });
 
 test("ready endpoint returns 200 degraded when report storage is unreachable", async () => {
@@ -162,6 +164,7 @@ test("ready endpoint returns 200 degraded when report storage is unreachable", a
   assert.equal(json.ready, true);
   assert.equal(json.status, "degraded");
   assert.equal(json.checks.reportStorageReachable, false);
+  assert.equal(json.checks.desktopEnrollmentConfigured, false);
 });
 
 test("internal data-plane health is a platform diagnostic and does not require private route resolution", async () => {

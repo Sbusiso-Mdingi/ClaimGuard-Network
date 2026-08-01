@@ -708,14 +708,18 @@ jobs:
           # Allow up to 5 minutes for App Service warm-up after deployment.
           for attempt in $(seq 1 30); do
             API_HEALTH_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$API_HEALTH_URL" || true)"
-            API_READY_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$API_READY_URL" || true)"
+            API_READY_BODY="$(curl -sS -w $'\n%{http_code}' "$API_READY_URL" || true)"
+            API_READY_STATUS="$(echo "$API_READY_BODY" | tail -n 1)"
+            API_READY_JSON="$(echo "$API_READY_BODY" | sed '$d')"
             WEB_ROOT_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_ROOT_URL" || true)"
             WEB_INDEX_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" "$WEB_INDEX_URL" || true)"
 
             API_OK=0
             WEB_OK=0
 
-            if [ "$API_HEALTH_STATUS" = "200" ] && [ "$API_READY_STATUS" = "200" ]; then
+            if [ "$API_HEALTH_STATUS" = "200" ] \
+              && [ "$API_READY_STATUS" = "200" ] \
+              && echo "$API_READY_JSON" | jq -e '.checks.desktopEnrollmentConfigured == true' >/dev/null; then
               API_OK=1
             fi
 
@@ -728,7 +732,8 @@ jobs:
               exit 0
             fi
 
-            echo "Attempt $attempt: api_health=$API_HEALTH_STATUS api_ready=$API_READY_STATUS web_root=$WEB_ROOT_STATUS web_index=$WEB_INDEX_STATUS"
+            DESKTOP_READY="$(echo "$API_READY_JSON" | jq -r '.checks.desktopEnrollmentConfigured // false' 2>/dev/null || echo false)"
+            echo "Attempt $attempt: api_health=$API_HEALTH_STATUS api_ready=$API_READY_STATUS desktop_enrollment=$DESKTOP_READY web_root=$WEB_ROOT_STATUS web_index=$WEB_INDEX_STATUS"
             sleep 10
           done
 

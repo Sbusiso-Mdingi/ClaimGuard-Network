@@ -43,8 +43,12 @@ jobs:
           if ("${{ inputs.expected_main_sha }}" -notmatch "^[0-9a-f]{40}$") { throw "expected_main_sha must be a full SHA." }
           if ("${{ inputs.expected_main_sha }}" -ne $env:GITHUB_SHA) { throw "The approved SHA does not match this run." }
           if ("${{ inputs.confirmation }}" -cne "BUILD SIGNED DESKTOP UPDATE") { throw "Confirmation did not match." }
-          if ([string]::IsNullOrWhiteSpace($env:CLAIMGUARD_ACTIVATION_ORIGIN) -or $env:CLAIMGUARD_ACTIVATION_ORIGIN -notmatch "^https://") { throw "A production HTTPS desktop origin is required." }
-          if ($env:CLAIMGUARD_ACTIVATION_ORIGIN -match "\.invalid") { throw "Placeholder origins are forbidden." }
+          if ([string]::IsNullOrWhiteSpace($env:CLAIMGUARD_ACTIVATION_ORIGIN)) { throw "A production HTTPS desktop origin is required." }
+          try { $origin = [Uri]::new($env:CLAIMGUARD_ACTIVATION_ORIGIN) } catch { throw "The production desktop origin is invalid." }
+          if (-not $origin.IsAbsoluteUri -or $origin.Scheme -ne "https" -or $origin.AbsolutePath -ne "/" -or $origin.Query -or $origin.Fragment) { throw "The production desktop origin must not contain a path, query, or fragment." }
+          if ($origin.Host -match "\.invalid$" -or $origin.Host -eq "localhost") { throw "Placeholder and local origins are forbidden." }
+          try { $enrollmentJwk = $env:CLAIMGUARD_ENROLLMENT_VERIFYING_JWK | ConvertFrom-Json } catch { throw "The enrollment-verification JWK is invalid JSON." }
+          if ($enrollmentJwk.kty -ne "OKP" -or $enrollmentJwk.crv -ne "Ed25519" -or $enrollmentJwk.x -notmatch "^[A-Za-z0-9_-]{43}$" -or [string]::IsNullOrWhiteSpace($enrollmentJwk.kid)) { throw "A keyed Ed25519 enrollment-verification JWK is required." }
           foreach ($name in @("CLAIMGUARD_ENROLLMENT_VERIFYING_JWK", "TAURI_UPDATER_PUBLIC_KEY", "TAURI_SIGNING_PRIVATE_KEY", "WINDOWS_SIGNING_CERTIFICATE_BASE64", "WINDOWS_SIGNING_CERTIFICATE_PASSWORD")) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) { throw "$name is required." }
           }

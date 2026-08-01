@@ -28,6 +28,8 @@ function repositoryWorkflows() {
       ".github/workflows/ensemble211-release-finalize.yml",
     ),
     ensembleProduction: read("infra/ensemble211-production.bicep"),
+    desktopPilot: read(".github/workflows/desktop-live-pilot.yml"),
+    desktopSigned: read(".github/workflows/desktop-signed-build.yml"),
   };
 }
 
@@ -92,6 +94,27 @@ test("production deployment must retain its protected environment", () => {
   assert.throws(
     () => validateDeploymentBoundaries(workflows),
     /CI observability deployment is missing/,
+  );
+});
+
+test("desktop live-pilot builds remain main-SHA-bound and unmistakably unsigned", () => {
+  const workflows = repositoryWorkflows();
+  workflows.desktopPilot = workflows.desktopPilot.replace(
+    'if ($env:GITHUB_REF -ne "refs/heads/main")',
+    'if ($env:GITHUB_REF -ne "refs/heads/feature")',
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Desktop live-pilot workflow is missing/,
+  );
+});
+
+test("desktop signed builds cannot gain release publication authority", () => {
+  const workflows = repositoryWorkflows();
+  workflows.desktopSigned += "\n# gh release create\n";
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Desktop signed-build workflow still contains/,
   );
 });
 

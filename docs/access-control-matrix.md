@@ -12,7 +12,7 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 | Worker identity | service runtime | perform bounded machine tasks | act as an interactive user |
 | Provisioning worker identity | provisioning | create/maintain provisioning artifacts and secrets within scope | manage unrelated Azure resources or subscription-wide RBAC |
 | Future external ingestion identity | scoped integration | ingest only for one organisation and one operation set | cross-tenant access or broad administrative privileges |
-| Enrolled desktop device | one immutable scheme organisation | prove possession, authenticate a user, sync authorised summaries | choose an organisation/tenant route, act without a matching user, or write offline |
+| Enrolled desktop device | one immutable medical-scheme organisation | prove possession, authenticate scheme users including scheme administrators, sync authorised summaries | authenticate ClaimGuard platform administrators, choose an organisation/tenant route, act without a matching user, or write offline |
 
 ## Current Azure Identity Snapshot
 
@@ -30,6 +30,8 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 - Authorization roles and permissions are evaluated in code.
 - Header-based authentication remains available only for isolated local rollback; production startup rejects it.
 - Scheme/platform administrators have `desktop.devices.manage`; scheme administrators are restricted to their own organisation and platform administration does not imply private-claims access.
+- Medical-scheme users, including scheme administrators, may use an organisation-enrolled Windows client. ClaimGuard platform administrators are web-only and are rejected by desktop authentication.
+- Scheme device/fleet management remains web-only. The Windows desktop exposes no activation-key, device-policy, revocation, or platform-governance commands; its reset is a local destructive recovery action.
 - Activation-key issuance and key/device revocation require password step-up, exact typed confirmation, and audit history.
 
 ## Required Constraints

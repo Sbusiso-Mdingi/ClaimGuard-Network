@@ -16,6 +16,7 @@ import {
 export function registerAdminRoutes(app, {
   reportService,
   dataPlaneRuntime = null,
+  desktopEnrollmentConfigured = false,
   detectionStrategyRepository = null,
   tenantRepository = null,
   modelDeploymentRepository = null,
@@ -69,7 +70,11 @@ export function registerAdminRoutes(app, {
       status: ready ? (readiness.degraded ? "degraded" : "ok") : "degraded",
       service: "api",
       ready,
-      checks: { ...readiness.checks, ...dataPlaneReadiness.checks },
+      checks: {
+        ...readiness.checks,
+        ...dataPlaneReadiness.checks,
+        desktopEnrollmentConfigured: Boolean(desktopEnrollmentConfigured),
+      },
       timestamp: new Date().toISOString(),
     }, ready ? 200 : 503);
   });
