@@ -105,6 +105,17 @@ export function createClaimsReadRepository(pool, options) {
       };
     },
 
+    async listDesktopClaimChanges(params) {
+      const result = await repository.listDesktopClaimChanges(params);
+      return {
+        ...result,
+        changes: result.changes.map((change) => ({
+          ...change,
+          record: mapClaim(change.record),
+        })),
+      };
+    },
+
     async getClaimById(claimId) {
       return mapClaim(await repository.getClaimById(claimId));
     },

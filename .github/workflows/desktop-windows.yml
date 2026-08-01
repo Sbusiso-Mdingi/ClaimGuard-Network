@@ -1,0 +1,129 @@
+name: desktop-windows
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "apps/api/**"
+      - "apps/web/src/components/ui/**"
+      - "packages/control-plane-database/**"
+      - "packages/database/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/desktop-windows.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "apps/api/**"
+      - "apps/web/src/components/ui/**"
+      - "packages/control-plane-database/**"
+      - "packages/database/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/desktop-windows.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      CLAIMGUARD_ACTIVATION_ORIGIN: https://api.example.invalid
+      CLAIMGUARD_ENROLLMENT_VERIFYING_JWK: '{"crv":"Ed25519","x":"Z-Pl3hrFt1YRtFg8ZKb0IfKYZ17BufPmRJLf8VvAsKM","kty":"OKP"}'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up stable Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify desktop frontend
+        run: |
+          pnpm --filter @claimguard/desktop test
+          pnpm --filter @claimguard/desktop build
+
+      - name: Verify desktop server and web integration
+        run: |
+          pnpm --filter @claimguard/control-plane-database test
+          pnpm --filter @claimguard/database test
+          pnpm --filter @claimguard/api test
+          pnpm --filter @claimguard/web test
+          pnpm --filter @claimguard/web build
+
+      - name: Verify native security boundary
+        working-directory: apps/desktop/src-tauri
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --all-targets --locked
+
+      - name: Install pinned Tauri CLI
+        run: cargo install tauri-cli --version 2.11.4 --locked
+
+      - name: Prepare ephemeral CI updater trust
+        shell: pwsh
+        working-directory: apps/desktop/src-tauri
+        run: |
+          $privateKey = Join-Path $env:RUNNER_TEMP "claimguard-ci-updater.key"
+          cargo tauri signer generate --ci --force -w $privateKey
+          $publicKey = Get-Content -Raw "$privateKey.pub"
+          $configuration = Get-Content -Raw "tauri.conf.json" | ConvertFrom-Json
+          $configuration.plugins.updater.pubkey = $publicKey.Trim()
+          $configuration | ConvertTo-Json -Depth 100 | Set-Content -Encoding UTF8 "tauri.conf.json"
+          "CLAIMGUARD_CI_UPDATER_PRIVATE_KEY=$privateKey" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build offline-capable NSIS installer
+        shell: pwsh
+        working-directory: apps/desktop/src-tauri
+        run: |
+          $env:TAURI_SIGNING_PRIVATE_KEY = $env:CLAIMGUARD_CI_UPDATER_PRIVATE_KEY
+          $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+          cargo tauri build --bundles nsis
+
+      - name: Normalize and verify installer artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $installers = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe")
+          if ($installers.Count -ne 1) { throw "Expected exactly one NSIS setup executable." }
+          Copy-Item $installers[0].FullName "artifacts/ClaimGuard-Setup.exe"
+          $updates = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip")
+          $signatures = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip.sig")
+          if ($updates.Count -ne 1 -or $signatures.Count -ne 1) { throw "Expected one signed Tauri updater payload." }
+          Copy-Item $updates[0].FullName "artifacts/ClaimGuard-Update.nsis.zip"
+          Copy-Item $signatures[0].FullName "artifacts/ClaimGuard-Update.nsis.zip.sig"
+          if (-not (Test-Path "artifacts/ClaimGuard-Setup.exe")) { throw "ClaimGuard-Setup.exe was not produced." }
+
+      - name: Upload exact Windows installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ClaimGuard-Windows-Setup
+          path: |
+            artifacts/ClaimGuard-Setup.exe
+            artifacts/ClaimGuard-Update.nsis.zip
+            artifacts/ClaimGuard-Update.nsis.zip.sig
+          if-no-files-found: error
+          retention-days: 14

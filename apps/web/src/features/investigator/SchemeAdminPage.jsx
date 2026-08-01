@@ -17,6 +17,7 @@ import { apiJson } from "../../lib/apiClient";
 import { hasCapability } from "../../lib/capabilities";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
+import { DesktopDeviceManagement } from "./DesktopDeviceManagement";
 
 function unavailableText(value, fallback = "Not available") {
   return value === undefined || value === null || value === "" ? fallback : value;
@@ -286,6 +287,7 @@ export function SchemeAdminPage() {
   const { identity } = useRole();
   const canViewOperations = hasCapability(identity, "tenant_status.view");
   const canManageUsers = hasCapability(identity, "users.manage_tenant");
+  const canManageDesktop = hasCapability(identity, "desktop.devices.manage");
   const [overview, setOverview] = useState(null);
   const [overviewStatus, setOverviewStatus] = useState("loading");
   const [overviewError, setOverviewError] = useState("");
@@ -354,6 +356,12 @@ export function SchemeAdminPage() {
             </div>
           </SectionCard>
         </>
+      ) : null}
+
+      {canManageDesktop ? (
+        <SectionCard title="Windows desktop activation" description="Issue one-time organisation keys, review enrolled devices, revoke access, and inspect activation audit history.">
+          <DesktopDeviceManagement />
+        </SectionCard>
       ) : null}
     </PageFrame>
   );

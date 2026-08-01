@@ -15,6 +15,7 @@ This threat model covers the current ClaimGuard surface and the future productio
 - report artifacts and storage pointers;
 - audit logs and telemetry;
 - worker runtime secrets and job inputs.
+- desktop device keys, signed enrollments, activation keys, encrypted caches, and signed updater artifacts.
 
 ## Trust Boundaries
 
@@ -27,6 +28,10 @@ This threat model covers the current ClaimGuard surface and the future productio
 - GitHub Actions -> Azure;
 - Doppler -> runtime delivery;
 - support/admin access -> operational records.
+- desktop WebView -> restricted Rust IPC;
+- desktop Rust core -> API TLS/device-proof boundary;
+- desktop Rust core -> Windows Credential Manager and per-user cache;
+- signed-build workflow -> Authenticode and updater signing material.
 
 ## Top Threats
 
@@ -133,3 +138,5 @@ Mitigations:
 - privacy/POPIA assessment;
 - supply-chain evidence;
 - secret-rotation rehearsal.
+
+The detailed desktop STRIDE analysis, security invariants, and residual risks are maintained in [desktop-security-and-threat-model.md](desktop-security-and-threat-model.md).

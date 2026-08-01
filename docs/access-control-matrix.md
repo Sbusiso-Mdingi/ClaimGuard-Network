@@ -12,6 +12,7 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 | Worker identity | service runtime | perform bounded machine tasks | act as an interactive user |
 | Provisioning worker identity | provisioning | create/maintain provisioning artifacts and secrets within scope | manage unrelated Azure resources or subscription-wide RBAC |
 | Future external ingestion identity | scoped integration | ingest only for one organisation and one operation set | cross-tenant access or broad administrative privileges |
+| Enrolled desktop device | one immutable scheme organisation | prove possession, authenticate a user, sync authorised summaries | choose an organisation/tenant route, act without a matching user, or write offline |
 
 ## Current Azure Identity Snapshot
 
@@ -28,6 +29,8 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 - Tenant routing and data-plane scoping are present in code.
 - Authorization roles and permissions are evaluated in code.
 - Header-based authentication remains available only for isolated local rollback; production startup rejects it.
+- Scheme/platform administrators have `desktop.devices.manage`; scheme administrators are restricted to their own organisation and platform administration does not imply private-claims access.
+- Activation-key issuance and key/device revocation require password step-up, exact typed confirmation, and audit history.
 
 ## Required Constraints
 

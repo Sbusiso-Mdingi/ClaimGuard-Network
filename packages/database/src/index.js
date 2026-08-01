@@ -54,6 +54,8 @@ export {
   createOperationalRepositories,
 } from "./operational-repositories.js";
 
+export { createDesktopSyncRepository } from "./desktop-sync-repository.js";
+
 
 export {
   ClaimIngestionValidationError,

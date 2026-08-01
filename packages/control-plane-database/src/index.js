@@ -57,6 +57,13 @@ export {
   projectModelDeployment,
 } from "./model-deployment-repository.js";
 export { createReleaseGovernanceRepository } from "./release-governance-repository.js";
+export { createDesktopEnrollmentRepository } from "./desktop-enrollment-repository.js";
+export {
+  createDesktopEnrollmentService,
+  createEnrollmentDocumentSigner,
+  createActivationKeyHasher,
+  DesktopEnrollmentError,
+} from "./desktop-enrollment-service.js";
 export { withControlPlaneTransaction } from "./transaction.js";
 export {
   assertNoPlaintextPassword,

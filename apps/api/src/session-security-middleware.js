@@ -6,6 +6,10 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 export function createSessionCsrfMiddleware({ authenticationService, configuration }) {
   return async (c, next) => {
     if (configuration.mode !== "session" || SAFE_METHODS.has(c.req.method.toUpperCase())) return next();
+    // Desktop mutations are protected by a verified DPoP-style device proof,
+    // including method, route, body digest, timestamp and one-use nonce. They
+    // do not rely on a browser origin or expose the HttpOnly web CSRF token.
+    if (c.get("desktopDevice")) return next();
     const resolvedSession = c.get("resolvedSession") || null;
     const isLogin = c.req.path === "/auth/login" || /^\/o\/[^/]+\/login$/.test(c.req.path);
     const isLogout = c.req.path === "/auth/logout";

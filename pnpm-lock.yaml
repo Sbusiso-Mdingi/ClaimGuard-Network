@@ -57,6 +57,49 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
 
+  apps/desktop:
+    dependencies:
+      lucide-react:
+        specifier: ^1.24.0
+        version: 1.24.0(react@19.2.7)
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+    devDependencies:
+      '@testing-library/dom':
+        specifier: ^10.4.0
+        version: 10.4.1
+      '@testing-library/jest-dom':
+        specifier: ^6.0.0
+        version: 6.9.1
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@testing-library/user-event':
+        specifier: ^14.4.3
+        version: 14.6.1(@testing-library/dom@10.4.1)
+      autoprefixer:
+        specifier: ^10.4.20
+        version: 10.5.2(postcss@8.5.16)
+      jsdom:
+        specifier: ^22.1.0
+        version: 22.1.0
+      postcss:
+        specifier: ^8.4.45
+        version: 8.5.16
+      tailwindcss:
+        specifier: 3.4.10
+        version: 3.4.10
+      vite:
+        specifier: ^5.0.0
+        version: 5.4.21(@types/node@26.1.1)
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@26.1.1)(jsdom@22.1.0)
+
   apps/provisioning-worker:
     dependencies:
       '@azure/identity':

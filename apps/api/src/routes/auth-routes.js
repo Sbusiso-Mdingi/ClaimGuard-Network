@@ -27,7 +27,7 @@ function operationalTenant(actor) {
   return null;
 }
 
-function safeSessionResponse(result, configuration) {
+export function safeSessionResponse(result, configuration) {
   const { actor, session } = result;
   return {
     authenticated: true,

@@ -10,6 +10,10 @@ import { createTenantContextMiddleware } from "./middleware/tenant-context-middl
 import { createDataPlaneMiddleware } from "./middleware/data-plane-middleware.js";
 import { createOperationalDependencyProxy } from "./operational-service-context.js";
 import { createSessionCsrfMiddleware } from "./session-security-middleware.js";
+import {
+  createDesktopDeviceProofMiddleware,
+  createDesktopOrganisationEnforcementMiddleware,
+} from "./desktop-device-proof.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerAdminRoutes } from "./routes/admin-routes.js";
 import { registerPlatformAdminRoutes } from "./routes/platform-admin-routes.js";
@@ -19,6 +23,7 @@ import { registerDetectionRoutes } from "./routes/detection-routes.js";
 import { registerInvestigationsRoutes } from "./routes/investigations-routes.js";
 import { registerLedgerRoutes } from "./routes/ledger-routes.js";
 import { registerRegistryRoutes } from "./routes/registry-routes.js";
+import { registerDesktopAdminRoutes, registerDesktopRoutes } from "./routes/desktop-routes.js";
 import { createClaimIngestionService } from "./services/claim-ingestion-service.js";
 import { createFraudConfirmationService } from "./services/fraud-confirmation-service.js";
 import { createFraudReversalService } from "./services/fraud-reversal-service.js";
@@ -95,6 +100,9 @@ export function createBackendApp({
   reportStorage = null,
   detectionReportPath = null,
   dataPlaneRuntime = null,
+  desktopEnrollmentService = null,
+  desktopSyncService = null,
+  desktopDeviceProofVerifier = null,
 } = {}) {
   if (authenticationConfiguration.mode !== "session") {
     throw new TypeError("Only session authentication mode is supported.");
@@ -135,6 +143,7 @@ export function createBackendApp({
     ledgerRepository: createOperationalDependencyProxy("ledgerRepository", ledgerRepository),
     tenantRepository: createOperationalDependencyProxy("tenantRepository", tenantRepository),
     detectionStrategyRepository: createOperationalDependencyProxy("detectionStrategyRepository", null),
+    desktopSyncRepository: createOperationalDependencyProxy("desktopSyncRepository", null),
     generationRepository: createOperationalDependencyProxy("generationRepository", generationRepository),
   } : {
     ...services,
@@ -142,6 +151,7 @@ export function createBackendApp({
     ledgerRepository,
     tenantRepository,
     detectionStrategyRepository: null,
+    desktopSyncRepository: null,
     generationRepository,
   };
 
@@ -178,6 +188,10 @@ export function createBackendApp({
     }),
   );
 
+  if (desktopDeviceProofVerifier) {
+    app.use("*", createDesktopDeviceProofMiddleware({ verifier: desktopDeviceProofVerifier }));
+  }
+
   if (usesSessionAuthentication) {
     app.use("*", createSessionCsrfMiddleware({ authenticationService, configuration: authenticationConfiguration }));
   }
@@ -213,12 +227,15 @@ export function createBackendApp({
           ledgerRepository: repositories.ledger,
           tenantRepository: repositories.tenants,
           detectionStrategyRepository: repositories.detectionStrategy,
+          desktopSyncRepository: repositories.desktopSync,
           generationRepository: repositories.claimProcessingOutbox,
           operationalRepositories: repositories,
         };
       },
     }));
   }
+
+  app.use("*", createDesktopOrganisationEnforcementMiddleware());
 
   app.use(
     "*",
@@ -232,6 +249,24 @@ export function createBackendApp({
       authenticationService,
       configuration: authenticationConfiguration,
       controlPlaneService,
+    });
+  }
+
+
+  registerDesktopRoutes(app, {
+    desktopEnrollmentService,
+    desktopSyncService,
+    authenticationService,
+    authenticationConfiguration,
+    claimsReadRepository: dependencies.claimsReadRepository,
+    desktopSyncRepository: dependencies.desktopSyncRepository,
+    investigationService: dependencies.investigationService,
+  });
+
+  if (controlPlaneRepositories && controlPlaneService) {
+    registerDesktopAdminRoutes(app, {
+      desktopEnrollmentService,
+      authenticationService,
     });
   }
 

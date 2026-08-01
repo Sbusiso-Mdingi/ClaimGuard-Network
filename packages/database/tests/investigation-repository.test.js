@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createInvestigationRepository,
   INVESTIGATION_STATUS,
+  InvestigationConflictError,
   InvestigationNotFoundError,
   InvestigationValidationError,
   runWithTenantContext,
@@ -18,7 +19,7 @@ function tenantContext(tenantId) {
   };
 }
 
-function createFakePool({ claims = [] } = {}) {
+function createFakePool({ claims = [], rejectVersionedUpdate = false } = {}) {
   const claimRows = new Map(claims.map((claim) => [`${claim.tenant_id}:${claim.claim_id}`, claim]));
   const investigations = new Map();
   const notes = [];
@@ -100,10 +101,16 @@ function createFakePool({ claims = [] } = {}) {
         if (!investigation || investigation.tenant_id !== tenantId) {
           return [{ affectedRows: 0 }];
         }
+        if (
+          statement.includes("AND updated_at = ?")
+          && (rejectVersionedUpdate || investigation.updated_at !== params[5])
+        ) {
+          return [{ affectedRows: 0 }];
+        }
 
         investigation.status = status;
         investigation.priority = priority;
-        investigation.updated_at = new Date().toISOString();
+        investigation.updated_at = new Date(new Date(investigation.updated_at).getTime() + 1).toISOString();
         if (status === INVESTIGATION_STATUS.CLOSED && !investigation.closed_at) {
           investigation.closed_at = investigation.updated_at;
         }
@@ -222,6 +229,47 @@ test("investigation repository rejects invalid status transitions", async () => 
           status: INVESTIGATION_STATUS.CONFIRMED_FRAUD,
         }),
       (error) => error instanceof InvestigationValidationError && error.code === "invalid_status_transition",
+    );
+  });
+});
+
+test("investigation repository rejects stale versions before and during a conditional update", async () => {
+  const pool = createFakePool({
+    claims: [{ claim_id: "claim-alpha-1", tenant_id: "tenant_alpha" }],
+  });
+  const repository = createInvestigationRepository(pool, { allowLegacyTenantContext: true });
+
+  await runWithTenantContext(tenantContext("tenant_alpha"), async () => {
+    const created = await createTestInvestigation(repository);
+    await repository.updateInvestigation({
+      investigationId: created.investigationId,
+      priority: "CRITICAL",
+      expectedUpdatedAt: created.updatedAt,
+    });
+    await assert.rejects(
+      () => repository.updateInvestigation({
+        investigationId: created.investigationId,
+        priority: "LOW",
+        expectedUpdatedAt: created.updatedAt,
+      }),
+      (error) => error instanceof InvestigationConflictError && error.code === "stale_record_version",
+    );
+  });
+
+  const racingPool = createFakePool({
+    claims: [{ claim_id: "claim-alpha-1", tenant_id: "tenant_alpha" }],
+    rejectVersionedUpdate: true,
+  });
+  const racingRepository = createInvestigationRepository(racingPool, { allowLegacyTenantContext: true });
+  await runWithTenantContext(tenantContext("tenant_alpha"), async () => {
+    const created = await createTestInvestigation(racingRepository);
+    await assert.rejects(
+      () => racingRepository.updateInvestigation({
+        investigationId: created.investigationId,
+        priority: "CRITICAL",
+        expectedUpdatedAt: created.updatedAt,
+      }),
+      (error) => error instanceof InvestigationConflictError && error.code === "stale_record_version",
     );
   });
 });

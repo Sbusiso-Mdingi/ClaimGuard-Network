@@ -39,6 +39,7 @@ export const CLAIMGUARD_PERMISSIONS = Object.freeze({
   PLATFORM_RELEASES_REQUEST: "platform_releases.request",
   PLATFORM_RELEASES_APPROVE: "platform_releases.approve",
   PLATFORM_ADMINISTRATORS_MANAGE: "platform_administrators.manage",
+  DESKTOP_DEVICES_MANAGE: "desktop.devices.manage",
 });
 
 const rolePermissionMap = Object.freeze({
@@ -104,6 +105,7 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
     CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT,
     CLAIMGUARD_PERMISSIONS.TENANT_STATUS_VIEW,
+    CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE,
   ]),
   [CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR]: Object.freeze([
     CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
@@ -113,6 +115,7 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_REQUEST,
     CLAIMGUARD_PERMISSIONS.PLATFORM_RELEASES_APPROVE,
     CLAIMGUARD_PERMISSIONS.PLATFORM_ADMINISTRATORS_MANAGE,
+    CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE,
   ]),
 });
 
@@ -215,10 +218,15 @@ export const OPERATIONAL_ROUTE_IDS = Object.freeze({
   INTERNAL_DATA_PLANE_HEALTH: "internal.data_plane.health",
   DETECTION_STRATEGY_VIEW: "detection.strategy.view",
   DETECTION_STRATEGY_UPDATE: "detection.strategy.update",
+  DESKTOP_SYNC_BOOTSTRAP: "desktop.sync.bootstrap",
+  DESKTOP_SYNC_CHANGES: "desktop.sync.changes",
+  DESKTOP_CLAIM_DETAIL: "desktop.claim.detail",
+  DESKTOP_INVESTIGATION_PATCH: "desktop.investigation.patch",
 });
 
 export const OPERATIONAL_ROUTE_PREFIXES = Object.freeze([
   "/claims", "/investigations", "/detection", "/ledger", "/registry", "/internal/data-plane",
+  "/desktop/sync", "/desktop/claims", "/desktop/investigations",
 ]);
 
 function normalizeRequestPath(path) {
@@ -286,6 +294,10 @@ const operationalRoutePolicyEntries = [
   { id: OPERATIONAL_ROUTE_IDS.INTERNAL_DATA_PLANE_HEALTH, method: "GET", pathPattern: "/internal/data-plane/health", permissions: [CLAIMGUARD_PERMISSIONS.PLATFORM_HEALTH_VIEW], permissionMode: "all", requiresOperationalDataPlane: false },
   { id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_VIEW, method: "GET", pathPattern: "/detection/strategy", permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.DETECTION_STRATEGY_UPDATE, method: "PUT", pathPattern: "/detection/strategy", permissions: [CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DESKTOP_SYNC_BOOTSTRAP, method: "GET", pathPattern: "/desktop/sync/bootstrap", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DESKTOP_SYNC_CHANGES, method: "GET", pathPattern: "/desktop/sync/changes", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DESKTOP_CLAIM_DETAIL, method: "GET", pathPattern: "/desktop/claims/:claimId", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_PATCH, method: "PATCH", pathPattern: "/desktop/investigations/:id", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS], permissionMode: "all", requiresOperationalDataPlane: true },
 ];
 
 export const OPERATIONAL_ROUTE_POLICIES = Object.freeze(operationalRoutePolicyEntries.map((entry) => Object.freeze(entry)));
