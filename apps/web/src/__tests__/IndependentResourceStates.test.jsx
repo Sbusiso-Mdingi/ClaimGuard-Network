@@ -18,7 +18,7 @@ const pageOneClaims = {
   available: true,
   claims: [
     {
-      claimId: "C-QUEUED-1", schemeId: "S1", memberId: "Member Queued", providerId: "P-1",
+      claimId: "8b98fb02-70ef-44a4-9f40-1d63c84a7be7", schemeId: "S1", memberId: "Member Queued", providerId: "P-1",
       status: "AWAITING_SCORING", processingStatus: "queued",
       processing: { status: "queued", updatedAt: "2026-07-25T08:00:00.000Z" },
       riskScore: null, riskLevel: null, updatedAt: "2026-07-25T08:00:00.000Z", triggeredRules: [], evidence: [],
@@ -33,7 +33,7 @@ const pageOneClaims = {
       riskScore: null, riskLevel: null, updatedAt: "2026-07-25T08:05:00.000Z", triggeredRules: [], evidence: [],
     },
   ],
-  pagination: { page: 1, pageSize: 2, total: 3, totalPages: 2, hasNextPage: true },
+  pagination: { page: "1", pageSize: "2", total: "3", totalPages: "2", hasNextPage: true },
 };
 
 const pageTwoClaims = {
@@ -49,7 +49,7 @@ const pageTwoClaims = {
       riskScore: null, riskLevel: null, updatedAt: "2026-07-25T08:10:00.000Z", triggeredRules: [], evidence: [],
     },
   ],
-  pagination: { page: 2, pageSize: 2, total: 3, totalPages: 2, hasNextPage: false },
+  pagination: { page: "2", pageSize: "2", total: "3", totalPages: "2", hasNextPage: false },
 };
 
 function claimsNavigationLink() {
@@ -94,7 +94,9 @@ test("keeps claims and other healthy resources usable when the report request fa
   await user.click(claimsNavigationLink());
 
   expect(await screen.findByRole("heading", { name: /^Claims$/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "C-QUEUED-1" })).toBeInTheDocument();
+  const claimLink = screen.getByRole("link", { name: "8b98fb02-70ef-44a4-9f40-1d63c84a7be7" });
+  expect(claimLink).toBeInTheDocument();
+  expect(claimLink).toHaveAttribute("title", "8b98fb02-70ef-44a4-9f40-1d63c84a7be7");
 });
 
 test("shows truthful processing and failure states", async () => {

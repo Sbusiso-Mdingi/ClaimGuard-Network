@@ -11,7 +11,7 @@ from claimguard_report_producer.cli import main, run_worker_command
 
 class WorkerCliTests(TestCase):
     @patch("claimguard_report_producer.cli.create_claim_wakeup_queue_from_environment")
-    @patch("claimguard_report_producer.cli.create_worker_from_environment")
+    @patch("claimguard_report_producer.cli.create_event_worker_from_environment")
     def test_event_processes_exact_job_in_a_scheme_slot(
         self,
         create_worker,
@@ -59,7 +59,7 @@ class WorkerCliTests(TestCase):
         connection.close.assert_called_once_with()
 
     @patch("claimguard_report_producer.cli.create_claim_wakeup_queue_from_environment")
-    @patch("claimguard_report_producer.cli.create_worker_from_environment")
+    @patch("claimguard_report_producer.cli.create_event_worker_from_environment")
     def test_event_releases_wakeup_when_five_scheme_slots_are_busy(
         self,
         create_worker,
