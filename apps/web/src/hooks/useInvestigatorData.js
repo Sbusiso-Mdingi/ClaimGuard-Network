@@ -140,6 +140,7 @@ function resourceError(error, fallback) {
 
 export function useInvestigatorData({ enabled = true } = {}) {
   const claimsPageRef = useRef(1);
+  const claimsRequestSequenceRef = useRef(0);
   const [state, setState] = useState({
     status: "loading",
     report: null,
@@ -237,7 +238,9 @@ export function useInvestigatorData({ enabled = true } = {}) {
 
   const refreshClaims = useCallback(async (page = claimsPageRef.current) => {
     const requestedPage = positiveInteger(page, claimsPageRef.current);
+    const requestSequence = claimsRequestSequenceRef.current + 1;
     const fetchedAt = new Date().toISOString();
+    claimsRequestSequenceRef.current = requestSequence;
     claimsPageRef.current = requestedPage;
 
     setState((previous) => ({
@@ -248,6 +251,7 @@ export function useInvestigatorData({ enabled = true } = {}) {
 
     try {
       const result = await fetchClaims({ page: requestedPage });
+      if (requestSequence !== claimsRequestSequenceRef.current) return;
       claimsPageRef.current = positiveInteger(result.pagination?.page, requestedPage);
       setState((previous) => ({
         ...previous,
@@ -260,6 +264,7 @@ export function useInvestigatorData({ enabled = true } = {}) {
         dataSource: "live",
       }));
     } catch (error) {
+      if (requestSequence !== claimsRequestSequenceRef.current) return;
       setState((previous) => ({
         ...previous,
         claimsStatus: previous.claims.length > 0 ? "stale" : "error",

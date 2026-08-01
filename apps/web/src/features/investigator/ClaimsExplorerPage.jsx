@@ -87,6 +87,12 @@ function isUnderInvestigation(claim) {
     || UNDER_INVESTIGATION_STATUSES.has(String(claim.status || ""));
 }
 
+function paginationInteger(value, fallback, { allowZero = false } = {}) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  const minimum = allowZero ? 0 : 1;
+  return Number.isInteger(parsed) && parsed >= minimum ? parsed : fallback;
+}
+
 export function ClaimsExplorerPage({
   claims,
   claimsStatus = "ready",
@@ -147,19 +153,22 @@ export function ClaimsExplorerPage({
     sortField,
   ]);
 
-  const page = Number.isFinite(claimsPagination?.page) ? claimsPagination.page : 1;
-  const pageSize = Number.isFinite(claimsPagination?.pageSize)
-    ? claimsPagination.pageSize
-    : claims.length;
-  const total = Number.isFinite(claimsPagination?.total)
-    ? claimsPagination.total
-    : claims.length;
+  const page = paginationInteger(claimsPagination?.page, 1);
+  const pageSize = paginationInteger(
+    claimsPagination?.pageSize,
+    Math.max(1, claims.length),
+  );
+  const total = paginationInteger(
+    claimsPagination?.total,
+    claims.length,
+    { allowZero: true },
+  );
   const totalPages = Math.max(
     1,
-    Number.isFinite(claimsPagination?.totalPages)
-      ? claimsPagination.totalPages
-      : 1,
+    paginationInteger(claimsPagination?.totalPages, Math.ceil(total / pageSize)),
   );
+  const hasPreviousPage = claimsPagination?.hasPreviousPage === true || page > 1;
+  const hasNextPage = claimsPagination?.hasNextPage === true || page < totalPages;
   const firstRecord = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastRecord = total === 0 ? 0 : Math.min(
     total,
@@ -353,10 +362,10 @@ export function ClaimsExplorerPage({
         title="Claims queue"
         description="Processing state is shown separately from investigation status and risk output."
       >
-        <DataTableShell ariaLabel="Claims table" minWidth="1180px">
+        <DataTableShell ariaLabel="Claims table" minWidth="1480px">
           <thead className="sticky top-0 z-10">
             <tr>
-              <th>
+              <th className="sticky left-0 z-20 min-w-[280px] bg-card shadow-[1px_0_0_hsl(var(--border))]">
                 <button className="inline-flex items-center gap-2 font-medium text-foreground transition hover:text-primary" onClick={() => toggleSort("claimId")} aria-label="Sort by claim ID">
                   Claim <SortIcon field="claimId" />
                 </button>
@@ -399,8 +408,12 @@ export function ClaimsExplorerPage({
                 const processingState = processingPresentation(claim);
                 return (
                   <tr key={claim.claimId}>
-                    <td className="font-medium text-foreground">
-                      <Link to={`/claims/${encodeURIComponent(claim.claimId)}`} className="text-sky-700 underline-offset-4 hover:underline focus-visible:underline dark:text-sky-300">
+                    <td className="sticky left-0 z-10 min-w-[280px] max-w-[280px] bg-card font-medium text-foreground shadow-[1px_0_0_hsl(var(--border))]">
+                      <Link
+                        to={`/claims/${encodeURIComponent(claim.claimId)}`}
+                        className="block break-all text-sky-700 underline-offset-4 hover:underline focus-visible:underline dark:text-sky-300"
+                        title={claim.claimId}
+                      >
                         {claim.claimId}
                       </Link>
                       {claim.currentClaimVersion ? <p className="mt-1 text-[10px] text-muted-foreground">Version {claim.currentClaimVersion}</p> : null}
@@ -458,7 +471,8 @@ export function ClaimsExplorerPage({
             <Button
               variant="outline"
               size="sm"
-              disabled={page <= 1 || refreshing || loading}
+              aria-label="Previous claims page"
+              disabled={!hasPreviousPage || refreshing || loading}
               onClick={() => onPageChange?.(page - 1)}
             >
               <ChevronLeft className="mr-1 h-4 w-4" /> Previous
@@ -469,7 +483,8 @@ export function ClaimsExplorerPage({
             <Button
               variant="outline"
               size="sm"
-              disabled={page >= totalPages || refreshing || loading}
+              aria-label="Next claims page"
+              disabled={!hasNextPage || refreshing || loading}
               onClick={() => onPageChange?.(page + 1)}
             >
               Next <ChevronRight className="ml-1 h-4 w-4" />

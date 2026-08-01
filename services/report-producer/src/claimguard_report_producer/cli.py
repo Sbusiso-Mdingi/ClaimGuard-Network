@@ -12,6 +12,7 @@ import time
 from .event_queue import create_claim_wakeup_queue_from_environment
 from .prospective_worker import (
     create_discovered_workers_from_environment,
+    create_event_worker_from_environment,
     create_worker_from_environment,
 )
 
@@ -128,7 +129,7 @@ def _run_event(*, backend: str | None, output_dir: Path | None) -> int:
         queue.delete(message)
         slot = "legacy"
     else:
-        worker = create_worker_from_environment(
+        worker = create_event_worker_from_environment(
             backend=backend,
             output_dir=output_dir,
             organisation_id=message.organisation_id,

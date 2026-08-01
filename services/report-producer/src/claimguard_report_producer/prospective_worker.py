@@ -16,6 +16,7 @@ from .worker import (
     TerminalJobError,
     WorkerConfigurationError,
     create_discovered_workers_from_environment as _create_legacy_discovered_workers,
+    create_event_worker_from_environment as _create_legacy_event_worker,
     create_worker_from_environment as _create_legacy_worker,
 )
 
@@ -152,6 +153,21 @@ def create_worker_from_environment(
 ) -> ProspectiveAwareReportProducerWorker:
     return _upgrade_worker(
         _create_legacy_worker(
+            backend=backend,
+            output_dir=output_dir,
+            organisation_id=organisation_id,
+        )
+    )
+
+
+def create_event_worker_from_environment(
+    *,
+    organisation_id: str,
+    backend: str | None = None,
+    output_dir: Path | None = None,
+) -> ProspectiveAwareReportProducerWorker:
+    return _upgrade_worker(
+        _create_legacy_event_worker(
             backend=backend,
             output_dir=output_dir,
             organisation_id=organisation_id,

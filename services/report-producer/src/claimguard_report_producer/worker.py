@@ -15,6 +15,7 @@ from .contract import (
     validate_detection_report,
 )
 from .data_plane import (
+    DataPlaneRouteError,
     discover_active_worker_organisation_ids,
     resolve_worker_data_plane_scope,
 )
@@ -2039,6 +2040,67 @@ def create_worker_from_environment(
             ModelDeploymentRegistry()
         ),
     )
+
+
+def create_event_worker_from_environment(
+    *,
+    organisation_id: str,
+    backend: str | None = None,
+    output_dir: Path | None = None,
+) -> ReportProducerWorker:
+    """Create one scheme worker after validating queue routing authority."""
+    selected_organisation_id = _required_text(
+        organisation_id,
+        field="organisation_id",
+        maximum=64,
+    )
+    supported_schema_versions = frozenset(
+        _csv_values(
+            os.environ.get(
+                "DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS",
+                "14",
+            )
+        )
+    )
+    if not supported_schema_versions:
+        raise WorkerConfigurationError(
+            "At least one supported data-plane schema version is required."
+        )
+
+    active_organisation_ids = discover_active_worker_organisation_ids(
+        control_plane_url=os.environ.get(
+            "CONTROL_PLANE_MYSQL_URL",
+            "",
+        ),
+        supported_schema_versions=supported_schema_versions,
+    )
+    if selected_organisation_id not in active_organisation_ids:
+        raise DataPlaneRouteError(
+            "The claim wake-up organisation is outside the active worker routing scope."
+        )
+
+    previous_allowlist = os.environ.get(
+        "INTERNAL_SERVICE_ORGANISATION_IDS"
+    )
+    os.environ["INTERNAL_SERVICE_ORGANISATION_IDS"] = (
+        selected_organisation_id
+    )
+    try:
+        return create_worker_from_environment(
+            backend=backend,
+            output_dir=output_dir,
+            organisation_id=selected_organisation_id,
+        )
+    finally:
+        if previous_allowlist is None:
+            os.environ.pop(
+                "INTERNAL_SERVICE_ORGANISATION_IDS",
+                None,
+            )
+        else:
+            os.environ["INTERNAL_SERVICE_ORGANISATION_IDS"] = (
+                previous_allowlist
+            )
 
 
 def create_discovered_workers_from_environment(
