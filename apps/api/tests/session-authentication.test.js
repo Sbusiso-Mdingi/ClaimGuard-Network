@@ -82,8 +82,8 @@ test("authentication configuration is session-only and rejects demo credential e
   assert.equal(Object.hasOwn(session, "internalServiceAllowedRoles"), false);
   assert.equal(Object.hasOwn(session, "demoCredentialsVisible"), false);
   assert.equal(Object.hasOwn(session, "demoCredentials"), false);
-  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "hybrid" }), /session or demo_headers/);
-  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "demo_headers" }), /refuses/);
+  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "hybrid" }), /exactly session/);
+  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "legacy_headers" }), /exactly session/);
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production" }), /AUTH_ALLOWED_ORIGINS/);
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEMO_CREDENTIALS_VISIBLE: "true" }), /no longer supported/);
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEMO_CREDENTIALS_JSON: "[]" }), /no longer supported/);

@@ -45,15 +45,8 @@ The provisioner prints generated passwords once. Put only approved ephemeral dem
 
 External claim producers use the separate internal-service bearer mechanism documented in `claim-ingestion.md`; they never use browser identity headers.
 
-## Rollback
+## Incident fallback
 
-For isolated non-production rollback, set `AUTHENTICATION_MODE=demo_headers` consistently on API and web, then restart both. Do not leave a session-mode instance and header-mode instance behind the same load balancer: that creates competing authorities. Production startup rejects header mode.
+Authentication mode is session-only. There is no supported fallback mode that re-enables browser-controlled identity headers.
 
-Before returning to session mode:
-
-1. Reapply/verify control-plane migration status.
-2. Run legacy inventory dry-run and resolve every conflict.
-3. Confirm active medical-scheme organisations have verified mappings and active memberships.
-4. Return both services to `AUTHENTICATION_MODE=session` and verify login, CSRF, logout, and private-route denial for the platform organisation.
-
-Never use rollback mode to infer database names, accept browser tenant selection, or grant a platform-wide tenant bypass.
+If login or session flows fail in non-production, keep `AUTHENTICATION_MODE=session`, remediate the failing dependency (control-plane database, configuration, or origin policy), and re-run login, CSRF, logout, and platform private-route denial verification.

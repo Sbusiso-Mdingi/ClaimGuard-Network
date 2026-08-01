@@ -27,7 +27,7 @@ export function resolveAuthenticationConfiguration(env = process.env) {
   const mode = String(env.AUTHENTICATION_MODE || "session").trim().toLowerCase();
   if (mode !== "session") {
     throw new Error(
-      "ClaimGuard refuses unsupported authentication modes: AUTHENTICATION_MODE must be exactly session; session or demo_headers switching is no longer supported.",
+      "ClaimGuard refuses unsupported authentication modes: AUTHENTICATION_MODE must be exactly session.",
     );
   }
   if (env.DEMO_CREDENTIALS_VISIBLE || env.DEMO_CREDENTIALS_JSON) {

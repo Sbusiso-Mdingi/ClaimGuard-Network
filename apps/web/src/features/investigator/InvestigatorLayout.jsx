@@ -48,19 +48,33 @@ export function InvestigatorLayout({
   ledgerStatus,
 }) {
   const { identity, logout, mode } = useRole();
+  const effectiveIdentity = identity || {
+    id: null,
+    userId: null,
+    label: "Authenticated account",
+    role: null,
+    roles: [],
+    capabilities: [],
+    tenantId: null,
+    tenantSlug: null,
+    tenantLabel: "Unknown",
+    organisationId: null,
+    organisationSlug: null,
+    organisationType: "medical_scheme",
+  };
   const location = useLocation();
   const visibleNavGroups = useMemo(
     () =>
       NAV_GROUPS
         .map((group) => ({
           ...group,
-          items: group.items.filter((item) => canAccessNavItem(identity, item)),
+          items: group.items.filter((item) => canAccessNavItem(effectiveIdentity, item)),
         }))
         .filter((group) => group.items.length > 0),
-    [identity],
+    [effectiveIdentity],
   );
   const showLiveControls = isLiveDetectionRoute(location.pathname);
-  const isPlatformWorkspace = identity.organisationType === "platform";
+  const isPlatformWorkspace = effectiveIdentity.organisationType === "platform";
   const workspaceLabel = isPlatformWorkspace ? "Platform operations" : "Scheme workspace";
   const contextLabel = isPlatformWorkspace ? "Organisation:" : "Scheme:";
 
@@ -163,7 +177,7 @@ export function InvestigatorLayout({
           ].join(" ")}
         >
           <div className="mb-6 flex items-center justify-between gap-3">
-            <Link to={defaultRouteForIdentity(identity)} className="flex items-center gap-3">
+            <Link to={defaultRouteForIdentity(effectiveIdentity)} className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-border-soft shadow-inner">
                 <Activity className="h-5 w-5" />
               </span>
@@ -239,10 +253,10 @@ export function InvestigatorLayout({
           </nav>
 
           <div className="mt-auto space-y-4 pt-6 border-t border-border-soft/50">
-            {mode === "session" ? (
+            {mode === "session" && identity ? (
               <div className="rounded-[12px] border border-border-soft bg-surface-card p-3 shadow-sm">
-                <p className="text-[13px] font-semibold text-foreground">{identity.label}</p>
-                <p className="text-[11px] text-muted-2 mt-0.5">{identity.tenantLabel}</p>
+                <p className="text-[13px] font-semibold text-foreground">{effectiveIdentity.label}</p>
+                <p className="text-[11px] text-muted-2 mt-0.5">{effectiveIdentity.tenantLabel}</p>
                 <Button type="button" variant="outline" size="sm" className="mt-3 h-8 w-full border-border-soft bg-background/50 text-xs text-muted hover:bg-secondary/70 hover:text-foreground" onClick={logout}>Sign out</Button>
               </div>
             ) : null}
@@ -255,12 +269,12 @@ export function InvestigatorLayout({
               <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#71a8d9]" aria-hidden="true" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">{contextLabel}</span>
-                <span className="text-[11px] font-semibold text-foreground">{identity.tenantLabel || identity.tenantId}</span>
+                <span className="text-[11px] font-semibold text-foreground">{effectiveIdentity.tenantLabel || effectiveIdentity.tenantId || "Unknown"}</span>
               </div>
               <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Role:</span>
-                <span className="text-[11px] font-semibold text-foreground">{formatIdentityRoles(identity)}</span>
+                <span className="text-[11px] font-semibold text-foreground">{formatIdentityRoles(effectiveIdentity)}</span>
               </div>
               {mode === "session" ? (
                 <div className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border-soft bg-background/55 px-3 py-1">

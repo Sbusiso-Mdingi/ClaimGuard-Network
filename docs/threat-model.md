@@ -32,7 +32,7 @@ This threat model covers the current ClaimGuard surface and the future productio
 
 ### Spoofing
 
-- forged demo headers or tenant headers;
+- forged tenant headers or asserted service identity headers;
 - fake browser session tokens;
 - worker or service identity impersonation;
 - spoofed origin or CSRF context.

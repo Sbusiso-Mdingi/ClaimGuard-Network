@@ -1,6 +1,6 @@
 # ClaimGuard Control-Plane Database
 
-This package owns the control-plane schema, migration history, repositories, authentication/session service, identity management, model deployments, release governance, provisioning, security, diagnostics, and demo provisioning.
+This package owns the control-plane schema, migration history, repositories, authentication/session service, identity management, model deployments, release governance, provisioning, security, and diagnostics.
 
 The control-plane's identity and session records are authoritative only when the API is started with `AUTHENTICATION_MODE=session`. Operational claims data and database routing remain owned by `@claimguard/database`.
 
@@ -12,7 +12,7 @@ The control-plane's identity and session records are authoritative only when the
 | `CONTROL_PLANE_SHADOW_ENABLED` | No | Defaults to `false`. Must be exactly `true` for inventory `--apply`. |
 | `MYSQL_URL` | Conditional | Read only by the legacy-tenant inventory command as the current operational source. |
 | `CLAIMGUARD_APP_VERSION` | No | Optional migration-history application version. |
-| `AUTHENTICATION_MODE` | Yes | API authority mode: exactly `session` or `demo_headers`. |
+| `AUTHENTICATION_MODE` | Yes | API authority mode: exactly `session`. |
 
 The control-plane database may be a separate database on the same local MySQL server, but must have a distinct URL and database name.
 
@@ -25,14 +25,9 @@ pnpm --filter @claimguard/control-plane-database diagnose
 pnpm --filter @claimguard/control-plane-database inventory -- --dry-run
 CONTROL_PLANE_SHADOW_ENABLED=true \
   pnpm --filter @claimguard/control-plane-database inventory -- --apply --deployment-class demo
-DEPLOYMENT_CLASS=demo \
-  pnpm --filter @claimguard/control-plane-database provision-demo -- \
-  --confirm=PROVISION_DEMO_ACCOUNTS
 ```
 
 Inventory never modifies operational tenant rows. Apply mode writes only unambiguous shadow organisations and mappings to the control plane.
-
-Demo provisioning reads current tenants without modifying them, creates verified control-plane mappings, hashes generated credentials with Argon2id, and prints generated passwords once to the invoking terminal. Supply approved ephemeral display credentials separately through `DEMO_CREDENTIALS_JSON`; they are never recovered from the database.
 
 ## Modules
 
@@ -54,7 +49,6 @@ Demo provisioning reads current tenants without modifying them, creates verified
 | `credential-guarded-control-plane-service.js` | Credential-guarded wrapper enforcing integration-credential boundaries |
 | `role-required-control-plane-service.js` | Role-enforcing wrapper for the control-plane service |
 | `route-aware-authentication-repository.js` | Authentication with data-plane route awareness |
-| `demo-provisioning.js` | Demo account and credential provisioning |
 | `development-platform-admin-bootstrap.js` | Local development bootstrap for platform admin accounts |
 | `diagnostics.js` | Control-plane health checks |
 | `migrate.js` | Schema migration runner |
@@ -63,7 +57,7 @@ Demo provisioning reads current tenants without modifying them, creates verified
 
 ## Authority Boundary
 
-Session mode authenticates local passwords and server-side sessions through this package. `demo_headers` is an isolated rollback/development mode and is refused in production. The modes cannot be combined. Authentication bridges an authenticated medical-scheme organisation only through a verified `legacy_tenant_mappings` record; operational request admission then separately resolves authoritative `data_plane_routes` metadata.
+Session mode authenticates local passwords and server-side sessions through this package. Authentication bridges an authenticated medical-scheme organisation only through a verified `legacy_tenant_mappings` record; operational request admission then separately resolves authoritative `data_plane_routes` metadata.
 
 At runtime, exactly one active `data_plane_routes` record is resolved for the authenticated immutable organisation ID before operational access. Non-production provisioning creates active `legacy_shared` routes and links verified mappings; the platform organisation receives `platform_none`. Database credentials remain outside route projections and control-plane responses.
 

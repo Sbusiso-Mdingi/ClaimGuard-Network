@@ -346,14 +346,6 @@ The deployment migration step retrieves control-plane and operational database U
 
 ## Rollback
 
-Non-production rollback may use:
+Authentication mode remains session-only for all environments.
 
-```text
-AUTHENTICATION_MODE=demo_headers
-```
-
-That mode uses the isolated deprecated global-pool compatibility path.
-
-Production refuses the demo-header authentication mode.
-
-Do not mix routed session instances and rollback instances behind the same load balancer. Do not use rollback mode as a substitute for repairing an incompatible route, database, mapping, or schema.
+Do not use compatibility shortcuts as a substitute for repairing an incompatible route, database, mapping, or schema.
