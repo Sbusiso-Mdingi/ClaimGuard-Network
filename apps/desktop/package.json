@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "node --check vite.config.js",
     "test": "vitest --run",
+    "test:coverage": "vitest --run --coverage",
     "tauri:build": "cargo tauri build --bundles nsis"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.4.3",
+    "@vitest/coverage-v8": "2.1.9",
     "autoprefixer": "^10.4.20",
     "jsdom": "^22.1.0",
     "postcss": "^8.4.45",

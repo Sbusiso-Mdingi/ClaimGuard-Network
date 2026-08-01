@@ -111,12 +111,14 @@ jobs:
             --filter './apps/**' \
             --filter './packages/**' \
             --filter '!@claimguard/web' \
+            --filter '!@claimguard/desktop' \
             --filter '!@claimguard/claimguard-sdk' \
             --if-present \
             run test
           unset NODE_V8_COVERAGE
 
           pnpm --filter @claimguard/web run test:coverage
+          pnpm --filter @claimguard/desktop run test:coverage
 
           pnpm dlx c8@12.0.0 report \
             --temp-directory=coverage/javascript/raw \
@@ -139,6 +141,7 @@ jobs:
 
           test -s coverage/javascript/node/lcov.info
           test -s coverage/javascript/web/lcov.info
+          test -s coverage/javascript/desktop/lcov.info
 
       - name: Run all Python tests with coverage
         shell: bash
@@ -180,7 +183,7 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           use_oidc: true
-          files: ./coverage/javascript/node/lcov.info,./coverage/javascript/web/lcov.info
+          files: ./coverage/javascript/node/lcov.info,./coverage/javascript/web/lcov.info,./coverage/javascript/desktop/lcov.info
           flags: javascript
           name: javascript
           disable_search: true

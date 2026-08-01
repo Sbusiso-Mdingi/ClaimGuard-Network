@@ -16,6 +16,14 @@ export default defineConfig({
     minify: "esbuild",
   },
   test: {
+    coverage: {
+      provider: "v8",
+      reportsDirectory: "../../coverage/javascript/desktop",
+      reporter: ["text-summary", ["lcov", { projectRoot: "../.." }]],
+      include: ["src/**/*.{js,jsx}"],
+      exclude: ["src/**/*.test.*", "src/setupTests.js"],
+      all: true,
+    },
     environment: "jsdom",
     setupFiles: ["./src/setupTests.js"],
     restoreMocks: true,
