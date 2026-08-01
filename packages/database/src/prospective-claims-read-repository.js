@@ -27,17 +27,20 @@ function percentage(value) {
   return parsed === null ? null : Math.round(parsed * 10_000) / 100;
 }
 
-function prospectiveEvidence(score) {
+function prospectiveEvidence(score, inputDrift) {
   const fraudProbability = percentage(score?.fraudProbability);
   const threshold = percentage(score?.threshold);
   if (fraudProbability === null) return [];
-  const decision = score?.predictedClass || "UNKNOWN";
   const thresholdText = threshold === null
     ? ""
-    : ` against a ${threshold.toFixed(2)}% fitted threshold`;
-  return [
-    `Prospective ML model classified the claim as ${decision} at ${fraudProbability.toFixed(2)}%${thresholdText}.`,
+    : ` against a ${threshold.toFixed(2)}% review threshold`;
+  const evidence = [
+    `The model estimated ${fraudProbability.toFixed(2)}% fraud risk${thresholdText}. This is a screening signal, not a fraud finding.`,
   ];
+  if (inputDrift?.status === "WATCH" || inputDrift?.status === "OUT_OF_DISTRIBUTION") {
+    evidence.push(inputDrift.message || "Unfamiliar model inputs were detected; interpret the score with caution.");
+  }
+  return evidence;
 }
 
 function mapProspectiveDetection(detection) {
@@ -60,7 +63,7 @@ function mapProspectiveDetection(detection) {
     riskLevel: riskLevel(riskScore),
     reviewRecommended,
     triggeredRules: reviewRecommended ? ["PROSPECTIVE_ML_REVIEW_RECOMMENDED"] : [],
-    evidence: prospectiveEvidence(score),
+    evidence: prospectiveEvidence(score, detection.inputDrift),
     modelId,
     modelVersion,
     ensembleId: null,

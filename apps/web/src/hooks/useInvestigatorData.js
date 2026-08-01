@@ -294,6 +294,38 @@ export function useInvestigatorData({ enabled = true } = {}) {
     }
   }, []);
 
+  const refreshClaimsOverview = useCallback(async () => {
+    setState((previous) => ({
+      ...previous,
+      claimsOverviewStatus: previous.claimsOverview ? "refreshing" : "loading",
+      claimsOverviewError: null,
+    }));
+
+    try {
+      const overview = await fetchAvailableResource(
+        "/claims/overview",
+        "overview",
+        "Claims overview",
+      );
+      const fetchedAt = new Date().toISOString();
+      setState((previous) => ({
+        ...previous,
+        claimsOverview: overview,
+        claimsOverviewStatus: "ready",
+        claimsOverviewError: null,
+        lastRefresh: fetchedAt,
+        dataSource: "live",
+      }));
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        claimsOverviewStatus: previous.claimsOverview ? "stale" : "error",
+        claimsOverviewError: resourceError(error, "Failed to refresh claims overview."),
+        dataSource: previous.claimsOverview ? "stale" : previous.dataSource,
+      }));
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       setState((previous) => ({
@@ -314,10 +346,11 @@ export function useInvestigatorData({ enabled = true } = {}) {
   useEffect(() => {
     if (!enabled) return undefined;
     const id = window.setInterval(() => {
-      refreshClaims();
+      void refreshClaims();
+      void refreshClaimsOverview();
     }, CLAIMS_POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [enabled, refreshClaims]);
+  }, [enabled, refreshClaims, refreshClaimsOverview]);
 
   const metrics = useMemo(() => {
     const { report, claimsOverview, claims, claimsPagination } = state;
@@ -376,6 +409,7 @@ export function useInvestigatorData({ enabled = true } = {}) {
       activeFraudSchemes,
       recentDetections,
       riskDistribution: overviewSummary?.riskDistribution || null,
+      inputDrift: overviewSummary?.inputDrift || null,
       allClaims: claims,
       ledgerStatus: isLedgerLinked(report?.ledgerReference) ? "Connected" : "Unavailable",
     };
@@ -387,6 +421,7 @@ export function useInvestigatorData({ enabled = true } = {}) {
     pollingIntervalMs: CLAIMS_POLL_INTERVAL_MS,
     refreshNow: load,
     refreshClaims,
+    refreshClaimsOverview,
     loadClaimsPage: refreshClaims,
   };
 }

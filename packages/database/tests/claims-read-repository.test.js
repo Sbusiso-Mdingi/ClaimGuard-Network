@@ -235,6 +235,51 @@ test("claims overview aggregates every current claim instead of the visible page
           updated_at: "2026-08-01T05:02:00.000Z",
           detection_strategy_id: null,
         },
+        {
+          claim_id: "claim-linked-scored",
+          current_claim_version: 1,
+          scheme_id: "scheme-a",
+          member_id: "member-c",
+          provider_id: "provider-a",
+          amount: 300,
+          created_at: "2026-08-01T05:03:00.000Z",
+          updated_at: "2026-08-01T05:04:00.000Z",
+          detection_strategy_id: 7,
+          strategy_type: "approved_model",
+          model_deployment_id: "model:1",
+          source_job_id: "job-2",
+          request_id: "request-2",
+          analysis_mode: "PROSPECTIVE_CLAIM_SCREENING",
+          feature_schema_version: "claims-v1",
+          scored_at: "2026-08-01T05:04:00.000Z",
+          prospective_fraud_probability: "0.7",
+          prospective_threshold: "0.4",
+          prospective_review_recommended: "true",
+          input_drift_status: "WATCH",
+          input_drift_reliability: "CAUTION",
+          input_drift_signal_count: "1",
+        },
+        {
+          claim_id: "claim-network-scored",
+          current_claim_version: 1,
+          scheme_id: "scheme-a",
+          member_id: "member-c",
+          provider_id: "provider-c",
+          amount: 250,
+          created_at: "2026-08-01T05:05:00.000Z",
+          updated_at: "2026-08-01T05:06:00.000Z",
+          detection_strategy_id: 7,
+          strategy_type: "approved_model",
+          model_deployment_id: "model:1",
+          source_job_id: "job-3",
+          request_id: "request-3",
+          analysis_mode: "PROSPECTIVE_CLAIM_SCREENING",
+          feature_schema_version: "claims-v1",
+          scored_at: "2026-08-01T05:06:00.000Z",
+          prospective_fraud_probability: "0.6",
+          prospective_threshold: "0.4",
+          prospective_review_recommended: "true",
+        },
       ]];
     },
   };
@@ -244,24 +289,93 @@ test("claims overview aggregates every current claim instead of the visible page
 
   const overview = await repository.getClaimsOverview();
 
-  assert.equal(overview.summary.totalClaims, 2);
-  assert.equal(overview.summary.scoredClaims, 1);
+  assert.equal(overview.summary.totalClaims, 4);
+  assert.equal(overview.summary.scoredClaims, 3);
   assert.equal(overview.summary.unscoredClaims, 1);
-  assert.equal(overview.summary.highRiskClaims, 1);
+  assert.equal(overview.summary.highRiskClaims, 3);
   assert.equal(overview.summary.averageRiskScore, 100);
   assert.deepEqual(overview.summary.riskDistribution, {
-    critical: 1,
+    critical: 3,
     high: 0,
     medium: 0,
     low: 0,
     unscored: 1,
   });
-  assert.equal(overview.recentDetections[0].claimId, "claim-scored");
+  assert.deepEqual(overview.summary.inputDrift, {
+    inDistribution: 0,
+    watch: 1,
+    outOfDistribution: 0,
+    profileUnavailable: 0,
+    unassessed: 2,
+  });
+  assert.equal(overview.recentDetections[0].claimId, "claim-network-scored");
   assert.equal(overview.graph.nodes.length, 4);
-  assert.equal(overview.graph.edges.length, 2);
+  assert.equal(overview.graph.edges.length, 3);
   assert.equal(overview.graph.edges[0].review_recommended, true);
-  assert.equal(overview.graph.summary.review_signal_count, 1);
+  assert.equal(overview.graph.summary.review_signal_count, 3);
   assert.equal(overview.graph.summary.active_cluster_count, 1);
+  assert.equal(overview.graph.summary.isolated_review_claim_count, 0);
+  assert.equal(overview.graph.summary.projection, "MULTI_CLAIM_REVIEW_NETWORKS");
+  assert.deepEqual(overview.graph.summary.candidate_rule, {
+    minimum_claim_count: 3,
+    minimum_member_count: 2,
+    minimum_provider_count: 2,
+  });
+});
+
+test("claims overview excludes isolated review signals from fraud networks", async () => {
+  const pool = {
+    async execute() {
+      return [[
+        {
+          claim_id: "claim-isolated",
+          current_claim_version: 1,
+          scheme_id: "scheme-a",
+          member_id: "member-a",
+          provider_id: "provider-a",
+          amount: 100,
+          created_at: "2026-08-01T05:00:00.000Z",
+          updated_at: "2026-08-01T05:01:00.000Z",
+          detection_strategy_id: 7,
+          strategy_type: "approved_model",
+          model_deployment_id: "model:1",
+          analysis_mode: "PROSPECTIVE_CLAIM_SCREENING",
+          scored_at: "2026-08-01T05:01:00.000Z",
+          prospective_fraud_probability: "0.8",
+          prospective_threshold: "0.4",
+          prospective_review_recommended: "true",
+        },
+        {
+          claim_id: "claim-same-provider",
+          current_claim_version: 1,
+          scheme_id: "scheme-a",
+          member_id: "member-b",
+          provider_id: "provider-a",
+          amount: 120,
+          created_at: "2026-08-01T05:02:00.000Z",
+          updated_at: "2026-08-01T05:03:00.000Z",
+          detection_strategy_id: 7,
+          strategy_type: "approved_model",
+          model_deployment_id: "model:1",
+          analysis_mode: "PROSPECTIVE_CLAIM_SCREENING",
+          scored_at: "2026-08-01T05:03:00.000Z",
+          prospective_fraud_probability: "0.7",
+          prospective_threshold: "0.4",
+          prospective_review_recommended: "true",
+        },
+      ]];
+    },
+  };
+  const repository = createClaimsReadRepository(pool, { dataPlaneContext: context() });
+
+  const overview = await repository.getClaimsOverview();
+
+  assert.equal(overview.summary.highRiskClaims, 2);
+  assert.equal(overview.graph.nodes.length, 0);
+  assert.equal(overview.graph.edges.length, 0);
+  assert.equal(overview.graph.summary.review_signal_count, 2);
+  assert.equal(overview.graph.summary.isolated_review_claim_count, 2);
+  assert.equal(overview.graph.summary.active_cluster_count, 0);
 });
 
 test("claims read repository uses the report producer threshold-normalised risk formula", async () => {

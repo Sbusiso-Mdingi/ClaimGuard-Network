@@ -15,6 +15,7 @@ from .prospective_model_service import (
     ProspectiveModelServiceExpectations,
     ProspectiveScreeningResult,
 )
+from .prospective_drift import assess_input_drift
 from .snapshot import ProspectiveScoringSnapshot
 
 
@@ -116,6 +117,11 @@ def _records(
         )
 
     records: list[dict[str, object]] = []
+    features_by_target = {
+        (str(item.get("claim_id") or "").strip(), int(item.get("claim_version") or 0)): item.get("features")
+        for item in snapshot.context_features
+        if isinstance(item, dict)
+    }
     for claim_id, claim_version in targets:
         score = by_target[(claim_id, claim_version)]
         probability = _probability(score.fraud_probability, "fraud_probability")
@@ -139,6 +145,11 @@ def _records(
                 "Prospective model decision differs from its published threshold."
             )
 
+        feature_values = features_by_target.get((claim_id, claim_version))
+        if not isinstance(feature_values, Mapping):
+            raise DetectionResultContractError(
+                f"Prospective input features are unavailable for claim {claim_id}."
+            )
         payload = {
             "schemaVersion": RESULT_PAYLOAD_SCHEMA_VERSION,
             "tenantId": snapshot.tenant_id,
@@ -165,6 +176,12 @@ def _records(
                 "threshold": threshold,
                 "reviewRecommended": score.review_recommended,
             },
+            "inputDrift": assess_input_drift(
+                feature_values,
+                model_id=result.model_id,
+                model_version=result.model_version,
+                feature_schema_version=result.feature_schema_version,
+            ),
         }
         records.append(
             {

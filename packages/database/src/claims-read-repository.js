@@ -105,7 +105,7 @@ function modelTriggeredRules(score) {
   ]);
 }
 
-function detectionEvidence(strategyType, score, triggeredRules) {
+function detectionEvidence(strategyType, score, triggeredRules, analysisMode, inputDrift) {
   if (strategyType === "deterministic_rules") {
     return triggeredRules.map((rule) => `Rule hit: ${rule}`);
   }
@@ -113,6 +113,20 @@ function detectionEvidence(strategyType, score, triggeredRules) {
   if (strategyType !== "approved_model") return [];
 
   const evidence = [];
+  if (analysisMode === "PROSPECTIVE_CLAIM_SCREENING") {
+    const fraudProbability = percentage(score?.fraudProbability);
+    const reviewThreshold = percentage(score?.threshold);
+    if (fraudProbability !== null) {
+      evidence.push(
+        `The model estimated ${fraudProbability.toFixed(2)}% fraud risk${reviewThreshold === null ? "" : ` against a ${reviewThreshold.toFixed(2)}% review threshold`}. This is a screening signal, not a fraud finding.`,
+      );
+    }
+    if (inputDrift?.status === "WATCH" || inputDrift?.status === "OUT_OF_DISTRIBUTION") {
+      evidence.push(inputDrift.message || "Unfamiliar model inputs were detected; interpret the score with caution.");
+    }
+    return evidence;
+  }
+
   const baseline = percentage(score?.baselineFraudProbability);
   const baselineThreshold = percentage(score?.baselineThreshold);
   if (baseline !== null) {
@@ -149,6 +163,7 @@ function mapDetectionRow(row) {
     : {};
   const strategyType = row.strategy_type || payload?.strategy?.strategyType || null;
   const analysisMode = row.analysis_mode || payload?.analysisMode || null;
+  const inputDrift = parseJsonObject(payload?.inputDrift);
 
   let riskScore = null;
   let riskScoreBasis = null;
@@ -185,7 +200,7 @@ function mapDetectionRow(row) {
     riskLevel: riskLevelFromScore(riskScore),
     reviewRecommended,
     triggeredRules,
-    evidence: detectionEvidence(strategyType, score, triggeredRules),
+    evidence: detectionEvidence(strategyType, score, triggeredRules, analysisMode, inputDrift),
     analysisMode,
     detectionStrategyId: Number(row.detection_strategy_id),
     strategyType,
@@ -197,6 +212,7 @@ function mapDetectionRow(row) {
     featureSchemaVersion: row.feature_schema_version || payload?.model?.featureSchemaVersion || null,
     resultSchemaVersion: payload?.schemaVersion || null,
     score: Object.keys(score).length > 0 ? score : null,
+    inputDrift,
   };
 }
 
@@ -242,6 +258,160 @@ function mapOverviewDetectionRow(row) {
     analysisMode,
     strategyType,
     modelDeploymentId: row.model_deployment_id || null,
+    inputDrift: row.input_drift_status
+      ? {
+          status: row.input_drift_status,
+          decisionReliability: row.input_drift_reliability || null,
+          signalCount: Number(row.input_drift_signal_count || 0),
+        }
+      : null,
+  };
+}
+
+function isReviewSignal(record) {
+  return record?.detection?.reviewRecommended === true
+    || (Number.isFinite(record?.riskScore) && record.riskScore >= 75);
+}
+
+function buildFraudNetworkProjection(records, maximumClaims = 500) {
+  const graphableRecords = records.filter((record) => record.memberId && record.providerId);
+  const reviewRecords = graphableRecords
+    .filter(isReviewSignal)
+    .slice()
+    .sort((left, right) => {
+      const riskDifference = (right.riskScore ?? -1) - (left.riskScore ?? -1);
+      if (riskDifference !== 0) return riskDifference;
+      return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
+    });
+  const entitiesForRecord = reviewRecords.map((record) => [
+    `member:${record.memberId}`,
+    `provider:${record.providerId}`,
+  ]);
+  const recordsByEntity = new Map();
+  entitiesForRecord.forEach((entityIds, recordIndex) => {
+    entityIds.forEach((entityId) => {
+      if (!recordsByEntity.has(entityId)) recordsByEntity.set(entityId, []);
+      recordsByEntity.get(entityId).push(recordIndex);
+    });
+  });
+
+  const visited = new Set();
+  const components = [];
+  for (let start = 0; start < reviewRecords.length; start += 1) {
+    if (visited.has(start)) continue;
+    const pending = [start];
+    const recordIndexes = [];
+    const entityIds = new Set();
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (visited.has(current)) continue;
+      visited.add(current);
+      recordIndexes.push(current);
+      for (const entityId of entitiesForRecord[current]) {
+        entityIds.add(entityId);
+        for (const neighbour of recordsByEntity.get(entityId) || []) {
+          if (!visited.has(neighbour)) pending.push(neighbour);
+        }
+      }
+    }
+    const memberCount = Array.from(entityIds).filter((entityId) => entityId.startsWith("member:")).length;
+    const providerCount = Array.from(entityIds).filter((entityId) => entityId.startsWith("provider:")).length;
+    if (recordIndexes.length >= 3 && memberCount >= 2 && providerCount >= 2) {
+      components.push({
+        recordIndexes,
+        entityIds,
+        memberCount,
+        providerCount,
+        maximumRiskScore: Math.max(...recordIndexes.map((index) => reviewRecords[index].riskScore ?? -1)),
+        newestAt: recordIndexes.reduce(
+          (latest, index) => String(reviewRecords[index].updatedAt || "") > latest
+            ? String(reviewRecords[index].updatedAt || "")
+            : latest,
+          "",
+        ),
+      });
+    }
+  }
+  components.sort((left, right) => (
+    right.maximumRiskScore - left.maximumRiskScore
+    || right.newestAt.localeCompare(left.newestAt)
+  ));
+
+  const projected = [];
+  let qualifyingClaimCount = 0;
+  for (const component of components) {
+    qualifyingClaimCount += component.recordIndexes.length;
+    if (projected.length >= maximumClaims) continue;
+    const stableEntity = Array.from(component.entityIds).sort()[0];
+    const clusterId = `network:${stableEntity}`;
+    for (const index of component.recordIndexes) {
+      if (projected.length >= maximumClaims) break;
+      projected.push({ record: reviewRecords[index], clusterId });
+    }
+  }
+
+  const networkNodes = new Map();
+  const upsertNetworkNode = (entityId, entityType, value, record, clusterId) => {
+    const current = networkNodes.get(entityId) || {
+      entity_id: entityId,
+      entity_type: entityType,
+      value,
+      claim_count: 0,
+      flagged_claim_count: 0,
+      max_risk_score: null,
+      cluster_ids: [],
+    };
+    current.claim_count += 1;
+    current.flagged_claim_count += 1;
+    if (!current.cluster_ids.includes(clusterId)) current.cluster_ids.push(clusterId);
+    if (Number.isFinite(record.riskScore)) {
+      current.max_risk_score = current.max_risk_score === null
+        ? record.riskScore
+        : Math.max(current.max_risk_score, record.riskScore);
+    }
+    networkNodes.set(entityId, current);
+  };
+  const networkEdges = projected.map(({ record, clusterId }) => {
+    const memberEntityId = `member:${record.memberId}`;
+    const providerEntityId = `provider:${record.providerId}`;
+    upsertNetworkNode(memberEntityId, "member", record.memberId, record, clusterId);
+    upsertNetworkNode(providerEntityId, "provider", record.providerId, record, clusterId);
+    return {
+      relationship_type: "flagged_claim",
+      source_entity_id: memberEntityId,
+      target_entity_id: providerEntityId,
+      claim_id: record.claimId,
+      cluster_id: clusterId,
+      risk_score: record.riskScore,
+      risk_level: record.riskLevel,
+      review_recommended: record.detection?.reviewRecommended === true,
+      billed_amount: record.billedAmount,
+    };
+  });
+
+  return {
+    nodes: Array.from(networkNodes.values()),
+    edges: networkEdges,
+    summary: {
+      entity_count: networkNodes.size,
+      relationship_count: networkEdges.length,
+      member_count: Array.from(networkNodes.values()).filter((node) => node.entity_type === "member").length,
+      provider_count: Array.from(networkNodes.values()).filter((node) => node.entity_type === "provider").length,
+      represented_claim_count: networkEdges.length,
+      eligible_claim_count: reviewRecords.length,
+      total_graphable_claim_count: graphableRecords.length,
+      review_signal_count: reviewRecords.length,
+      isolated_review_claim_count: reviewRecords.length - qualifyingClaimCount,
+      active_cluster_count: components.length,
+      refresh_interval_seconds: 15,
+      projection: "MULTI_CLAIM_REVIEW_NETWORKS",
+      candidate_rule: {
+        minimum_claim_count: 3,
+        minimum_member_count: 2,
+        minimum_provider_count: 2,
+      },
+      truncated: qualifyingClaimCount > networkEdges.length,
+    },
   };
 }
 
@@ -497,7 +667,10 @@ export function createClaimsReadRepository(pool, {
             JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.ringThreshold')) AS ring_threshold,
             JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.phantomProbability')) AS phantom_probability,
             JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.phantomThreshold')) AS phantom_threshold,
-            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.compositeReviewRecommended')) AS composite_review_recommended
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.compositeReviewRecommended')) AS composite_review_recommended,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.inputDrift.status')) AS input_drift_status,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.inputDrift.decisionReliability')) AS input_drift_reliability,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.inputDrift.signalCount')) AS input_drift_signal_count
           FROM claims c
           LEFT JOIN claim_detection_results d
             ON d.tenant_id = c.tenant_id
@@ -547,84 +720,14 @@ export function createClaimsReadRepository(pool, {
         else if (record.riskScore >= 40) riskDistribution.medium += 1;
         else riskDistribution.low += 1;
       }
-
-      const networkRecords = records
-        .filter((record) => record.memberId && record.providerId)
-        .slice()
-        .sort((left, right) => {
-          const riskDifference = (right.riskScore ?? -1) - (left.riskScore ?? -1);
-          if (riskDifference !== 0) return riskDifference;
-          return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
-        });
-      const projectedNetworkRecords = networkRecords.slice(0, 500);
-      const networkNodes = new Map();
-      const upsertNetworkNode = (entityId, entityType, value, record) => {
-        const current = networkNodes.get(entityId) || {
-          entity_id: entityId,
-          entity_type: entityType,
-          value,
-          claim_count: 0,
-          flagged_claim_count: 0,
-          max_risk_score: null,
-        };
-        current.claim_count += 1;
-        if (
-          record.detection?.reviewRecommended === true
-          || (Number.isFinite(record.riskScore) && record.riskScore >= 75)
-        ) {
-          current.flagged_claim_count += 1;
-        }
-        if (Number.isFinite(record.riskScore)) {
-          current.max_risk_score = current.max_risk_score === null
-            ? record.riskScore
-            : Math.max(current.max_risk_score, record.riskScore);
-        }
-        networkNodes.set(entityId, current);
+      const inputDrift = {
+        inDistribution: scoredRecords.filter((record) => record.detection?.inputDrift?.status === "IN_DISTRIBUTION").length,
+        watch: scoredRecords.filter((record) => record.detection?.inputDrift?.status === "WATCH").length,
+        outOfDistribution: scoredRecords.filter((record) => record.detection?.inputDrift?.status === "OUT_OF_DISTRIBUTION").length,
+        profileUnavailable: scoredRecords.filter((record) => record.detection?.inputDrift?.status === "PROFILE_UNAVAILABLE").length,
+        unassessed: scoredRecords.filter((record) => !record.detection?.inputDrift?.status).length,
       };
-      const networkEdges = projectedNetworkRecords.map((record) => {
-        const memberEntityId = `member:${record.memberId}`;
-        const providerEntityId = `provider:${record.providerId}`;
-        upsertNetworkNode(memberEntityId, "member", record.memberId, record);
-        upsertNetworkNode(providerEntityId, "provider", record.providerId, record);
-        return {
-          relationship_type: "submitted_to",
-          source_entity_id: memberEntityId,
-          target_entity_id: providerEntityId,
-          claim_id: record.claimId,
-          risk_score: record.riskScore,
-          risk_level: record.riskLevel,
-          review_recommended: record.detection?.reviewRecommended === true,
-          billed_amount: record.billedAmount,
-        };
-      });
-      const reviewNetworkRecords = networkRecords.filter((record) => (
-        record.detection?.reviewRecommended === true
-        || (Number.isFinite(record.riskScore) && record.riskScore >= 75)
-      ));
-      const reviewAdjacency = new Map();
-      for (const record of reviewNetworkRecords) {
-        const sourceEntityId = `member:${record.memberId}`;
-        const targetEntityId = `provider:${record.providerId}`;
-        if (!reviewAdjacency.has(sourceEntityId)) reviewAdjacency.set(sourceEntityId, new Set());
-        if (!reviewAdjacency.has(targetEntityId)) reviewAdjacency.set(targetEntityId, new Set());
-        reviewAdjacency.get(sourceEntityId).add(targetEntityId);
-        reviewAdjacency.get(targetEntityId).add(sourceEntityId);
-      }
-      const visitedReviewNodes = new Set();
-      let activeClusterCount = 0;
-      for (const entityId of reviewAdjacency.keys()) {
-        if (visitedReviewNodes.has(entityId)) continue;
-        activeClusterCount += 1;
-        const pending = [entityId];
-        while (pending.length > 0) {
-          const current = pending.pop();
-          if (visitedReviewNodes.has(current)) continue;
-          visitedReviewNodes.add(current);
-          for (const neighbour of reviewAdjacency.get(current) || []) {
-            if (!visitedReviewNodes.has(neighbour)) pending.push(neighbour);
-          }
-        }
-      }
+      const graph = buildFraudNetworkProjection(records);
 
       return {
         generatedAt: new Date().toISOString(),
@@ -637,6 +740,7 @@ export function createClaimsReadRepository(pool, {
             ? Math.round((totalRisk / scoredRiskRecords.length) * 1_000) / 1_000
             : null,
           riskDistribution,
+          inputDrift,
         },
         recentDetections: scoredRecords
           .slice()
@@ -646,23 +750,7 @@ export function createClaimsReadRepository(pool, {
             return String(right.detectionDate || "").localeCompare(String(left.detectionDate || ""));
           })
           .slice(0, 8),
-        graph: {
-          nodes: Array.from(networkNodes.values()),
-          edges: networkEdges,
-          summary: {
-            entity_count: networkNodes.size,
-            relationship_count: networkEdges.length,
-            member_count: Array.from(networkNodes.values())
-              .filter((node) => node.entity_type === "member").length,
-            provider_count: Array.from(networkNodes.values())
-              .filter((node) => node.entity_type === "provider").length,
-            represented_claim_count: networkEdges.length,
-            eligible_claim_count: networkRecords.length,
-            review_signal_count: reviewNetworkRecords.length,
-            active_cluster_count: activeClusterCount,
-            truncated: networkRecords.length > networkEdges.length,
-          },
-        },
+        graph,
       };
     },
 

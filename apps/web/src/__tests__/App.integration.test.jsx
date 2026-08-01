@@ -77,6 +77,12 @@ const claimsPayload = {
         scoredAt: "2026-07-16T00:00:00.000Z",
         modelDeploymentId: "claimguard-claim-fraud-ensemble:2.1.1",
         score: { fraudProbability: 0.82, threshold: 0.45, predictedClass: "FRAUD" },
+        inputDrift: {
+          status: "WATCH",
+          decisionReliability: "CAUTION",
+          message: "One unfamiliar model input was detected; retain human review and monitor the pattern.",
+          signals: [{ feature: "benefit_option", observed: "STANDARD", expected: "One of: COMPREHENSIVE, CORE, EXECUTIVE, FLEX" }],
+        },
       },
       triggeredRules: ["PROSPECTIVE_ML_REVIEW_RECOMMENDED"],
       evidence: [],
@@ -119,6 +125,7 @@ const claimsOverviewPayload = {
       highRiskClaims: 4,
       averageRiskScore: 61.5,
       riskDistribution: { critical: 1, high: 3, medium: 3, low: 2, unscored: 28 },
+      inputDrift: { inDistribution: 5, watch: 2, outOfDistribution: 1, profileUnavailable: 0, unassessed: 1 },
     },
     recentDetections: claimsPayload.claims,
     graph: reportPayload.report.graph,
@@ -251,6 +258,7 @@ test("renders dashboard and routes to claim details", async () => {
   expect(within(detectionSummary).getByText("4")).toBeInTheDocument();
   expect(within(detectionSummary).getByText("61.5")).toBeInTheDocument();
   expect(within(detectionSummary).getByText(/9 scored · 28 awaiting/i)).toBeInTheDocument();
+  expect(screen.getByText("Drift watch")).toBeInTheDocument();
 
   const operationalCalls = global.fetch.mock.calls.filter(([url]) => {
     const requestUrl = String(url);
@@ -273,19 +281,21 @@ test("renders dashboard and routes to claim details", async () => {
   await user.click(screen.getByRole("link", { name: "C-1" }));
   expect(await screen.findByRole("heading", { name: /C-1/i })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
-  expect(screen.getByText("ML review threshold met")).toBeInTheDocument();
+  expect(screen.getByText("Fraud-risk review recommended")).toBeInTheDocument();
+  expect(screen.getByText("Drift watch")).toBeInTheDocument();
+  expect(screen.getByText(/benefit option/i)).toBeInTheDocument();
   expect(screen.getByText("82.00%")).toBeInTheDocument();
   expect(screen.getByText("45.00%")).toBeInTheDocument();
   expect(screen.queryByText("PROSPECTIVE_ML_REVIEW_RECOMMENDED")).not.toBeInTheDocument();
 
   await user.click(networkNavigationLink());
-  expect(await screen.findByRole("heading", { name: /Scheme relationship network/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Fraud network candidates/i })).toBeInTheDocument();
   expect(screen.getAllByText("Members").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Providers").length).toBeGreaterThan(0);
   expect(screen.queryByText("Bank links")).not.toBeInTheDocument();
 });
 
-test("automatic refresh polls claims without refetching aggregate resources", async () => {
+test("automatic refresh polls claims and the operational overview without refetching reports", async () => {
   vi.useFakeTimers();
   render(<AppRoot />);
 
@@ -301,6 +311,7 @@ test("automatic refresh polls claims without refetching aggregate resources", as
   expect(requestCount("/api/detection/graph")).toBe(1);
   expect(requestCount("/api/detection/risk")).toBe(1);
   expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(1);
+  expect(requestCount("/api/claims/overview")).toBe(1);
 
   await act(async () => {
     vi.advanceTimersByTime(30000);
@@ -309,6 +320,7 @@ test("automatic refresh polls claims without refetching aggregate resources", as
   });
 
   expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(3);
+  expect(requestCount("/api/claims/overview")).toBe(3);
   expect(requestCount("/api/detection/report")).toBe(1);
   expect(requestCount("/api/detection/graph")).toBe(1);
   expect(requestCount("/api/detection/risk")).toBe(1);
@@ -320,6 +332,7 @@ test("automatic refresh polls claims without refetching aggregate resources", as
   });
 
   expect(requestCount("/api/claims?page=1&pageSize=25")).toBe(5);
+  expect(requestCount("/api/claims/overview")).toBe(5);
   expect(requestCount("/api/detection/report")).toBe(1);
   expect(requestCount("/api/detection/graph")).toBe(1);
   expect(requestCount("/api/detection/risk")).toBe(1);

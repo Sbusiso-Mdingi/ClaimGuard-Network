@@ -192,6 +192,11 @@ class ProspectivePipelineTests(TestCase):
             "ringProbability",
             validated["claims"][0]["modelReview"],
         )
+        stored_payload = repository.records[("tenant-1", "C1", 1)]["result_payload"]
+        self.assertEqual(
+            stored_payload["inputDrift"]["status"],
+            "PROFILE_UNAVAILABLE",
+        )
 
         stored_again = load_or_score_prospective_result(
             snapshot=scoring_snapshot,
