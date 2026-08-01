@@ -160,7 +160,8 @@ jobs:
             --output json)"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.triggerType')" = "Event"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
-          test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "2"
+          EVENT_MAX_BEFORE="$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')"
+          test "$EVENT_MAX_BEFORE" = "2" || test "$EVENT_MAX_BEFORE" = "100"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
           test "$(echo "$EVENT_JOB_BEFORE" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
 
@@ -349,7 +350,7 @@ jobs:
 
           test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.triggerType')" = "Event"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.minExecutions')" = "0"
-          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "2"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.configuration.eventTriggerConfig.scale.maxExecutions')" = "100"
           test "$(echo "$EVENT_SCALE_RULE" | jq -r '.type')" = "azure-queue"
           test "$(echo "$EVENT_SCALE_RULE" | jq -r '.metadata.accountName')" = "$REPORT_STORAGE_ACCOUNT_NAME"
           test "$(echo "$EVENT_SCALE_RULE" | jq -r '.metadata.queueName')" = "$CLAIM_SCORING_QUEUE_NAME"
@@ -358,6 +359,8 @@ jobs:
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].args | join(" ")')" = "worker event"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].image')" = "$REPORT_WORKER_IMAGE"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_DEPLOYMENT_ID") | .value')" = "$MODEL_DEPLOYMENT_ID"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "REPORT_WORKER_BATCH_SIZE") | .value')" = "1"
+          test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "REPORT_WORKER_SCHEME_CONCURRENCY") | .value')" = "5"
           test "$(echo "$EVENT_JOB" | jq -r '.properties.template.containers[0].env[] | select(.name == "MODEL_SERVICE_APPROVED_DEPLOYMENT_IDS") | .value')" = "$WORKER_APPROVED_MODEL_DEPLOYMENT_IDS"
           test "$(echo "$EVENT_JOB" | jq -r ".properties.template.containers[0].env[] | select(.name == \"MODEL_SERVICE_BASE_URL_${ENSEMBLE_RUNTIME_CONFIG_KEY}\") | .value")" = "$ENSEMBLE_MODEL_SERVICE_BASE_URL"
           test "$(echo "$RECOVERY_JOB" | jq -r '.properties.configuration.triggerType')" = "Schedule"

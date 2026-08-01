@@ -406,6 +406,10 @@ class FakeDatabase:
 
         self.duplicate_fetch = False
 
+        self.json_normaliser = (
+            lambda payload: payload
+        )
+
     def connect(
         self,
     ):
@@ -532,6 +536,28 @@ class FakeCursor:
                     canonical_params,
             }
         )
+
+        if normalized.startswith(
+            "SELECT CAST(%s AS JSON)"
+        ):
+            payload = json.loads(
+                canonical_params[0]
+            )
+
+            self.result = [
+                {
+                    "normalised_payload":
+                        json.dumps(
+                            database.json_normaliser(
+                                payload
+                            ),
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        ),
+                },
+            ]
+
+            return 1
 
         if normalized.startswith(
             "INSERT INTO "
@@ -2054,4 +2080,74 @@ class DetectionResultsTests(
         self.assertEqual(
             stored.result_payload,
             expected_payload,
+        )
+
+    def test_result_hash_uses_database_normalised_json(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+
+        def normalise_numbers(payload):
+            rewritten = copy.deepcopy(
+                payload
+            )
+            rewritten["score"][
+                "riskScore"
+            ] = float(
+                format(
+                    rewritten["score"][
+                        "riskScore"
+                    ],
+                    ".15g",
+                )
+            )
+            return rewritten
+
+        database.json_normaliser = (
+            normalise_numbers
+        )
+
+        payload = deterministic_payload(
+            claim_id="CLAIM-1",
+            claim_version=1,
+        )
+        payload["score"][
+            "riskScore"
+        ] = 0.049236234887246655
+
+        stored = repository_for(
+            database
+        ).save_result_records(
+            [
+                deterministic_record(
+                    payload=payload,
+                ),
+            ]
+        )[0]
+
+        self.assertEqual(
+            stored.result_payload[
+                "score"
+            ]["riskScore"],
+            0.0492362348872467,
+        )
+
+        expected_json = json.dumps(
+            stored.result_payload,
+            sort_keys=True,
+            separators=(
+                ",",
+                ":",
+            ),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+
+        self.assertEqual(
+            stored.result_hash,
+            hashlib.sha256(
+                expected_json.encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
         )

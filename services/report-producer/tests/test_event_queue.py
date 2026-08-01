@@ -18,7 +18,7 @@ VALID_MESSAGE = """
   <MessageId>message-1</MessageId>
   <PopReceipt>receipt/with+symbols</PopReceipt>
   <DequeueCount>2</DequeueCount>
-  <MessageText>{"schema_version":1,"outbox_job_id":"job-123","correlation_id":"request-456","emitted_at":"2026-07-27T01:00:00Z"}</MessageText>
+  <MessageText>{"schema_version":2,"outbox_job_id":"job-123","organisation_id":"organisation-123","correlation_id":"request-456","emitted_at":"2026-07-27T01:00:00Z"}</MessageText>
 </QueueMessage>
 """.strip()
 
@@ -30,6 +30,7 @@ class EventQueueContractTests(TestCase):
         self.assertEqual(message.message_id, "message-1")
         self.assertEqual(message.pop_receipt, "receipt/with+symbols")
         self.assertEqual(message.outbox_job_id, "job-123")
+        self.assertEqual(message.organisation_id, "organisation-123")
         self.assertEqual(message.correlation_id, "request-456")
         self.assertEqual(message.dequeue_count, 2)
 
@@ -47,6 +48,21 @@ class EventQueueContractTests(TestCase):
 
         with self.assertRaisesRegex(ClaimWakeupContractError, "ISO timestamp"):
             _parse_message(ElementTree.fromstring(invalid))
+
+    def test_parse_message_accepts_legacy_schema_during_rollout(self) -> None:
+        legacy = VALID_MESSAGE.replace(
+            '"schema_version":2,',
+            '"schema_version":1,',
+        ).replace(
+            '"organisation_id":"organisation-123",',
+            "",
+        )
+
+        message = _parse_message(
+            ElementTree.fromstring(legacy)
+        )
+
+        self.assertIsNone(message.organisation_id)
 
     def test_receive_uses_bounded_queue_parameters(self) -> None:
         queue = AzureClaimWakeupQueue(
@@ -78,6 +94,25 @@ class EventQueueContractTests(TestCase):
             "https://storage.queue.core.windows.net/claim-scoring/messages/message-1?popreceipt=receipt%2Fwith%2Bsymbols",
             method="DELETE",
         )
+
+    def test_release_preserves_the_message_and_shortens_visibility(self) -> None:
+        queue = AzureClaimWakeupQueue(
+            "https://storage.queue.core.windows.net/claim-scoring",
+            credential=Mock(),
+        )
+        queue._request = Mock(return_value=b"")
+        message = _parse_message(ElementTree.fromstring(VALID_MESSAGE))
+
+        queue.release(message, delay_seconds=7)
+
+        call = queue._request.call_args
+        self.assertEqual(
+            call.args[0],
+            "https://storage.queue.core.windows.net/claim-scoring/messages/message-1"
+            "?popreceipt=receipt%2Fwith%2Bsymbols&visibilitytimeout=7",
+        )
+        self.assertEqual(call.kwargs["method"], "PUT")
+        self.assertIn(b"organisation-123", call.kwargs["body"])
 
     def test_environment_factory_requires_the_queue_url(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

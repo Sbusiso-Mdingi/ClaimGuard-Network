@@ -28,6 +28,7 @@ test("claim wakeup publisher sends only a durable outbox reference", async () =>
 
   const result = await publisher.publish({
     jobId: "job-1",
+    organisationId: "organisation-1",
     correlationId: "request-1",
   });
 
@@ -37,6 +38,7 @@ test("claim wakeup publisher sends only a durable outbox reference", async () =>
   assert.equal(requests[0].url, "https://example.queue.core.windows.net/claim-scoring/messages");
   assert.equal(requests[0].options.headers.Authorization, "Bearer test-token");
   assert.match(requests[0].options.body, /outbox_job_id/);
+  assert.match(requests[0].options.body, /organisation_id/);
   assert.doesNotMatch(requests[0].options.body, /member_id|provider_id|identity_number|banking_detail|claim_payload/);
 });
 
@@ -55,9 +57,27 @@ test("claim wakeup publisher retries transient queue failures", async () => {
     },
   });
 
-  const result = await publisher.publish({ jobId: "job-3" });
+  const result = await publisher.publish({
+    jobId: "job-3",
+    organisationId: "organisation-3",
+  });
   assert.equal(calls, 3);
   assert.equal(result.messageId, "message-3");
+});
+
+test("claim wakeup publisher requires scheme routing authority", async () => {
+  const publisher = createClaimWakeupPublisher({
+    queueUrl: "https://example.queue.core.windows.net/claim-scoring",
+    credential: { async getToken() { return { token: "test-token" }; } },
+    fetchImpl: async () => {
+      throw new Error("The queue must not be called without an organisation.");
+    },
+  });
+
+  await assert.rejects(
+    () => publisher.publish({ jobId: "job-without-scheme" }),
+    /organisationId is required/,
+  );
 });
 
 test("claim wakeup publisher fails closed after bounded attempts", async () => {
@@ -69,7 +89,10 @@ test("claim wakeup publisher fails closed after bounded attempts", async () => {
   });
 
   await assert.rejects(
-    () => publisher.publish({ jobId: "job-4" }),
+    () => publisher.publish({
+      jobId: "job-4",
+      organisationId: "organisation-4",
+    }),
     (error) => error instanceof ClaimWakeupDeliveryError
       && error.code === "CLAIM_SCORING_WAKEUP_UNAVAILABLE",
   );
@@ -101,8 +124,16 @@ test("ingestion publishes the committed job wakeup and returns its receipt", asy
     },
   });
 
-  const result = await service.ingest({ claims: [{}], requestId: "request-5" });
-  assert.deepEqual(published, [{ jobId: "job-5", correlationId: "request-5" }]);
+  const result = await service.ingest({
+    claims: [{}],
+    requestId: "request-5",
+    organisationId: "organisation-5",
+  });
+  assert.deepEqual(published, [{
+    jobId: "job-5",
+    organisationId: "organisation-5",
+    correlationId: "request-5",
+  }]);
   assert.deepEqual(result.processing.wakeup, {
     status: "published",
     messageId: "message-5",
