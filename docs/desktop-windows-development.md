@@ -42,9 +42,11 @@ cargo tauri build --bundles nsis
 New-Item -ItemType Directory -Force ..\..\..\artifacts | Out-Null
 $installer = Get-ChildItem target\release\bundle\nsis\*-setup.exe
 Copy-Item $installer.FullName ..\..\..\artifacts\ClaimGuard-Setup.exe
+$signature = Get-ChildItem target\release\bundle\nsis\*-setup.exe.sig
+Copy-Item $signature.FullName ..\..\..\artifacts\ClaimGuard-Setup.exe.sig
 ```
 
-The required normalized artifact is exactly `artifacts/ClaimGuard-Setup.exe`. CI also retains `ClaimGuard-Update.nsis.zip` and its `.sig`.
+The required normalized installer is exactly `artifacts/ClaimGuard-Setup.exe`. Tauri v2 uses that NSIS executable itself as the updater payload, so CI also retains its detached `ClaimGuard-Setup.exe.sig` signature.
 
 `desktop-windows.yml` uses a disposable updater key and creates inspection artifacts only. `desktop-signed-build.yml` is an explicit, main-SHA-bound, protected-environment workflow that creates Authenticode and persistent-updater-key artifacts but does not publish or deploy them.
 
@@ -60,4 +62,4 @@ cargo test --all-targets --locked
 Get-AuthenticodeSignature ..\..\..\artifacts\ClaimGuard-Setup.exe
 ```
 
-For production artifacts, `Get-AuthenticodeSignature` must report `Valid`; the updater `.sig` must be published alongside the exact `.nsis.zip` bytes referenced by the update manifest.
+For production artifacts, `Get-AuthenticodeSignature` must report `Valid`; the updater `.sig` content must be published alongside the exact installer bytes referenced by the update manifest.

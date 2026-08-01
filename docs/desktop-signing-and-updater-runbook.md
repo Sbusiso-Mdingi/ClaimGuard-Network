@@ -19,13 +19,13 @@ Require reviewers for that environment. Prefer a hardware-backed enterprise sign
 1. Confirm the target is the exact reviewed commit on `main`.
 2. Trigger `desktop-signed-build` with its full SHA and exact confirmation.
 3. The workflow imports the certificate into the ephemeral runner user store, injects only public keys/config into Tauri, runs tests, Authenticode-signs via the bundler, creates a Tauri-signed updater payload, verifies Authenticode, uploads artifacts, and removes the imported certificate.
-4. Independently verify SHA-256, Authenticode subject/chain/timestamp, `.nsis.zip` signature, version, and source SHA before approving publication.
+4. Independently verify SHA-256, Authenticode subject/chain/timestamp, the detached updater signature, version, and source SHA before approving publication.
 
 The workflow intentionally has `contents: read` and no release/cloud deployment step.
 
 ## Publication Contract
 
-The HTTPS updater service at the configured endpoint must return the Tauri v2 update manifest for `{{target}}`, `{{arch}}`, and `{{current_version}}`. Its URL must identify the exact uploaded `ClaimGuard-Update.nsis.zip`; its signature must be the matching `.sig` content. Never recompress, modify, or Authenticode-sign the zip after Tauri creates the signature.
+The HTTPS updater service at the configured endpoint must return the Tauri v2 update manifest for `{{target}}`, `{{arch}}`, and `{{current_version}}`. For the NSIS target, its URL must identify the exact uploaded `ClaimGuard-Setup.exe`; its signature must be the matching `ClaimGuard-Setup.exe.sig` content. Never modify or re-sign the executable after Tauri creates the detached updater signature.
 
 Roll out in rings. Confirm install/update on a non-production scheme device, then pilot, then broader deployment. Preserve the prior signed payload/manifest for rollback; do not allow downgrade unless incident governance explicitly approves it.
 

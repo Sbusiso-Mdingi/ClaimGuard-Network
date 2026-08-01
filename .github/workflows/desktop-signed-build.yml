@@ -106,11 +106,10 @@ jobs:
           Copy-Item $installers[0].FullName "artifacts/ClaimGuard-Setup.exe"
           $authenticode = Get-AuthenticodeSignature "artifacts/ClaimGuard-Setup.exe"
           if ($authenticode.Status -ne "Valid") { throw "Authenticode verification failed: $($authenticode.Status)" }
-          $updates = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip")
-          $signatures = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip.sig")
-          if ($updates.Count -ne 1 -or $signatures.Count -ne 1) { throw "The signed Tauri updater payload is missing." }
-          Copy-Item $updates[0].FullName "artifacts/ClaimGuard-Update.nsis.zip"
-          Copy-Item $signatures[0].FullName "artifacts/ClaimGuard-Update.nsis.zip.sig"
+          $signatures = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig")
+          if ($signatures.Count -ne 1) { throw "The Tauri signature for the signed NSIS updater executable is missing." }
+          Copy-Item $signatures[0].FullName "artifacts/ClaimGuard-Setup.exe.sig"
+          if ((Get-Item "artifacts/ClaimGuard-Setup.exe.sig").Length -le 0) { throw "The Tauri updater signature is empty." }
           Get-FileHash "artifacts/ClaimGuard-Setup.exe" -Algorithm SHA256 | Format-List
 
       - name: Upload signed artifacts without publishing
@@ -119,8 +118,7 @@ jobs:
           name: ClaimGuard-Signed-Windows-Setup-${{ github.sha }}
           path: |
             artifacts/ClaimGuard-Setup.exe
-            artifacts/ClaimGuard-Update.nsis.zip
-            artifacts/ClaimGuard-Update.nsis.zip.sig
+            artifacts/ClaimGuard-Setup.exe.sig
           if-no-files-found: error
           retention-days: 7
 

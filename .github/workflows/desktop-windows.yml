@@ -110,12 +110,12 @@ jobs:
           $installers = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe")
           if ($installers.Count -ne 1) { throw "Expected exactly one NSIS setup executable." }
           Copy-Item $installers[0].FullName "artifacts/ClaimGuard-Setup.exe"
-          $updates = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip")
-          $signatures = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip.sig")
-          if ($updates.Count -ne 1 -or $signatures.Count -ne 1) { throw "Expected one signed Tauri updater payload." }
-          Copy-Item $updates[0].FullName "artifacts/ClaimGuard-Update.nsis.zip"
-          Copy-Item $signatures[0].FullName "artifacts/ClaimGuard-Update.nsis.zip.sig"
-          if (-not (Test-Path "artifacts/ClaimGuard-Setup.exe")) { throw "ClaimGuard-Setup.exe was not produced." }
+          $signatures = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig")
+          if ($signatures.Count -ne 1) { throw "Expected one Tauri signature for the NSIS updater executable." }
+          Copy-Item $signatures[0].FullName "artifacts/ClaimGuard-Setup.exe.sig"
+          foreach ($path in @("artifacts/ClaimGuard-Setup.exe", "artifacts/ClaimGuard-Setup.exe.sig")) {
+            if (-not (Test-Path $path) -or (Get-Item $path).Length -le 0) { throw "$path was not produced or is empty." }
+          }
 
       - name: Upload exact Windows installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -123,7 +123,6 @@ jobs:
           name: ClaimGuard-Windows-Setup
           path: |
             artifacts/ClaimGuard-Setup.exe
-            artifacts/ClaimGuard-Update.nsis.zip
-            artifacts/ClaimGuard-Update.nsis.zip.sig
+            artifacts/ClaimGuard-Setup.exe.sig
           if-no-files-found: error
           retention-days: 14
