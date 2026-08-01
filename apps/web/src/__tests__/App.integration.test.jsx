@@ -190,7 +190,9 @@ function mockFetchFailure(session = activeSession) {
 }
 
 function claimsNavigationLink() {
-  return within(screen.getByRole("complementary")).getByRole("link", { name: /Claims/i });
+  const workspaceNavigationRegion = screen.getByRole("complementary", { name: /workspace navigation/i });
+  const primaryNav = within(workspaceNavigationRegion).getByRole("navigation");
+  return within(primaryNav).getByRole("link", { name: /^Claims Explorer$/i });
 }
 
 beforeEach(() => {
@@ -287,7 +289,7 @@ test("shows unavailable state without substituting demo analytics when backend A
   render(<AppRoot />);
 
   expect(await screen.findByText(/Dashboard Unavailable/i)).toBeInTheDocument();
-  expect(screen.getByText("ClaimGuard")).toBeInTheDocument();
+  expect(within(screen.getByRole("complementary")).getByText(/^ClaimGuard$/i)).toBeInTheDocument();
   expect(screen.queryByText(/Claims Screened/i)).not.toBeInTheDocument();
 });
 
