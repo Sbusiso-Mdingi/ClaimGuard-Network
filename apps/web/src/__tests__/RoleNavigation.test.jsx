@@ -27,8 +27,8 @@ function renderLayout(session = SESSION_FIXTURES.analyst) {
 
 test("fraud analyst sees operational navigation but not scheme administration", async () => {
   renderLayout();
-  expect(await screen.findByRole("link", { name: /Claims/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Investigations/i })).toBeInTheDocument();
+  expect(await screen.findByRole("link", { name: /^Claims$/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /^Investigations$/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Scheme Administration/i })).not.toBeInTheDocument();
 });
 
@@ -36,9 +36,9 @@ test("scheme administrator sees read-only operational navigation and administrat
   renderLayout(SESSION_FIXTURES.schemeAdministrator);
 
   expect(await screen.findByRole("link", { name: /Scheme Administration/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Claims/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Investigations/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /^Claims$/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /^Investigations$/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /^Dashboard$/i })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Shared Fraud Registry/i })).not.toBeInTheDocument();
 });
 
@@ -73,7 +73,7 @@ test("provides a keyboard skip link to the main workspace", async () => {
 test("does not expose development or live-refresh controls", async () => {
   renderLayout();
 
-  await screen.findByRole("link", { name: /Claims/i });
+  await screen.findByRole("link", { name: /^Claims$/i });
   expect(screen.queryByText(/Demo Mode/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/Dev-only role switcher/i)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /live refresh/i })).not.toBeInTheDocument();
