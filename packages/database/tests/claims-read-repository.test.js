@@ -195,6 +195,75 @@ test("claims read repository returns current-version model detection and investi
   assert.equal(tenantParams.length >= 4, true);
 });
 
+test("claims overview aggregates every current claim instead of the visible page", async () => {
+  const pool = {
+    async execute(sql, params) {
+      assert.deepEqual(params, ["tenant_alpha"]);
+      assert.match(sql, /LEFT JOIN claim_detection_results/i);
+      return [[
+        {
+          claim_id: "claim-scored",
+          current_claim_version: 1,
+          scheme_id: "scheme-a",
+          member_id: "member-a",
+          provider_id: "provider-a",
+          amount: 100,
+          created_at: "2026-08-01T05:00:00.000Z",
+          updated_at: "2026-08-01T05:01:00.000Z",
+          detection_strategy_id: 7,
+          strategy_type: "approved_model",
+          model_deployment_id: "model:1",
+          source_job_id: "job-1",
+          request_id: "request-1",
+          analysis_mode: "PROSPECTIVE_CLAIM_SCREENING",
+          ensemble_id: null,
+          ensemble_version: null,
+          feature_schema_version: "claims-v1",
+          scored_at: "2026-08-01T05:01:00.000Z",
+          prospective_fraud_probability: "0.8",
+          prospective_threshold: "0.4",
+          prospective_review_recommended: "true",
+        },
+        {
+          claim_id: "claim-awaiting",
+          current_claim_version: 1,
+          scheme_id: "scheme-a",
+          member_id: "member-b",
+          provider_id: "provider-b",
+          amount: 200,
+          created_at: "2026-08-01T05:02:00.000Z",
+          updated_at: "2026-08-01T05:02:00.000Z",
+          detection_strategy_id: null,
+        },
+      ]];
+    },
+  };
+  const repository = createClaimsReadRepository(pool, {
+    dataPlaneContext: context(),
+  });
+
+  const overview = await repository.getClaimsOverview();
+
+  assert.equal(overview.summary.totalClaims, 2);
+  assert.equal(overview.summary.scoredClaims, 1);
+  assert.equal(overview.summary.unscoredClaims, 1);
+  assert.equal(overview.summary.highRiskClaims, 1);
+  assert.equal(overview.summary.averageRiskScore, 100);
+  assert.deepEqual(overview.summary.riskDistribution, {
+    critical: 1,
+    high: 0,
+    medium: 0,
+    low: 0,
+    unscored: 1,
+  });
+  assert.equal(overview.recentDetections[0].claimId, "claim-scored");
+  assert.equal(overview.graph.nodes.length, 4);
+  assert.equal(overview.graph.edges.length, 2);
+  assert.equal(overview.graph.edges[0].review_recommended, true);
+  assert.equal(overview.graph.summary.review_signal_count, 1);
+  assert.equal(overview.graph.summary.active_cluster_count, 1);
+});
+
 test("claims read repository uses the report producer threshold-normalised risk formula", async () => {
   const result = approvedModelResult();
   const payload = JSON.parse(result.result_payload);

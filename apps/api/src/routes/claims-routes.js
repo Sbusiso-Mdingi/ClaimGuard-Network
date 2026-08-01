@@ -23,6 +23,9 @@ export function registerClaimsRoutes(app, {
   const requireClaimsListPermission = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_LIST,
   });
+  const requireClaimsOverviewPermission = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_OVERVIEW,
+  });
   const requireClaimsDetailPermission = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.CLAIMS_DETAIL,
   });
@@ -88,6 +91,36 @@ export function registerClaimsRoutes(app, {
           },
           500,
         );
+      }
+    },
+  );
+
+  app.get(
+    "/claims/overview",
+    requireClaimsOverviewPermission,
+    async (c) => {
+      const tenantDecision = await authorizeTenantScopedRequest({ c, tenantRepository });
+      if (!tenantDecision.ok) return tenantDecision.response;
+
+      if (!claimsReadRepository?.getClaimsOverview) {
+        return c.json({
+          available: false,
+          message: "Claims overview repository is not configured.",
+        }, 503);
+      }
+
+      try {
+        const overview = await claimsReadRepository.getClaimsOverview();
+        return c.json({ available: true, overview });
+      } catch (error) {
+        logger?.("error", "claims_overview_failed", {
+          requestId: c.get("requestId") || null,
+          message: error?.message || "Claims overview failed.",
+        });
+        return c.json({
+          available: false,
+          message: "Claims overview is currently unavailable.",
+        }, 500);
       }
     },
   );

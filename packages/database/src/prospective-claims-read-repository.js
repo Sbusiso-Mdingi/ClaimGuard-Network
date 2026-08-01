@@ -90,6 +90,10 @@ function mapClaim(claim) {
 export function createClaimsReadRepository(pool, options) {
   const repository = createLegacyClaimsReadRepository(pool, options);
   return Object.freeze({
+    async getClaimsOverview() {
+      return repository.getClaimsOverview();
+    },
+
     async listClaims(params) {
       const result = await repository.listClaims(params);
       return {

@@ -111,6 +111,17 @@ function buildRiskDistribution(claims = []) {
   ];
 }
 
+function buildSchemeRiskDistribution(counts) {
+  if (!counts || typeof counts !== "object") return null;
+  return [
+    { severity: "Critical", count: Number(counts.critical) || 0, tone: "bg-rose-600/85" },
+    { severity: "High", count: Number(counts.high) || 0, tone: "bg-orange-500/85" },
+    { severity: "Medium", count: Number(counts.medium) || 0, tone: "bg-amber-500/80" },
+    { severity: "Low", count: Number(counts.low) || 0, tone: "bg-emerald-500/80" },
+    { severity: "Awaiting", count: Number(counts.unscored) || 0, tone: "bg-slate-400/80" },
+  ];
+}
+
 function polylinePoints(points, key, maxValue) {
   if (points.length === 0 || maxValue <= 0) return "";
   const stepX = points.length > 1 ? CHART_WIDTH / (points.length - 1) : CHART_WIDTH;
@@ -224,7 +235,10 @@ function RiskDistributionChart({ distribution, highestBand }) {
           );
         })}
       </div>
-      <div className="grid grid-cols-4 gap-3 px-1 pt-2 text-center text-[10px] text-muted-foreground">
+      <div
+        className="grid gap-3 px-1 pt-2 text-center text-[10px] text-muted-foreground"
+        style={{ gridTemplateColumns: `repeat(${distribution.length}, minmax(0, 1fr))` }}
+      >
         {distribution.map((band) => <span key={band.severity}>{band.severity}</span>)}
       </div>
     </div>
@@ -266,9 +280,12 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
   const totalClaims = Number.isFinite(metrics?.totalClaims) ? metrics.totalClaims : "Unavailable";
   const highRiskClaims = Number.isFinite(metrics?.highRiskClaims) ? metrics.highRiskClaims : "Unavailable";
   const averageRiskScore = Number.isFinite(metrics?.averageRiskScore) ? metrics.averageRiskScore : "Unavailable";
+  const scoredClaims = Number.isFinite(metrics?.scoredClaims) ? metrics.scoredClaims : null;
+  const unscoredClaims = Number.isFinite(metrics?.unscoredClaims) ? metrics.unscoredClaims : null;
   const activeNetworks = Number.isFinite(metrics?.activeFraudSchemes) ? metrics.activeFraudSchemes : "Unavailable";
   const trend = buildDetectionTrend(allClaims);
-  const distribution = buildRiskDistribution(allClaims);
+  const distribution = buildSchemeRiskDistribution(metrics?.riskDistribution)
+    || buildRiskDistribution(allClaims);
   const highestBand = Math.max(1, ...distribution.map((band) => band.count));
   const activity = allClaims
     .slice()
@@ -329,9 +346,17 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
       ]}
     >
       <section aria-label="Detection summary" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard variant="console" title="Claims screened" value={totalClaims} description="Total volume represented by the current operational snapshot." icon={FileText} />
-        <StatCard variant="console" title="Flagged for review" value={highRiskClaims} description="Scored claims currently above the high-risk threshold." icon={ShieldAlert} tone="danger" />
-        <StatCard variant="console" title="Average risk score" value={averageRiskScore} description="Mean persisted detection score for the current snapshot." icon={AlertTriangle} tone={riskScoreTone(averageRiskScore)} />
+        <StatCard
+          variant="console"
+          title="Claims received"
+          value={totalClaims}
+          description={scoredClaims === null || unscoredClaims === null
+            ? "Scheme-wide submitted claim volume."
+            : `${scoredClaims} scored · ${unscoredClaims} awaiting a persisted score.`}
+          icon={FileText}
+        />
+        <StatCard variant="console" title="Flagged for review" value={highRiskClaims} description="Scheme-wide scored claims meeting a review or high-risk threshold." icon={ShieldAlert} tone="danger" />
+        <StatCard variant="console" title="Average risk score" value={averageRiskScore} description="Mean persisted score across all currently scored scheme claims." icon={AlertTriangle} tone={riskScoreTone(averageRiskScore)} />
         <StatCard variant="console" title="Active networks" value={activeNetworks} description="Suspicious linked-entity clusters identified by the graph projection." icon={Radar} />
       </section>
 
@@ -348,7 +373,7 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
         <SectionCard
           variant="console"
           title="Risk distribution"
-          description="Current claim severity distribution in the active workspace."
+          description="Scheme-wide current-version claim severity, with unscored volume shown separately."
         >
           <RiskDistributionChart distribution={distribution} highestBand={highestBand} />
           <div className="space-y-4 p-5">
@@ -434,7 +459,7 @@ export function DashboardPage({ metrics, graph, status, lastRefresh }) {
                     <td>
                       <div className="flex items-center gap-2">
                         <span className="font-data font-semibold">{Number.isFinite(item.riskScore) ? item.riskScore : "—"}</span>
-                        <span className="text-xs text-muted-foreground">{item.severity || "Unknown"}</span>
+                        <span className="text-xs text-muted-foreground">{item.severity || item.riskLevel || "Unknown"}</span>
                       </div>
                     </td>
                     <td><StatusIndicator variant="badge" tone={claimStatusTone(item.status)}>{formatEnumLabel(item.status)}</StatusIndicator></td>

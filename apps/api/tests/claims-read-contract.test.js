@@ -62,7 +62,23 @@ function enrichedClaim() {
 
 test("claims list and detail endpoints preserve enriched processing and detection fields", async () => {
   const claim = enrichedClaim();
+  const overview = {
+    generatedAt: "2026-07-25T00:00:00.000Z",
+    summary: {
+      totalClaims: 12,
+      scoredClaims: 9,
+      unscoredClaims: 3,
+      highRiskClaims: 4,
+      averageRiskScore: 61.5,
+      riskDistribution: { critical: 1, high: 3, medium: 3, low: 2, unscored: 3 },
+    },
+    recentDetections: [claim],
+    graph: { nodes: [], edges: [], summary: { entity_count: 0, relationship_count: 0 } },
+  };
   const repository = {
+    async getClaimsOverview() {
+      return overview;
+    },
     async listClaims({ page, pageSize }) {
       assert.equal(page, "1");
       assert.equal(pageSize, "25");
@@ -104,6 +120,13 @@ test("claims list and detail endpoints preserve enriched processing and detectio
   assert.equal(listPayload.claims[0].detection.modelDeploymentId, "claimguard-claim-fraud-ensemble:1.1.0");
   assert.equal(listPayload.claims[0].riskScore, 91);
   assert.deepEqual(listPayload.claims[0].triggeredRules, ["BASELINE_FRAUD", "MODEL_REVIEW_RECOMMENDED"]);
+
+  const overviewResponse = await app.request("http://localhost/claims/overview");
+  const overviewPayload = await overviewResponse.json();
+
+  assert.equal(overviewResponse.status, 200);
+  assert.equal(overviewPayload.available, true);
+  assert.deepEqual(overviewPayload.overview, overview);
 
   const detailResponse = await app.request(`http://localhost/claims/${claim.claimId}`);
   const detailPayload = await detailResponse.json();
