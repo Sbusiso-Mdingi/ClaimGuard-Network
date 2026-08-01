@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,90 +6,119 @@
 
 @layer base {
   :root {
-    /* Case File — daylight mode */
-    --background: 40 22% 92%;
-    --foreground: 210 18% 14%;
-    --card: 40 30% 97%;
-    --card-foreground: 210 18% 14%;
-    --popover: 40 30% 97%;
-    --popover-foreground: 210 18% 14%;
-    --primary: 33 57% 41%;
-    --primary-foreground: 40 30% 97%;
-    --secondary: 40 18% 88%;
-    --secondary-foreground: 210 18% 14%;
-    --muted: 40 18% 88%;
-    --muted-foreground: 40 10% 40%;
-    --accent: 207 34% 40%;
-    --accent-foreground: 40 30% 97%;
-    --destructive: 5 55% 42%;
-    --destructive-foreground: 40 30% 97%;
-    --border: 40 14% 80%;
-    --input: 40 14% 80%;
-    --ring: 33 57% 41%;
+    --background: 210 35% 97%;
+    --foreground: 218 38% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 218 38% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 218 38% 12%;
+    --primary: 181 72% 28%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 28% 94%;
+    --secondary-foreground: 218 32% 18%;
+    --muted: 210 24% 94%;
+    --muted-foreground: 215 16% 42%;
+    --accent: 195 78% 38%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 2 68% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 24% 86%;
+    --input: 214 24% 86%;
+    --ring: 181 72% 34%;
 
-    --surface-sunken: 40 22% 92%;
-    --surface-elevated: 40 30% 97%;
-    --surface-card: 40 26% 95%;
-    --border-soft: 40 14% 80%;
-    --text-muted-2: 40 10% 40%;
+    --surface-sunken: 210 35% 97%;
+    --surface-elevated: 0 0% 100%;
+    --surface-card: 210 30% 98%;
+    --border-soft: 214 24% 88%;
+    --text-muted-2: 215 14% 47%;
 
-    --stamp-danger: 5 55% 38%;
-    --stamp-warning: 33 60% 36%;
-    --stamp-success: 154 35% 30%;
-    --stamp-info: 207 40% 36%;
+    --sidebar: 218 36% 18%;
+    --sidebar-foreground: 210 24% 91%;
+    --sidebar-primary: 176 62% 52%;
+    --sidebar-primary-foreground: 218 40% 11%;
+    --sidebar-accent: 217 30% 24%;
+    --sidebar-border: 216 25% 29%;
 
-    --font-display: 'Fraunces', ui-serif, Georgia, serif;
-    --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    --stamp-danger: 2 68% 45%;
+    --stamp-warning: 34 88% 42%;
+    --stamp-success: 158 58% 31%;
+    --stamp-info: 197 68% 38%;
+
+    --font-display: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
   }
 
   .dark {
-    /* Case File — after hours (default) */
-    --background: 213 33% 5%;
-    --foreground: 42 17% 89%;
-    --card: 212 27% 11%;
-    --card-foreground: 42 17% 89%;
-    --popover: 212 28% 9%;
-    --popover-foreground: 42 17% 89%;
-    --primary: 34 65% 50%;
-    --primary-foreground: 213 33% 5%;
-    --secondary: 215 23% 16%;
-    --secondary-foreground: 42 17% 89%;
-    --muted: 215 23% 16%;
-    --muted-foreground: 213 16% 62%;
-    --accent: 208 56% 65%;
-    --accent-foreground: 213 33% 5%;
-    --destructive: 3 81% 68%;
-    --destructive-foreground: 213 33% 5%;
-    --border: 213 20% 20%;
-    --input: 213 20% 20%;
-    --ring: 34 65% 50%;
+    --background: 222 43% 6%;
+    --foreground: 210 30% 94%;
+    --card: 220 32% 10%;
+    --card-foreground: 210 30% 94%;
+    --popover: 220 34% 9%;
+    --popover-foreground: 210 30% 94%;
+    --primary: 176 68% 46%;
+    --primary-foreground: 222 43% 6%;
+    --secondary: 219 25% 15%;
+    --secondary-foreground: 210 30% 94%;
+    --muted: 219 25% 15%;
+    --muted-foreground: 215 16% 66%;
+    --accent: 192 76% 55%;
+    --accent-foreground: 222 43% 6%;
+    --destructive: 2 78% 66%;
+    --destructive-foreground: 222 43% 6%;
+    --border: 218 24% 19%;
+    --input: 218 24% 19%;
+    --ring: 176 68% 46%;
 
-    /* Investigator Console Tokens */
-    --surface-sunken: 213 33% 5%;
-    --surface-elevated: 212 28% 9%;
-    --surface-card: 212 27% 11%;
-    --border-soft: 215 23% 16%;
-    --text-muted-2: 212 11% 46%;
+    --surface-sunken: 222 43% 6%;
+    --surface-elevated: 221 36% 8%;
+    --surface-card: 220 32% 10%;
+    --border-soft: 218 24% 17%;
+    --text-muted-2: 215 14% 54%;
 
-    --stamp-danger: 3 81% 68%;
-    --stamp-warning: 34 65% 50%;
-    --stamp-success: 152 51% 60%;
-    --stamp-info: 208 56% 65%;
+    --sidebar: 222 45% 5%;
+    --sidebar-foreground: 210 23% 88%;
+    --sidebar-primary: 176 68% 52%;
+    --sidebar-primary-foreground: 222 45% 5%;
+    --sidebar-accent: 219 30% 12%;
+    --sidebar-border: 218 25% 18%;
+
+    --stamp-danger: 2 78% 66%;
+    --stamp-warning: 38 88% 60%;
+    --stamp-success: 158 58% 52%;
+    --stamp-info: 192 76% 62%;
   }
 
   * {
     @apply border-border;
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
+    min-width: 320px;
     font-family: var(--font-sans);
-    background: hsl(var(--background));
+    background-color: hsl(var(--background));
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.22);
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
   }
 
   .font-display {
     font-family: var(--font-display);
+    letter-spacing: -0.025em;
   }
 
   .font-data {
@@ -100,7 +129,7 @@
 
 @layer components {
   .investigator-surface {
-    @apply rounded-xl border border-border/70 bg-card;
+    @apply rounded-lg border border-border bg-card shadow-[0_1px_2px_hsl(220_30%_10%/0.04)];
   }
 
   .investigator-section {
@@ -112,50 +141,71 @@
   }
 
   .investigator-table thead {
-    @apply bg-muted/60 text-xs uppercase tracking-[0.14em] text-muted-foreground;
+    @apply bg-muted/55 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground;
   }
 
   .investigator-table th {
-    @apply whitespace-nowrap border-b border-border/70 px-4 py-3 font-medium;
+    @apply whitespace-nowrap border-b border-border px-4 py-3 font-semibold;
   }
 
   .investigator-table td {
-    @apply border-b border-border/50 px-4 py-3 align-top font-data;
+    @apply border-b border-border/70 px-4 py-3 align-middle font-data text-[13px];
   }
 
   .investigator-table tbody tr {
-    @apply transition-colors hover:bg-secondary/40;
+    @apply transition-colors duration-150 hover:bg-secondary/55;
+  }
+
+  .investigator-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .investigator-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
   }
 
   .investigator-scrollbar::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
   }
 
   .investigator-scrollbar::-webkit-scrollbar-thumb {
-    @apply rounded-full bg-border;
+    @apply rounded-full bg-border hover:bg-muted-foreground/40;
   }
 
   .investigator-scrollbar::-webkit-scrollbar-track {
     @apply bg-transparent;
   }
 
-  /* Signature element: an ink-stamped status/severity tag, used via the
-     CaseStamp component in InvestigatorUI.jsx instead of a soft Badge
-     pill wherever a claim's disposition is the primary thing being read. */
   .case-stamp {
-    @apply inline-flex items-center gap-1.5 rounded-[3px] border-[1.5px] px-2.5 py-1 font-data text-[10px] font-semibold uppercase tracking-[0.1em];
-    transform: rotate(-1.5deg);
-    background: transparent;
+    @apply inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-data text-[10px] font-semibold uppercase tracking-[0.09em];
+    transform: none;
+    background: hsl(var(--card));
   }
 }
 
+.react-flow__renderer {
+  background:
+    linear-gradient(hsl(var(--border) / 0.28) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.28) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
 .react-flow__node {
-  @apply rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground font-data;
+  @apply rounded-lg border border-border bg-card px-3.5 py-2.5 text-xs text-foreground shadow-md font-data;
+}
+
+.react-flow__node.selected {
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.55), 0 12px 28px hsl(220 30% 8% / 0.18);
+}
+
+.react-flow__controls {
+  @apply overflow-hidden rounded-lg border border-border bg-card shadow-md;
 }
 
 .react-flow__controls button {
-  @apply border-border bg-card text-foreground;
+  @apply border-border bg-card text-foreground transition-colors hover:bg-secondary;
 }
 
 .react-flow__panel {
@@ -163,7 +213,7 @@
 }
 
 .react-flow__minimap {
-  @apply rounded-lg border border-border;
+  @apply rounded-lg border border-border bg-card shadow-md;
 }
 
 .react-flow__attribution {
