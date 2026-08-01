@@ -23,9 +23,12 @@ import {
   createControlPlaneRepositories,
   createControlPlaneService,
   getControlPlaneMigrationStatus,
-  provisionDemoAccounts,
   readLegacyTenantInventory,
 } from "@claimguard/control-plane-database";
+
+import {
+  provisionPhase11dFixtures,
+} from "../../../packages/control-plane-database/test-support/phase11d-fixtures.js";
 
 import {
   resolveAuthenticationConfiguration,
@@ -1243,7 +1246,7 @@ test(
         );
 
       const provisioned =
-        await provisionDemoAccounts({
+        await provisionPhase11dFixtures({
           tenants:
             inventory,
 
