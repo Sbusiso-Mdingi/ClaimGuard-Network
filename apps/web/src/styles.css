@@ -32,6 +32,13 @@
     --border-soft: 214 24% 88%;
     --text-muted-2: 215 14% 47%;
 
+    --sidebar: 218 36% 18%;
+    --sidebar-foreground: 210 24% 91%;
+    --sidebar-primary: 176 62% 52%;
+    --sidebar-primary-foreground: 218 40% 11%;
+    --sidebar-accent: 217 30% 24%;
+    --sidebar-border: 216 25% 29%;
+
     --stamp-danger: 2 68% 45%;
     --stamp-warning: 34 88% 42%;
     --stamp-success: 158 58% 31%;
@@ -69,6 +76,13 @@
     --border-soft: 218 24% 17%;
     --text-muted-2: 215 14% 54%;
 
+    --sidebar: 222 45% 5%;
+    --sidebar-foreground: 210 23% 88%;
+    --sidebar-primary: 176 68% 52%;
+    --sidebar-primary-foreground: 222 45% 5%;
+    --sidebar-accent: 219 30% 12%;
+    --sidebar-border: 218 25% 18%;
+
     --stamp-danger: 2 78% 66%;
     --stamp-warning: 38 88% 60%;
     --stamp-success: 158 58% 52%;
@@ -88,10 +102,6 @@
     min-width: 320px;
     font-family: var(--font-sans);
     background-color: hsl(var(--background));
-    background-image:
-      radial-gradient(circle at 85% 0%, hsl(var(--primary) / 0.055), transparent 26rem),
-      radial-gradient(circle at 10% 100%, hsl(var(--accent) / 0.035), transparent 30rem);
-    background-attachment: fixed;
   }
 
   ::selection {
@@ -119,7 +129,7 @@
 
 @layer components {
   .investigator-surface {
-    @apply rounded-2xl border border-border/80 bg-card shadow-[0_1px_2px_hsl(220_30%_10%/0.04),0_10px_30px_hsl(220_30%_10%/0.035)] dark:shadow-[0_1px_2px_hsl(0_0%_0%/0.22),0_16px_36px_hsl(0_0%_0%/0.15)];
+    @apply rounded-lg border border-border bg-card shadow-[0_1px_2px_hsl(220_30%_10%/0.04)];
   }
 
   .investigator-section {
@@ -135,15 +145,15 @@
   }
 
   .investigator-table th {
-    @apply whitespace-nowrap border-b border-border/80 px-4 py-3 font-semibold;
+    @apply whitespace-nowrap border-b border-border px-4 py-3 font-semibold;
   }
 
   .investigator-table td {
-    @apply border-b border-border/55 px-4 py-3.5 align-middle font-data text-[13px];
+    @apply border-b border-border/70 px-4 py-3 align-middle font-data text-[13px];
   }
 
   .investigator-table tbody tr {
-    @apply transition-colors duration-150 hover:bg-primary/[0.035];
+    @apply transition-colors duration-150 hover:bg-secondary/55;
   }
 
   .investigator-table tbody tr:last-child td {
@@ -169,7 +179,7 @@
   }
 
   .case-stamp {
-    @apply inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-data text-[10px] font-semibold uppercase tracking-[0.09em] shadow-sm;
+    @apply inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-data text-[10px] font-semibold uppercase tracking-[0.09em];
     transform: none;
     background: hsl(var(--card));
   }
@@ -179,11 +189,11 @@
   background:
     linear-gradient(hsl(var(--border) / 0.28) 1px, transparent 1px),
     linear-gradient(90deg, hsl(var(--border) / 0.28) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-size: 28px 28px;
 }
 
 .react-flow__node {
-  @apply rounded-xl border border-border/90 bg-card px-3.5 py-2.5 text-xs text-foreground shadow-lg font-data;
+  @apply rounded-lg border border-border bg-card px-3.5 py-2.5 text-xs text-foreground shadow-md font-data;
 }
 
 .react-flow__node.selected {
@@ -191,7 +201,7 @@
 }
 
 .react-flow__controls {
-  @apply overflow-hidden rounded-xl border border-border bg-card shadow-lg;
+  @apply overflow-hidden rounded-lg border border-border bg-card shadow-md;
 }
 
 .react-flow__controls button {
@@ -199,11 +209,11 @@
 }
 
 .react-flow__panel {
-  @apply rounded-xl bg-card;
+  @apply rounded-lg bg-card;
 }
 
 .react-flow__minimap {
-  @apply rounded-xl border border-border bg-card shadow-lg;
+  @apply rounded-lg border border-border bg-card shadow-md;
 }
 
 .react-flow__attribution {
