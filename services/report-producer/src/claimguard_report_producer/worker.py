@@ -846,6 +846,8 @@ class ReportProducerWorker:
 
     def run_once(
         self,
+        *,
+        job_id: str | None = None,
     ) -> int:
         if (
             self.scope_validator
@@ -853,20 +855,30 @@ class ReportProducerWorker:
         ):
             self.scope_validator()
 
+        lease_options = {
+            "worker_id":
+                self.config.worker_id,
+
+            "limit":
+                (
+                    1
+                    if job_id
+                    else self.config.batch_size
+                ),
+
+            "lease_seconds":
+                self.config.lease_seconds,
+        }
+
+        if job_id:
+            lease_options[
+                "job_id"
+            ] = job_id
+
         jobs = (
             self.repository
             .lease_next_available_jobs(
-                worker_id=(
-                    self.config.worker_id
-                ),
-
-                limit=(
-                    self.config.batch_size
-                ),
-
-                lease_seconds=(
-                    self.config.lease_seconds
-                ),
+                **lease_options
             )
         )
 

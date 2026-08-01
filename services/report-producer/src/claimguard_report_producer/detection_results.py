@@ -1222,6 +1222,51 @@ class PyMySqlDetectionResultsRepository:
         )
 
     @staticmethod
+    def _storage_payload(
+        cursor,
+        payload_json: str,
+    ) -> tuple[str, str]:
+        """Return the canonical form MySQL will persist and its digest."""
+        cursor.execute(
+            """
+                SELECT CAST(%s AS JSON) AS normalised_payload
+            """,
+            [
+                payload_json,
+            ],
+        )
+
+        row = cursor.fetchone()
+
+        if not row or row.get(
+            "normalised_payload"
+        ) is None:
+            raise DetectionResultIntegrityError(
+                "The database could not normalise "
+                "the result payload."
+            )
+
+        payload = _decode_payload(
+            row.get(
+                "normalised_payload"
+            )
+        )
+
+        canonical = _canonical_json(
+            payload,
+            "database-normalised result payload",
+        )
+
+        return (
+            canonical,
+            hashlib.sha256(
+                canonical.encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+        )
+
+    @staticmethod
     def _insert(
         cursor,
         record: Mapping[
@@ -1379,8 +1424,16 @@ class PyMySqlDetectionResultsRepository:
                 for (
                     record,
                     payload_json,
-                    result_hash,
+                    _,
                 ) in pending:
+                    (
+                        payload_json,
+                        result_hash,
+                    ) = self._storage_payload(
+                        cursor,
+                        payload_json,
+                    )
+
                     existing = self._select_one(
                         cursor,
                         str(

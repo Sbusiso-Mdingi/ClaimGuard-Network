@@ -1251,6 +1251,7 @@ class PyMySqlOutboxRepository:
         worker_id: str,
         limit: int,
         lease_seconds: int,
+        job_id: str | None = None,
     ) -> list[OutboxJob]:
         canonical_worker_id = (
             _required_text(
@@ -1280,6 +1281,16 @@ class PyMySqlOutboxRepository:
             )
         )
 
+        canonical_job_id = (
+            _required_text(
+                job_id,
+                field="job_id",
+                maximum=64,
+            )
+            if job_id is not None
+            else None
+        )
+
         connection = (
             self.connection_factory()
         )
@@ -1301,6 +1312,12 @@ class PyMySqlOutboxRepository:
                     tenant_params,
                 ) = self._tenant_filter()
 
+                job_sql = (
+                    "AND id = %s"
+                    if canonical_job_id
+                    else ""
+                )
+
                 cursor.execute(
                     f"""
                         SELECT id
@@ -1311,6 +1328,8 @@ class PyMySqlOutboxRepository:
                           AND aggregate_type = %s
 
                           {tenant_sql}
+
+                          {job_sql}
 
                           AND status IN (
                             'pending',
@@ -1336,6 +1355,11 @@ class PyMySqlOutboxRepository:
                         CLAIM_PROCESSING_JOB_TYPE,
                         CLAIM_PROCESSING_AGGREGATE_TYPE,
                         *tenant_params,
+                        *(
+                            [canonical_job_id]
+                            if canonical_job_id
+                            else []
+                        ),
                     ],
                 )
 

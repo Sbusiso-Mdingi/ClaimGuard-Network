@@ -14,7 +14,15 @@ export function createClaimIngestionService({
       return Boolean(claimIngestionRepository && typeof claimIngestionRepository.ingestClaims === "function");
     },
 
-    async ingest({ claims, schemes = [], members = [], providers = [], source = "api", requestId = null }) {
+    async ingest({
+      claims,
+      schemes = [],
+      members = [],
+      providers = [],
+      source = "api",
+      requestId = null,
+      organisationId,
+    }) {
       const summary = await claimIngestionRepository.ingestClaims({
         claims,
         schemes,
@@ -31,6 +39,7 @@ export function createClaimIngestionService({
       if (summary.processing?.asynchronous && summary.processing?.jobId && resolvedWakeupPublisher?.publish) {
         wakeup = await resolvedWakeupPublisher.publish({
           jobId: summary.processing.jobId,
+          organisationId,
           correlationId: summary.processing.correlationId || requestId,
         });
       }

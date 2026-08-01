@@ -173,11 +173,11 @@ test("event-worker scaler requires an API version that preserves managed identit
   );
 });
 
-test("event-worker scorer concurrency remains bounded at two executions", () => {
+test("event-worker scorer concurrency keeps five slots per scheme", () => {
   const workflows = repositoryWorkflows();
   workflows.eventWorker = workflows.eventWorker.replace(
-    "param maximumExecutions int = 2",
-    "param maximumExecutions int = 1",
+    "param maximumExecutions int = 100",
+    "param maximumExecutions int = 4",
   );
   assert.throws(
     () => validateDeploymentBoundaries(workflows),

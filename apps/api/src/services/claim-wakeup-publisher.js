@@ -53,12 +53,18 @@ export function createClaimWakeupPublisher({
   });
 
   return Object.freeze({
-    async publish({ jobId, correlationId = null } = {}) {
+    async publish({ jobId, organisationId, correlationId = null } = {}) {
       const canonicalJobId = requiredText(jobId, "jobId", 64);
+      const canonicalOrganisationId = requiredText(
+        organisationId,
+        "organisationId",
+        64,
+      );
       const canonicalCorrelationId = correlationId ? requiredText(correlationId, "correlationId", 128) : null;
       const message = JSON.stringify({
-        schema_version: 1,
+        schema_version: 2,
         outbox_job_id: canonicalJobId,
+        organisation_id: canonicalOrganisationId,
         correlation_id: canonicalCorrelationId,
         emitted_at: new Date().toISOString(),
       });
@@ -89,6 +95,7 @@ export function createClaimWakeupPublisher({
           const messageId = messageIdFromXml(responseBody);
           logger?.("info", "claim_scoring_wakeup_published", {
             jobId: canonicalJobId,
+            organisationId: canonicalOrganisationId,
             correlationId: canonicalCorrelationId,
             queueMessageId: messageId,
             attempt,
@@ -98,6 +105,7 @@ export function createClaimWakeupPublisher({
           lastError = error;
           logger?.("warning", "claim_scoring_wakeup_publish_failed", {
             jobId: canonicalJobId,
+            organisationId: canonicalOrganisationId,
             correlationId: canonicalCorrelationId,
             attempt,
             failureCategory: error?.code || error?.name || "queue_failure",

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -55,15 +58,102 @@ def _drain_all(*, backend: str | None, output_dir: Path | None) -> int:
     return total
 
 
+def _scorer_slots() -> int:
+    try:
+        configured = int(
+            os.environ.get(
+                "REPORT_WORKER_SCHEME_CONCURRENCY",
+                "5",
+            )
+        )
+    except ValueError:
+        configured = 5
+    return max(1, min(configured, 5))
+
+
+@contextmanager
+def _scheme_scorer_slot(worker, organisation_id: str):
+    """Hold one of five server-wide slots for this scheme execution."""
+    digest = hashlib.sha256(
+        organisation_id.encode("utf-8")
+    ).hexdigest()[:24]
+    connection = worker.repository.connection_factory()
+    acquired_name = None
+
+    try:
+        with connection.cursor() as cursor:
+            for slot in range(1, _scorer_slots() + 1):
+                lock_name = f"cg:score:{digest}:{slot}"
+                cursor.execute(
+                    "SELECT GET_LOCK(%s, 0) AS acquired",
+                    [lock_name],
+                )
+                row = cursor.fetchone()
+                acquired = (
+                    row.get("acquired")
+                    if isinstance(row, dict)
+                    else row[0]
+                    if row
+                    else 0
+                )
+                if int(acquired or 0) == 1:
+                    acquired_name = lock_name
+                    break
+
+        yield acquired_name
+
+    finally:
+        if acquired_name:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT RELEASE_LOCK(%s) AS released",
+                    [acquired_name],
+                )
+        connection.close()
+
+
 def _run_event(*, backend: str | None, output_dir: Path | None) -> int:
     queue = create_claim_wakeup_queue_from_environment()
-    messages = queue.receive()
+    messages = queue.receive(maximum_messages=1)
     if not messages:
         return 0
 
-    processed = _drain_all(backend=backend, output_dir=output_dir)
-    for message in messages:
+    message = messages[0]
+
+    if message.organisation_id is None:
+        processed = _drain_all(
+            backend=backend,
+            output_dir=output_dir,
+        )
         queue.delete(message)
+        slot = "legacy"
+    else:
+        worker = create_worker_from_environment(
+            backend=backend,
+            output_dir=output_dir,
+            organisation_id=message.organisation_id,
+        )
+        with _scheme_scorer_slot(
+            worker,
+            message.organisation_id,
+        ) as slot:
+            if slot is None:
+                queue.release(
+                    message,
+                    delay_seconds=5,
+                )
+                processed = 0
+            else:
+                processed = worker.run_once(
+                    job_id=message.outbox_job_id,
+                )
+                if processed:
+                    queue.delete(message)
+                else:
+                    queue.release(
+                        message,
+                        delay_seconds=15,
+                    )
 
     print(json.dumps({
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -73,6 +163,7 @@ def _run_event(*, backend: str | None, output_dir: Path | None) -> int:
         "wakeup_count": len(messages),
         "leased_job_count": processed,
         "outbox_job_ids": sorted({message.outbox_job_id for message in messages}),
+        "scheme_slot": slot,
     }, sort_keys=True))
     return processed
 

@@ -35,7 +35,9 @@ param ensembleFeatureSchemaVersion string = 'claim-feature-schema-2026.2'
 param ensembleAnalysisMode string = 'PROSPECTIVE_CLAIM_SCREENING'
 param ensembleThreshold string = '0.049236234887246655'
 param pollingIntervalSeconds int = 5
-param maximumExecutions int = 2
+@minValue(5)
+@maxValue(100)
+param maximumExecutions int = 100
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
   name: containerAppsEnvironmentName
@@ -139,7 +141,8 @@ var workerEnvironment = [
   { name: 'DATA_PLANE_ENVIRONMENT', value: 'legacy' }
   { name: 'DATA_PLANE_PRIVATE_ENVIRONMENT', value: 'production' }
   { name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS', value: '14' }
-  { name: 'REPORT_WORKER_BATCH_SIZE', value: '10' }
+  { name: 'REPORT_WORKER_BATCH_SIZE', value: '1' }
+  { name: 'REPORT_WORKER_SCHEME_CONCURRENCY', value: '5' }
   { name: 'REPORT_WORKER_MAX_BATCHES_PER_RUN', value: '100' }
   { name: 'REPORT_WORKER_LEASE_SECONDS', value: '300' }
   { name: 'REPORT_WORKER_MAX_ATTEMPTS', value: '5' }

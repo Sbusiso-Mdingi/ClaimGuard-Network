@@ -212,6 +212,7 @@ export function registerClaimsRoutes(app, {
           members,
           providers,
           source,
+          organisationId: authContext?.organisation_id || null,
           tenantContext: c.get("tenantContext") || null,
           requestId: c.get("requestId") || null,
         });

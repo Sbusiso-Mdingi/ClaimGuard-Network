@@ -20,8 +20,10 @@ class ClaimWakeupMessage:
     message_id: str
     pop_receipt: str
     outbox_job_id: str
+    organisation_id: str | None
     correlation_id: str | None
     dequeue_count: int
+    message_text: str
 
 
 def _required_text(value: object, field: str, maximum: int) -> str:
@@ -41,15 +43,30 @@ def _parse_message(element: ElementTree.Element) -> ClaimWakeupMessage:
         payload = json.loads(message_text)
     except json.JSONDecodeError as error:
         raise ClaimWakeupContractError("MessageText must contain JSON.") from error
-    if not isinstance(payload, dict) or frozenset(payload) != {
-        "schema_version",
-        "outbox_job_id",
-        "correlation_id",
-        "emitted_at",
-    }:
+    if not isinstance(payload, dict):
         raise ClaimWakeupContractError("Wake-up payload has an incompatible schema.")
-    if payload.get("schema_version") != 1:
+
+    schema_version = payload.get("schema_version")
+    expected_fields = (
+        {
+            "schema_version",
+            "outbox_job_id",
+            "correlation_id",
+            "emitted_at",
+        }
+        if schema_version == 1
+        else {
+            "schema_version",
+            "outbox_job_id",
+            "organisation_id",
+            "correlation_id",
+            "emitted_at",
+        }
+    )
+    if schema_version not in {1, 2}:
         raise ClaimWakeupContractError("Wake-up schema version is unsupported.")
+    if frozenset(payload) != expected_fields:
+        raise ClaimWakeupContractError("Wake-up payload has an incompatible schema.")
     emitted_at = _required_text(payload.get("emitted_at"), "emitted_at", 64)
     try:
         datetime.fromisoformat(emitted_at.replace("Z", "+00:00")).astimezone(UTC)
@@ -60,12 +77,22 @@ def _parse_message(element: ElementTree.Element) -> ClaimWakeupMessage:
         message_id=message_id,
         pop_receipt=pop_receipt,
         outbox_job_id=_required_text(payload.get("outbox_job_id"), "outbox_job_id", 64),
+        organisation_id=(
+            _required_text(
+                payload.get("organisation_id"),
+                "organisation_id",
+                64,
+            )
+            if schema_version == 2
+            else None
+        ),
         correlation_id=(
             _required_text(correlation, "correlation_id", 128)
             if correlation is not None
             else None
         ),
         dequeue_count=int(element.findtext("DequeueCount") or "1"),
+        message_text=message_text,
     )
 
 
@@ -83,15 +110,27 @@ class AzureClaimWakeupQueue:
         )
         self.visibility_timeout_seconds = max(60, min(int(visibility_timeout_seconds), 7200))
 
-    def _request(self, url: str, *, method: str) -> bytes:
+    def _request(
+        self,
+        url: str,
+        *,
+        method: str,
+        body: bytes | None = None,
+    ) -> bytes:
         token = self.credential.get_token("https://storage.azure.com/.default")
         request = Request(
             url,
+            data=body,
             method=method,
             headers={
                 "Authorization": f"Bearer {token.token}",
                 "x-ms-date": datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S GMT"),
                 "x-ms-version": "2023-11-03",
+                **(
+                    {"Content-Type": "application/xml"}
+                    if body is not None
+                    else {}
+                ),
             },
         )
         with urlopen(request, timeout=30) as response:  # noqa: S310
@@ -112,6 +151,29 @@ class AzureClaimWakeupQueue:
             f"{self.queue_url}/messages/{quote(message.message_id, safe='')}"
             f"?popreceipt={quote(message.pop_receipt, safe='')}",
             method="DELETE",
+        )
+
+    def release(
+        self,
+        message: ClaimWakeupMessage,
+        *,
+        delay_seconds: int = 5,
+    ) -> None:
+        delay = max(0, min(int(delay_seconds), 604_800))
+        root = ElementTree.Element("QueueMessage")
+        text = ElementTree.SubElement(root, "MessageText")
+        text.text = message.message_text
+        body = ElementTree.tostring(
+            root,
+            encoding="utf-8",
+            xml_declaration=True,
+        )
+        self._request(
+            f"{self.queue_url}/messages/{quote(message.message_id, safe='')}"
+            f"?popreceipt={quote(message.pop_receipt, safe='')}"
+            f"&visibilitytimeout={delay}",
+            method="PUT",
+            body=body,
         )
 
 
