@@ -11,6 +11,7 @@ import { createSharedFraudRegistryRepository } from "./shared-fraud-registry-rep
 import { createScopedReadRepositories } from "./scoped-read-repositories.js";
 import { createTenantRepository } from "./tenant-repository.js";
 import { createDetectionStrategyRepository } from "./detection-strategy-repository.js";
+import { createDesktopSyncRepository } from "./desktop-sync-repository.js";
 
 export function createOperationalRepositories(dataPlaneContext, pool) {
   const context = requireOperationalDataPlaneContext(dataPlaneContext);
@@ -22,10 +23,12 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     ...createInvestigationRepository(pool, options),
     ...createInvestigationQueueRepository(pool, options),
   });
+  const claimsRead = createClaimsReadRepository(pool, options);
   return Object.freeze({
     dataPlaneContext: context,
     claims: createClaimIngestionRepository(pool, options),
-    claimsRead: createClaimsReadRepository(pool, options),
+    claimsRead,
+    desktopSync: createDesktopSyncRepository(pool, claimsRead, options),
     members: scopedReads.members,
     providers: scopedReads.providers,
     claimProcessingOutbox: createClaimProcessingOutboxRepository(pool, options),

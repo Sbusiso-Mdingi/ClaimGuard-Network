@@ -9,6 +9,7 @@ import { createProvisioningRepository } from "./provisioning-repository.js";
 import { createReleaseGovernanceRepository } from "./release-governance-repository.js";
 import { createDataPlaneRoutesRepository } from "./routes-repository.js";
 import { createSecurityRepository } from "./security-repository.js";
+import { createDesktopEnrollmentRepository } from "./desktop-enrollment-repository.js";
 import { withControlPlaneTransaction } from "./transaction.js";
 
 export function createControlPlaneRepositories(executor) {
@@ -22,6 +23,7 @@ export function createControlPlaneRepositories(executor) {
     modelDeployments: createModelDeploymentRepository(executor),
     provisioning: createProvisioningRepository(executor),
     releaseGovernance: createReleaseGovernanceRepository(executor),
+    desktopEnrollment: createDesktopEnrollmentRepository(executor),
     security: createSecurityRepository(executor),
     configuration: createConfigurationRepository(executor),
     runInTransaction: async (operation) => {

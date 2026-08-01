@@ -489,6 +489,32 @@ function mapClaimRow(row) {
   };
 }
 
+function mapDesktopClaimRow(row) {
+  const claim = mapClaimRow(row);
+  if (!claim) return null;
+  return {
+    claimId: claim.claimId,
+    currentClaimVersion: claim.currentClaimVersion,
+    serviceDate: claim.serviceDate,
+    billedAmount: claim.billedAmount,
+    billingCode: claim.billingCode,
+    submittedAt: claim.submittedAt,
+    updatedAt: claim.updatedAt,
+    status: claim.status,
+    processingStatus: claim.processingStatus,
+    riskScore: claim.riskScore,
+    riskLevel: claim.riskLevel,
+    investigation: claim.investigation
+      ? {
+          investigationId: claim.investigation.investigationId,
+          status: claim.investigation.status,
+          priority: claim.investigation.priority,
+          updatedAt: claim.investigation.updatedAt,
+        }
+      : null,
+  };
+}
+
 function attachLatestInvestigation(claimRows, investigationRows) {
   const byClaimId = new Map();
   for (const row of investigationRows || []) {
@@ -798,6 +824,91 @@ export function createClaimsReadRepository(pool, {
           totalPages: Math.max(1, Math.ceil(total / paging.pageSize)),
           hasNextPage: paging.offset + claims.length < total,
         },
+      };
+    },
+
+    async listDesktopClaimChanges({
+      scopeStart,
+      afterUpdatedAt = null,
+      afterClaimId = null,
+      limit = 500,
+    } = {}) {
+      const tenantId = canonicalTenantId();
+      const pageLimit = Math.max(1, Math.min(500, parsePositiveInteger(limit, 500)));
+      const retentionStart = scopeStart instanceof Date ? scopeStart : new Date(scopeStart);
+      if (!Number.isFinite(retentionStart.getTime())) throw new TypeError("scopeStart must be a valid date.");
+      const cursorDate = afterUpdatedAt ? new Date(afterUpdatedAt) : null;
+      if (cursorDate && !Number.isFinite(cursorDate.getTime())) throw new TypeError("afterUpdatedAt must be a valid date.");
+      const parameters = [tenantId, retentionStart];
+      const syncUpdatedAt = `GREATEST(
+        c.updated_at,
+        COALESCE(d.scored_at, c.updated_at),
+        COALESCE((
+          SELECT MAX(i_sync.updated_at)
+          FROM investigations i_sync
+          WHERE i_sync.tenant_id = c.tenant_id AND i_sync.claim_id = c.claim_id
+        ), c.updated_at)
+      )`;
+      let cursorPredicate = "";
+      if (cursorDate && afterClaimId) {
+        cursorPredicate = `
+          AND (
+            ${syncUpdatedAt} > ?
+            OR (
+              ${syncUpdatedAt} = ?
+              AND c.claim_id > ?
+            )
+          )`;
+        parameters.push(cursorDate, cursorDate, afterClaimId);
+      }
+      const [claimRows] = await pool.execute(
+        `
+          SELECT
+            c.claim_id,
+            c.current_claim_version,
+            c.scheme_id,
+            c.member_id,
+            c.provider_id,
+            c.service_date,
+            c.amount,
+            c.billing_code,
+            c.created_at,
+            c.updated_at,
+            ${syncUpdatedAt} AS sync_updated_at
+          FROM claims c
+          LEFT JOIN claim_detection_results d
+            ON d.tenant_id = c.tenant_id
+           AND d.claim_id = c.claim_id
+           AND d.claim_version = c.current_claim_version
+          WHERE c.tenant_id = ?
+            AND (
+              c.updated_at >= ?
+              OR EXISTS (
+                SELECT 1 FROM investigations i_active
+                WHERE i_active.tenant_id = c.tenant_id
+                  AND i_active.claim_id = c.claim_id
+                  AND i_active.status <> 'CLOSED'
+              )
+            )
+            ${cursorPredicate}
+          ORDER BY sync_updated_at ASC, c.claim_id ASC
+          LIMIT ${pageLimit + 1}
+        `,
+        parameters,
+      );
+      const hasMore = (claimRows || []).length > pageLimit;
+      const selectedRows = (claimRows || []).slice(0, pageLimit);
+      const enrichedRows = await enrichClaimRows(pool, tenantId, selectedRows);
+      return {
+        changes: enrichedRows.map((row, index) => ({
+          resource: "claim",
+          operation: "upsert",
+          id: row.claim_id,
+          version: String(selectedRows[index]?.sync_updated_at || row.updated_at || ""),
+          updatedAt: selectedRows[index]?.sync_updated_at || row.updated_at,
+          record: mapDesktopClaimRow(row),
+        })),
+        hasMore,
       };
     },
 

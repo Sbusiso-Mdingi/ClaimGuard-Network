@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-main",
+  "description": "Minimum capability for the bundled ClaimGuard main window; no shell, filesystem, HTTP, or updater commands are exposed to JavaScript.",
+  "windows": ["main"],
+  "permissions": [
+    "core:app:allow-version",
+    "allow-desktop-status",
+    "allow-activate-desktop",
+    "allow-desktop-login",
+    "allow-desktop-logout",
+    "allow-lock-desktop",
+    "allow-synchronize-desktop",
+    "allow-desktop-claim-details",
+    "allow-reset-desktop"
+  ]
+}

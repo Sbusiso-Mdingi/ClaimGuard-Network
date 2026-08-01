@@ -97,6 +97,7 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "platform_releases.request": ["platform_releases.request"],
   "platform_releases.approve": ["platform_releases.approve"],
   "platform_administrators.manage": ["platform_administrators.manage"],
+  "desktop_devices.manage": ["desktop.devices.manage"],
 });
 
 export function operationalPermissions(controlPermissions, roles = []) {

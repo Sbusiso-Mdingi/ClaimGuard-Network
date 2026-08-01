@@ -1,0 +1,128 @@
+name: desktop-signed-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact 40-character main commit SHA approved for signed artifact creation
+        required: true
+        type: string
+      confirmation:
+        description: Type BUILD SIGNED DESKTOP UPDATE (this workflow does not publish it)
+        required: true
+        type: string
+
+concurrency:
+  group: desktop-signed-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    environment: desktop-signing
+    env:
+      CLAIMGUARD_ACTIVATION_ORIGIN: ${{ vars.DESKTOP_ACTIVATION_ORIGIN }}
+      CLAIMGUARD_ENROLLMENT_VERIFYING_JWK: ${{ vars.DESKTOP_ENROLLMENT_VERIFYING_JWK }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+      WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Validate explicit non-publishing build authorization
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne "refs/heads/main") { throw "Signed builds are restricted to main." }
+          if ("${{ inputs.expected_main_sha }}" -notmatch "^[0-9a-f]{40}$") { throw "expected_main_sha must be a full SHA." }
+          if ("${{ inputs.expected_main_sha }}" -ne $env:GITHUB_SHA) { throw "The approved SHA does not match this run." }
+          if ("${{ inputs.confirmation }}" -cne "BUILD SIGNED DESKTOP UPDATE") { throw "Confirmation did not match." }
+          if ([string]::IsNullOrWhiteSpace($env:CLAIMGUARD_ACTIVATION_ORIGIN) -or $env:CLAIMGUARD_ACTIVATION_ORIGIN -notmatch "^https://") { throw "A production HTTPS desktop origin is required." }
+          if ($env:CLAIMGUARD_ACTIVATION_ORIGIN -match "\.invalid") { throw "Placeholder origins are forbidden." }
+          foreach ($name in @("CLAIMGUARD_ENROLLMENT_VERIFYING_JWK", "TAURI_UPDATER_PUBLIC_KEY", "TAURI_SIGNING_PRIVATE_KEY", "WINDOWS_SIGNING_CERTIFICATE_BASE64", "WINDOWS_SIGNING_CERTIFICATE_PASSWORD")) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) { throw "$name is required." }
+          }
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up stable Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: Install dependencies and pinned Tauri CLI
+        run: |
+          pnpm install --frozen-lockfile
+          cargo install tauri-cli --version 2.11.4 --locked
+
+      - name: Import Authenticode certificate and bind public updater key
+        id: signing
+        shell: pwsh
+        working-directory: apps/desktop/src-tauri
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP "claimguard-signing.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if (-not $certificate.Thumbprint) { throw "The Authenticode certificate could not be imported." }
+          "certificate_thumbprint=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $configuration = Get-Content -Raw "tauri.conf.json" | ConvertFrom-Json
+          $configuration.plugins.updater.pubkey = $env:TAURI_UPDATER_PUBLIC_KEY.Trim()
+          $configuration.bundle.windows | Add-Member -NotePropertyName certificateThumbprint -NotePropertyValue $certificate.Thumbprint -Force
+          $configuration.bundle.windows | Add-Member -NotePropertyName digestAlgorithm -NotePropertyValue "sha256" -Force
+          $configuration.bundle.windows | Add-Member -NotePropertyName timestampUrl -NotePropertyValue "http://timestamp.digicert.com" -Force
+          $configuration | ConvertTo-Json -Depth 100 | Set-Content -Encoding UTF8 "tauri.conf.json"
+          Remove-Item $certificatePath -Force
+
+      - name: Verify and build signed NSIS/updater artifacts
+        shell: pwsh
+        working-directory: apps/desktop/src-tauri
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --all-targets --locked
+          cargo tauri build --bundles nsis
+
+      - name: Normalize and verify signed artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $installers = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe")
+          if ($installers.Count -ne 1) { throw "Expected exactly one signed NSIS setup executable." }
+          Copy-Item $installers[0].FullName "artifacts/ClaimGuard-Setup.exe"
+          $authenticode = Get-AuthenticodeSignature "artifacts/ClaimGuard-Setup.exe"
+          if ($authenticode.Status -ne "Valid") { throw "Authenticode verification failed: $($authenticode.Status)" }
+          $signatures = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig")
+          if ($signatures.Count -ne 1) { throw "The Tauri signature for the signed NSIS updater executable is missing." }
+          Copy-Item $signatures[0].FullName "artifacts/ClaimGuard-Setup.exe.sig"
+          if ((Get-Item "artifacts/ClaimGuard-Setup.exe.sig").Length -le 0) { throw "The Tauri updater signature is empty." }
+          Get-FileHash "artifacts/ClaimGuard-Setup.exe" -Algorithm SHA256 | Format-List
+
+      - name: Upload signed artifacts without publishing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ClaimGuard-Signed-Windows-Setup-${{ github.sha }}
+          path: |
+            artifacts/ClaimGuard-Setup.exe
+            artifacts/ClaimGuard-Setup.exe.sig
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove imported certificate
+        if: always() && steps.signing.outputs.certificate_thumbprint != ''
+        shell: pwsh
+        run: Remove-Item "Cert:\CurrentUser\My\${{ steps.signing.outputs.certificate_thumbprint }}" -Force

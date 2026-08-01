@@ -115,6 +115,9 @@ function createPoolStub({
       if (/SELECT COUNT\(\*\) AS total FROM claims/i.test(sql)) {
         return [[{ total: claims.length }]];
       }
+      if (/AS sync_updated_at/i.test(sql)) {
+        return [claims.map((claim) => ({ ...claim, sync_updated_at: claim.updated_at }))];
+      }
       if (/FROM claims c/i.test(sql) && /LIMIT \d+ OFFSET \d+/i.test(sql)) {
         return [claims];
       }
@@ -193,6 +196,34 @@ test("claims read repository returns current-version model detection and investi
 
   const tenantParams = pool.calls.map((call) => call.params).flat().filter((value) => value === "tenant_alpha");
   assert.equal(tenantParams.length >= 4, true);
+});
+
+test("desktop claim changes are bounded, stable, and exclude unnecessary personal identifiers", async () => {
+  const pool = createPoolStub();
+  const repository = createClaimsReadRepository(pool, {
+    dataPlaneContext: context(),
+    allowLegacyTenantContext: false,
+  });
+
+  const result = await repository.listDesktopClaimChanges({
+    scopeStart: "2026-05-01T00:00:00.000Z",
+    afterUpdatedAt: "2026-07-01T00:00:00.000Z",
+    afterClaimId: "C-1",
+    limit: 900,
+  });
+
+  assert.equal(result.changes.length, 1);
+  assert.equal(result.changes[0].resource, "claim");
+  assert.equal(result.changes[0].operation, "upsert");
+  assert.equal(result.changes[0].record.claimId, "C-3");
+  assert.equal(Object.hasOwn(result.changes[0].record, "memberId"), false);
+  assert.equal(Object.hasOwn(result.changes[0].record, "providerId"), false);
+  const changeQuery = pool.calls.find(({ sql }) => /AS sync_updated_at/i.test(sql));
+  assert.ok(changeQuery);
+  assert.match(changeQuery.sql, /EXISTS\s*\(\s*SELECT 1 FROM investigations i_active/i);
+  assert.match(changeQuery.sql, /SELECT MAX\(i_sync\.updated_at\)/i);
+  assert.doesNotMatch(changeQuery.sql, /LEFT JOIN investigations i\s/i);
+  assert.match(changeQuery.sql, /LIMIT 501/i);
 });
 
 test("claims overview aggregates every current claim instead of the visible page", async () => {

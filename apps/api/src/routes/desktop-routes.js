@@ -1,0 +1,325 @@
+import { CLAIMGUARD_PERMISSIONS, OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
+import {
+  createRequireOperationalRouteAuthorizationMiddleware,
+  createRequirePermissionMiddleware,
+} from "../middleware/authorization-middleware.js";
+import { safeSessionResponse, serializeCookie } from "./auth-routes.js";
+
+function desktopError(c, error, fallbackMessage, fallbackCode = "DESKTOP_REQUEST_FAILED") {
+  const status = Number.isInteger(error?.status) ? error.status : 500;
+  return c.json({
+    available: false,
+    code: error?.code || fallbackCode,
+    message: status >= 500 ? fallbackMessage : error?.message || fallbackMessage,
+    ...(error?.details && typeof error.details === "object" ? error.details : {}),
+  }, status);
+}
+
+function actorFromContext(c) {
+  const auth = c.get("authContext") || {};
+  return {
+    type: "user",
+    id: auth.user_id || null,
+    organisationId: auth.organisation_id || null,
+    correlationId: c.get("requestId") || null,
+  };
+}
+
+function targetOrganisation(c) {
+  const auth = c.get("authContext") || {};
+  const target = c.req.param("organisationId");
+  const platform = auth.roles?.includes("platform_administrator");
+  if (!platform && target !== auth.organisation_id) return null;
+  return target;
+}
+
+function rejectRoutingOverrides(c) {
+  const url = new URL(c.req.url);
+  const forbiddenQuery = ["organisationId", "organisation_id", "tenantId", "tenant_id", "tenantSlug", "apiOrigin"];
+  const forbiddenHeaders = ["x-organisation-id", "x-tenant-id", "x-api-origin"];
+  if (forbiddenQuery.some((name) => url.searchParams.has(name)) || forbiddenHeaders.some((name) => c.req.header(name))) {
+    return c.json({
+      available: false,
+      code: "DESKTOP_ROUTING_OVERRIDE_REJECTED",
+      message: "Desktop organisation routing is fixed by the enrolled device.",
+    }, 400);
+  }
+  return null;
+}
+
+export function registerDesktopRoutes(app, {
+  desktopEnrollmentService = null,
+  desktopSyncService = null,
+  authenticationService = null,
+  authenticationConfiguration = null,
+  claimsReadRepository = null,
+  desktopSyncRepository = null,
+  investigationService = null,
+} = {}) {
+  app.post("/desktop/activate", async (c) => {
+    if (!desktopEnrollmentService?.activate) {
+      return c.json({ available: false, code: "DESKTOP_ACTIVATION_UNAVAILABLE", message: "Desktop activation is not configured." }, 503);
+    }
+    const payload = await c.req.json().catch(() => ({}));
+    const permitted = new Set(["activationKey", "installationId", "devicePublicKey"]);
+    if (Object.keys(payload).some((key) => !permitted.has(key))) {
+      return c.json({ available: false, code: "DESKTOP_ACTIVATION_INPUT_INVALID", message: "The desktop activation request is invalid." }, 400);
+    }
+    try {
+      const result = await desktopEnrollmentService.activate(payload, c.get("authenticationMetadata") || {});
+      return c.json({ available: true, ...result }, 201);
+    } catch (error) {
+      return desktopError(c, error, "Desktop activation is temporarily unavailable.", "DESKTOP_ACTIVATION_FAILED");
+    }
+  });
+
+  app.post("/desktop/auth/login", async (c) => {
+    if (!authenticationService || !authenticationConfiguration || !desktopEnrollmentService?.renewEnrollment) {
+      return c.json({ available: false, code: "DESKTOP_AUTHENTICATION_UNAVAILABLE", message: "Desktop authentication is not configured." }, 503);
+    }
+    const device = c.get("desktopDevice") || null;
+    if (!device) return c.json({ available: false, code: "DEVICE_PROOF_REQUIRED", message: "This desktop device could not be verified." }, 401);
+    const payload = await c.req.json().catch(() => ({}));
+    if (Object.keys(payload).some((key) => !["username", "password"].includes(key))) {
+      return c.json({ available: false, code: "DESKTOP_LOGIN_INPUT_INVALID", message: "Only account credentials are accepted." }, 400);
+    }
+    let result = null;
+    try {
+      result = await authenticationService.login({
+        organisationSlug: device.organisationSlug,
+        username: payload.username,
+        password: payload.password,
+        requiredOrganisationId: device.organisationId,
+      }, c.get("authenticationMetadata") || {});
+      const enrollment = await desktopEnrollmentService.renewEnrollment(device);
+      const previous = c.get("resolvedSession") || null;
+      if (previous) await authenticationService.logout(previous, c.get("authenticationMetadata") || {});
+      const maxAgeSeconds = Math.max(0, (new Date(result.session.absoluteExpiresAt).getTime() - Date.now()) / 1000);
+      c.header("Set-Cookie", serializeCookie(authenticationConfiguration, result.bearerSecret, { maxAgeSeconds }));
+      return c.json({
+        ...safeSessionResponse(result, authenticationConfiguration),
+        csrfToken: result.csrfToken,
+        licensedOrganisation: {
+          organisationId: device.organisationId,
+          displayName: device.organisationDisplayName,
+        },
+        enrollment,
+      });
+    } catch {
+      if (result) {
+        await authenticationService.logout(result, c.get("authenticationMetadata") || {}).catch(() => {});
+      }
+      return c.json({
+        available: false,
+        code: "DESKTOP_AUTHENTICATION_FAILED",
+        message: "The account could not be authorised for the organisation licensed on this device.",
+      }, 401);
+    }
+  });
+
+  app.get("/desktop/auth/session", (c) => {
+    const resolved = c.get("resolvedSession") || null;
+    const device = c.get("desktopDevice") || null;
+    if (!resolved || !device) return c.json({ authenticated: false });
+    return c.json({
+      ...safeSessionResponse(resolved, authenticationConfiguration),
+      licensedOrganisation: {
+        organisationId: device.organisationId,
+        displayName: device.organisationDisplayName,
+      },
+    });
+  });
+
+  app.post("/desktop/auth/logout", async (c) => {
+    const resolved = c.get("resolvedSession") || null;
+    if (resolved) await authenticationService?.logout(resolved, c.get("authenticationMetadata") || {});
+    if (authenticationConfiguration) {
+      c.header("Set-Cookie", serializeCookie(authenticationConfiguration, "", { maxAgeSeconds: 0, expires: new Date(0) }));
+    }
+    return c.json({ authenticated: false });
+  });
+
+  const requireDesktopBootstrap = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_SYNC_BOOTSTRAP,
+  });
+  const requireDesktopChanges = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_SYNC_CHANGES,
+  });
+  const requireDesktopClaimDetail = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_CLAIM_DETAIL,
+  });
+  const requireDesktopInvestigationPatch = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_PATCH,
+  });
+
+  app.get("/desktop/sync/bootstrap", requireDesktopBootstrap, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    try {
+      const response = await desktopSyncService.bootstrap({
+        repository: desktopSyncRepository,
+        device: c.get("desktopDevice"),
+        authContext: c.get("authContext"),
+        dataPlaneContext: c.get("dataPlaneContext"),
+        limit: c.req.query("limit"),
+        schemaVersion: c.req.header("x-claimguard-desktop-schema") || c.req.query("schemaVersion"),
+      });
+      const enrollment = await desktopEnrollmentService.renewEnrollment(c.get("desktopDevice"));
+      return c.json({ ...response, enrollment });
+    } catch (error) {
+      return desktopError(c, error, "Desktop synchronization is temporarily unavailable.", "DESKTOP_SYNC_FAILED");
+    }
+  });
+
+  app.get("/desktop/sync/changes", requireDesktopChanges, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    try {
+      const response = await desktopSyncService.changes({
+        repository: desktopSyncRepository,
+        device: c.get("desktopDevice"),
+        authContext: c.get("authContext"),
+        dataPlaneContext: c.get("dataPlaneContext"),
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
+        schemaVersion: c.req.header("x-claimguard-desktop-schema") || c.req.query("schemaVersion"),
+      });
+      const enrollment = await desktopEnrollmentService.renewEnrollment(c.get("desktopDevice"));
+      return c.json({ ...response, enrollment });
+    } catch (error) {
+      return desktopError(c, error, "Desktop synchronization is temporarily unavailable.", "DESKTOP_SYNC_FAILED");
+    }
+  });
+
+  app.get("/desktop/claims/:claimId", requireDesktopClaimDetail, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    try {
+      const claim = await claimsReadRepository?.getClaimById?.(c.req.param("claimId"));
+      if (!claim) return c.json({ available: false, code: "CLAIM_NOT_FOUND", message: "The claim was not found in the licensed organisation." }, 404);
+      return c.json({
+        available: true,
+        claim,
+        etag: `W/\"claim-${claim.currentClaimVersion || 1}\"`,
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      return desktopError(c, error, "Claim details are temporarily unavailable.", "DESKTOP_CLAIM_FETCH_FAILED");
+    }
+  });
+
+  app.patch("/desktop/investigations/:id", requireDesktopInvestigationPatch, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    const ifMatch = String(c.req.header("if-match") || "").replace(/^W\//, "").replace(/^\"|\"$/g, "");
+    if (!ifMatch) {
+      return c.json({ available: false, code: "PRECONDITION_REQUIRED", message: "A current investigation version is required." }, 428);
+    }
+    const payload = await c.req.json().catch(() => ({}));
+    if (Object.keys(payload).some((key) => !["status", "priority"].includes(key))) {
+      return c.json({ available: false, code: "DESKTOP_MUTATION_INPUT_INVALID", message: "The investigation update is invalid." }, 400);
+    }
+    try {
+      const investigation = await investigationService.updateInvestigation({
+        investigationId: c.req.param("id"),
+        status: payload.status,
+        priority: payload.priority,
+        expectedUpdatedAt: ifMatch,
+      });
+      c.header("ETag", `W/\"${investigation.updatedAt}\"`);
+      return c.json({ available: true, investigation });
+    } catch (error) {
+      const stale = error?.code === "stale_record_version";
+      return c.json({
+        available: false,
+        code: stale ? "STALE_RECORD_VERSION" : error?.code || "DESKTOP_MUTATION_FAILED",
+        message: stale
+          ? "The investigation changed after it was loaded. Authoritative state must be refreshed."
+          : "The investigation could not be updated.",
+      }, stale ? 412 : Number.isInteger(error?.status) ? error.status : 400);
+    }
+  });
+}
+
+export function registerDesktopAdminRoutes(app, {
+  desktopEnrollmentService = null,
+  authenticationService = null,
+} = {}) {
+  const requireDesktopManage = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE,
+  });
+
+  app.get("/admin/desktop/organisations/:organisationId", requireDesktopManage, async (c) => {
+    if (!desktopEnrollmentService?.getAdminSnapshot) {
+      return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop device administration is not configured." }, 503);
+    }
+    const organisationId = targetOrganisation(c);
+    if (!organisationId) return c.json({ available: false, code: "FORBIDDEN", message: "You do not have permission to manage this organisation." }, 403);
+    try {
+      return c.json({ available: true, ...(await desktopEnrollmentService.getAdminSnapshot(organisationId)) });
+    } catch (error) {
+      return desktopError(c, error, "Desktop device administration is temporarily unavailable.");
+    }
+  });
+
+  app.post("/admin/desktop/organisations/:organisationId/activation-keys", requireDesktopManage, async (c) => {
+    if (!desktopEnrollmentService?.issueActivationKey || !authenticationService?.reauthenticate) {
+      return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop device administration is not configured." }, 503);
+    }
+    const organisationId = targetOrganisation(c);
+    if (!organisationId) return c.json({ available: false, code: "FORBIDDEN", message: "You do not have permission to manage this organisation." }, 403);
+    const payload = await c.req.json().catch(() => ({}));
+    if (payload.confirmation !== "ISSUE DESKTOP KEY") {
+      return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The activation-key confirmation did not match." }, 400);
+    }
+    try {
+      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      const result = await desktopEnrollmentService.issueActivationKey({
+        organisationId,
+        expiresInHours: payload.expiresInHours,
+        maximumUses: payload.maximumUses,
+      }, actorFromContext(c));
+      return c.json({ available: true, activationKey: result, displayedOnce: true }, 201);
+    } catch (error) {
+      return desktopError(c, error, "The activation key could not be issued.");
+    }
+  });
+
+  app.post("/admin/desktop/organisations/:organisationId/activation-keys/:activationKeyId/revoke", requireDesktopManage, async (c) => {
+    if (!desktopEnrollmentService?.revokeActivationKey || !authenticationService?.reauthenticate) {
+      return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop device administration is not configured." }, 503);
+    }
+    const organisationId = targetOrganisation(c);
+    if (!organisationId) return c.json({ available: false, code: "FORBIDDEN", message: "You do not have permission to manage this organisation." }, 403);
+    const payload = await c.req.json().catch(() => ({}));
+    const activationKeyId = c.req.param("activationKeyId");
+    if (payload.confirmation !== `REVOKE KEY ${activationKeyId}`) {
+      return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The activation-key revocation confirmation did not match." }, 400);
+    }
+    try {
+      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      return c.json({ available: true, ...(await desktopEnrollmentService.revokeActivationKey({ organisationId, activationKeyId, reason: payload.reason }, actorFromContext(c))) });
+    } catch (error) {
+      return desktopError(c, error, "The activation key could not be revoked.");
+    }
+  });
+
+  app.post("/admin/desktop/organisations/:organisationId/devices/:deviceEnrollmentId/revoke", requireDesktopManage, async (c) => {
+    if (!desktopEnrollmentService?.revokeDevice || !authenticationService?.reauthenticate) {
+      return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop device administration is not configured." }, 503);
+    }
+    const organisationId = targetOrganisation(c);
+    if (!organisationId) return c.json({ available: false, code: "FORBIDDEN", message: "You do not have permission to manage this organisation." }, 403);
+    const payload = await c.req.json().catch(() => ({}));
+    const deviceEnrollmentId = c.req.param("deviceEnrollmentId");
+    if (payload.confirmation !== `REVOKE DEVICE ${deviceEnrollmentId}`) {
+      return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The device revocation confirmation did not match." }, 400);
+    }
+    try {
+      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      return c.json({ available: true, ...(await desktopEnrollmentService.revokeDevice({ organisationId, deviceEnrollmentId, reason: payload.reason }, actorFromContext(c))) });
+    } catch (error) {
+      return desktopError(c, error, "The desktop device could not be revoked.");
+    }
+  });
+}

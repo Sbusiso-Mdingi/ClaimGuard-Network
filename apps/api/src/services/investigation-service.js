@@ -27,11 +27,12 @@ export function createInvestigationService({ investigationRepository = null } = 
       return investigationRepository.getInvestigationDetails(investigationId);
     },
 
-    async updateInvestigation({ investigationId, status = undefined, priority = undefined }) {
+    async updateInvestigation({ investigationId, status = undefined, priority = undefined, expectedUpdatedAt = null }) {
       return investigationRepository.updateInvestigation({
         investigationId,
         status,
         priority,
+        expectedUpdatedAt,
       });
     },
 

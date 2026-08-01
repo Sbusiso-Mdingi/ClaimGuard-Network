@@ -78,6 +78,19 @@ test("schema represents suspended organisations, disabled credentials, revocatio
   assert.match(sql, /'pending', 'running', 'completed', 'failed', 'compensating', 'compensated', 'quarantined'/);
 });
 
+test("desktop enrollment schema binds every activation key and device to one immutable organisation", async () => {
+  const sql = await readFile(new URL("../migrations/0016_desktop_device_enrollment.sql", import.meta.url), "utf8");
+  assert.match(sql, /activation_key_hash CHAR\(64\) NOT NULL/);
+  assert.doesNotMatch(sql, /raw_activation|activation_key_value|plaintext/i);
+  assert.match(sql, /UNIQUE KEY uq_activation_key_organisation \(activation_key_id, organisation_id\)/);
+  assert.match(
+    sql,
+    /FOREIGN KEY \(activation_key_id, organisation_id\)\s+REFERENCES organisation_activation_keys \(activation_key_id, organisation_id\)/,
+  );
+  assert.match(sql, /UNIQUE KEY uq_desktop_installation \(installation_id\)/);
+  assert.match(sql, /UNIQUE KEY uq_desktop_public_key \(public_key_thumbprint\)/);
+});
+
 test("Phase 11C migration adds only hashed CSRF/session authority and durable throttling", async () => {
   const sql = await readFile(new URL("../migrations/0005_session_authority_and_throttling.sql", import.meta.url), "utf8");
   assert.match(sql, /csrf_token_hash CHAR\(64\) NOT NULL/);

@@ -25,6 +25,9 @@ import {
   createControlPlanePool,
   createControlPlaneRepositories,
   createControlPlaneService,
+  createActivationKeyHasher,
+  createDesktopEnrollmentService,
+  createEnrollmentDocumentSigner,
 } from "@claimguard/control-plane-database";
 
 import { createBackendApp } from "./backend.js";
@@ -33,6 +36,8 @@ import { createControlPlaneDataPlaneRouteResolver } from "./data-plane-route-res
 import { createReportStorageFromEnvironment } from "./report-storage.js";
 import { createPrivateDatabaseAdapter } from "./private-database-adapter.js";
 import { logEvent } from "./services/log-event.js";
+import { createDesktopDeviceProofVerifier } from "./desktop-device-proof.js";
+import { createDesktopSyncService } from "./desktop-sync-service.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
@@ -128,6 +133,44 @@ const dataPlaneRuntime = {
   },
 };
 
+const desktopConfigurationValues = {
+  activationKeyPepper: process.env.DESKTOP_ACTIVATION_KEY_PEPPER,
+  enrollmentSigningPrivateKey: process.env.DESKTOP_ENROLLMENT_SIGNING_PRIVATE_KEY,
+  enrollmentSigningKeyId: process.env.DESKTOP_ENROLLMENT_SIGNING_KEY_ID,
+  cursorSecret: process.env.DESKTOP_SYNC_CURSOR_SECRET,
+  apiOrigin: process.env.DESKTOP_API_ORIGIN,
+};
+const configuredDesktopValueCount = Object.values(desktopConfigurationValues).filter((value) => String(value || "").trim()).length;
+if (configuredDesktopValueCount > 0 && configuredDesktopValueCount !== Object.keys(desktopConfigurationValues).length) {
+  throw new Error("Desktop enrollment configuration is incomplete; all DESKTOP_* security settings are required together.");
+}
+const desktopEnrollmentService = configuredDesktopValueCount > 0
+  ? createDesktopEnrollmentService({
+      repositories: controlPlaneRepositories,
+      activationKeyHasher: createActivationKeyHasher({ pepper: desktopConfigurationValues.activationKeyPepper }),
+      enrollmentSigner: createEnrollmentDocumentSigner({
+        privateKey: desktopConfigurationValues.enrollmentSigningPrivateKey.replaceAll("\\n", "\n"),
+        keyId: desktopConfigurationValues.enrollmentSigningKeyId,
+      }),
+      apiOrigin: desktopConfigurationValues.apiOrigin,
+      environment: process.env.CLAIMGUARD_ENVIRONMENT || process.env.NODE_ENV || "production",
+      enrollmentLifetimeDays: Number(process.env.DESKTOP_ENROLLMENT_LIFETIME_DAYS || 365),
+    })
+  : null;
+const desktopDeviceProofVerifier = desktopEnrollmentService
+  ? createDesktopDeviceProofVerifier({
+      desktopEnrollmentRepository: controlPlaneRepositories.desktopEnrollment,
+      maximumClockSkewSeconds: Number(process.env.DESKTOP_PROOF_MAXIMUM_CLOCK_SKEW_SECONDS || 300),
+    })
+  : null;
+const desktopSyncService = desktopEnrollmentService
+  ? createDesktopSyncService({
+      cursorSecret: desktopConfigurationValues.cursorSecret,
+      cursorLifetimeDays: Number(process.env.DESKTOP_SYNC_CURSOR_LIFETIME_DAYS || 30),
+      retentionDays: Number(process.env.DESKTOP_CACHE_RETENTION_DAYS || 90),
+    })
+  : null;
+
 const reportStorage = await createReportStorageFromEnvironment({
   reportStorageBackend: process.env.REPORT_STORAGE_BACKEND,
   reportPath: process.env.DETECTION_REPORT_PATH,
@@ -142,6 +185,9 @@ const app = createBackendApp({
   controlPlaneRepositories,
   controlPlaneService,
   dataPlaneRuntime,
+  desktopEnrollmentService,
+  desktopDeviceProofVerifier,
+  desktopSyncService,
 });
 
 serve({
@@ -162,6 +208,7 @@ console.log(
     authenticationMode: authenticationConfiguration.mode,
     explicitDataPlaneRouting: true,
     supportedDataPlaneSchemaVersions,
+    desktopEnrollmentConfigured: Boolean(desktopEnrollmentService),
   }),
 );
 

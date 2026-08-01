@@ -311,7 +311,7 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
       };
     },
 
-    async updateInvestigation({ investigationId, status = undefined, priority = undefined }) {
+    async updateInvestigation({ investigationId, status = undefined, priority = undefined, expectedUpdatedAt = null }) {
       const investigation = await this.getInvestigationById(investigationId);
       if (!investigation) {
         throw new InvestigationNotFoundError();
@@ -321,6 +321,17 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
         throw new InvestigationValidationError("status or priority must be provided.");
       }
 
+      if (expectedUpdatedAt) {
+        const expected = new Date(expectedUpdatedAt).getTime();
+        const current = new Date(investigation.updatedAt).getTime();
+        if (!Number.isFinite(expected) || expected !== current) {
+          throw new InvestigationConflictError(
+            "The investigation changed after it was loaded. Refresh and retry the update.",
+            "stale_record_version",
+          );
+        }
+      }
+
       const nextStatus = status === undefined ? investigation.status : normalizeInvestigationStatus(status);
       const nextPriority = priority === undefined ? investigation.priority : normalizeInvestigationPriority(priority);
 
@@ -328,7 +339,7 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
         assertInvestigationStatusTransition(investigation.status, nextStatus);
       }
 
-      await pool.execute(
+      const [result] = await pool.execute(
         `
           UPDATE investigations
           SET
@@ -339,9 +350,18 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
               ELSE closed_at
             END
           WHERE investigation_id = ? AND tenant_id = ?
+            ${expectedUpdatedAt ? "AND updated_at = ?" : ""}
         `,
-        [nextStatus, nextPriority, nextStatus, investigation.investigationId, investigation.tenantId],
+        [nextStatus, nextPriority, nextStatus, investigation.investigationId, investigation.tenantId,
+          ...(expectedUpdatedAt ? [investigation.updatedAt] : [])],
       );
+
+      if (expectedUpdatedAt && Number(result.affectedRows || 0) !== 1) {
+        throw new InvestigationConflictError(
+          "The investigation changed after it was loaded. Refresh and retry the update.",
+          "stale_record_version",
+        );
+      }
 
       const now = new Date().toISOString();
       return {
