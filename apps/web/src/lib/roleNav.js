@@ -5,21 +5,21 @@ import {
 
 export const NAV_GROUPS = [
   {
-    key: "your-scheme",
-    title: "YOUR SCHEME",
-    subtitle: "Tenant workspace views scoped to your active medical scheme.",
+    key: "operations",
+    title: "OPERATIONS",
+    subtitle: "Monitor claims, investigate alerts, and review scheme risk.",
     items: [
       {
         key: "dashboard",
         to: "/dashboard",
-        label: "Dashboard",
+        label: "Overview",
         capabilities: ["reports.view_own", "claims.view_own"],
         capabilityMode: "any",
       },
       {
         key: "claims",
         to: "/claims",
-        label: "Claims",
+        label: "Claims Explorer",
         capabilities: ["claims.view_own"],
       },
       {
@@ -28,35 +28,35 @@ export const NAV_GROUPS = [
         label: "Investigations",
         capabilities: ["investigations.view"],
       },
+    ],
+  },
+  {
+    key: "intelligence",
+    title: "INTELLIGENCE",
+    subtitle: "Analyse suspicious relationships, risk signals, and detection history.",
+    items: [
       {
         key: "network",
         to: "/network",
-        label: "Network",
+        label: "Network Analysis",
         capabilities: ["reports.view_own"],
       },
       {
         key: "risk",
         to: "/risk",
-        label: "Risk",
+        label: "Risk Intelligence",
         capabilities: ["reports.view_own"],
       },
       {
         key: "history",
         to: "/history",
-        label: "History",
+        label: "Detection History",
         capabilities: ["reports.view_own"],
       },
-    ],
-  },
-  {
-    key: "shared-ecosystem",
-    title: "SHARED ECOSYSTEM",
-    subtitle: "Confirmed fraud records shared between participating medical schemes.",
-    items: [
       {
         key: "committee",
         to: "/committee",
-        label: "Shared Fraud Registry",
+        label: "Fraud Registry",
         capabilities: [
           "fraud_registry.search",
           "fraud_registry.view",
@@ -69,19 +69,19 @@ export const NAV_GROUPS = [
   {
     key: "administration",
     title: "ADMINISTRATION",
-    subtitle: "Tenant and platform governance controls.",
+    subtitle: "Manage scheme access, policy, and platform operations.",
     items: [
       {
         key: "scheme-admin",
         to: "/admin/scheme",
-        label: "Scheme Administration",
+        label: "Scheme Settings",
         capabilities: ["users.manage_tenant", "tenant_status.view"],
         capabilityMode: "any",
       },
       {
         key: "platform-admin",
         to: "/admin/platform",
-        label: "Platform Administration",
+        label: "Platform Control",
         capabilities: ["tenants.manage", "platform_health.view"],
         capabilityMode: "any",
       },
