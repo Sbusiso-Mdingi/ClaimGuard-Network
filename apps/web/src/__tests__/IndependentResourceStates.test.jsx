@@ -88,7 +88,7 @@ test("keeps claims and other healthy resources usable when the report request fa
   const user = userEvent.setup();
   render(<AppRoot />);
 
-  expect(await screen.findByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Executive dashboard/i })).toBeInTheDocument();
   expect(screen.queryByText(/Dashboard Unavailable/i)).not.toBeInTheDocument();
 
   await user.click(claimsNavigationLink());
@@ -101,7 +101,7 @@ test("shows truthful processing and failure states", async () => {
   const user = userEvent.setup();
   render(<AppRoot />);
 
-  await screen.findByRole("heading", { name: /Claims risk intelligence/i });
+  await screen.findByRole("heading", { name: /Executive dashboard/i });
   await user.click(claimsNavigationLink());
 
   expect((await screen.findAllByText("Queued")).length).toBeGreaterThan(0);
@@ -117,7 +117,7 @@ test("uses server pagination and loads the requested page only", async () => {
   const user = userEvent.setup();
   render(<AppRoot />);
 
-  await screen.findByRole("heading", { name: /Claims risk intelligence/i });
+  await screen.findByRole("heading", { name: /Executive dashboard/i });
   await user.click(claimsNavigationLink());
 
   expect(await screen.findByText(/Page 1 \/ 2/i)).toBeInTheDocument();
@@ -139,7 +139,7 @@ test("manual claims refresh does not refetch report, graph or aggregate risk", a
   const user = userEvent.setup();
   render(<AppRoot />);
 
-  await screen.findByRole("heading", { name: /Claims risk intelligence/i });
+  await screen.findByRole("heading", { name: /Executive dashboard/i });
   await user.click(claimsNavigationLink());
   await screen.findByRole("heading", { name: /^Claims$/i });
 

@@ -213,7 +213,7 @@ test("renders dashboard and routes to claim details", async () => {
   expect(
     await screen.findByRole(
       "heading",
-      { name: /Claims risk intelligence/i },
+      { name: /Executive dashboard/i },
       { timeout: 10_000 },
     ),
   ).toBeInTheDocument();
@@ -253,7 +253,7 @@ test("automatic refresh polls claims without refetching aggregate resources", as
   const requestCount = (path) =>
     global.fetch.mock.calls.filter(([url]) => String(url).includes(path)).length;
 
-  expect(screen.getByRole("heading", { name: /Claims risk intelligence/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Executive dashboard/i })).toBeInTheDocument();
   expect(requestCount("/api/detection/report")).toBe(1);
   expect(requestCount("/api/detection/graph")).toBe(1);
   expect(requestCount("/api/detection/risk")).toBe(1);
