@@ -12,14 +12,14 @@ export const NAV_GROUPS = [
       {
         key: "dashboard",
         to: "/dashboard",
-        label: "Overview",
+        label: "Dashboard",
         capabilities: ["reports.view_own", "claims.view_own"],
         capabilityMode: "any",
       },
       {
         key: "claims",
         to: "/claims",
-        label: "Claims Explorer",
+        label: "Claims",
         capabilities: ["claims.view_own"],
       },
       {
@@ -56,7 +56,7 @@ export const NAV_GROUPS = [
       {
         key: "committee",
         to: "/committee",
-        label: "Fraud Registry",
+        label: "Shared Fraud Registry",
         capabilities: [
           "fraud_registry.search",
           "fraud_registry.view",
@@ -74,14 +74,14 @@ export const NAV_GROUPS = [
       {
         key: "scheme-admin",
         to: "/admin/scheme",
-        label: "Scheme Settings",
+        label: "Scheme Administration",
         capabilities: ["users.manage_tenant", "tenant_status.view"],
         capabilityMode: "any",
       },
       {
         key: "platform-admin",
         to: "/admin/platform",
-        label: "Platform Control",
+        label: "Platform Administration",
         capabilities: ["tenants.manage", "platform_health.view"],
         capabilityMode: "any",
       },
