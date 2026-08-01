@@ -50,6 +50,8 @@ The required normalized installer is exactly `artifacts/ClaimGuard-Setup.exe`. T
 
 `desktop-windows.yml` uses a disposable updater key and creates inspection artifacts only. `desktop-signed-build.yml` is an explicit, main-SHA-bound, protected-environment workflow that creates Authenticode and persistent-updater-key artifacts but does not publish or deploy them.
 
+`desktop-live-pilot.yml` is the intermediate real-API validation path. It is restricted to an exact `main` SHA and the protected `desktop-pilot` environment, compiles the reviewed production origin and enrollment-verification JWK, and labels its artifact as unsigned and disposable. It must not be distributed as a production release or retained for updater continuity. See [desktop-production-readiness.md](desktop-production-readiness.md).
+
 ## Verification
 
 ```powershell

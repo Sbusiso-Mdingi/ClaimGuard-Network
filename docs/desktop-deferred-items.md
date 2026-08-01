@@ -7,6 +7,7 @@ The following are intentionally outside this implementation and must not be repr
 - choose and integrate Azure Trusted Signing/HSM-backed Authenticode instead of an exportable PFX;
 - production migration execution for `0016_desktop_device_enrollment.sql`;
 - production API configuration/deployment and activation endpoint exposure;
+- execution of the protected live-API pilot procedure in `desktop-production-readiness.md`; the workflow exists, but its environment values and server trust group are not yet provisioned;
 - MSI enterprise packaging (NSIS `.exe` is the required artifact; MSI is optional);
 - true hardware device attestation; current proof demonstrates possession of a Windows-user-protected Ed25519 key;
 - system-browser Authorization Code + PKCE integration when ClaimGuard adopts an external identity provider; the current deployment preserves its existing local-password/session authority through the Rust network boundary;

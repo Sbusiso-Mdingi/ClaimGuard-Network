@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { nextBackoff, operationalWriteAllowed, pollingDelay } from "./desktopBridge";
+import { desktopBridge, nextBackoff, operationalWriteAllowed, pollingDelay } from "./desktopBridge";
 
 describe("desktop polling and offline mutation policy", () => {
+  it("exposes no platform-governance or device-fleet administration commands", () => {
+    expect(Object.keys(desktopBridge).sort()).toEqual([
+      "activate",
+      "claimDetails",
+      "lock",
+      "login",
+      "logout",
+      "reset",
+      "status",
+      "sync",
+    ]);
+  });
+
   it("adds jitter so clients do not synchronize on a fixed clock boundary", () => {
     expect(pollingDelay(15_000, () => 0)).toBe(12_000);
     expect(pollingDelay(15_000, () => 0.5)).toBe(15_000);

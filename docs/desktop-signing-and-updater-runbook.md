@@ -14,12 +14,16 @@ The protected GitHub environment `desktop-signing` owns:
 
 Require reviewers for that environment. Prefer a hardware-backed enterprise signing service over an exportable PFX when available; migrating to Azure Trusted Signing is deferred.
 
+The enrollment JWK must include the `kid` that exactly matches the production API's `DESKTOP_ENROLLMENT_SIGNING_KEY_ID`. ClaimGuard platform administrators remain web-only; the signed Windows application is distributed to enrolled medical schemes, including their scheme administrators.
+
 ## Build (Does Not Publish)
 
 1. Confirm the target is the exact reviewed commit on `main`.
 2. Trigger `desktop-signed-build` with its full SHA and exact confirmation.
 3. The workflow imports the certificate into the ephemeral runner user store, injects only public keys/config into Tauri, runs tests, Authenticode-signs via the bundler, creates a Tauri-signed updater payload, verifies Authenticode, uploads artifacts, and removes the imported certificate.
 4. Independently verify SHA-256, Authenticode subject/chain/timestamp, the detached updater signature, version, and source SHA before approving publication.
+
+Use `desktop-live-pilot`, not this protected signing workflow, for the disposable live-API activation test that precedes certificate-backed production distribution. The ordered server migration/configuration and pilot procedure are in [desktop-production-readiness.md](desktop-production-readiness.md).
 
 The workflow intentionally has `contents: read` and no release/cloud deployment step.
 

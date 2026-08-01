@@ -87,6 +87,82 @@ test("desktop login renews signed offline grace before returning the session", a
   }]);
 });
 
+test("scheme administrators can use an enrolled scheme desktop while platform administrators are rejected", async () => {
+  const renewals = [];
+  const loggedOutRoles = [];
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("desktopDevice", {
+      deviceEnrollmentId: "device-alpha",
+      organisationId: "org-alpha",
+      organisationSlug: "alpha-medical",
+      organisationDisplayName: "Alpha Medical",
+    });
+    await next();
+  });
+  registerDesktopRoutes(app, {
+    desktopEnrollmentService: {
+      async renewEnrollment() {
+        renewals.push("renewed");
+        return { signedEnrollment: "renewed-signed-enrollment" };
+      },
+    },
+    authenticationConfiguration: {
+      deploymentClass: "test",
+      cookie: { name: "claim_guard_session", sameSite: "Strict", httpOnly: true, secure: true },
+    },
+    authenticationService: {
+      async login({ username }) {
+        const platform = username === "platform-admin";
+        const roles = [platform ? "platform_administrator" : "scheme_administrator"];
+        return {
+          bearerSecret: "session-secret",
+          csrfToken: "csrf-token",
+          actor: {
+            user: { userId: "user-1", displayName: "Administrator", status: "active" },
+            organisation: {
+              organisationId: "org-alpha",
+              organisationType: platform ? "platform" : "medical_scheme",
+              canonicalSlug: "alpha-medical",
+            },
+            membership: { status: "active" },
+            credential: { normalizedUsername: username, status: "active", authenticationProvider: "local_password" },
+            roles,
+            permissions: [],
+          },
+          session: {
+            issuedAt: "2026-08-01T00:00:00.000Z",
+            lastActivityAt: "2026-08-01T00:00:00.000Z",
+            idleExpiresAt: "2026-08-01T01:00:00.000Z",
+            absoluteExpiresAt: "2026-08-02T00:00:00.000Z",
+          },
+        };
+      },
+      async logout(result) {
+        loggedOutRoles.push(result.actor.roles[0]);
+      },
+    },
+  });
+
+  const schemeResponse = await app.request("/desktop/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "scheme-admin", password: "correct-password" }),
+  });
+  assert.equal(schemeResponse.status, 200);
+  assert.deepEqual((await schemeResponse.json()).roles, ["scheme_administrator"]);
+
+  const platformResponse = await app.request("/desktop/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "platform-admin", password: "correct-password" }),
+  });
+  assert.equal(platformResponse.status, 401);
+  assert.equal((await platformResponse.json()).code, "DESKTOP_AUTHENTICATION_FAILED");
+  assert.deepEqual(renewals, ["renewed"]);
+  assert.deepEqual(loggedOutRoles, ["platform_administrator"]);
+});
+
 test("a user from another organisation is denied before desktop route data", async () => {
   let reached = false;
   const app = new Hono();

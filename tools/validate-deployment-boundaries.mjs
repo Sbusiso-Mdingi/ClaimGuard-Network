@@ -19,6 +19,8 @@ const ENSEMBLE_STAGE_PATH =
 const ENSEMBLE_FINALIZE_PATH =
   ".github/workflows/ensemble211-release-finalize.yml";
 const ENSEMBLE_PRODUCTION_PATH = "infra/ensemble211-production.bicep";
+const DESKTOP_PILOT_PATH = ".github/workflows/desktop-live-pilot.yml";
+const DESKTOP_SIGNED_PATH = ".github/workflows/desktop-signed-build.yml";
 
 function read(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -53,6 +55,8 @@ export function validateDeploymentBoundaries({
   ensembleStage,
   ensembleFinalize,
   ensembleProduction,
+  desktopPilot,
+  desktopSigned,
 }) {
   for (const required of [
     "workflow_dispatch:",
@@ -89,6 +93,7 @@ export function validateDeploymentBoundaries({
     "node-version: 22",
     "bash infra/configure-app-service-observability.sh",
     "CLAIMGUARD_RELEASE: ${{ github.sha }}",
+    ".checks.desktopEnrollmentConfigured == true",
   ]) {
     requireText(ci, required, "CI observability deployment");
   }
@@ -98,6 +103,56 @@ export function validateDeploymentBoundaries({
     "${{ secrets.NEW_RELIC_LICENSE_KEY }}",
   ]) {
     forbidText(ci, forbidden, "CI observability deployment");
+  }
+
+  for (const required of [
+    "workflow_dispatch:",
+    "expected_main_sha:",
+    "BUILD LIVE DESKTOP PILOT",
+    "environment: desktop-pilot",
+    'if ($env:GITHUB_REF -ne "refs/heads/main")',
+    'if ("${{ inputs.expected_main_sha }}" -ne $env:GITHUB_SHA)',
+    "CLAIMGUARD_ACTIVATION_ORIGIN: ${{ vars.DESKTOP_ACTIVATION_ORIGIN }}",
+    "CLAIMGUARD_ENROLLMENT_VERIFYING_JWK: ${{ vars.DESKTOP_ENROLLMENT_VERIFYING_JWK }}",
+    "Get-AuthenticodeSignature",
+    'if ($authenticode.Status -ne "NotSigned")',
+    'artifactClass = "live_api_disposable_pilot"',
+    'updaterTrust = "ephemeral_not_upgradeable"',
+    "Upload live pilot without publishing",
+  ]) {
+    requireText(desktopPilot, required, "Desktop live-pilot workflow");
+  }
+  for (const forbidden of [
+    "WINDOWS_SIGNING_CERTIFICATE_BASE64",
+    "environment: production",
+    "contents: write",
+    "releases: write",
+    "gh release",
+    "az webapp",
+  ]) {
+    forbidText(desktopPilot, forbidden, "Desktop live-pilot workflow");
+  }
+
+  for (const required of [
+    "workflow_dispatch:",
+    "expected_main_sha:",
+    "BUILD SIGNED DESKTOP UPDATE",
+    "environment: desktop-signing",
+    'if ($env:GITHUB_REF -ne "refs/heads/main")',
+    'if ("${{ inputs.expected_main_sha }}" -ne $env:GITHUB_SHA)',
+    "Get-AuthenticodeSignature",
+    'if ($authenticode.Status -ne "Valid")',
+    "Upload signed artifacts without publishing",
+  ]) {
+    requireText(desktopSigned, required, "Desktop signed-build workflow");
+  }
+  for (const forbidden of [
+    "contents: write",
+    "releases: write",
+    "gh release",
+    "az webapp",
+  ]) {
+    forbidText(desktopSigned, forbidden, "Desktop signed-build workflow");
   }
   const apiDeploymentIndex = ci.indexOf("Deploy API app with retry");
   const observabilityConfigurationIndex = ci.indexOf(
@@ -499,6 +554,8 @@ export function validateRepositoryDeploymentBoundaries() {
     ensembleStage: read(ENSEMBLE_STAGE_PATH),
     ensembleFinalize: read(ENSEMBLE_FINALIZE_PATH),
     ensembleProduction: read(ENSEMBLE_PRODUCTION_PATH),
+    desktopPilot: read(DESKTOP_PILOT_PATH),
+    desktopSigned: read(DESKTOP_SIGNED_PATH),
   });
 }
 
