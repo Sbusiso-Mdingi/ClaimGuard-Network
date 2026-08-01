@@ -161,6 +161,42 @@ test("event-worker infrastructure keeps recovery parked", () => {
   );
 });
 
+test("event-worker scaler requires an API version that preserves managed identity", () => {
+  const workflows = repositoryWorkflows();
+  workflows.eventWorker = workflows.eventWorker.replace(
+    "resource reportWorker 'Microsoft.App/jobs@2025-01-01'",
+    "resource reportWorker 'Microsoft.App/jobs@2024-03-01'",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Event-worker parked recovery is missing/,
+  );
+});
+
+test("event-worker scorer concurrency remains bounded at two executions", () => {
+  const workflows = repositoryWorkflows();
+  workflows.eventWorker = workflows.eventWorker.replace(
+    "param maximumExecutions int = 2",
+    "param maximumExecutions int = 1",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Event-worker parked recovery is missing/,
+  );
+});
+
+test("worker deployment must verify scaler managed identity", () => {
+  const workflows = repositoryWorkflows();
+  workflows.worker = workflows.worker.replaceAll(
+    "EVENT_SCALE_RULE",
+    "UNVERIFIED_SCALE_RULE",
+  );
+  assert.throws(
+    () => validateDeploymentBoundaries(workflows),
+    /Event-worker scaler verification is missing/,
+  );
+});
+
 test("first recovery-job bootstrap cannot acquire a schedule", () => {
   const workflows = repositoryWorkflows();
   workflows.recoveryBootstrap = workflows.recoveryBootstrap.replace(

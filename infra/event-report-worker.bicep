@@ -35,7 +35,7 @@ param ensembleFeatureSchemaVersion string = 'claim-feature-schema-2026.2'
 param ensembleAnalysisMode string = 'PROSPECTIVE_CLAIM_SCREENING'
 param ensembleThreshold string = '0.049236234887246655'
 param pollingIntervalSeconds int = 5
-param maximumExecutions int = 1
+param maximumExecutions int = 2
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
   name: containerAppsEnvironmentName
@@ -154,7 +154,7 @@ var registryConfiguration = [
   }
 ]
 
-resource reportWorker 'Microsoft.App/jobs@2024-03-01' = {
+resource reportWorker 'Microsoft.App/jobs@2025-01-01' = {
   name: reportWorkerJobName
   location: location
   tags: {

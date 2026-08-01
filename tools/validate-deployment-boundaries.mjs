@@ -272,10 +272,24 @@ export function validateDeploymentBoundaries({
     "param ensembleDeploymentId string = 'claimguard-claim-fraud-ensemble:2.1.1'",
     "param ensembleRuntimeConfigKey string = 'CLAIMGUARD_CLAIM_FRAUD_ENSEMBLE_2_1_1_E0652D762C0E'",
     "param ensembleThreshold string = '0.049236234887246655'",
+    "param maximumExecutions int = 2",
+    "resource reportWorker 'Microsoft.App/jobs@2025-01-01'",
+    "identity: identity.id",
     "MODEL_SERVICE_BASE_URL_${ensembleRuntimeConfigKey}",
     "MODEL_SERVICE_PSEUDONYMIZATION_KEY_${ensembleRuntimeConfigKey}",
   ]) {
     requireText(eventWorker, required, "Event-worker parked recovery");
+  }
+
+  for (const required of [
+    "EVENT_SCALE_RULE",
+    ".metadata.accountName",
+    ".metadata.queueName",
+    ".metadata.queueLength",
+    ".identity | ascii_downcase",
+    "EXPECTED_WORKER_ID",
+  ]) {
+    requireText(worker, required, "Event-worker scaler verification");
   }
 
   for (const required of [
