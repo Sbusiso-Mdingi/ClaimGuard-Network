@@ -24,11 +24,30 @@ const OPERATIONAL_TENANT = Object.freeze({
 function session({ userId, displayName, role, capabilities, organisation = MEDICAL_SCHEME, operationalTenant = OPERATIONAL_TENANT }) {
   return Object.freeze({
     authenticated: true,
-    user: Object.freeze({ userId, displayName }),
+    user: Object.freeze({
+      userId,
+      displayName,
+      canonicalContact: `${userId}@example.test`,
+      status: "active",
+    }),
     organisation,
     operationalTenant,
     roles: Object.freeze([role]),
     clientCapabilities: Object.freeze([...capabilities]),
+    account: Object.freeze({
+      username: userId,
+      workContact: `${userId}@example.test`,
+      userStatus: "active",
+      membershipStatus: "active",
+      credentialStatus: "active",
+      authenticationProvider: "local_password",
+      passwordChangeAvailable: true,
+      passwordMinLength: organisation.organisationType === "platform" ? 12 : 8,
+    }),
+    sessionActivity: Object.freeze({
+      issuedAt: "2026-08-01T08:00:00Z",
+      lastActivityAt: "2026-08-01T08:15:00Z",
+    }),
     expires: Object.freeze({ idleAt: "2026-08-01T09:00:00Z", absoluteAt: "2026-08-01T16:00:00Z" }),
     deployment: Object.freeze({ class: "production", demo: false }),
   });

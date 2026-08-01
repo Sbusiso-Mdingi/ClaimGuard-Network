@@ -46,14 +46,18 @@ function fixture({ passwordHash = "current-hash", organisationStatus = "active",
     async rotateCsrfToken(id, csrfTokenHash) { sessions.get(id).csrfTokenHash = csrfTokenHash; },
     async revokeSession(id, reason) { const session = sessions.get(id); if (!session) return false; session.revokedAt ||= currentTime; session.revocationReason ||= reason; return true; },
     async revokeSessionsBy(scope, id, reason) { let count = 0; for (const session of sessions.values()) { const key = { user: "userId", membership: "membershipId", organisation: "organisationId", credential: "credentialId" }[scope]; if (session[key] === id && !session.revokedAt) { session.revokedAt = currentTime; session.revocationReason = reason; count += 1; } } return count; },
+    async revokeOtherSessionsByCredential(credentialId, currentSessionId, reason) { let count = 0; for (const session of sessions.values()) { if (session.credentialId === credentialId && session.sessionId !== currentSessionId && !session.revokedAt) { session.revokedAt = currentTime; session.revocationReason = reason; count += 1; } } return count; },
     async getThrottleBucket(key) { return throttle.get(key) || null; },
     async recordThrottleFailure(input) { const previous = throttle.get(input.bucketKey); const row = { ...previous, failure_count: Number(previous?.failure_count || 0) + 1, blocked_until: input.blockedUntil, window_started_at: previous?.window_started_at || input.now }; throttle.set(input.bucketKey, row); return row; },
     async resetThrottle(key) { throttle.delete(key); },
     async recordAuthenticationEvent(event) { events.push(event); return { eventId: String(events.length) }; },
   };
   const passwordHasher = {
-    async hash() { return "upgraded-hash"; },
-    async verify(hash, password) { return ["current-hash", "upgraded-hash"].includes(hash) && password === "correct"; },
+    async hash(password) { return password === "replacement-password" ? "replacement-hash" : "upgraded-hash"; },
+    async verify(hash, password) {
+      if (["current-hash", "upgraded-hash"].includes(hash)) return password === "correct";
+      return hash === "replacement-hash" && password === "replacement-password";
+    },
     needsRehash(hash) { return hash === "current-hash"; },
   };
   const service = createControlPlaneAuthenticationService({
@@ -142,6 +146,51 @@ test("sensitive actions require a fresh password check bound to the current sess
   assert.deepEqual(
     f.events.slice(-1).map((event) => [event.eventType, event.result]),
     [["reauthentication_failure", "failure"]],
+  );
+});
+
+test("password changes verify the current secret, replace the Argon2id hash, and revoke other sessions", async () => {
+  const f = fixture();
+  const first = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
+  const second = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
+  const resolved = await f.service.resolveSession(second.bearerSecret, metadata);
+
+  const changed = await f.service.changePassword(resolved, {
+    currentPassword: "correct",
+    newPassword: "replacement-password",
+  }, metadata);
+
+  assert.equal(changed.changed, true);
+  assert.equal(changed.otherSessionsRevoked, 1);
+  assert.equal(f.credential.passwordHash, "replacement-hash");
+  assert.equal(f.sessions.get("session-1").revocationReason, "password_changed");
+  assert.equal(f.sessions.get("session-2").revokedAt, null);
+  assert.deepEqual(
+    f.events.slice(-1).map((event) => [event.eventType, event.result]),
+    [["password_changed", "success"]],
+  );
+  await assert.rejects(() => f.service.resolveSession(first.bearerSecret, metadata), /not valid/);
+});
+
+test("password changes reject a wrong current password and password reuse with audited failures", async () => {
+  const f = fixture();
+  const login = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
+  const resolved = await f.service.resolveSession(login.bearerSecret, metadata);
+
+  await assert.rejects(
+    () => f.service.changePassword(resolved, { currentPassword: "wrong", newPassword: "replacement-password" }, metadata),
+    (error) => error.code === "AUTHENTICATION_FAILED",
+  );
+  await assert.rejects(
+    () => f.service.changePassword(resolved, { currentPassword: "correct", newPassword: "correct" }, metadata),
+    (error) => error.code === "PASSWORD_REUSE",
+  );
+  assert.deepEqual(
+    f.events.slice(-2).map((event) => [event.eventType, event.result, event.failureCategory]),
+    [
+      ["password_changed", "failure", "invalid_current_password"],
+      ["password_changed", "failure", "password_reuse"],
+    ],
   );
 });
 

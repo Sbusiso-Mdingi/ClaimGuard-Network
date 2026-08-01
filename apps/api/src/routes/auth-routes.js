@@ -29,6 +29,7 @@ function operationalTenant(actor) {
 
 function safeSessionResponse(result, configuration) {
   const { actor, session } = result;
+  const passwordMinLength = actor.organisation.organisationType === "platform" ? 12 : 8;
   return {
     authenticated: true,
     user: actor.user,
@@ -36,6 +37,20 @@ function safeSessionResponse(result, configuration) {
     roles: [...actor.roles],
     clientCapabilities: operationalPermissions(actor.permissions, actor.roles),
     operationalTenant: operationalTenant(actor),
+    account: {
+      username: actor.credential.normalizedUsername || null,
+      workContact: actor.user.canonicalContact || null,
+      userStatus: actor.user.status || null,
+      membershipStatus: actor.membership.status || null,
+      credentialStatus: actor.credential.status || null,
+      authenticationProvider: actor.credential.authenticationProvider || null,
+      passwordChangeAvailable: actor.credential.authenticationProvider === "local_password",
+      passwordMinLength,
+    },
+    sessionActivity: {
+      issuedAt: session.issuedAt,
+      lastActivityAt: session.lastActivityAt,
+    },
     expires: {
       idleAt: session.idleExpiresAt,
       absoluteAt: session.absoluteExpiresAt,
@@ -93,6 +108,74 @@ export function registerAuthRoutes(app, { authenticationService, configuration, 
     if (resolved) await authenticationService.logout(resolved, c.get("authenticationMetadata") || {});
     c.header("Set-Cookie", serializeCookie(configuration, "", { maxAgeSeconds: 0, expires: new Date(0) }));
     return c.json({ authenticated: false });
+  });
+
+  app.post("/auth/password/change", async (c) => {
+    const resolved = c.get("resolvedSession") || null;
+    if (!resolved) {
+      return c.json({
+        available: false,
+        code: "UNAUTHENTICATED",
+        message: "Authentication is required.",
+      }, 401);
+    }
+
+    let input;
+    try { input = await c.req.json(); } catch { input = {}; }
+    const currentPassword = typeof input.currentPassword === "string" ? input.currentPassword : "";
+    const newPassword = typeof input.newPassword === "string" ? input.newPassword : "";
+    const minimumLength = resolved.actor.organisation.organisationType === "platform" ? 12 : 8;
+
+    if (!currentPassword || !newPassword) {
+      return c.json({
+        available: false,
+        code: "INVALID_INPUT",
+        message: "Current password and new password are required.",
+      }, 400);
+    }
+    if (newPassword.length < minimumLength) {
+      return c.json({
+        available: false,
+        code: "WEAK_PASSWORD",
+        message: `Password must be at least ${minimumLength} characters.`,
+      }, 400);
+    }
+    if (newPassword.length > 128) {
+      return c.json({
+        available: false,
+        code: "PASSWORD_TOO_LONG",
+        message: "Password must be no more than 128 characters.",
+      }, 400);
+    }
+
+    try {
+      const result = await authenticationService.changePassword(
+        resolved,
+        { currentPassword, newPassword },
+        c.get("authenticationMetadata") || {},
+      );
+      return c.json({
+        available: true,
+        changedAt: result.changedAt,
+        otherSessionsRevoked: result.otherSessionsRevoked,
+      });
+    } catch (error) {
+      if (error?.code === "AUTHENTICATION_FAILED") {
+        return c.json({
+          available: false,
+          code: "CURRENT_PASSWORD_INCORRECT",
+          message: "The current password is incorrect.",
+        }, 400);
+      }
+      const status = Number.isInteger(error?.status) ? error.status : 500;
+      return c.json({
+        available: false,
+        code: error?.code || "PASSWORD_CHANGE_FAILED",
+        message: status >= 500
+          ? "The password could not be changed. Try again."
+          : error.message,
+      }, status);
+    }
   });
 
   app.post("/auth/invitation/validate", async (c) => {
