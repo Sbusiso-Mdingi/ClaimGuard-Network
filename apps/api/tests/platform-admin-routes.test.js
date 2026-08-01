@@ -1,22 +1,71 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createAuthenticatedAuthContext } from "../src/auth-context.js";
+import {
+  CLAIMGUARD_ROLES,
+  getPermissionsForRoles,
+} from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
+import { createRequestAuthenticationProvider } from "./helpers/authentication-provider.js";
+
+const TEST_ACTOR_HEADERS = Object.freeze({
+  user: "x-test-user-id",
+  role: "x-test-role",
+  tenant: "x-test-tenant-id",
+});
+
+const platformOrganisation = Object.freeze({
+  organisationId: "org-platform",
+  organisationType: "platform",
+  displayName: "ClaimGuard Platform",
+});
+
+const alphaOrganisation = Object.freeze({
+  organisationId: "org-alpha",
+  organisationType: "medical_scheme",
+  displayName: "Alpha Medical Scheme",
+});
 
 function platformHeaders(userId = "platform-admin-1") {
   return {
-    "x-claimguard-user": userId,
-    "x-claimguard-role": "platform_administrator",
-    "x-claimguard-user-tenant": "tenant_platform",
+    [TEST_ACTOR_HEADERS.user]: userId,
+    [TEST_ACTOR_HEADERS.role]: CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR,
   };
 }
 
 function investigatorHeaders() {
   return {
-    "x-claimguard-user": "investigator-1",
-    "x-claimguard-role": "investigator",
-    "x-claimguard-user-tenant": "tenant_alpha",
+    [TEST_ACTOR_HEADERS.user]: "investigator-1",
+    [TEST_ACTOR_HEADERS.role]: CLAIMGUARD_ROLES.INVESTIGATOR,
+    [TEST_ACTOR_HEADERS.tenant]: "tenant_alpha",
   };
+}
+
+function createTestAuthenticationProvider() {
+  return createRequestAuthenticationProvider(({ request }) => {
+    const role = request.headers.get(TEST_ACTOR_HEADERS.role)
+      || CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR;
+    const userId = request.headers.get(TEST_ACTOR_HEADERS.user)
+      || "platform-admin-1";
+    const isPlatformAdministrator = role === CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR;
+    const organisation = isPlatformAdministrator
+      ? platformOrganisation
+      : alphaOrganisation;
+    const tenantId = isPlatformAdministrator
+      ? null
+      : request.headers.get(TEST_ACTOR_HEADERS.tenant) || "tenant_alpha";
+
+    return createAuthenticatedAuthContext({
+      userId,
+      roles: [role],
+      permissions: getPermissionsForRoles([role]),
+      tenantId,
+      organisationId: organisation.organisationId,
+      organisation,
+      source: "test_provider",
+    });
+  });
 }
 
 function createControlPlaneHarness({
@@ -417,8 +466,9 @@ function createApp(options) {
     controlPlaneRepositories: harness.repositories,
     controlPlaneService: harness.service,
     authenticationService: harness.authenticationService,
+    authenticationProvider: createTestAuthenticationProvider(),
     authenticationConfiguration: {
-      mode: "demo_headers",
+      mode: "session",
       deploymentClass: options?.deploymentClass || "demo",
     },
   });

@@ -4,21 +4,8 @@ import test from "node:test";
 import {
   createAuthenticatedAuthContext,
   operationalPermissions,
-  resolveAuthContextFromHeaders,
 } from "../src/middleware/auth-context.js";
 import { CLAIMGUARD_PERMISSIONS, hasPermission } from "../src/authorization-policy.js";
-
-function headerContext(role) {
-  return resolveAuthContextFromHeaders({
-    request: new Request("http://localhost/claims", {
-      headers: {
-        "x-claimguard-user": `${role}-user`,
-        "x-claimguard-role": role,
-        "x-claimguard-user-tenant": "tenant-alpha",
-      },
-    }),
-  });
-}
 
 function sessionContext(role, controlPermissions = []) {
   return createAuthenticatedAuthContext({
@@ -26,6 +13,7 @@ function sessionContext(role, controlPermissions = []) {
     roles: [role],
     permissions: operationalPermissions(controlPermissions, [role]),
     tenantId: "tenant-alpha",
+    source: "session",
   });
 }
 
@@ -85,10 +73,13 @@ test("platform administrator sessions retain administrator-management authority"
   );
 });
 
-test("demo-header rollback authority mirrors effective session visibility", () => {
-  const investigator = headerContext("investigator");
-  const schemeAdministrator = headerContext("scheme_administrator");
-  const committeeMember = headerContext("applications_committee_member");
+test("explicit authenticated contexts preserve effective role visibility", () => {
+  const investigator = sessionContext("investigator");
+  const schemeAdministrator = sessionContext("scheme_administrator");
+  const committeeMember = sessionContext("applications_committee_member", [
+    "registry.search",
+    "registry.review_history",
+  ]);
 
   assert.equal(hasPermission(investigator, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
   assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.REPORTS_VIEW_OWN), true);

@@ -1,30 +1,23 @@
-const identityAuthorityHeaders = new Set([
+const rejectedClientIdentityHeaders = new Set([
   "x-claimguard-user", "x-claimguard-role", "x-claimguard-user-tenant", "x-claimguard-tenant",
+  "x-cg-service-actor", "x-cg-service-role", "x-cg-service-tenant", "x-cg-service-organisation",
+  "authorization",
 ]);
-const internalServiceHeaders = new Set(["x-cg-service-actor", "x-cg-service-role", "x-cg-service-tenant", "x-cg-service-organisation"]);
 const forwardingHeaders = new Set(["forwarded", "x-forwarded-for", "x-real-ip"]);
 
 const hopByHopHeaders = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "host",
-  "content-length",
+  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
+  "transfer-encoding", "upgrade", "host", "content-length",
 ]);
 
-export function buildUpstreamHeaders(req, { mode = "session", trustProxy = false } = {}) {
+export function buildUpstreamHeaders(req, { trustProxy = false } = {}) {
   const headers = new Headers();
 
   for (const [name, value] of Object.entries(req.headers)) {
     const lowerName = name.toLowerCase();
     if (
-      hopByHopHeaders.has(lowerName) || forwardingHeaders.has(lowerName) || value == null ||
-      (mode === "session" && (identityAuthorityHeaders.has(lowerName) || internalServiceHeaders.has(lowerName) || lowerName === "authorization"))
+      hopByHopHeaders.has(lowerName) || forwardingHeaders.has(lowerName) ||
+      rejectedClientIdentityHeaders.has(lowerName) || value == null
     ) {
       continue;
     }
@@ -45,14 +38,14 @@ export function buildUpstreamHeaders(req, { mode = "session", trustProxy = false
   return headers;
 }
 
-export async function proxyApiRequest(req, res, { baseUrl, mode = "session", trustProxy = false, fetchImpl = fetch } = {}) {
+export async function proxyApiRequest(req, res, { baseUrl, trustProxy = false, fetchImpl = fetch } = {}) {
   if (!baseUrl) throw new Error("A proxy base URL is required.");
   const upstreamUrl = new URL(req.url.replace(/^\/api/, ""), baseUrl);
   const method = (req.method || "GET").toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
   const upstreamResponse = await fetchImpl(upstreamUrl, {
     method,
-    headers: buildUpstreamHeaders(req, { mode, trustProxy }),
+    headers: buildUpstreamHeaders(req, { trustProxy }),
     body: hasBody ? req : undefined,
     duplex: hasBody ? "half" : undefined,
   });

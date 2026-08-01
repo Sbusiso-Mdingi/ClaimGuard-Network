@@ -2,6 +2,7 @@ import React from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AppRoot from "../AppRoot";
+import { createSessionFetch, SESSION_FIXTURES } from "./helpers/sessionFixtures";
 
 const graphPayload = {
   available: true,
@@ -17,37 +18,19 @@ const pageOneClaims = {
   available: true,
   claims: [
     {
-      claimId: "C-QUEUED-1",
-      schemeId: "S1",
-      memberId: "Member Queued",
-      providerId: "P-1",
-      status: "AWAITING_SCORING",
-      processingStatus: "queued",
+      claimId: "C-QUEUED-1", schemeId: "S1", memberId: "Member Queued", providerId: "P-1",
+      status: "AWAITING_SCORING", processingStatus: "queued",
       processing: { status: "queued", updatedAt: "2026-07-25T08:00:00.000Z" },
-      riskScore: null,
-      riskLevel: null,
-      updatedAt: "2026-07-25T08:00:00.000Z",
-      triggeredRules: [],
-      evidence: [],
+      riskScore: null, riskLevel: null, updatedAt: "2026-07-25T08:00:00.000Z", triggeredRules: [], evidence: [],
     },
     {
-      claimId: "C-FAILED-1",
-      schemeId: "S1",
-      memberId: "Member Failed",
-      providerId: "P-2",
-      status: "PROCESSING_FAILED",
-      processingStatus: "failed",
+      claimId: "C-FAILED-1", schemeId: "S1", memberId: "Member Failed", providerId: "P-2",
+      status: "PROCESSING_FAILED", processingStatus: "failed",
       processing: {
-        status: "failed",
-        failureCode: "WORKER_DEAD_LETTER",
-        lastError: "Detection worker exhausted retries.",
-        updatedAt: "2026-07-25T08:05:00.000Z",
+        status: "failed", failureCode: "WORKER_DEAD_LETTER",
+        lastError: "Detection worker exhausted retries.", updatedAt: "2026-07-25T08:05:00.000Z",
       },
-      riskScore: null,
-      riskLevel: null,
-      updatedAt: "2026-07-25T08:05:00.000Z",
-      triggeredRules: [],
-      evidence: [],
+      riskScore: null, riskLevel: null, updatedAt: "2026-07-25T08:05:00.000Z", triggeredRules: [], evidence: [],
     },
   ],
   pagination: { page: 1, pageSize: 2, total: 3, totalPages: 2, hasNextPage: true },
@@ -57,24 +40,13 @@ const pageTwoClaims = {
   available: true,
   claims: [
     {
-      claimId: "C-RETRY-1",
-      schemeId: "S1",
-      memberId: "Member Retrying",
-      providerId: "P-3",
-      status: "AWAITING_SCORING",
-      processingStatus: "retrying",
+      claimId: "C-RETRY-1", schemeId: "S1", memberId: "Member Retrying", providerId: "P-3",
+      status: "AWAITING_SCORING", processingStatus: "retrying",
       processing: {
-        status: "retrying",
-        attemptCount: 2,
-        maxAttempts: 5,
-        lastError: "Temporary model endpoint failure.",
-        updatedAt: "2026-07-25T08:10:00.000Z",
+        status: "retrying", attemptCount: 2, maxAttempts: 5,
+        lastError: "Temporary model endpoint failure.", updatedAt: "2026-07-25T08:10:00.000Z",
       },
-      riskScore: null,
-      riskLevel: null,
-      updatedAt: "2026-07-25T08:10:00.000Z",
-      triggeredRules: [],
-      evidence: [],
+      riskScore: null, riskLevel: null, updatedAt: "2026-07-25T08:10:00.000Z", triggeredRules: [], evidence: [],
     },
   ],
   pagination: { page: 2, pageSize: 2, total: 3, totalPages: 2, hasNextPage: false },
@@ -86,13 +58,10 @@ function claimsNavigationLink() {
 
 beforeEach(() => {
   window.history.pushState({}, "", "/dashboard");
-  window.localStorage.setItem("claimguard-dev-identity", "analyst-alpha");
-  global.fetch = vi.fn((url) => {
-    const requestUrl = String(url);
+  global.fetch = createSessionFetch(SESSION_FIXTURES.analyst, (requestUrl) => {
     if (requestUrl.includes("/api/detection/report")) {
       return Promise.resolve({
-        ok: false,
-        status: 503,
+        ok: false, status: 503,
         json: async () => ({ available: false, message: "Report service unavailable" }),
       });
     }
@@ -109,8 +78,7 @@ beforeEach(() => {
       return Promise.resolve({ ok: true, status: 200, json: async () => pageOneClaims });
     }
     return Promise.resolve({
-      ok: false,
-      status: 404,
+      ok: false, status: 404,
       json: async () => ({ available: false, message: "not found" }),
     });
   });

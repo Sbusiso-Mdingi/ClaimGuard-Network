@@ -1,6 +1,6 @@
 import { sha256 } from "@claimguard/control-plane-database";
 
-import { getPermissionsForRoles, parseRoles } from "../authorization-policy.js";
+import { getPermissionsForRoles } from "../authorization-policy.js";
 import { ForbiddenError } from "../application-errors.js";
 
 export const IDENTITY_AUTHORITY_HEADERS = Object.freeze([
@@ -16,12 +16,6 @@ export const LEGACY_SERVICE_IDENTITY_HEADERS = Object.freeze([
   "x-cg-service-tenant",
   "x-cg-service-organisation",
 ]);
-
-function normalizeHeaderValue(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 export function createAnonymousAuthContext({ source = "anonymous" } = {}) {
   return Object.freeze({
@@ -70,21 +64,6 @@ export function createAuthenticatedAuthContext({
     organisation,
     source,
   });
-}
-
-export function resolveAuthContextFromHeaders({ request } = {}) {
-  const userId = normalizeHeaderValue(request?.headers?.get("x-claimguard-user"));
-  const roleHeader = normalizeHeaderValue(request?.headers?.get("x-claimguard-role"));
-  const userTenantId = normalizeHeaderValue(request?.headers?.get("x-claimguard-user-tenant"));
-  const roles = parseRoles(roleHeader || "");
-  if (!userId || !roleHeader || !userTenantId) {
-    return createAnonymousAuthContext({ source: userId || roleHeader || userTenantId ? "incomplete_header" : "anonymous" });
-  }
-  return createAuthenticatedAuthContext({ userId, roles, tenantId: userTenantId, source: "demo_headers" });
-}
-
-export function createHeaderAuthenticationProvider() {
-  return { mode: "demo_headers", async resolveAuthContext({ request }) { return resolveAuthContextFromHeaders({ request }); } };
 }
 
 export function parseCookieHeader(headerValue) {

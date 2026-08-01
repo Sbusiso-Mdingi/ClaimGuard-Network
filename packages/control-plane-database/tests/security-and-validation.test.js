@@ -9,7 +9,6 @@ import {
   isControlPlaneShadowEnabled,
   normalizeOrganisationSlug,
   projectSafeCredential,
-  projectSafeDemoCatalogueEntry,
   projectSafeRoute,
   projectSafeSession,
   requireControlPlaneDatabaseUrl,
@@ -63,11 +62,7 @@ test("session projection represents revoked and expired foundations without expo
   assert.equal(Object.hasOwn(session, "hashedBearerSecret"), false);
 });
 
-test("disabled demo entries are omitted from safe projections", () => {
-  assert.equal(projectSafeDemoCatalogueEntry({ enabled: 0, secret_reference: "kv://demo" }), null);
-});
-
-test("safe projections exclude password hashes, route secret references, session hashes, and demo secrets", () => {
+test("safe projections exclude password hashes, route secret references, and session hashes", () => {
   const credential = projectSafeCredential({
     credential_id: "c", user_id: "u", organisation_id: "o", authentication_provider: "local_password",
     normalized_username: "user", status: "disabled", failed_attempt_count: 2, password_hash: "hash",
@@ -86,11 +81,4 @@ test("safe projections exclude password hashes, route secret references, session
     hashed_bearer_secret: "a".repeat(64),
   });
   assert.equal(Object.hasOwn(session, "hashedBearerSecret"), false);
-
-  const demo = projectSafeDemoCatalogueEntry({
-    catalogue_entry_id: "d", organisation_id: "o", membership_id: "m", display_label: "Demo",
-    role_label: "Investigator", username_display_value: "demo", display_order: 1, enabled: 1,
-    secret_reference: "kv://demo-secret",
-  });
-  assert.equal(Object.hasOwn(demo, "secretReference"), false);
 });

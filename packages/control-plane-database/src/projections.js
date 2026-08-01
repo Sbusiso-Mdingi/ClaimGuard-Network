@@ -64,16 +64,3 @@ export function projectSafeSession(row) {
     authorizationVersion: Number(row.authorization_version),
   };
 }
-
-export function projectSafeDemoCatalogueEntry(row) {
-  if (!row || !row.enabled) return null;
-  return {
-    catalogueEntryId: row.catalogue_entry_id,
-    organisationId: row.organisation_id,
-    membershipId: row.membership_id,
-    displayLabel: row.display_label,
-    roleLabel: row.role_label,
-    usernameDisplayValue: row.username_display_value,
-    displayOrder: Number(row.display_order),
-  };
-}

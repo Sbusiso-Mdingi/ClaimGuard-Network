@@ -1,58 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiJson, setCsrfToken, setDemoAuthorityHeaders, setUnauthorizedHandler } from "../lib/apiClient";
-import { CLAIMGUARD_ROLES } from "../lib/claimguardRoles";
-
-const STORAGE_KEY = "claimguard-dev-identity";
-const authenticationMode = () => {
-  const runtimeMode = String(window.__CLAIMGUARD_AUTHENTICATION_MODE__ || "").trim();
-  if (runtimeMode === "session" || runtimeMode === "demo_headers") return runtimeMode;
-
-  const developmentMode = String(import.meta.env?.VITE_AUTHENTICATION_MODE || "").trim();
-  return developmentMode === "demo_headers" ? "demo_headers" : "session";
-};
-
-const DEMO_CAPABILITIES = Object.freeze({
-  [CLAIMGUARD_ROLES.FRAUD_ANALYST]: Object.freeze([
-    "claims.view_own", "reports.view_own", "investigations.create", "investigations.view",
-    "investigations.add_note", "investigations.change_priority", "fraud_registry.search",
-    "fraud_registry.view", "fraud_registry.review_history",
-  ]),
-  [CLAIMGUARD_ROLES.INVESTIGATOR]: Object.freeze([
-    "claims.view_own", "reports.view_own", "investigations.create", "investigations.view",
-    "investigations.update_status", "investigations.add_note", "investigations.open",
-    "investigations.complete", "investigations.upload_evidence", "investigations.submit_findings",
-    "investigations.confirm_fraud", "investigations.reverse_fraud", "fraud_registry.search", "fraud_registry.view",
-    "fraud_registry.review_history",
-  ]),
-  [CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER]: Object.freeze([
-    "fraud_registry.search", "fraud_registry.view", "fraud_registry.review_history",
-  ]),
-  [CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR]: Object.freeze([
-    "claims.view_own", "reports.view_own", "investigations.view",
-    "users.manage_tenant", "tenant_status.view",
-  ]),
-  [CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR]: Object.freeze([
-    "tenants.manage", "platform_health.view", "telemetry.view",
-    "platform_releases.view", "platform_releases.request", "platform_releases.approve",
-    "platform_administrators.manage",
-  ]),
-});
-
-function demoIdentity(identity) {
-  return Object.freeze({
-    ...identity,
-    roles: Object.freeze([identity.role]),
-    capabilities: DEMO_CAPABILITIES[identity.role] || Object.freeze([]),
-  });
-}
-
-export const DEMO_IDENTITIES = [
-  demoIdentity({ id: "analyst-alpha", label: "Fraud Analyst — Bonitas", userId: "analyst-alpha", role: CLAIMGUARD_ROLES.FRAUD_ANALYST, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
-  demoIdentity({ id: "investigator-alpha", label: "Fraud Investigator — Bonitas", userId: "investigator-alpha", role: CLAIMGUARD_ROLES.INVESTIGATOR, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
-  demoIdentity({ id: "committee-alpha", label: "Applications Committee — Bonitas", userId: "committee-alpha", role: CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
-  demoIdentity({ id: "scheme-admin-alpha", label: "Scheme Administrator — Bonitas", userId: "scheme-admin-alpha", role: CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR, tenantId: "tenant_alpha", tenantLabel: "Bonitas" }),
-  demoIdentity({ id: "platform-admin", label: "Platform Administrator — rollback mode", userId: "platform-admin", role: CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR, tenantId: "tenant_default", tenantLabel: "Platform", organisationType: "platform" }),
-];
+import { apiJson, setCsrfToken, setUnauthorizedHandler } from "../lib/apiClient";
 
 const RoleContext = createContext(null);
 
@@ -75,22 +22,7 @@ function sessionIdentity(session) {
 }
 
 export function RoleProvider({ children }) {
-  const mode = authenticationMode();
-  const [state, setState] = useState({ status: mode === "demo_headers" ? "authenticated" : "loading", session: null, error: null });
-  const [identityId, setIdentityId] = useState(() => {
-    if (mode !== "demo_headers") return null;
-    try { return window.localStorage.getItem(STORAGE_KEY) || DEMO_IDENTITIES[0].id; } catch { return DEMO_IDENTITIES[0].id; }
-  });
-  const selectedDemoIdentity = DEMO_IDENTITIES.find((item) => item.id === identityId) || DEMO_IDENTITIES[0];
-
-  if (mode === "demo_headers") {
-    setDemoAuthorityHeaders({
-      "x-claimguard-user": selectedDemoIdentity.userId,
-      "x-claimguard-role": selectedDemoIdentity.role,
-      "x-claimguard-user-tenant": selectedDemoIdentity.tenantId,
-      "x-claimguard-tenant": selectedDemoIdentity.tenantId,
-    });
-  }
+  const [state, setState] = useState({ status: "loading", session: null, error: null });
 
   const clearSession = useCallback(() => {
     setCsrfToken(null);
@@ -109,7 +41,6 @@ export function RoleProvider({ children }) {
   }, []);
 
   const loadSession = useCallback(async () => {
-    if (mode === "demo_headers") return;
     try {
       const session = await apiJson("/auth/session", { cache: "no-store", skipUnauthorizedHandler: true });
       if (!session.authenticated) return clearSession();
@@ -119,18 +50,13 @@ export function RoleProvider({ children }) {
     } catch {
       clearSession();
     }
-  }, [clearSession, mode]);
+  }, [clearSession]);
 
   useEffect(() => {
     setUnauthorizedHandler(expireSession);
-    if (mode === "demo_headers") {
-      try { window.localStorage.setItem(STORAGE_KEY, selectedDemoIdentity.id); } catch { /* isolated rollback mode only */ }
-    } else {
-      setDemoAuthorityHeaders(null);
-      loadSession();
-    }
+    loadSession();
     return () => setUnauthorizedHandler(null);
-  }, [expireSession, selectedDemoIdentity.id, loadSession, mode]);
+  }, [expireSession, loadSession]);
 
   const login = useCallback(async (credentials) => {
     setState({ status: "loading", session: null, error: null });
@@ -154,19 +80,16 @@ export function RoleProvider({ children }) {
     clearSession();
   }, [clearSession]);
 
-  const identity = state.session ? sessionIdentity(state.session) : (mode === "demo_headers" ? selectedDemoIdentity : null);
+  const identity = state.session ? sessionIdentity(state.session) : null;
   const value = useMemo(() => ({
     ...state,
-    mode,
+    mode: "session",
     authenticated: state.status === "authenticated",
     identity,
-    identities: mode === "demo_headers" ? DEMO_IDENTITIES : [],
-    setIdentityId: mode === "demo_headers" ? setIdentityId : () => {},
-    authHeaders: Object.freeze({}),
     login,
     logout,
     reloadSession: loadSession,
-  }), [state, mode, identity, login, logout, loadSession]);
+  }), [state, identity, login, logout, loadSession]);
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
 }
 

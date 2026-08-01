@@ -4,21 +4,23 @@
   "type": "module",
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "test": "./test-support/index.js",
+      "default": "./src/index.js"
+    }
   },
   "dependencies": {
     "argon2": "^0.44.0",
     "mysql2": "^3.12.0"
   },
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp -R src migrations dist/",
+    "build": "rm -rf dist && mkdir -p dist && cp -R src migrations test-support dist/",
     "lint": "node -e \"import('./src/index.js')\" && node --check src/cli.js",
-    "test": "node --test",
+    "test": "node --conditions=test --test",
     "migrate": "node src/cli.js migrate",
     "status": "node src/cli.js status",
     "diagnose": "node src/cli.js diagnose",
     "inventory": "node src/cli.js inventory",
-    "provision-demo": "node src/cli.js provision-demo",
     "release-status": "node src/cli.js release-status"
   }
 }

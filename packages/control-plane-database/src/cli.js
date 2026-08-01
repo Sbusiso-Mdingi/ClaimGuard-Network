@@ -10,7 +10,6 @@ import {
   requireOperationalDatabaseUrl,
 } from "./config.js";
 import { createControlPlaneService } from "./control-plane-service.js";
-import { provisionDemoAccounts } from "./demo-provisioning.js";
 import {
   bootstrapDevelopmentPlatformAdministrator,
   DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
@@ -77,35 +76,6 @@ async function runInventory({ flags, values }) {
       repositories,
     });
     json({ mode: "apply-shadow", operationalRowsModified: 0, results });
-  } finally {
-    await Promise.all([controlPool.end(), operationalPool.end()]);
-  }
-}
-
-async function runDemoProvisioning({ values }) {
-  if (String(process.env.DEPLOYMENT_CLASS || "").toLowerCase() !== "demo") {
-    throw new Error("Demo provisioning requires DEPLOYMENT_CLASS=demo.");
-  }
-  if (values.get("confirm") !== "PROVISION_DEMO_ACCOUNTS") {
-    throw new Error("Demo provisioning requires --confirm=PROVISION_DEMO_ACCOUNTS.");
-  }
-  const controlUrl = requireControlPlaneDatabaseUrl();
-  const operationalUrl = requireOperationalDatabaseUrl();
-  assertDistinctDatabaseUrls(controlUrl, operationalUrl);
-  const controlPool = createControlPlanePool(controlUrl);
-  const operationalPool = mysql.createPool((await import("./client.js")).buildControlPlaneConnectionOptions(operationalUrl));
-  try {
-    const repositories = createControlPlaneRepositories(controlPool);
-    const service = createControlPlaneService({ pool: controlPool, repositories });
-    const tenants = await readLegacyTenantInventory(operationalPool);
-    const result = await provisionDemoAccounts({
-      tenants, repositories, service, executor: controlPool,
-      operationalDatabaseName: new URL(operationalUrl).pathname.replace(/^\//, ""),
-    });
-    json({
-      warning: "These generated demo passwords are shown once. Store them only in the approved deployment secret mechanism.",
-      ...result,
-    });
   } finally {
     await Promise.all([controlPool.end(), operationalPool.end()]);
   }
@@ -375,7 +345,6 @@ export async function runControlPlaneCli(argv = process.argv.slice(2)) {
   const command = argv[0];
   const args = parseArguments(argv.slice(1));
   if (command === "inventory") return runInventory(args);
-  if (command === "provision-demo") return runDemoProvisioning(args);
   if ([
     "development-platform-admin-bootstrap-status",
     "development-platform-admin-bootstrap",

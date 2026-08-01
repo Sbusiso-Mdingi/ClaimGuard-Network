@@ -14,7 +14,8 @@ export function createTenantContextMiddleware({
         ? tenantRepository
         : null;
       let tenantContext;
-        if (dataPlaneContext?.operationalTenantId) {
+
+      if (dataPlaneContext?.operationalTenantId) {
         tenantContext = Object.freeze({
           tenant_id: dataPlaneContext.operationalTenantId,
           tenant_slug: dataPlaneContext.operationalTenantSlug,
@@ -23,7 +24,6 @@ export function createTenantContextMiddleware({
         });
       } else {
         tenantContext = await resolveTenantContext({
-          request: c.req.raw,
           authContext: currentAuthContext,
           tenantRepository: resolvedTenantRepository,
         });

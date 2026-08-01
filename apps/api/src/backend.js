@@ -88,15 +88,25 @@ export function createBackendApp({
   generationRepository = null,
   tenantRepository = null,
   authenticationProvider = null,
-  authenticationConfiguration = Object.freeze({ mode: "demo_headers" }),
+  authenticationConfiguration = Object.freeze({ mode: "session" }),
   authenticationService = null,
-  controlPlaneConfigurationRepository = null,
   controlPlaneRepositories = null,
   controlPlaneService = null,
   reportStorage = null,
   detectionReportPath = null,
   dataPlaneRuntime = null,
 } = {}) {
+  if (authenticationConfiguration.mode !== "session") {
+    throw new TypeError("Only session authentication mode is supported.");
+  }
+
+  const usesSessionAuthentication = !authenticationProvider;
+  if (usesSessionAuthentication && !authenticationService) {
+    throw new TypeError(
+      "createBackendApp requires authenticationService or an explicit authenticationProvider.",
+    );
+  }
+
   const resolvedReportStorage =
     reportStorage ||
     new FileReportStorage({
@@ -155,15 +165,11 @@ export function createBackendApp({
     }
   });
 
-  if (authenticationConfiguration.mode === "session" && !authenticationService) {
-    throw new TypeError("Session authentication mode requires authenticationService.");
-  }
-
-  const resolvedAuthenticationProvider = authenticationProvider || (
-    authenticationConfiguration.mode === "session"
-      ? createSessionAuthenticationProvider({ authenticationService, configuration: authenticationConfiguration })
-      : undefined
-  );
+  const resolvedAuthenticationProvider = authenticationProvider ||
+    createSessionAuthenticationProvider({
+      authenticationService,
+      configuration: authenticationConfiguration,
+    });
 
   app.use(
     "*",
@@ -172,7 +178,7 @@ export function createBackendApp({
     }),
   );
 
-  if (authenticationConfiguration.mode === "session") {
+  if (usesSessionAuthentication) {
     app.use("*", createSessionCsrfMiddleware({ authenticationService, configuration: authenticationConfiguration }));
   }
 
@@ -221,11 +227,10 @@ export function createBackendApp({
     }),
   );
 
-  if (authenticationConfiguration.mode === "session") {
+  if (usesSessionAuthentication) {
     registerAuthRoutes(app, {
       authenticationService,
       configuration: authenticationConfiguration,
-      configurationRepository: controlPlaneConfigurationRepository,
       controlPlaneService,
     });
   }

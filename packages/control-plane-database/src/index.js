@@ -14,7 +14,6 @@ export {
 } from "./credential-guarded-control-plane-service.js";
 export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
 export { getShadowDiagnostics } from "./diagnostics.js";
-export { provisionDemoAccounts } from "./demo-provisioning.js";
 export {
   bootstrapDevelopmentPlatformAdministrator,
   DEVELOPMENT_PLATFORM_ADMIN_BOOTSTRAP_CONFIRMATION,
@@ -38,7 +37,6 @@ export {
 } from "./migrate.js";
 export {
   projectSafeCredential,
-  projectSafeDemoCatalogueEntry,
   projectSafeRoute,
   projectSafeSession,
   projectSafeUser,

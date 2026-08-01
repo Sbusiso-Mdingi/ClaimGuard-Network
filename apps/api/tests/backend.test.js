@@ -5,20 +5,69 @@ import {
   createCanonicalDetectionReport,
   createCanonicalModelDetectionReport,
 } from "./helpers/detection-report.js";
+import { createRequestAuthenticationProvider } from "./helpers/authentication-provider.js";
 
-import { createBackendApp } from "../src/backend.js";
+import { createBackendApp as createRuntimeBackendApp } from "../src/backend.js";
 import { createAuthenticatedAuthContext } from "../src/middleware/auth-context.js";
+import {
+  CLAIMGUARD_ROLES,
+  getPermissionsForRoles,
+} from "../src/authorization-policy.js";
+
+const TEST_ACTOR_HEADERS = Object.freeze({
+  user: "x-test-user-id",
+  role: "x-test-role",
+  tenant: "x-test-tenant-id",
+});
 
 function developmentAuthHeaders({
   user = "scheme-user",
-  role = "scheme_user",
+  role = CLAIMGUARD_ROLES.SCHEME_USER,
   tenantId = "tenant_default",
 } = {}) {
   return {
-    "x-claimguard-user": user,
-    "x-claimguard-role": role,
-    "x-claimguard-user-tenant": tenantId,
+    [TEST_ACTOR_HEADERS.user]: user,
+    [TEST_ACTOR_HEADERS.role]: role,
+    [TEST_ACTOR_HEADERS.tenant]: tenantId,
   };
+}
+
+function createBackendApp(options = {}) {
+  const authenticationProvider = createRequestAuthenticationProvider(({ request }) => {
+    const role = request.headers.get(TEST_ACTOR_HEADERS.role)
+      || CLAIMGUARD_ROLES.SCHEME_USER;
+    const userId = request.headers.get(TEST_ACTOR_HEADERS.user)
+      || "scheme-user";
+    const tenantId = request.headers.get(TEST_ACTOR_HEADERS.tenant)
+      || "tenant_default";
+    const isPlatformAdministrator = role === CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR;
+    const organisation = isPlatformAdministrator
+      ? {
+          organisationId: "org-platform",
+          organisationType: "platform",
+          displayName: "ClaimGuard Platform",
+        }
+      : {
+          organisationId: `org-${tenantId}`,
+          organisationType: "medical_scheme",
+          displayName: "Test Medical Scheme",
+        };
+
+    return createAuthenticatedAuthContext({
+      userId,
+      roles: [role],
+      permissions: getPermissionsForRoles([role]),
+      tenantId: isPlatformAdministrator ? null : tenantId,
+      organisationId: organisation.organisationId,
+      organisation,
+      source: "test_provider",
+    });
+  });
+
+  return createRuntimeBackendApp({
+    authenticationProvider,
+    ...options,
+  });
 }
 
 function modelClaimFields(serviceDate) {
@@ -746,7 +795,7 @@ test("investigation confirm-fraud endpoint writes confirmed ledger entry", async
       "content-type": "application/json",
       ...developmentAuthHeaders({
         user: "INV-1",
-        role: "investigator",
+        role: CLAIMGUARD_ROLES.INVESTIGATOR,
       }),
     },
     body: JSON.stringify({
@@ -790,7 +839,10 @@ test("confirmation route uses authenticated actor and returns 200 for an idempot
     headers: {
       "content-type": "application/json",
       "idempotency-key": "route-key-1",
-      ...developmentAuthHeaders({ user: "authenticated-investigator", role: "investigator" }),
+      ...developmentAuthHeaders({
+        user: "authenticated-investigator",
+        role: CLAIMGUARD_ROLES.INVESTIGATOR,
+      }),
     },
     body: JSON.stringify({
       investigationId: "investigation-route",

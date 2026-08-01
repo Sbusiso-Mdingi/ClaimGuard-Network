@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CLAIMGUARD_ROLES } from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
+import { createStaticAuthenticationProvider } from "./helpers/authentication-provider.js";
 
 const tenant = {
   tenant_id: "tenant_alpha",
@@ -11,14 +13,11 @@ const tenant = {
   status: "active",
 };
 
-function headers(role = "investigator") {
-  return {
-    "x-claimguard-user": "investigator-alpha",
-    "x-claimguard-role": role,
-    "x-claimguard-user-tenant": tenant.tenant_id,
-    "x-claimguard-tenant": tenant.tenant_id,
-  };
-}
+const organisation = Object.freeze({
+  organisationId: "org-alpha",
+  organisationType: "medical_scheme",
+  displayName: tenant.tenant_name,
+});
 
 function tenantRepository() {
   return {
@@ -29,10 +28,23 @@ function tenantRepository() {
   };
 }
 
+function createApp({ role = CLAIMGUARD_ROLES.INVESTIGATOR, investigationRepository }) {
+  return createBackendApp({
+    tenantRepository: tenantRepository(),
+    investigationRepository,
+    authenticationProvider: createStaticAuthenticationProvider({
+      userId: role === CLAIMGUARD_ROLES.INVESTIGATOR ? "investigator-alpha" : "scheme-user-alpha",
+      roles: [role],
+      tenantId: tenant.tenant_id,
+      organisationId: organisation.organisationId,
+      organisation,
+    }),
+  });
+}
+
 test("investigation queue forwards filters and authenticated actor", async () => {
   let received = null;
-  const app = createBackendApp({
-    tenantRepository: tenantRepository(),
+  const app = createApp({
     investigationRepository: {
       async listInvestigations(filters) {
         received = filters;
@@ -47,7 +59,6 @@ test("investigation queue forwards filters and authenticated actor", async () =>
 
   const response = await app.request(
     "/investigations/queue?page=1&pageSize=25&status=OPEN&priority=HIGH&search=CLAIM&assignment=mine",
-    { headers: headers() },
   );
   const payload = await response.json();
 
@@ -60,12 +71,16 @@ test("investigation queue forwards filters and authenticated actor", async () =>
 });
 
 test("investigation queue requires investigation view authority", async () => {
-  const app = createBackendApp({
-    tenantRepository: tenantRepository(),
-    investigationRepository: { async listInvestigations() { return { investigations: [], pagination: {} }; } },
+  const app = createApp({
+    role: CLAIMGUARD_ROLES.SCHEME_USER,
+    investigationRepository: {
+      async listInvestigations() {
+        return { investigations: [], pagination: {} };
+      },
+    },
   });
 
-  const response = await app.request("/investigations/queue", { headers: headers("claims_analyst") });
+  const response = await app.request("/investigations/queue");
   assert.equal(response.status, 403);
 });
 
@@ -74,8 +89,7 @@ test("investigation queue hides unexpected database details and returns a reques
     new Error("Incorrect arguments to mysqld_stmt_execute"),
     { code: "ER_WRONG_ARGUMENTS", errno: 1210 },
   );
-  const app = createBackendApp({
-    tenantRepository: tenantRepository(),
+  const app = createApp({
     investigationRepository: {
       async listInvestigations() {
         throw databaseError;
@@ -84,10 +98,7 @@ test("investigation queue hides unexpected database details and returns a reques
   });
 
   const response = await app.request("/investigations/queue", {
-    headers: {
-      ...headers(),
-      "x-request-id": "queue-safe-error-test",
-    },
+    headers: { "x-request-id": "queue-safe-error-test" },
   });
   const payload = await response.json();
 

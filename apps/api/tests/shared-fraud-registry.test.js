@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import crypto from "node:crypto";
 
+import { FRAUD_REGISTRY_STATUS, INVESTIGATION_STATUS } from "@claimguard/database";
+
+import { CLAIMGUARD_ROLES } from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
-import { INVESTIGATION_STATUS, FRAUD_REGISTRY_STATUS } from "@claimguard/database";
+import {
+  createAnonymousAuthenticationProvider,
+  createStaticAuthenticationProvider,
+} from "./helpers/authentication-provider.js";
 import { createFraudWorkflowRepositoryStub } from "./helpers/fraud-workflow-stub.js";
 
 const alphaTenant = {
@@ -31,10 +37,10 @@ function createTenantRepositoryStub() {
       return tenants.get(tenantId) || null;
     },
     async lookupTenantBySlug(tenantSlug) {
-      return [...tenants.values()].find((t) => t.tenant_slug === tenantSlug) || null;
+      return [...tenants.values()].find((tenant) => tenant.tenant_slug === tenantSlug) || null;
     },
     async lookupTenantBySchemeId(schemeId) {
-      return [...tenants.values()].find((t) => t.scheme_id === schemeId) || null;
+      return [...tenants.values()].find((tenant) => tenant.scheme_id === schemeId) || null;
     },
     async getDefaultTenant() {
       return alphaTenant;
@@ -42,18 +48,29 @@ function createTenantRepositoryStub() {
   };
 }
 
-function authHeaders({
-  user = "user-alpha",
+function createActorProvider({
+  userId,
   role,
-  tenantId = alphaTenant.tenant_id,
-  requestTenantId = tenantId,
+  tenant = alphaTenant,
 } = {}) {
+  return createStaticAuthenticationProvider({
+    userId,
+    roles: [role],
+    tenantId: tenant.tenant_id,
+    organisationId: `org-${tenant.tenant_slug}`,
+    organisation: {
+      organisationId: `org-${tenant.tenant_slug}`,
+      organisationType: "medical_scheme",
+      displayName: `${tenant.tenant_slug} scheme`,
+    },
+  });
+}
+
+function jsonRequest(body) {
   return {
-    "content-type": "application/json",
-    "x-claimguard-user": user,
-    "x-claimguard-role": role,
-    "x-claimguard-user-tenant": tenantId,
-    "x-claimguard-tenant": requestTenantId,
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   };
 }
 
@@ -94,32 +111,32 @@ function getActiveTenantIdStub() {
 }
 
 function createInvestigationRepositoryStub({ investigations = [] } = {}) {
-  const records = new Map(investigations.map((inv) => [inv.investigationId, { ...inv }]));
+  const records = new Map(investigations.map((investigation) => [investigation.investigationId, { ...investigation }]));
 
   function requiredInvestigation(investigationId) {
-    const inv = records.get(investigationId);
-    if (!inv || inv.tenantId !== activeTenantId) {
+    const investigation = records.get(investigationId);
+    if (!investigation || investigation.tenantId !== activeTenantId) {
       const error = new Error("Not found");
       error.code = "investigation_not_found";
       throw error;
     }
-    return inv;
+    return investigation;
   }
 
   return {
     records,
     async getInvestigationById(investigationId) {
-      const inv = records.get(investigationId);
-      return inv && inv.tenantId === activeTenantId ? { ...inv } : null;
+      const investigation = records.get(investigationId);
+      return investigation && investigation.tenantId === activeTenantId ? { ...investigation } : null;
     },
     async markFraudPublished(investigationId) {
-      const inv = requiredInvestigation(investigationId);
-      if (inv.status !== INVESTIGATION_STATUS.CONFIRMED_FRAUD || inv.fraudConfirmedAt) {
-        const err = new Error("Conflict");
-        err.code = "confirmation_status_not_permitted";
-        throw err;
+      const investigation = requiredInvestigation(investigationId);
+      if (investigation.status !== INVESTIGATION_STATUS.CONFIRMED_FRAUD || investigation.fraudConfirmedAt) {
+        const error = new Error("Conflict");
+        error.code = "confirmation_status_not_permitted";
+        throw error;
       }
-      inv.fraudConfirmedAt = new Date().toISOString();
+      investigation.fraudConfirmedAt = new Date().toISOString();
       return true;
     },
   };
@@ -169,35 +186,27 @@ function createSharedFraudRegistryRepositoryStub() {
       return entry;
     },
     async getRegistryRecordById(registryEntryId) {
-      return records.find((r) => r.registryEntryId === registryEntryId) || null;
+      return records.find((record) => record.registryEntryId === registryEntryId) || null;
     },
     async searchRegistry({ subjectToken, fraudSubjectType = null }) {
-      const reversedIds = new Set(
-        records.filter((r) => r.reversesRegistryEntryId).map((r) => r.reversesRegistryEntryId)
-      );
-      return records.filter(
-        (r) =>
-          r.subjectToken === subjectToken &&
-          (!fraudSubjectType || r.fraudSubjectType === fraudSubjectType) &&
-          !(r.status === FRAUD_REGISTRY_STATUS.ACTIVE && reversedIds.has(r.registryEntryId))
+      const reversedIds = new Set(records.filter((record) => record.reversesRegistryEntryId).map((record) => record.reversesRegistryEntryId));
+      return records.filter((record) =>
+        record.subjectToken === subjectToken
+        && (!fraudSubjectType || record.fraudSubjectType === fraudSubjectType)
+        && !(record.status === FRAUD_REGISTRY_STATUS.ACTIVE && reversedIds.has(record.registryEntryId))
       );
     },
     async getRegistryHistory(subjectToken) {
-      return records.filter((r) => r.subjectToken === subjectToken);
+      return records.filter((record) => record.subjectToken === subjectToken);
     },
     async getActiveRegistryFindingForInvestigation({ investigationId, tenantId }) {
-      const reversedIds = new Set(
-        records.filter((r) => r.reversesRegistryEntryId).map((r) => r.reversesRegistryEntryId)
-      );
-      return (
-        records.find(
-          (r) =>
-            r.investigationId === investigationId &&
-            r.tenantId === tenantId &&
-            r.status === FRAUD_REGISTRY_STATUS.ACTIVE &&
-            !reversedIds.has(r.registryEntryId)
-        ) || null
-      );
+      const reversedIds = new Set(records.filter((record) => record.reversesRegistryEntryId).map((record) => record.reversesRegistryEntryId));
+      return records.find((record) =>
+        record.investigationId === investigationId
+        && record.tenantId === tenantId
+        && record.status === FRAUD_REGISTRY_STATUS.ACTIVE
+        && !reversedIds.has(record.registryEntryId)
+      ) || null;
     },
   };
 }
@@ -205,15 +214,13 @@ function createSharedFraudRegistryRepositoryStub() {
 test("confirm-fraud successfully publishes to the shared fraud registry", async () => {
   activeTenantId = alphaTenant.tenant_id;
   const investigationRepository = createInvestigationRepositoryStub({
-    investigations: [
-      {
-        investigationId: "inv-reg-1",
-        tenantId: alphaTenant.tenant_id,
-        claimId: "claim-alpha",
-        status: "CONFIRMED_FRAUD",
-        fraudConfirmedAt: null,
-      },
-    ],
+    investigations: [{
+      investigationId: "inv-reg-1",
+      tenantId: alphaTenant.tenant_id,
+      claimId: "claim-alpha",
+      status: "CONFIRMED_FRAUD",
+      fraudConfirmedAt: null,
+    }],
   });
   const ledgerRepository = createLedgerRepositoryStub();
   const sharedFraudRegistryRepository = createSharedFraudRegistryRepositoryStub();
@@ -225,8 +232,12 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
       return { entry: ledgerEntry, registryEntry, replayed: false };
     },
   });
-  
+
   const app = createBackendApp({
+    authenticationProvider: createActorProvider({
+      userId: "investigator-alpha",
+      role: CLAIMGUARD_ROLES.INVESTIGATOR,
+    }),
     investigationRepository,
     ledgerRepository,
     sharedFraudRegistryRepository,
@@ -234,10 +245,9 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
     tenantRepository: createTenantRepositoryStub(),
   });
 
-  const response = await app.request("http://localhost/investigations/confirm-fraud", {
-    method: "POST",
-    headers: authHeaders({ user: "investigator-alpha", role: "investigator" }),
-    body: JSON.stringify({
+  const response = await app.request(
+    "http://localhost/investigations/confirm-fraud",
+    jsonRequest({
       investigationId: "inv-reg-1",
       claimId: "claim-alpha",
       investigatorId: "investigator-alpha",
@@ -251,7 +261,7 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
         investigatorReference: "INV-001",
       },
     }),
-  });
+  );
 
   assert.equal(response.status, 201);
   const data = await response.json();
@@ -265,19 +275,17 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
 test("reverse-fraud creates ledger event and REVERSED registry entry", async () => {
   activeTenantId = alphaTenant.tenant_id;
   const investigationRepository = createInvestigationRepositoryStub({
-    investigations: [
-      {
-        investigationId: "inv-reg-2",
-        tenantId: alphaTenant.tenant_id,
-        claimId: "claim-alpha",
-        status: "CONFIRMED_FRAUD",
-        fraudConfirmedAt: "2026-07-13T10:00:00.000Z",
-      },
-    ],
+    investigations: [{
+      investigationId: "inv-reg-2",
+      tenantId: alphaTenant.tenant_id,
+      claimId: "claim-alpha",
+      status: "CONFIRMED_FRAUD",
+      fraudConfirmedAt: "2026-07-13T10:00:00.000Z",
+    }],
   });
   const ledgerRepository = createLedgerRepositoryStub();
   const sharedFraudRegistryRepository = createSharedFraudRegistryRepositoryStub();
-  
+
   sharedFraudRegistryRepository.records.push({
     registryEntryId: "reg-active",
     ledgerHash: "hash",
@@ -302,8 +310,12 @@ test("reverse-fraud creates ledger event and REVERSED registry entry", async () 
       return { entry: ledgerEntry, registryEntry, replayed: false };
     },
   });
-  
+
   const app = createBackendApp({
+    authenticationProvider: createActorProvider({
+      userId: "investigator-alpha",
+      role: CLAIMGUARD_ROLES.INVESTIGATOR,
+    }),
     investigationRepository,
     ledgerRepository,
     sharedFraudRegistryRepository,
@@ -311,16 +323,15 @@ test("reverse-fraud creates ledger event and REVERSED registry entry", async () 
     tenantRepository: createTenantRepositoryStub(),
   });
 
-  const response = await app.request("http://localhost/investigations/reverse-fraud", {
-    method: "POST",
-    headers: authHeaders({ user: "investigator-alpha", role: "investigator" }),
-    body: JSON.stringify({
+  const response = await app.request(
+    "http://localhost/investigations/reverse-fraud",
+    jsonRequest({
       investigationId: "inv-reg-2",
       claimId: "claim-alpha",
       investigatorId: "investigator-alpha",
       reason: "Appeal granted",
     }),
-  });
+  );
 
   assert.equal(response.status, 201);
   const data = await response.json();
@@ -348,74 +359,50 @@ test("registry endpoints allow global read access across tenants", async () => {
     status: "ACTIVE",
     reversesRegistryEntryId: null,
   });
-  
+
+  activeTenantId = betaTenant.tenant_id;
   const app = createBackendApp({
+    authenticationProvider: createActorProvider({
+      userId: "analyst-beta",
+      role: CLAIMGUARD_ROLES.FRAUD_ANALYST,
+      tenant: betaTenant,
+    }),
     sharedFraudRegistryRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
 
-  // Query as Beta tenant
-  activeTenantId = betaTenant.tenant_id;
-  const betaHeaders = authHeaders({
-    user: "analyst-beta",
-    role: "fraud_analyst",
-    tenantId: betaTenant.tenant_id,
-    requestTenantId: betaTenant.tenant_id,
-  });
-
-  // 1. Search
-  const searchResp = await app.request("http://localhost/registry/search?subjectToken=prov-shared", {
-    headers: betaHeaders,
-  });
-  assert.equal(searchResp.status, 200);
-  const searchData = await searchResp.json();
+  const searchResponse = await app.request("http://localhost/registry/search?subjectToken=prov-shared");
+  assert.equal(searchResponse.status, 200);
+  const searchData = await searchResponse.json();
   assert.equal(searchData.results.length, 1);
   assert.equal(searchData.results[0].tenantId, alphaTenant.tenant_id);
 
-  // 2. Get by ID
-  const getResp = await app.request("http://localhost/registry/reg-alpha", {
-    headers: betaHeaders,
-  });
-  assert.equal(getResp.status, 200);
-  const getData = await getResp.json();
+  const getResponse = await app.request("http://localhost/registry/reg-alpha");
+  assert.equal(getResponse.status, 200);
+  const getData = await getResponse.json();
   assert.equal(getData.record.registryEntryId, "reg-alpha");
 
-  // 3. History
-  const historyResp = await app.request("http://localhost/registry/history/prov-shared", {
-    headers: betaHeaders,
-  });
-  assert.equal(historyResp.status, 200);
-  const historyData = await historyResp.json();
+  const historyResponse = await app.request("http://localhost/registry/history/prov-shared");
+  assert.equal(historyResponse.status, 200);
+  const historyData = await historyResponse.json();
   assert.equal(historyData.history.length, 1);
 });
 
-test("registry read endpoints reject incomplete authentication context", async () => {
+test("registry read endpoints reject anonymous authentication context", async () => {
   const sharedFraudRegistryRepository = createSharedFraudRegistryRepositoryStub();
   const app = createBackendApp({
+    authenticationProvider: createAnonymousAuthenticationProvider(),
     sharedFraudRegistryRepository,
     tenantRepository: createTenantRepositoryStub(),
   });
   activeTenantId = alphaTenant.tenant_id;
 
-  const noRolesHeader = {
-    "content-type": "application/json",
-    "x-claimguard-user": "unknown",
-    "x-claimguard-user-tenant": alphaTenant.tenant_id,
-    "x-claimguard-tenant": alphaTenant.tenant_id,
-  };
+  const searchResponse = await app.request("http://localhost/registry/search?subjectToken=tok");
+  assert.equal(searchResponse.status, 401);
 
-  const searchResp = await app.request("http://localhost/registry/search?subjectToken=tok", {
-    headers: noRolesHeader,
-  });
-  assert.equal(searchResp.status, 401);
+  const getResponse = await app.request("http://localhost/registry/reg-1");
+  assert.equal(getResponse.status, 401);
 
-  const getResp = await app.request("http://localhost/registry/reg-1", {
-    headers: noRolesHeader,
-  });
-  assert.equal(getResp.status, 401);
-  
-  const histResp = await app.request("http://localhost/registry/history/tok", {
-    headers: noRolesHeader,
-  });
-  assert.equal(histResp.status, 401);
+  const historyResponse = await app.request("http://localhost/registry/history/tok");
+  assert.equal(historyResponse.status, 401);
 });

@@ -11,6 +11,7 @@ import {
   isOperationalRoutePath,
   resolveOperationalRoutePolicy,
 } from "../src/authorization-policy.js";
+import { createAnonymousAuthenticationProvider } from "./helpers/authentication-provider.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,18 +34,20 @@ function patternMatchesPath(pathPattern, requestPath) {
 }
 
 function listRegisteredOperationalRoutes() {
-  const app = createBackendApp();
+  const app = createBackendApp({
+    authenticationProvider: createAnonymousAuthenticationProvider(),
+  });
   const seen = new Set();
   const routes = [];
   for (const route of app.routes || []) {
     const method = String(route.method || "").toUpperCase();
-    const path = String(route.path || "");
+    const routePath = String(route.path || "");
     if (!method || method === "ALL") continue;
-    if (!isOperationalRoutePath(path)) continue;
-    const key = `${method} ${path}`;
+    if (!isOperationalRoutePath(routePath)) continue;
+    const key = `${method} ${routePath}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    routes.push({ method, path });
+    routes.push({ method, path: routePath });
   }
   return routes;
 }

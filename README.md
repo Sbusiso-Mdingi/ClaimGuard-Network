@@ -150,7 +150,7 @@ For Azure mode, use backend `azure_blob` with storage configuration and managed 
 
 ## Web Application
 
-The investigator dashboard is a React 19 SPA built with React Router, Tailwind CSS, and shadcn-style primitives. Authentication uses server-side sessions (session mode) or demo headers (development).
+The investigator dashboard is a React 19 SPA built with React Router, Tailwind CSS, and shadcn-style primitives. Authentication uses server-side sessions (session mode).
 
 ### Pages
 

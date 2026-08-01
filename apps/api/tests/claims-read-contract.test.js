@@ -1,15 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CLAIMGUARD_ROLES } from "../src/authorization-policy.js";
 import { createBackendApp } from "../src/backend.js";
-
-function headers() {
-  return {
-    "x-claimguard-user": "scheme-user",
-    "x-claimguard-role": "scheme_user",
-    "x-claimguard-user-tenant": "tenant_default",
-  };
-}
+import { createStaticAuthenticationProvider } from "./helpers/authentication-provider.js";
 
 function enrichedClaim() {
   return {
@@ -90,11 +84,16 @@ test("claims list and detail endpoints preserve enriched processing and detectio
     },
   };
 
-  const app = createBackendApp({ claimReadRepository: repository });
-
-  const listResponse = await app.request("http://localhost/claims?page=1&pageSize=25", {
-    headers: headers(),
+  const app = createBackendApp({
+    authenticationProvider: createStaticAuthenticationProvider({
+      userId: "scheme-user",
+      roles: [CLAIMGUARD_ROLES.SCHEME_USER],
+      tenantId: "tenant_default",
+    }),
+    claimReadRepository: repository,
   });
+
+  const listResponse = await app.request("http://localhost/claims?page=1&pageSize=25");
   const listPayload = await listResponse.json();
 
   assert.equal(listResponse.status, 200);
@@ -106,9 +105,7 @@ test("claims list and detail endpoints preserve enriched processing and detectio
   assert.equal(listPayload.claims[0].riskScore, 91);
   assert.deepEqual(listPayload.claims[0].triggeredRules, ["BASELINE_FRAUD", "MODEL_REVIEW_RECOMMENDED"]);
 
-  const detailResponse = await app.request(`http://localhost/claims/${claim.claimId}`, {
-    headers: headers(),
-  });
+  const detailResponse = await app.request(`http://localhost/claims/${claim.claimId}`);
   const detailPayload = await detailResponse.json();
 
   assert.equal(detailResponse.status, 200);
