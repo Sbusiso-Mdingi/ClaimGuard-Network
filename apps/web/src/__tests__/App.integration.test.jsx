@@ -73,8 +73,12 @@ const claimsPayload = {
       riskScore: 82,
       riskLevel: "High",
       updatedAt: "2026-07-16T00:00:00.000Z",
-      detection: { scoredAt: "2026-07-16T00:00:00.000Z" },
-      triggeredRules: ["Suspicious repeat billing"],
+      detection: {
+        scoredAt: "2026-07-16T00:00:00.000Z",
+        modelDeploymentId: "claimguard-claim-fraud-ensemble:2.1.1",
+        score: { fraudProbability: 0.82, threshold: 0.45, predictedClass: "FRAUD" },
+      },
+      triggeredRules: ["PROSPECTIVE_ML_REVIEW_RECOMMENDED"],
       evidence: [],
     },
     {
@@ -101,6 +105,23 @@ const claimsPayload = {
     total: 2,
     totalPages: 1,
     hasNextPage: false,
+  },
+};
+
+const claimsOverviewPayload = {
+  available: true,
+  overview: {
+    generatedAt: "2026-07-16T00:00:00.000Z",
+    summary: {
+      totalClaims: 37,
+      scoredClaims: 9,
+      unscoredClaims: 28,
+      highRiskClaims: 4,
+      averageRiskScore: 61.5,
+      riskDistribution: { critical: 1, high: 3, medium: 3, low: 2, unscored: 28 },
+    },
+    recentDetections: claimsPayload.claims,
+    graph: reportPayload.report.graph,
   },
 };
 
@@ -162,6 +183,7 @@ function operationalResponse(requestUrl) {
   if (requestUrl.includes("/api/investigations/queue")) {
     return Promise.resolve({ ok: true, status: 200, json: async () => investigationsPayload });
   }
+  if (requestUrl.includes("/api/claims/overview")) return Promise.resolve({ ok: true, status: 200, json: async () => claimsOverviewPayload });
   if (requestUrl.includes("/api/claims/C-1")) return Promise.resolve({ ok: true, status: 200, json: async () => claimDetailPayload });
   if (requestUrl.includes("/api/claims")) return Promise.resolve({ ok: true, status: 200, json: async () => claimsPayload });
   return Promise.resolve({ ok: false, status: 404, json: async () => ({ available: false, message: "not found" }) });
@@ -195,6 +217,12 @@ function claimsNavigationLink() {
   return within(primaryNav).getByRole("link", { name: /^Claims Explorer$/i });
 }
 
+function networkNavigationLink() {
+  const workspaceNavigationRegion = screen.getByRole("complementary", { name: /workspace navigation/i });
+  const primaryNav = within(workspaceNavigationRegion).getByRole("navigation");
+  return within(primaryNav).getByRole("link", { name: /^Network Analysis$/i });
+}
+
 beforeEach(() => {
   activeSession = SESSION_FIXTURES.analyst;
   window.history.pushState({}, "", "/dashboard");
@@ -217,7 +245,12 @@ test("renders dashboard and routes to claim details", async () => {
       { timeout: 10_000 },
     ),
   ).toBeInTheDocument();
-  expect(screen.getByText(/Claims Screened/i)).toBeInTheDocument();
+  expect(screen.getByText(/Claims received/i)).toBeInTheDocument();
+  const detectionSummary = screen.getByRole("region", { name: "Detection summary" });
+  expect(within(detectionSummary).getByText("37")).toBeInTheDocument();
+  expect(within(detectionSummary).getByText("4")).toBeInTheDocument();
+  expect(within(detectionSummary).getByText("61.5")).toBeInTheDocument();
+  expect(within(detectionSummary).getByText(/9 scored · 28 awaiting/i)).toBeInTheDocument();
 
   const operationalCalls = global.fetch.mock.calls.filter(([url]) => {
     const requestUrl = String(url);
@@ -240,6 +273,16 @@ test("renders dashboard and routes to claim details", async () => {
   await user.click(screen.getByRole("link", { name: "C-1" }));
   expect(await screen.findByRole("heading", { name: /C-1/i })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
+  expect(screen.getByText("ML review threshold met")).toBeInTheDocument();
+  expect(screen.getByText("82.00%")).toBeInTheDocument();
+  expect(screen.getByText("45.00%")).toBeInTheDocument();
+  expect(screen.queryByText("PROSPECTIVE_ML_REVIEW_RECOMMENDED")).not.toBeInTheDocument();
+
+  await user.click(networkNavigationLink());
+  expect(await screen.findByRole("heading", { name: /Scheme relationship network/i })).toBeInTheDocument();
+  expect(screen.getAllByText("Members").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Providers").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Bank links")).not.toBeInTheDocument();
 });
 
 test("automatic refresh polls claims without refetching aggregate resources", async () => {

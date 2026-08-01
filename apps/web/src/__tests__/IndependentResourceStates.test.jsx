@@ -52,6 +52,22 @@ const pageTwoClaims = {
   pagination: { page: "2", pageSize: "2", total: "3", totalPages: "2", hasNextPage: false },
 };
 
+const claimsOverview = {
+  available: true,
+  overview: {
+    summary: {
+      totalClaims: 52,
+      scoredClaims: 41,
+      unscoredClaims: 11,
+      highRiskClaims: 7,
+      averageRiskScore: 64.2,
+      riskDistribution: { critical: 2, high: 5, medium: 18, low: 16, unscored: 11 },
+    },
+    recentDetections: [],
+    graph: { nodes: [], edges: [], summary: { entity_count: 0, relationship_count: 0 } },
+  },
+};
+
 function claimsNavigationLink() {
   return within(screen.getByRole("complementary")).getByRole("link", { name: /Claims/i });
 }
@@ -70,6 +86,9 @@ beforeEach(() => {
     }
     if (requestUrl.includes("/api/detection/risk")) {
       return Promise.resolve({ ok: true, status: 200, json: async () => riskPayload });
+    }
+    if (requestUrl.includes("/api/claims/overview")) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => claimsOverview });
     }
     if (requestUrl.includes("/api/claims?page=2")) {
       return Promise.resolve({ ok: true, status: 200, json: async () => pageTwoClaims });
@@ -90,6 +109,10 @@ test("keeps claims and other healthy resources usable when the report request fa
 
   expect(await screen.findByRole("heading", { name: /Executive dashboard/i })).toBeInTheDocument();
   expect(screen.queryByText(/Dashboard Unavailable/i)).not.toBeInTheDocument();
+  const detectionSummary = screen.getByRole("region", { name: "Detection summary" });
+  expect(within(detectionSummary).getByText("52")).toBeInTheDocument();
+  expect(within(detectionSummary).getByText("7")).toBeInTheDocument();
+  expect(within(detectionSummary).getByText("64.2")).toBeInTheDocument();
 
   await user.click(claimsNavigationLink());
 

@@ -193,6 +193,7 @@ export function evaluateTenantAccess({ authContext, tenantContext, resourceTenan
 
 export const OPERATIONAL_ROUTE_IDS = Object.freeze({
   CLAIMS_LIST: "claims.list",
+  CLAIMS_OVERVIEW: "claims.overview",
   CLAIMS_DETAIL: "claims.detail",
   CLAIMS_INGEST: "claims.ingest",
   INVESTIGATIONS_CREATE: "investigations.create",
@@ -249,6 +250,7 @@ function patternMatchesPath(pathPattern, requestPath) {
 
 const operationalRoutePolicyEntries = [
   { id: OPERATIONAL_ROUTE_IDS.CLAIMS_LIST, method: "GET", pathPattern: "/claims", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.CLAIMS_OVERVIEW, method: "GET", pathPattern: "/claims/overview", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.CLAIMS_DETAIL, method: "GET", pathPattern: "/claims/:claimId", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.CLAIMS_INGEST, method: "POST", pathPattern: "/claims/ingest", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CREATE, method: "POST", pathPattern: "/investigations", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE], permissionMode: "all", requiresOperationalDataPlane: true },

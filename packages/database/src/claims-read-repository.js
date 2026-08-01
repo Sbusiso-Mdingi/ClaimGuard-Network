@@ -77,6 +77,14 @@ function approvedModelRiskIndex(score) {
   return Math.round(Math.max(...components) * 1_000) / 1_000;
 }
 
+function prospectiveRiskIndex(score) {
+  const fraudProbability = probability(score?.fraudProbability);
+  const threshold = probability(score?.threshold);
+  if (fraudProbability === null || threshold === null) return null;
+  if (threshold === 0) return 100;
+  return Math.round(Math.min(100, 70 * fraudProbability / threshold) * 1_000) / 1_000;
+}
+
 function riskLevelFromScore(score) {
   if (!Number.isFinite(score)) return null;
   if (score >= 70) return "High";
@@ -140,6 +148,7 @@ function mapDetectionRow(row) {
     ? payload.score
     : {};
   const strategyType = row.strategy_type || payload?.strategy?.strategyType || null;
+  const analysisMode = row.analysis_mode || payload?.analysisMode || null;
 
   let riskScore = null;
   let riskScoreBasis = null;
@@ -152,10 +161,19 @@ function mapDetectionRow(row) {
     reviewRecommended = score.reviewRecommended === true;
     triggeredRules = uniqueStrings(Array.isArray(score.ruleHits) ? score.ruleHits : []);
   } else if (strategyType === "approved_model") {
-    riskScore = approvedModelRiskIndex(score);
-    riskScoreBasis = "THRESHOLD_NORMALIZED_MAX_COMPONENT";
-    reviewRecommended = score.compositeReviewRecommended === true;
-    triggeredRules = modelTriggeredRules(score);
+    if (analysisMode === "PROSPECTIVE_CLAIM_SCREENING") {
+      riskScore = prospectiveRiskIndex(score);
+      riskScoreBasis = "THRESHOLD_NORMALIZED_BASELINE";
+      reviewRecommended = score.reviewRecommended === true;
+      triggeredRules = reviewRecommended
+        ? ["PROSPECTIVE_ML_REVIEW_RECOMMENDED"]
+        : [];
+    } else {
+      riskScore = approvedModelRiskIndex(score);
+      riskScoreBasis = "THRESHOLD_NORMALIZED_MAX_COMPONENT";
+      reviewRecommended = score.compositeReviewRecommended === true;
+      triggeredRules = modelTriggeredRules(score);
+    }
   }
 
   return {
@@ -168,7 +186,7 @@ function mapDetectionRow(row) {
     reviewRecommended,
     triggeredRules,
     evidence: detectionEvidence(strategyType, score, triggeredRules),
-    analysisMode: row.analysis_mode || payload?.analysisMode || null,
+    analysisMode,
     detectionStrategyId: Number(row.detection_strategy_id),
     strategyType,
     modelDeploymentId: row.model_deployment_id || payload?.strategy?.modelDeploymentId || null,
@@ -179,6 +197,51 @@ function mapDetectionRow(row) {
     featureSchemaVersion: row.feature_schema_version || payload?.model?.featureSchemaVersion || null,
     resultSchemaVersion: payload?.schemaVersion || null,
     score: Object.keys(score).length > 0 ? score : null,
+  };
+}
+
+function booleanValue(value) {
+  return value === true || value === 1 || String(value || "").toLowerCase() === "true";
+}
+
+function mapOverviewDetectionRow(row) {
+  if (row.detection_strategy_id === null || row.detection_strategy_id === undefined) {
+    return null;
+  }
+  const strategyType = row.strategy_type || null;
+  const analysisMode = row.analysis_mode || null;
+  let riskScore = null;
+  let reviewRecommended = false;
+
+  if (strategyType === "deterministic_rules") {
+    riskScore = percentage(row.deterministic_risk_score);
+    reviewRecommended = booleanValue(row.deterministic_review_recommended);
+  } else if (strategyType === "approved_model" && analysisMode === "PROSPECTIVE_CLAIM_SCREENING") {
+    riskScore = prospectiveRiskIndex({
+      fraudProbability: row.prospective_fraud_probability,
+      threshold: row.prospective_threshold,
+    });
+    reviewRecommended = booleanValue(row.prospective_review_recommended);
+  } else if (strategyType === "approved_model") {
+    riskScore = approvedModelRiskIndex({
+      baselineFraudProbability: row.baseline_fraud_probability,
+      baselineThreshold: row.baseline_threshold,
+      ringProbability: row.ring_probability,
+      ringThreshold: row.ring_threshold,
+      phantomProbability: row.phantom_probability,
+      phantomThreshold: row.phantom_threshold,
+    });
+    reviewRecommended = booleanValue(row.composite_review_recommended);
+  }
+
+  return {
+    scoredAt: row.scored_at || null,
+    riskScore,
+    riskLevel: riskLevelFromScore(riskScore),
+    reviewRecommended,
+    analysisMode,
+    strategyType,
+    modelDeploymentId: row.model_deployment_id || null,
   };
 }
 
@@ -400,6 +463,209 @@ export function createClaimsReadRepository(pool, {
   const canonicalTenantId = () => repositoryTenantId(dataPlaneContext, { allowLegacyTenantContext });
 
   return Object.freeze({
+    async getClaimsOverview() {
+      const tenantId = canonicalTenantId();
+      const [rows] = await pool.execute(
+        `
+          SELECT
+            c.claim_id,
+            c.current_claim_version,
+            c.scheme_id,
+            c.member_id,
+            c.provider_id,
+            c.amount,
+            c.created_at,
+            c.updated_at,
+            d.detection_strategy_id,
+            d.strategy_type,
+            d.model_deployment_id,
+            d.source_job_id,
+            d.request_id,
+            d.analysis_mode,
+            d.ensemble_id,
+            d.ensemble_version,
+            d.feature_schema_version,
+            d.scored_at,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.riskScore')) AS deterministic_risk_score,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.reviewRecommended')) AS deterministic_review_recommended,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.fraudProbability')) AS prospective_fraud_probability,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.threshold')) AS prospective_threshold,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.reviewRecommended')) AS prospective_review_recommended,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.baselineFraudProbability')) AS baseline_fraud_probability,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.baselineThreshold')) AS baseline_threshold,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.ringProbability')) AS ring_probability,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.ringThreshold')) AS ring_threshold,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.phantomProbability')) AS phantom_probability,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.phantomThreshold')) AS phantom_threshold,
+            JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.score.compositeReviewRecommended')) AS composite_review_recommended
+          FROM claims c
+          LEFT JOIN claim_detection_results d
+            ON d.tenant_id = c.tenant_id
+           AND d.claim_id = c.claim_id
+           AND d.claim_version = c.current_claim_version
+          WHERE c.tenant_id = ?
+        `,
+        [tenantId],
+      );
+
+      const records = (rows || []).map((row) => {
+        const detection = mapOverviewDetectionRow(row);
+        return {
+          claimId: row.claim_id,
+          schemeId: row.scheme_id,
+          memberId: row.member_id,
+          providerId: row.provider_id,
+          billedAmount: Number(row.amount),
+          submittedAt: row.created_at,
+          updatedAt: row.updated_at,
+          status: detection?.reviewRecommended ? "FLAGGED" : detection ? "SCORED" : "AWAITING_SCORING",
+          processingStatus: detection ? "scored" : "not_scored",
+          riskScore: detection?.riskScore ?? null,
+          riskLevel: detection?.riskLevel ?? null,
+          severity: detection?.riskLevel ?? null,
+          detectionDate: detection?.scoredAt || null,
+          detection,
+        };
+      });
+      const scoredRecords = records.filter((record) => record.detection);
+      const scoredRiskRecords = scoredRecords.filter((record) => Number.isFinite(record.riskScore));
+      const totalRisk = scoredRiskRecords.reduce((sum, record) => sum + record.riskScore, 0);
+      const flaggedRecords = scoredRecords.filter((record) => (
+        record.detection?.reviewRecommended === true
+        || (Number.isFinite(record.riskScore) && record.riskScore >= 75)
+      ));
+      const riskDistribution = {
+        critical: 0,
+        high: 0,
+        medium: 0,
+        low: 0,
+        unscored: records.length - scoredRiskRecords.length,
+      };
+      for (const record of scoredRiskRecords) {
+        if (record.riskScore >= 90) riskDistribution.critical += 1;
+        else if (record.riskScore >= 75) riskDistribution.high += 1;
+        else if (record.riskScore >= 40) riskDistribution.medium += 1;
+        else riskDistribution.low += 1;
+      }
+
+      const networkRecords = records
+        .filter((record) => record.memberId && record.providerId)
+        .slice()
+        .sort((left, right) => {
+          const riskDifference = (right.riskScore ?? -1) - (left.riskScore ?? -1);
+          if (riskDifference !== 0) return riskDifference;
+          return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
+        });
+      const projectedNetworkRecords = networkRecords.slice(0, 500);
+      const networkNodes = new Map();
+      const upsertNetworkNode = (entityId, entityType, value, record) => {
+        const current = networkNodes.get(entityId) || {
+          entity_id: entityId,
+          entity_type: entityType,
+          value,
+          claim_count: 0,
+          flagged_claim_count: 0,
+          max_risk_score: null,
+        };
+        current.claim_count += 1;
+        if (
+          record.detection?.reviewRecommended === true
+          || (Number.isFinite(record.riskScore) && record.riskScore >= 75)
+        ) {
+          current.flagged_claim_count += 1;
+        }
+        if (Number.isFinite(record.riskScore)) {
+          current.max_risk_score = current.max_risk_score === null
+            ? record.riskScore
+            : Math.max(current.max_risk_score, record.riskScore);
+        }
+        networkNodes.set(entityId, current);
+      };
+      const networkEdges = projectedNetworkRecords.map((record) => {
+        const memberEntityId = `member:${record.memberId}`;
+        const providerEntityId = `provider:${record.providerId}`;
+        upsertNetworkNode(memberEntityId, "member", record.memberId, record);
+        upsertNetworkNode(providerEntityId, "provider", record.providerId, record);
+        return {
+          relationship_type: "submitted_to",
+          source_entity_id: memberEntityId,
+          target_entity_id: providerEntityId,
+          claim_id: record.claimId,
+          risk_score: record.riskScore,
+          risk_level: record.riskLevel,
+          review_recommended: record.detection?.reviewRecommended === true,
+          billed_amount: record.billedAmount,
+        };
+      });
+      const reviewNetworkRecords = networkRecords.filter((record) => (
+        record.detection?.reviewRecommended === true
+        || (Number.isFinite(record.riskScore) && record.riskScore >= 75)
+      ));
+      const reviewAdjacency = new Map();
+      for (const record of reviewNetworkRecords) {
+        const sourceEntityId = `member:${record.memberId}`;
+        const targetEntityId = `provider:${record.providerId}`;
+        if (!reviewAdjacency.has(sourceEntityId)) reviewAdjacency.set(sourceEntityId, new Set());
+        if (!reviewAdjacency.has(targetEntityId)) reviewAdjacency.set(targetEntityId, new Set());
+        reviewAdjacency.get(sourceEntityId).add(targetEntityId);
+        reviewAdjacency.get(targetEntityId).add(sourceEntityId);
+      }
+      const visitedReviewNodes = new Set();
+      let activeClusterCount = 0;
+      for (const entityId of reviewAdjacency.keys()) {
+        if (visitedReviewNodes.has(entityId)) continue;
+        activeClusterCount += 1;
+        const pending = [entityId];
+        while (pending.length > 0) {
+          const current = pending.pop();
+          if (visitedReviewNodes.has(current)) continue;
+          visitedReviewNodes.add(current);
+          for (const neighbour of reviewAdjacency.get(current) || []) {
+            if (!visitedReviewNodes.has(neighbour)) pending.push(neighbour);
+          }
+        }
+      }
+
+      return {
+        generatedAt: new Date().toISOString(),
+        summary: {
+          totalClaims: records.length,
+          scoredClaims: scoredRecords.length,
+          unscoredClaims: records.length - scoredRecords.length,
+          highRiskClaims: flaggedRecords.length,
+          averageRiskScore: scoredRiskRecords.length > 0
+            ? Math.round((totalRisk / scoredRiskRecords.length) * 1_000) / 1_000
+            : null,
+          riskDistribution,
+        },
+        recentDetections: scoredRecords
+          .slice()
+          .sort((left, right) => {
+            const riskDifference = (right.riskScore ?? -1) - (left.riskScore ?? -1);
+            if (riskDifference !== 0) return riskDifference;
+            return String(right.detectionDate || "").localeCompare(String(left.detectionDate || ""));
+          })
+          .slice(0, 8),
+        graph: {
+          nodes: Array.from(networkNodes.values()),
+          edges: networkEdges,
+          summary: {
+            entity_count: networkNodes.size,
+            relationship_count: networkEdges.length,
+            member_count: Array.from(networkNodes.values())
+              .filter((node) => node.entity_type === "member").length,
+            provider_count: Array.from(networkNodes.values())
+              .filter((node) => node.entity_type === "provider").length,
+            represented_claim_count: networkEdges.length,
+            eligible_claim_count: networkRecords.length,
+            review_signal_count: reviewNetworkRecords.length,
+            active_cluster_count: activeClusterCount,
+            truncated: networkRecords.length > networkEdges.length,
+          },
+        },
+      };
+    },
+
     async listClaims({ page = 1, pageSize = 25 } = {}) {
       const tenantId = canonicalTenantId();
       const paging = normalizeListParams({ page, pageSize, maxPageSize });

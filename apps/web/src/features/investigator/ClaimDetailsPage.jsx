@@ -20,7 +20,7 @@ function mapClaimPayload(claim) {
   if (!claim) return null;
   const score = Number.isFinite(claim?.riskScore) ? claim.riskScore : null;
   const status = claim?.investigation?.status || claim?.status || "SUBMITTED";
-  const detectionDate = claim?.updatedAt || claim?.submittedAt || null;
+  const detectionDate = claim?.detection?.scoredAt || claim?.updatedAt || claim?.submittedAt || null;
   return {
     claimId: claim?.claimId,
     schemeId: claim?.schemeId || null,
@@ -33,10 +33,63 @@ function mapClaimPayload(claim) {
     severity: claim?.riskLevel || severityFromScore(score),
     triggeredRules: Array.isArray(claim?.triggeredRules) ? claim.triggeredRules : [],
     evidence: Array.isArray(claim?.evidence) ? claim.evidence : [],
+    detection: claim?.detection || null,
+    processing: claim?.processing || null,
+    billedAmount: Number.isFinite(claim?.billedAmount) ? claim.billedAmount : null,
+    billingCode: claim?.billingCode || null,
   };
 }
 
-function RiskPanel({ claim, risk, ledgerReference }) {
+function percentageLabel(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const percentage = parsed >= 0 && parsed <= 1 ? parsed * 100 : parsed;
+  return `${percentage.toFixed(2)}%`;
+}
+
+function rulePresentation(rule, claim) {
+  const score = claim?.detection?.score || {};
+  if (rule === "PROSPECTIVE_ML_REVIEW_RECOMMENDED") {
+    const probability = percentageLabel(score.fraudProbability);
+    const threshold = percentageLabel(score.threshold);
+    return {
+      label: "ML review threshold met",
+      explanation: probability && threshold
+        ? `Fraud probability ${probability} exceeded the fitted review threshold of ${threshold}.`
+        : "The prospective fraud model crossed its fitted review threshold and recommended human review.",
+    };
+  }
+  if (rule === "MODEL_REVIEW_RECOMMENDED") {
+    return {
+      label: "Combined model review recommended",
+      explanation: "The approved model ensemble recommended human review after combining its component signals.",
+    };
+  }
+  if (rule === "BASELINE_FRAUD") {
+    return {
+      label: "Baseline model flagged fraud",
+      explanation: "The baseline fraud classifier returned a fraud decision for this claim.",
+    };
+  }
+  if (rule === "RING_REVIEW_HIT") {
+    return {
+      label: "Fraud-ring signal detected",
+      explanation: "The provider/member relationship signal met the configured fraud-ring review threshold.",
+    };
+  }
+  if (rule === "PHANTOM_REVIEW_HIT") {
+    return {
+      label: "Phantom-billing signal detected",
+      explanation: "The phantom-billing model met the configured human-review threshold.",
+    };
+  }
+  return {
+    label: String(rule || "Review signal").replaceAll("_", " ").toLowerCase().replace(/^./, (character) => character.toUpperCase()),
+    explanation: "This configured detection signal contributed to the claim review decision.",
+  };
+}
+
+function RiskPanel({ claim, ledgerReference }) {
   const ledgerLinked =
     ledgerReference?.available === true ||
     ledgerReference?.linked === true ||
@@ -48,6 +101,14 @@ function RiskPanel({ claim, risk, ledgerReference }) {
   const ledgerLabel = ledgerLinked
     ? `Connected (${ledgerReference?.entry?.entryType || "no entries yet"})`
     : "Unavailable";
+  const ruleDetails = (claim.triggeredRules || []).map((rule) => rulePresentation(rule, claim));
+  const score = claim?.detection?.score || {};
+  const modelProbability = percentageLabel(
+    score.fraudProbability ?? score.baselineFraudProbability,
+  );
+  const modelThreshold = percentageLabel(
+    score.threshold ?? score.baselineThreshold,
+  );
 
   return (
     <SectionCard title="Risk summary" description="Explainability, triggered rules, evidence, and ledger linkage for the selected claim.">
@@ -67,7 +128,9 @@ function RiskPanel({ claim, risk, ledgerReference }) {
           <div className="rounded-xl border border-border/70 px-4 py-3">
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Triggered rules</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              {(claim.triggeredRules || []).map((rule) => <StatusIndicator key={rule} variant="badge">{rule}</StatusIndicator>)}
+              {ruleDetails.length > 0
+                ? ruleDetails.map((rule) => <StatusIndicator key={rule.label} variant="badge">{rule.label}</StatusIndicator>)
+                : <span className="text-sm text-muted-foreground">No review rule was triggered.</span>}
             </div>
           </div>
           <div className="rounded-xl border border-border/70 px-4 py-3">
@@ -77,24 +140,29 @@ function RiskPanel({ claim, risk, ledgerReference }) {
         </div>
 
         <div className="rounded-xl border border-border/70 px-4 py-3">
-          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Evidence</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Why this claim was flagged</p>
           <ul className="mt-2 space-y-2 text-sm leading-6 text-foreground">
-            {(claim.evidence || []).slice(0, 6).map((item) => <li key={item} className="rounded-lg bg-secondary/30 px-3 py-2">{item}</li>)}
+            {(claim.evidence || []).length > 0
+              ? claim.evidence.slice(0, 6).map((item) => <li key={item} className="rounded-lg bg-secondary/30 px-3 py-2">{item}</li>)
+              : ruleDetails.map((rule) => <li key={rule.label} className="rounded-lg bg-secondary/30 px-3 py-2">{rule.explanation}</li>)}
           </ul>
         </div>
 
         <div className="rounded-xl border border-border/70 px-4 py-3">
-          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Global risk explanation</p>
-          <ul className="mt-2 space-y-2 text-sm leading-6 text-foreground">
-            {(risk?.reasons || []).slice(0, 4).map((item) => <li key={item} className="rounded-lg bg-secondary/30 px-3 py-2">{item}</li>)}
-          </ul>
+          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Model assessment</p>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div><dt className="text-xs text-muted-foreground">Decision</dt><dd className="mt-1 font-medium">{score.predictedClass || score.baselinePredictedClass || (claim.triggeredRules?.length ? "Review recommended" : "No review")}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Fraud probability</dt><dd className="mt-1 font-data font-medium">{modelProbability || "Not supplied"}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Review threshold</dt><dd className="mt-1 font-data font-medium">{modelThreshold || "Not supplied"}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Model</dt><dd className="mt-1 break-all font-data text-xs font-medium">{claim.detection?.modelDeploymentId || claim.detection?.modelId || "Configured rules"}</dd></div>
+          </dl>
         </div>
       </div>
     </SectionCard>
   );
 }
 
-export function ClaimDetailsPage({ report, graph, risk }) {
+export function ClaimDetailsPage({ report, graph }) {
   const params = useParams();
   const claimId = decodeURIComponent(params.claimId || "");
 
@@ -307,7 +375,7 @@ export function ClaimDetailsPage({ report, graph, risk }) {
           </div>
         </SectionCard>
 
-        <RiskPanel claim={claim} risk={risk} ledgerReference={report?.detection?.ledger_reference} />
+        <RiskPanel claim={claim} ledgerReference={report?.detection?.ledger_reference} />
       </div>
     </PageFrame>
   );
