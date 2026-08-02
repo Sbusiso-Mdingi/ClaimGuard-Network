@@ -82,6 +82,7 @@ test("canonical operational schema bindings and deployment inputs do not drift",
 
   for (const consumerPath of [
     "apps/api/tests/desktop-tenant-enforcement.test.js",
+    "apps/provisioning-worker/tests/mysql.integration.test.js",
     "packages/control-plane-database/test-support/phase11d-fixtures.js",
     "packages/database/tests/claims-read-repository.test.js",
     "packages/database/tests/prospective-claims-read-repository.test.js",

@@ -11,9 +11,12 @@ import {
 } from "@claimguard/control-plane-database";
 
 import {
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
   CANONICAL_OPERATIONAL_SCHEMA_VERSION,
-  runProvisioningBatch,
-} from "../src/worker.js";
+  defaultMigrationPaths,
+} from "@claimguard/database";
+
+import { runProvisioningBatch } from "../src/worker.js";
 
 
 const controlUrl =
@@ -401,7 +404,7 @@ async function addAdministrator(
 
 
 integration(
-  "real MySQL onboarding applies schema 14, isolates tenants, retries safely, and leaves routes inactive",
+  "real MySQL onboarding applies the canonical schema, isolates tenants, retries safely, and leaves routes inactive",
   async () => {
     const environmentKeys = [
       ...Object.keys(
@@ -718,7 +721,7 @@ integration(
 
       /*
        * The provisioned private database must expose
-       * canonical schema and migration version 14.
+        * canonical schema and migration version.
        */
       const [
         firstMetadata,
@@ -789,9 +792,7 @@ integration(
             "test",
 
           migrationVersion:
-            Number(
-              CANONICAL_OPERATIONAL_SCHEMA_VERSION,
-            ),
+            CANONICAL_OPERATIONAL_MIGRATION_VERSION,
         },
       );
 
@@ -813,7 +814,7 @@ integration(
           migrationRows[0]
             .count,
         ),
-        14,
+        defaultMigrationPaths.length,
       );
 
       /*
@@ -893,7 +894,7 @@ integration(
           ),
           true,
           (
-            "Missing provisioned schema-14 column "
+            "Missing provisioned prospective column "
             + expectedColumn
             + "."
           ),
