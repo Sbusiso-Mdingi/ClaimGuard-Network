@@ -661,7 +661,7 @@ jobs:
           test "$(sha256sum /tmp/claimguard-governed-release/claimguard-api-deploy.zip | cut -d' ' -f1)" = "$EXPECTED_API_ARTIFACT_DIGEST"
 
       - name: Deploy web app with retry
-        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60
         with:
           timeout_minutes: 15
           max_attempts: 3
@@ -677,7 +677,7 @@ jobs:
             --timeout 1800000
 
       - name: Deploy API app with retry
-        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60
         with:
           timeout_minutes: 15
           max_attempts: 3
