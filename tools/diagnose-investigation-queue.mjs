@@ -9,6 +9,7 @@ import {
   createControlPlaneRepositories,
 } from "../packages/control-plane-database/src/index.js";
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   createLegacySharedAdapter,
   createOperationalRepositories,
   createTenantConnectionManager,
@@ -30,7 +31,7 @@ const DEFAULTS = Object.freeze({
   vault: "claimguard-kv-ufs",
   controlPlaneSecret: "claimguard--api--control-plane-mysql-url",
   legacyOperationalSecret: "claimguard--api--mysql-url",
-  schemaVersion: "14",
+  schemaVersion: CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 });
 
 function fail(message) {

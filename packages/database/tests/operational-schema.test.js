@@ -79,4 +79,21 @@ test("canonical operational schema bindings and deployment inputs do not drift",
     "apps/provisioning-worker/aca-job.phase11e.yaml",
   );
   assert.doesNotMatch(provisioningManifest, /PRIVATE_TENANT_SCHEMA_VERSION/);
+
+  for (const consumerPath of [
+    "apps/api/tests/desktop-tenant-enforcement.test.js",
+    "packages/control-plane-database/test-support/phase11d-fixtures.js",
+    "packages/database/tests/claims-read-repository.test.js",
+    "packages/database/tests/prospective-claims-read-repository.test.js",
+    "tools/diagnose-investigation-queue.mjs",
+    "tools/prospective-production-verification.mjs",
+  ]) {
+    const consumer = await repoFile(consumerPath);
+    assert.match(consumer, /CANONICAL_OPERATIONAL_SCHEMA_VERSION/);
+    assert.doesNotMatch(
+      consumer,
+      /(?:const|let|var)\s+CANONICAL_OPERATIONAL_SCHEMA_VERSION\s*=/,
+    );
+    assert.doesNotMatch(consumer, /schemaVersion:\s*["'][1-9]\d*["']/);
+  }
 });
