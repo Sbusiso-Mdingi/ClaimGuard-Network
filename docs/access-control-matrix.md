@@ -29,10 +29,10 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 - Tenant routing and data-plane scoping are present in code.
 - Authorization roles and permissions are evaluated in code.
 - Header-based authentication remains available only for isolated local rollback; production startup rejects it.
-- Scheme/platform administrators have `desktop.devices.manage`; scheme administrators are restricted to their own organisation and platform administration does not imply private-claims access.
+- Scheme/platform administrators have `desktop.devices.manage`; scheme administrators are restricted to their own organisation. Only platform administrators have `desktop.fleet_policy.manage`, which sets the licensed allowance without granting private-claims access.
 - Medical-scheme users, including scheme administrators, may use an organisation-enrolled Windows client. ClaimGuard platform administrators are web-only and are rejected by desktop authentication.
 - Scheme device/fleet management remains web-only. The Windows desktop exposes no activation-key, device-policy, revocation, or platform-governance commands; its reset is a local destructive recovery action.
-- Activation-key issuance and key/device revocation require password step-up, exact typed confirmation, and audit history.
+- Fleet-policy changes, activation-key issuance, and key/device revocation require password step-up, exact typed confirmation, and audit history.
 
 ## Required Constraints
 

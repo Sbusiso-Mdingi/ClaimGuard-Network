@@ -13,6 +13,7 @@ import {
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
+import { DesktopFleetPolicyEditor } from "./DesktopDeviceManagement";
 import { usePlatformAdminLifecycle } from "./usePlatformAdminLifecycle";
 
 function LifecycleActions({ lifecycle }) {
@@ -159,6 +160,9 @@ export function PlatformAdminLifecyclePage() {
             </SectionCard>
           </div>
 
+          <SectionCard title="Windows desktop fleet licence" description="Set the explicit licensed computer allowance for this medical scheme. Scheme administrators manage activation keys and device revocation within it.">
+            <DesktopFleetPolicyEditor organisationId={selected.organisationId} />
+          </SectionCard>
         </>
       )}
     </PageFrame>

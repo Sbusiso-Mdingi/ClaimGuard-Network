@@ -40,7 +40,7 @@ function mapActivationKey(row) {
     revokedAt: row.revoked_at || null,
     revokedBy: row.revoked_by || null,
     revocationReason: row.revocation_reason || null,
-    deviceLimit: Number(row.device_limit || 5),
+    deviceLimit: row.device_limit == null ? null : Number(row.device_limit),
     offlineGraceDays: Number(row.offline_grace_days || 7),
   };
 }
@@ -81,6 +81,7 @@ function mapAudit(row) {
     action: row.action,
     outcome: row.outcome,
     failureCategory: row.failure_category || null,
+    details: parseJson(row.event_details),
     correlationId: row.correlation_id || null,
     occurredAt: row.occurred_at,
   };
@@ -100,12 +101,7 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
         deviceLimit: Number(row.device_limit),
         activationKeyLifetimeHours: Number(row.activation_key_lifetime_hours),
         offlineGraceDays: Number(row.offline_grace_days),
-      } : {
-        organisationId,
-        deviceLimit: 5,
-        activationKeyLifetimeHours: 24,
-        offlineGraceDays: 7,
-      };
+      } : null;
     },
 
     async setPolicy({ organisationId, deviceLimit, activationKeyLifetimeHours, offlineGraceDays }, { executor } = {}) {
@@ -141,7 +137,7 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
     async getActivationKeyByHash(activationKeyHash, { executor, forUpdate = false } = {}) {
       const [rows] = await executorOr(defaultExecutor, executor).execute(
         `SELECT k.*, o.display_name, o.canonical_slug, o.organisation_type, o.status AS organisation_status,
-                o.activation_state, COALESCE(p.device_limit, 5) AS device_limit,
+                o.activation_state, p.device_limit,
                 COALESCE(p.offline_grace_days, 7) AS offline_grace_days
          FROM organisation_activation_keys k
          JOIN organisations o ON o.organisation_id = k.organisation_id
@@ -155,7 +151,7 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
     async getActivationKeyById(activationKeyId, { executor } = {}) {
       const [rows] = await executorOr(defaultExecutor, executor).execute(
         `SELECT k.*, o.display_name, o.canonical_slug, o.organisation_type, o.status AS organisation_status,
-                o.activation_state, COALESCE(p.device_limit, 5) AS device_limit,
+                o.activation_state, p.device_limit,
                 COALESCE(p.offline_grace_days, 7) AS offline_grace_days
          FROM organisation_activation_keys k
          JOIN organisations o ON o.organisation_id = k.organisation_id
@@ -209,10 +205,16 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
 
     async lockOrganisationForDesktopEnrollment(organisationId, { executor } = {}) {
       const [rows] = await executorOr(defaultExecutor, executor).execute(
-        "SELECT organisation_id FROM organisations WHERE organisation_id = ? LIMIT 1 FOR UPDATE",
+        "SELECT organisation_id, organisation_type, status, activation_state FROM organisations WHERE organisation_id = ? LIMIT 1 FOR UPDATE",
         [organisationId],
       );
-      return rows?.[0]?.organisation_id === organisationId;
+      const row = rows?.[0];
+      return row ? {
+        organisationId: row.organisation_id,
+        organisationType: row.organisation_type,
+        status: row.status,
+        activationState: row.activation_state,
+      } : null;
     },
 
     async createDevice(input, { executor } = {}) {
@@ -241,6 +243,36 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
         [deviceEnrollmentId],
       );
       return mapDevice(rows?.[0]);
+    },
+
+    async getDeviceByInstallationId(installationId, { executor, forUpdate = false } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT d.*, o.display_name, o.canonical_slug
+         FROM desktop_device_enrollments d
+         JOIN organisations o ON o.organisation_id = d.organisation_id
+         WHERE d.installation_id = ? LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+        [installationId],
+      );
+      return mapDevice(rows?.[0]);
+    },
+
+    async reactivateDevice(input, { executor } = {}) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE desktop_device_enrollments
+         SET activation_key_id = ?, device_public_key = ?, public_key_thumbprint = ?,
+             status = 'active', document_version = ?, signing_key_id = ?,
+             permitted_api_origin = ?, environment = ?, activated_at = ?, last_seen_at = ?,
+             expires_at = ?, offline_grace_expires_at = ?, revoked_at = NULL,
+             revoked_by = NULL, revocation_reason = NULL
+         WHERE device_enrollment_id = ? AND organisation_id = ?
+           AND (status IN ('revoked', 'expired') OR expires_at <= ?)`,
+        [input.activationKeyId, JSON.stringify(input.devicePublicKey),
+          assertDigest(input.publicKeyThumbprint, "publicKeyThumbprint"), input.documentVersion,
+          input.signingKeyId, input.permittedApiOrigin, input.environment, input.activatedAt,
+          input.activatedAt, input.expiresAt, input.offlineGraceExpiresAt,
+          input.deviceEnrollmentId, input.organisationId, input.activatedAt],
+      );
+      return Number(result.affectedRows || 0) === 1;
     },
 
     async listDevices(organisationId, { executor } = {}) {
@@ -333,12 +365,13 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
       await executorOr(defaultExecutor, executor).execute(
         `INSERT INTO desktop_activation_audit_events
            (desktop_audit_event_id, organisation_id, activation_key_id, device_enrollment_id,
-            actor_type, actor_id, action, outcome, failure_category, source_network_hash, correlation_id,
-            occurred_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            actor_type, actor_id, action, outcome, failure_category, event_details,
+            source_network_hash, correlation_id, occurred_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [desktopAuditEventId, input.organisationId || null, input.activationKeyId || null,
           input.deviceEnrollmentId || null, input.actorType, input.actorId || null, input.action,
-          input.outcome, input.failureCategory || null, input.sourceNetworkHash || null,
+          input.outcome, input.failureCategory || null,
+          input.details == null ? null : JSON.stringify(input.details), input.sourceNetworkHash || null,
           input.correlationId || null, input.occurredAt || new Date()],
       );
       return { desktopAuditEventId };

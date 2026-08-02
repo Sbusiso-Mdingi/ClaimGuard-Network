@@ -2,11 +2,12 @@
 
 ## Issue an Activation Key
 
-1. Scheme administrator opens Desktop device management for the current scheme.
-2. Review device limit, active count, key lifetime, and offline-grace policy.
-3. Re-enter the administrator password and type `ISSUE DESKTOP KEY`.
-4. Transfer the displayed key through an approved one-time channel. It is never shown again.
-5. Verify a `desktop_device.activated` success event and the expected installation/device entry.
+1. ClaimGuard platform administration confirms that the scheme has an explicit licensed allowance from 1 to 10,000.
+2. Scheme administrator opens Desktop device management for the current scheme.
+3. Review device allowance, active count, key lifetime, and offline-grace policy. If the scheme is at or over its allowance, revoke an unused device or request a licensed increase.
+4. Re-enter the administrator password and type `ISSUE DESKTOP KEY`.
+5. Transfer the displayed key through an approved one-time channel. It is never shown again.
+6. Verify a `desktop_device.activated` success event and the expected installation/device entry.
 
 Keys default to one use and expire according to policy. ClaimGuard stores only an HMAC-SHA-256 digest. Do not paste raw keys into tickets, chat, logs, or audit notes.
 
@@ -23,6 +24,8 @@ Use the key ID shown in administration, reauthenticate, type `REVOKE KEY <activa
 5. If the Windows device is available, perform confirmed reset and validate deletion of local app data/Credential Manager entries.
 
 An active device that merely exceeded offline grace can recover by reconnecting and signing in. The API renews grace only after device proof and organisation-bound user authentication succeed; revocation or licence expiry still fails closed.
+
+A revoked installation is not permanently banned. If the organisation deliberately authorises it again with a fresh activation key, ClaimGuard reactivates the same device enrollment record, increments its signed document version, and records `desktop_device.reactivated`. Active installations and cross-organisation collisions still fail closed.
 
 ## Lost or Stolen Device
 

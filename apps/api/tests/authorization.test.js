@@ -193,6 +193,16 @@ test("permission evaluation grants only the capabilities assigned to each role",
   assert.equal(hasPermission(schemeUser, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
   assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
   assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE), true);
+  assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.DESKTOP_FLEET_POLICY_MANAGE), true);
+  const schemeAdministrator = createAuthenticatedAuthContext({
+    userId: "scheme-admin",
+    roles: [CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR],
+    tenantId: alphaTenant.tenant_id,
+    organisationId: medicalSchemeOrganisation.organisationId,
+    organisation: medicalSchemeOrganisation,
+  });
+  assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE), true);
+  assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.DESKTOP_FLEET_POLICY_MANAGE), false);
 });
 
 test("tenant access denies cross-tenant resources and gives platform administrators no bypass", () => {

@@ -80,6 +80,7 @@ test("desktop enrollment reads map database rows and redact persisted credential
     [[activationKeyRow()]],
     [[deviceRow()]],
     [[deviceRow()]],
+    [[deviceRow()]],
     [[{
       desktop_audit_event_id: "audit-1",
       organisation_id: "org-1",
@@ -102,12 +103,7 @@ test("desktop enrollment reads map database rows and redact persisted credential
     activationKeyLifetimeHours: 12,
     offlineGraceDays: 6,
   });
-  assert.deepEqual(await repository.getPolicy("org-default"), {
-    organisationId: "org-default",
-    deviceLimit: 5,
-    activationKeyLifetimeHours: 24,
-    offlineGraceDays: 7,
-  });
+  assert.equal(await repository.getPolicy("org-default"), null);
 
   const key = await repository.getActivationKeyByHash(DIGEST, { forUpdate: true });
   assert.equal(key.organisationDisplayName, "ClaimGuard Health");
@@ -120,6 +116,8 @@ test("desktop enrollment reads map database rows and redact persisted credential
   const device = await repository.getDeviceById("device-1");
   assert.deepEqual(device.devicePublicKey, { kty: "OKP", crv: "Ed25519" });
   assert.equal(device.documentVersion, 1);
+  assert.equal((await repository.getDeviceByInstallationId("installation-1", { forUpdate: true })).deviceEnrollmentId, "device-1");
+  assert.match(executor.queries[6].sql, /FOR UPDATE$/);
   const listedDevices = await repository.listDevices("org-1");
   assert.equal(Object.hasOwn(listedDevices[0], "devicePublicKey"), false);
   assert.equal(Object.hasOwn(listedDevices[0], "publicKeyThumbprint"), false);
@@ -137,9 +135,10 @@ test("desktop enrollment writes remain tenant-scoped and report optimistic outco
     [{ affectedRows: 1 }],
     [{ affectedRows: 0 }],
     [[{ total: "2" }]],
-    [[{ organisation_id: "org-1" }]],
+    [[{ organisation_id: "org-1", organisation_type: "medical_scheme", status: "active", activation_state: "activated" }]],
     [[]],
     [[deviceRow()]],
+    [{ affectedRows: 1 }],
     [{ affectedRows: 1 }],
     [[]],
     [{ affectedRows: 0 }],
@@ -171,7 +170,12 @@ test("desktop enrollment writes remain tenant-scoped and report optimistic outco
     activationKeyId: "key-1", organisationId: "org-1", revokedBy: "actor-1", revokedAt: NOW,
   }), false);
   assert.equal(await repository.countActiveDevices("org-1", NOW), 2);
-  assert.equal(await repository.lockOrganisationForDesktopEnrollment("org-1"), true);
+  assert.deepEqual(await repository.lockOrganisationForDesktopEnrollment("org-1"), {
+    organisationId: "org-1",
+    organisationType: "medical_scheme",
+    status: "active",
+    activationState: "activated",
+  });
 
   assert.deepEqual(await repository.createDevice({
     deviceEnrollmentId: "device-1",
@@ -189,6 +193,20 @@ test("desktop enrollment writes remain tenant-scoped and report optimistic outco
     offlineGraceExpiresAt: new Date("2026-08-07T00:00:00.000Z"),
   }), { deviceEnrollmentId: "device-1" });
   assert.equal((await repository.getDeviceById("device-1", { forUpdate: true })).deviceEnrollmentId, "device-1");
+  assert.equal(await repository.reactivateDevice({
+    deviceEnrollmentId: "device-1",
+    organisationId: "org-1",
+    activationKeyId: "key-2",
+    devicePublicKey: { kty: "OKP", crv: "Ed25519" },
+    publicKeyThumbprint: DIGEST,
+    documentVersion: 2,
+    signingKeyId: "signer-1",
+    permittedApiOrigin: "https://api.claimguard.example",
+    environment: "production",
+    activatedAt: NOW,
+    expiresAt: new Date("2027-08-01T00:00:00.000Z"),
+    offlineGraceExpiresAt: new Date("2026-08-07T00:00:00.000Z"),
+  }), true);
   assert.equal(await repository.revokeDevice({
     deviceEnrollmentId: "device-1", organisationId: "org-1", revokedBy: "actor-1", revokedAt: NOW,
   }), true);

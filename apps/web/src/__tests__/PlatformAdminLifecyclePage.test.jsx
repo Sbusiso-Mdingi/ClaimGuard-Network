@@ -169,6 +169,15 @@ function configureApi() {
         credentials: [],
       });
     }
+    if (path === "/admin/desktop/organisations/org-ubuntu") {
+      return Promise.resolve({
+        policy: { deviceLimit: 25, configured: true, source: "licensed" },
+        usage: { activeDevices: 4, deviceLimit: 25, remainingCapacity: 21, overLimit: false, enrollmentBlocked: false },
+        devices: [],
+        activationKeys: [],
+        auditHistory: [],
+      });
+    }
     return Promise.reject(new Error(`Unexpected request: ${path}`));
   });
 }

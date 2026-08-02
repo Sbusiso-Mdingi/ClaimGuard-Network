@@ -4,7 +4,9 @@
 
 The Windows application is distributed to medical schemes. Scheme users, including scheme administrators, may authenticate on a device enrolled to their immutable medical-scheme organisation and receive only their server-authorised operational capabilities.
 
-ClaimGuard platform administrators are web-only. Desktop login rejects a platform organisation or `platform_administrator` role with the generic desktop authentication response. Activation-key issuance, device policy, fleet revocation, and audit management remain in the browser application.
+ClaimGuard platform administrators are web-only. Desktop login rejects a platform organisation or `platform_administrator` role with the generic desktop authentication response. Platform administrators set each medical scheme's explicit licensed computer allowance in the browser. Scheme administrators review usage and manage activation keys and device revocation within that allowance.
+
+Production has no implicit five-computer licence. A missing stored policy blocks key issuance and enrollment until a platform administrator configures an allowance from 1 to 10,000. Five remains only the non-production test/pilot fallback. Reducing an allowance never revokes an active device; it blocks new enrollment and reports the scheme as over-limit until usage falls within the licence.
 
 ## Live API
 
@@ -44,12 +46,12 @@ Do not put the private key, pepper, cursor secret, session material, or database
 1. Generate and escrow the activation pepper, cursor secret, and Ed25519 enrollment key under the production operator boundary.
 2. Add the three secrets to the production Key Vault and bind version-pinned Key Vault references plus the public origin/key ID to `claimguard-api` as one reviewed change.
 3. Obtain the required independent approval for the pending desktop-readiness pull request and merge it to `main`.
-4. Run the governed production deployment for the exact reviewed main SHA. It applies control-plane migration `0016_desktop_device_enrollment.sql`, deploys the API, and requires desktop readiness to become true.
+4. Run the governed production deployment for the exact reviewed main SHA. It applies control-plane migrations `0016_desktop_device_enrollment.sql` and `0017_desktop_fleet_policy.sql`, deploys the API, and requires desktop readiness to become true.
 5. Create the protected `desktop-pilot` GitHub environment with required reviewers and these public variables:
    - `DESKTOP_ACTIVATION_ORIGIN=https://claimguard-api.azurewebsites.net`
    - `DESKTOP_ENROLLMENT_VERIFYING_JWK=<matching public Ed25519 JWK including kid>`
 6. Dispatch `desktop-live-pilot` for the exact main SHA with `BUILD LIVE DESKTOP PILOT`.
-7. A scheme administrator uses the web application to issue a one-time activation key. Install the pilot on a controlled scheme Windows device and verify activation, scheme-admin login, analyst login, platform-admin rejection, sync, offline expiry, reset, and web-driven revocation.
+7. A platform administrator sets the pilot scheme allowance. A scheme administrator then uses the web application to issue a one-time activation key. Install the pilot on a controlled scheme Windows device and verify activation, scheme-admin login, analyst login, platform-admin rejection, sync, offline expiry, reset, web-driven revocation, and explicit re-enrollment with a fresh key.
 8. Discard the pilot before broad distribution. It is deliberately not Authenticode signed and uses a disposable updater key, so it cannot transition into the production updater chain.
 
 ## Production Distribution
