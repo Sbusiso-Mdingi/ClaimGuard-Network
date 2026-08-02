@@ -10,6 +10,7 @@ on:
       - "packages/database/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "tools/verify-windows-gui-subsystem.ps1"
       - ".github/workflows/desktop-windows.yml"
   push:
     branches: [main]
@@ -21,6 +22,7 @@ on:
       - "packages/database/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "tools/verify-windows-gui-subsystem.ps1"
       - ".github/workflows/desktop-windows.yml"
   workflow_dispatch:
 
@@ -106,6 +108,7 @@ jobs:
       - name: Normalize and verify installer artifact
         shell: pwsh
         run: |
+          & "tools/verify-windows-gui-subsystem.ps1" -ExecutablePath "apps/desktop/src-tauri/target/release/claim-guard-desktop.exe"
           New-Item -ItemType Directory -Force artifacts | Out-Null
           $installers = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe")
           if ($installers.Count -ne 1) { throw "Expected exactly one NSIS setup executable." }

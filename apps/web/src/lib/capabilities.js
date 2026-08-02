@@ -24,7 +24,14 @@ export function hasAnyCapability(identity, capabilities = []) {
 }
 
 export function defaultRouteForIdentity(identity) {
-  if (hasCapability(identity, "tenants.manage")) {
+  if (hasAnyCapability(identity, [
+    "tenants.manage",
+    "platform_health.view",
+    "platform_releases.view",
+    "platform_releases.request",
+    "platform_releases.approve",
+    "platform_administrators.manage",
+  ])) {
     return "/admin/platform";
   }
   if (hasCapability(identity, "users.manage_tenant")) {
