@@ -47,7 +47,12 @@ const NAV_ICONS = Object.freeze({
   history: FileClock,
   committee: SearchCheck,
   "scheme-admin": Building2,
-  "platform-admin": Settings,
+  "platform-overview": LayoutDashboard,
+  "platform-schemes": Building2,
+  "platform-integrations": Network,
+  "platform-releases": FileClock,
+  "platform-administrators": ShieldCheck,
+  "platform-detection": Settings,
 });
 
 export function InvestigatorLayout({ ledgerStatus }) {
@@ -251,7 +256,7 @@ export function InvestigatorLayout({ ledgerStatus }) {
                         <NavLink
                           key={item.to}
                           to={item.to}
-                          end={item.to === "/dashboard"}
+                          end={Boolean(item.end || item.to === "/dashboard")}
                           title={sidebarCollapsed ? item.label : undefined}
                           className={({ isActive }) =>
                             [

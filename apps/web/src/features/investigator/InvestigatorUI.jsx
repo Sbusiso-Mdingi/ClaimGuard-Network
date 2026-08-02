@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
+import Copy from "lucide-react/dist/esm/icons/copy.mjs";
+import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 
 export function formatEnumLabel(value, fallback = "Unknown") {
@@ -238,6 +240,43 @@ export function DefinitionList({ items = [], columns = 2, className = "" }) {
   );
 }
 
+export function CopyableIdentifier({ value, label = "identifier", compact = false }) {
+  const [copied, setCopied] = useState(false);
+  const normalizedValue = String(value || "");
+
+  async function copyValue() {
+    if (!normalizedValue || !navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(normalizedValue);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  if (!normalizedValue) return <span>Not available</span>;
+
+  return (
+    <span className={`flex min-w-0 items-start gap-2 ${compact ? "max-w-sm" : ""}`}>
+      <code className="min-w-0 flex-1 break-all font-data text-xs leading-5" title={normalizedValue}>
+        {normalizedValue}
+      </code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 shrink-0 px-2 text-[10px]"
+        aria-label={`Copy ${label}`}
+        onClick={copyValue}
+      >
+        <Copy className="mr-1 h-3 w-3" aria-hidden="true" />
+        {copied ? "Copied" : "Copy"}
+      </Button>
+    </span>
+  );
+}
+
 export function FormField({ label, htmlFor, hint, error, children }) {
   const generatedId = React.useId().replace(/:/g, "");
   const controlId = htmlFor || children?.props?.id || `field-${generatedId}`;
@@ -262,13 +301,32 @@ export function FormField({ label, htmlFor, hint, error, children }) {
   );
 }
 
-export function DataTableShell({ ariaLabel, children, minWidth = "760px" }) {
+export function DataTableShell({ ariaLabel, children, minWidth = "760px", maxHeight }) {
   return (
-    <div className="overflow-x-auto investigator-scrollbar">
+    <div
+      role="region"
+      aria-label={`${ariaLabel} scroll area`}
+      tabIndex={0}
+      className="relative min-w-0 max-w-full overflow-auto rounded-lg border border-border/60 investigator-scrollbar"
+      style={maxHeight ? { maxHeight } : undefined}
+    >
       <table aria-label={ariaLabel} className="investigator-table w-full" style={{ minWidth }}>
         {children}
       </table>
     </div>
+  );
+}
+
+export function TablePagination({ page, pageCount, onPageChange, itemLabel = "items" }) {
+  if (pageCount <= 1) return null;
+  return (
+    <nav aria-label={`${itemLabel} pagination`} className="flex flex-wrap items-center justify-between gap-3">
+      <p className="text-xs text-muted-foreground">Page {page} of {pageCount}</p>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>Previous</Button>
+        <Button type="button" variant="outline" size="sm" disabled={page >= pageCount} onClick={() => onPageChange(page + 1)}>Next</Button>
+      </div>
+    </nav>
   );
 }
 

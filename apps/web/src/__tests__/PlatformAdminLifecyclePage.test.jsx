@@ -10,7 +10,12 @@ vi.mock("../lib/apiClient", () => ({
 }));
 
 import { apiJson } from "../lib/apiClient";
-import { PlatformAdminPage } from "../features/investigator/PlatformAdminPage";
+import {
+  PlatformDetectionEnginePage,
+  PlatformIntegrationsPage,
+  PlatformReleasesPage,
+  PlatformSchemesPage,
+} from "../features/investigator/PlatformAdminPage";
 
 const organisations = [{
   organisationId: "org-ubuntu",
@@ -168,7 +173,7 @@ function configureApi() {
   });
 }
 
-describe("PlatformAdminLifecyclePage", () => {
+describe("Platform operations workspaces", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     configureApi();
@@ -177,7 +182,7 @@ describe("PlatformAdminLifecyclePage", () => {
   afterEach(() => cleanup());
 
   test("preserves the draft organisation payload", async () => {
-    render(<PlatformAdminPage />);
+    render(<PlatformSchemesPage />);
     const user = userEvent.setup();
 
     await screen.findByText("Ubuntu Medical Scheme");
@@ -205,7 +210,7 @@ describe("PlatformAdminLifecyclePage", () => {
   });
 
   test("enables only valid lifecycle actions for an active scheme", async () => {
-    render(<PlatformAdminPage />);
+    render(<PlatformSchemesPage />);
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole("button", { name: /Ubuntu Medical Scheme/i }));
@@ -214,12 +219,22 @@ describe("PlatformAdminLifecyclePage", () => {
     expect(screen.getByRole("button", { name: /Request provisioning/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Upgrade data plane/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Activate organisation/i })).toBeDisabled();
-    expect(screen.getByText("/api/claims")).toBeInTheDocument();
+    expect(screen.queryByText("/api/claims")).not.toBeInTheDocument();
+  });
+
+  test("keeps claims-server credentials in their own focused workspace", async () => {
+    render(<PlatformIntegrationsPage />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /Ubuntu Medical Scheme/i }));
+
+    expect(await screen.findByText("/api/claims")).toBeInTheDocument();
     expect(screen.getByText(/No integration credentials/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Request provisioning/i })).not.toBeInTheDocument();
   });
 
   test("shows the deployment-authoritative managed model without an unsafe save action", async () => {
-    render(<PlatformAdminPage />);
+    render(<PlatformDetectionEnginePage />);
 
     expect((await screen.findAllByText("deployment-1")).length).toBeGreaterThan(0);
     expect(screen.getByText("ClaimGuard baseline")).toBeInTheDocument();
@@ -229,7 +244,7 @@ describe("PlatformAdminLifecyclePage", () => {
   });
 
   test("registers a checksum-pinned inactive model candidate", async () => {
-    render(<PlatformAdminPage />);
+    render(<PlatformDetectionEnginePage />);
     const user = userEvent.setup();
 
     await screen.findByText("ClaimGuard baseline");
@@ -320,7 +335,7 @@ describe("PlatformAdminLifecyclePage", () => {
       return Promise.reject(new Error(`Unexpected request: ${path}`));
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<PlatformAdminPage />);
+    render(<PlatformDetectionEnginePage />);
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole("button", {
@@ -349,11 +364,12 @@ describe("PlatformAdminLifecyclePage", () => {
   });
 
   test("shows immutable production provenance and requests promotion with step-up confirmation", async () => {
-    render(<PlatformAdminPage />);
+    render(<PlatformReleasesPage />);
     const user = userEvent.setup();
 
     expect(await screen.findByText("Production deployment")).toBeInTheDocument();
     expect(screen.getByText("b".repeat(40))).toBeInTheDocument();
+    expect(screen.getByText("33333333-3333-4333-8333-333333333333")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Run 98765/i })).toHaveAttribute(
       "href",
       "https://github.com/Sbusiso-Mdingi/ClaimGuard-Network/actions/runs/98765",

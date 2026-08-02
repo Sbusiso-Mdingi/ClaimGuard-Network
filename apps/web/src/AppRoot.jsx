@@ -32,7 +32,12 @@ const InvestigationsPage = lazyNamed(() => import("./features/investigator/Inves
 const InvestigationWorkspacePage = lazyNamed(() => import("./features/investigator/InvestigationWorkspacePage"), "InvestigationWorkspacePage");
 const CommitteeRegistryPage = lazyNamed(() => import("./features/investigator/CommitteeRegistryPage"), "CommitteeRegistryPage");
 const SchemeAdminPage = lazyNamed(() => import("./features/investigator/SchemeAdminPage"), "SchemeAdminPage");
-const PlatformAdminPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformAdminPage");
+const PlatformOperationsOverviewPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformOperationsOverviewPage");
+const PlatformSchemesPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformSchemesPage");
+const PlatformIntegrationsPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformIntegrationsPage");
+const PlatformReleasesPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformReleasesPage");
+const PlatformAdministratorsPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformAdministratorsPage");
+const PlatformDetectionEnginePage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformDetectionEnginePage");
 const ProfilePage = lazyNamed(() => import("./features/auth/ProfilePage"), "ProfilePage");
 
 function StatusScreen({ title, description, actionLabel, onAction }) {
@@ -86,7 +91,12 @@ function InvestigatorRoutes() {
           <Route path="investigations/:investigationId" element={<RequireRoleAccess navKey="investigations"><InvestigationWorkspacePage /></RequireRoleAccess>} />
           <Route path="committee" element={<RequireRoleAccess navKey="committee"><CommitteeRegistryPage /></RequireRoleAccess>} />
           <Route path="admin/scheme" element={<RequireRoleAccess navKey="scheme-admin"><SchemeAdminPage /></RequireRoleAccess>} />
-          <Route path="admin/platform" element={<RequireRoleAccess navKey="platform-admin"><PlatformAdminPage /></RequireRoleAccess>} />
+          <Route path="admin/platform" element={<RequireRoleAccess navKey="platform-overview"><PlatformOperationsOverviewPage /></RequireRoleAccess>} />
+          <Route path="admin/platform/schemes" element={<RequireRoleAccess navKey="platform-schemes"><PlatformSchemesPage /></RequireRoleAccess>} />
+          <Route path="admin/platform/integrations" element={<RequireRoleAccess navKey="platform-integrations"><PlatformIntegrationsPage /></RequireRoleAccess>} />
+          <Route path="admin/platform/releases" element={<RequireRoleAccess navKey="platform-releases"><PlatformReleasesPage /></RequireRoleAccess>} />
+          <Route path="admin/platform/administrators" element={<RequireRoleAccess navKey="platform-administrators"><PlatformAdministratorsPage /></RequireRoleAccess>} />
+          <Route path="admin/platform/detection-engine" element={<RequireRoleAccess navKey="platform-detection"><PlatformDetectionEnginePage /></RequireRoleAccess>} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="access" element={<StatusScreen title="No workspace access" description="This account is authenticated but has no ClaimGuard workspace capabilities. Ask an administrator to review its organisation membership and roles." />} />
           <Route path="*" element={<Navigate to="/" replace />} />

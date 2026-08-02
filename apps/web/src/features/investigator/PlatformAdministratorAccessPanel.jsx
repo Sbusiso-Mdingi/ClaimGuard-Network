@@ -9,13 +9,17 @@ import { Input } from "../../components/ui/input";
 import { ApiError, apiJson, safeApiErrorMessage } from "../../lib/apiClient";
 import {
   DataTableShell,
+  CopyableIdentifier,
   EmptyState,
   FormField,
   SectionCard,
   StatusIndicator,
+  TablePagination,
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
+
+const INVITATION_PAGE_SIZE = 10;
 
 function formatTimestamp(value) {
   if (!value) return "Not recorded";
@@ -158,6 +162,7 @@ export function PlatformAdministratorAccessPanel() {
   const [reviewedEmail, setReviewedEmail] = useState("");
   const [invitationUrl, setInvitationUrl] = useState("");
   const [revocation, setRevocation] = useState(null);
+  const [invitationPage, setInvitationPage] = useState(1);
 
   const loadAccess = useCallback(() => {
     setLoading(true);
@@ -179,6 +184,16 @@ export function PlatformAdministratorAccessPanel() {
     () => inviteEmail.trim().toLowerCase(),
     [inviteEmail],
   );
+  const invitations = access?.invitations || [];
+  const invitationPageCount = Math.max(1, Math.ceil(invitations.length / INVITATION_PAGE_SIZE));
+  const visibleInvitations = useMemo(() => {
+    const start = (invitationPage - 1) * INVITATION_PAGE_SIZE;
+    return invitations.slice(start, start + INVITATION_PAGE_SIZE);
+  }, [invitationPage, invitations]);
+
+  useEffect(() => {
+    setInvitationPage((current) => Math.min(current, invitationPageCount));
+  }, [invitationPageCount]);
 
   async function createInvitation(values) {
     if (!reviewedEmail) return;
@@ -373,17 +388,20 @@ export function PlatformAdministratorAccessPanel() {
                 compact
               />
             ) : (
-              <div className="divide-y divide-border/70 rounded-xl border border-border/70">
+              <div className="max-h-[32rem] divide-y divide-border/70 overflow-auto rounded-xl border border-border/70 investigator-scrollbar">
                 {access.administrators.map((administrator) => (
                   <div
                     key={administrator.userId}
                     className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <p className="font-semibold">{administrator.displayName}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {administrator.canonicalContact}
                       </p>
+                      <div className="mt-1">
+                        <CopyableIdentifier value={administrator.userId} label="platform administrator ID" compact />
+                      </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusIndicator
@@ -392,9 +410,6 @@ export function PlatformAdministratorAccessPanel() {
                       >
                         {formatEnumLabel(administrator.userStatus)}
                       </StatusIndicator>
-                      <code className="font-data text-[10px] text-muted-foreground">
-                        {String(administrator.userId || "").slice(0, 8)}
-                      </code>
                     </div>
                   </div>
                 ))}
@@ -418,57 +433,62 @@ export function PlatformAdministratorAccessPanel() {
               compact
             />
           ) : (
-            <DataTableShell
-              ariaLabel="Platform administrator invitation history"
-              minWidth="860px"
-            >
-              <thead>
-                <tr>
-                  <th scope="col">Email</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Invited</th>
-                  <th scope="col">Expires</th>
-                  <th scope="col">Invited by</th>
-                  <th scope="col">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {access.invitations.map((invitation) => (
-                  <tr key={invitation.invitationId}>
-                    <td>{invitation.email}</td>
-                    <td>
-                      <StatusIndicator
-                        variant="badge"
-                        tone={invitationTone(invitation.status)}
-                      >
-                        {formatEnumLabel(invitation.status)}
-                      </StatusIndicator>
-                    </td>
-                    <td>{formatTimestamp(invitation.createdAt)}</td>
-                    <td>{formatTimestamp(invitation.expiresAt)}</td>
-                    <td className="font-data text-xs">
-                      {invitation.invitedBy || "Not recorded"}
-                    </td>
-                    <td>
-                      {invitation.status === "pending" ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setRevocation(invitation)}
-                        >
-                          Revoke
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          No action available
-                        </span>
-                      )}
-                    </td>
+            <div className="grid gap-3">
+              <DataTableShell
+                ariaLabel="Platform administrator invitation history"
+                minWidth="980px"
+                maxHeight="520px"
+              >
+                <thead>
+                  <tr>
+                    <th scope="col">Email & invitation ID</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Invited</th>
+                    <th scope="col">Expires</th>
+                    <th scope="col">Invited by</th>
+                    <th scope="col">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </DataTableShell>
+                </thead>
+                <tbody>
+                  {visibleInvitations.map((invitation) => (
+                    <tr key={invitation.invitationId}>
+                      <td>
+                        <p>{invitation.email}</p>
+                        <div className="mt-1"><CopyableIdentifier value={invitation.invitationId} label="platform administrator invitation ID" compact /></div>
+                      </td>
+                      <td>
+                        <StatusIndicator
+                          variant="badge"
+                          tone={invitationTone(invitation.status)}
+                        >
+                          {formatEnumLabel(invitation.status)}
+                        </StatusIndicator>
+                      </td>
+                      <td>{formatTimestamp(invitation.createdAt)}</td>
+                      <td>{formatTimestamp(invitation.expiresAt)}</td>
+                      <td>{invitation.invitedBy ? <CopyableIdentifier value={invitation.invitedBy} label="inviter ID" compact /> : "Not recorded"}</td>
+                      <td>
+                        {invitation.status === "pending" ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setRevocation(invitation)}
+                          >
+                            Revoke
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            No action available
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </DataTableShell>
+              <TablePagination page={invitationPage} pageCount={invitationPageCount} onPageChange={setInvitationPage} itemLabel="administrator invitations" />
+            </div>
           )}
         </div>
       </div>
@@ -487,8 +507,8 @@ export function PlatformAdministratorAccessPanel() {
 
       {revocation ? (
         <AdministratorStepUpDialog
-          title={`Revoke invitation ${revocation.invitationId.slice(0, 8)}`}
-          description={`This prevents ${revocation.email} from using the pending one-time link.`}
+          title="Revoke platform administrator invitation"
+          description={<>This prevents {revocation.email} from using the pending one-time link. Invitation ID: <code className="break-all font-data text-xs">{revocation.invitationId}</code></>}
           confirmation={revocation.revocationConfirmation}
           submitLabel="Revoke invitation"
           submitting={submitting}

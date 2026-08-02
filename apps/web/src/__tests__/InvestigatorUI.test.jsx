@@ -1,11 +1,14 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, test, vi } from "vitest";
 import {
+  CopyableIdentifier,
   DataTableShell,
   DefinitionList,
   EmptyState,
   WorkspaceNotice,
+  TablePagination,
   formatEnumLabel,
 } from "../features/investigator/InvestigatorUI";
 
@@ -35,7 +38,7 @@ describe("InvestigatorUI workspace primitives", () => {
     render(
       <div>
         <DefinitionList items={[{ label: "Operational tenant", value: "tenant-1", mono: true }]} />
-        <DataTableShell ariaLabel="Claims summary">
+        <DataTableShell ariaLabel="Claims summary" maxHeight="320px">
           <thead><tr><th>Claim</th></tr></thead>
           <tbody><tr><td>C-1</td></tr></tbody>
         </DataTableShell>
@@ -45,5 +48,30 @@ describe("InvestigatorUI workspace primitives", () => {
     expect(screen.getByText("Operational tenant")).toBeInTheDocument();
     expect(screen.getByText("tenant-1")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Claims summary" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Claims summary scroll area" })).toHaveStyle({ maxHeight: "320px" });
+  });
+
+  test("shows complete copyable identifiers and paginates bounded histories", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const onPageChange = vi.fn();
+    const identifier = "33333333-3333-4333-8333-333333333333";
+
+    render(
+      <div>
+        <CopyableIdentifier value={identifier} label="promotion request ID" />
+        <TablePagination page={2} pageCount={4} onPageChange={onPageChange} itemLabel="promotion requests" />
+      </div>,
+    );
+
+    expect(screen.getByText(identifier)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy promotion request ID" }));
+    expect(writeText).toHaveBeenCalledWith(identifier);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(onPageChange).toHaveBeenCalledWith(3);
   });
 });
