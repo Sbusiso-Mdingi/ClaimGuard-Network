@@ -17,12 +17,12 @@ use enrollment::{
     verify_enrollment, EnrollmentDocument, PublicJwk,
 };
 use error::{DesktopError, DesktopResult};
-use http_client::DesktopHttpClient;
+use http_client::{DesktopHttpClient, VersionedEnrollment};
 use rand::{rngs::OsRng, RngCore};
 use reqwest::Method;
 use secure_store::{
     SecureStore, CACHE_KEY, DEVICE_PRIVATE_KEY, ENROLLMENT_DOCUMENT, INSTALLATION_ID,
-    SESSION_COOKIE,
+    SESSION_COOKIE, SESSION_PROFILE,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -88,6 +88,35 @@ impl DesktopState {
         Ok(expiry.timestamp() <= Utc::now().timestamp())
     }
 
+    fn session_profile(&self) -> DesktopResult<Option<Value>> {
+        self.secure_store
+            .get(SESSION_PROFILE)?
+            .map(|value| {
+                serde_json::from_slice::<Value>(&value).map_err(|_| DesktopError::CredentialStore)
+            })
+            .transpose()
+    }
+
+    fn profile_has_capability(profile: Option<&Value>, capability: &str) -> bool {
+        profile
+            .and_then(|value| value.get("clientCapabilities"))
+            .and_then(Value::as_array)
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| value.as_str() == Some(capability))
+            })
+    }
+
+    fn require_capability(&self, capability: &str) -> DesktopResult<()> {
+        let profile = self.session_profile()?;
+        if Self::profile_has_capability(profile.as_ref(), capability) {
+            Ok(())
+        } else {
+            Err(DesktopError::CapabilityDenied)
+        }
+    }
+
     fn status(&self) -> DesktopResult<Value> {
         let enrollment = match self.load_enrollment() {
             Ok((document, _, _)) => document,
@@ -103,27 +132,59 @@ impl DesktopState {
         let locked = self.locked.load(Ordering::SeqCst);
         let session_exists = self.secure_store.get(SESSION_COOKIE)?.is_some();
         let authenticated = session_exists && !locked;
-        let (claims, dashboard, last_sync, freshness) = if authenticated {
-            let cache = self.open_cache(&enrollment)?;
-            let last_sync = cache.last_successful_sync_at()?;
-            let allowed_freshness = cache.claims_freshness_seconds()?;
-            let freshness = if self.offline.load(Ordering::SeqCst) {
-                "Offline"
-            } else if last_sync
-                .as_deref()
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                .is_some_and(|value| {
-                    Utc::now().timestamp() - value.timestamp() <= allowed_freshness
-                })
-            {
-                "Fresh"
-            } else {
-                "Stale"
-            };
-            (cache.claims()?, cache.dashboard()?, last_sync, freshness)
+        let session = if authenticated {
+            self.session_profile()?
         } else {
-            (Vec::new(), None, None, "Stale")
+            None
         };
+        let can_view_claims = Self::profile_has_capability(session.as_ref(), "claims.view_own");
+        let can_view_investigations =
+            Self::profile_has_capability(session.as_ref(), "investigations.view");
+        let (claims, investigations, dashboard, suspicious_network, last_sync, freshness) =
+            if authenticated {
+                let cache = self.open_cache(&enrollment)?;
+                let last_sync = cache.last_successful_sync_at()?;
+                let allowed_freshness = cache.claims_freshness_seconds()?;
+                let freshness = if self.offline.load(Ordering::SeqCst) {
+                    "Offline"
+                } else if last_sync
+                    .as_deref()
+                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                    .is_some_and(|value| {
+                        Utc::now().timestamp() - value.timestamp() <= allowed_freshness
+                    })
+                {
+                    "Fresh"
+                } else {
+                    "Stale"
+                };
+                (
+                    if can_view_claims {
+                        cache.claims()?
+                    } else {
+                        Vec::new()
+                    },
+                    if can_view_investigations {
+                        cache.investigations()?
+                    } else {
+                        Vec::new()
+                    },
+                    if can_view_claims {
+                        cache.dashboard()?
+                    } else {
+                        None
+                    },
+                    if can_view_claims {
+                        cache.suspicious_network()?
+                    } else {
+                        None
+                    },
+                    last_sync,
+                    freshness,
+                )
+            } else {
+                (Vec::new(), Vec::new(), None, None, None, "Stale")
+            };
         Ok(json!({
             "activationRequired": false,
             "authenticated": authenticated,
@@ -140,8 +201,11 @@ impl DesktopState {
                 "freshness": freshness,
                 "lastSuccessfulSyncAt": last_sync,
                 "claims": claims,
+                "investigations": investigations,
                 "dashboard": dashboard,
+                "suspiciousNetwork": suspicious_network,
             },
+            "session": session,
             "syncHasMore": self.sync_has_more.load(Ordering::SeqCst),
         }))
     }
@@ -326,10 +390,32 @@ async fn desktop_login(
             return Err(DesktopError::OrganisationMismatch);
         }
         let session_cookie = response.session_cookie.ok_or(DesktopError::InvalidResponse)?;
+        let client_capabilities = response
+            .body
+            .get("clientCapabilities")
+            .and_then(Value::as_array)
+            .ok_or(DesktopError::InvalidResponse)?;
+        let roles = response
+            .body
+            .get("roles")
+            .and_then(Value::as_array)
+            .ok_or(DesktopError::InvalidResponse)?;
+        if !client_capabilities.iter().all(Value::is_string) || !roles.iter().all(Value::is_string) {
+            return Err(DesktopError::InvalidResponse);
+        }
+        let session_profile = json!({
+            "user": response.body.get("user").cloned().unwrap_or(Value::Null),
+            "account": response.body.get("account").cloned().unwrap_or(Value::Null),
+            "roles": roles,
+            "clientCapabilities": client_capabilities,
+        });
+        let session_profile = serde_json::to_vec(&session_profile)
+            .map_err(|_| DesktopError::InvalidResponse)?;
         state
             .secure_store
             .set(ENROLLMENT_DOCUMENT, renewed.as_bytes())?;
         state.secure_store.set(SESSION_COOKIE, session_cookie.as_bytes())?;
+        state.secure_store.set(SESSION_PROFILE, &session_profile)?;
         state.locked.store(false, Ordering::SeqCst);
         state.offline.store(false, Ordering::SeqCst);
         state.status()
@@ -360,6 +446,7 @@ async fn desktop_logout(state: State<'_, DesktopState>) -> Result<Value, String>
                 }
             }
             state.secure_store.delete(SESSION_COOKIE)?;
+            state.secure_store.delete(SESSION_PROFILE)?;
             state.locked.store(true, Ordering::SeqCst);
             state.status()
         }
@@ -426,7 +513,8 @@ async fn synchronize_desktop(state: State<'_, DesktopState>) -> Result<Value, St
             let (page, replace_scope) = match requested {
                 Ok(value) => value,
                 Err(DesktopError::ServerRejected(message))
-                    if message.starts_with("DESKTOP_CURSOR_EXPIRED:") =>
+                    if message.starts_with("DESKTOP_CURSOR_EXPIRED:")
+                        || message.starts_with("DESKTOP_CURSOR_CAPABILITY_CHANGED:") =>
                 {
                     request_sync_page(&state, &enrollment, &signing_key, cookie, None).await?
                 }
@@ -479,6 +567,7 @@ async fn desktop_claim_details(
     command_result(
         async {
             state.require_unlocked()?;
+            state.require_capability("claims.view_own")?;
             if claim_id.trim().is_empty() || claim_id.len() > 512 {
                 return Err(DesktopError::InvalidResponse);
             }
@@ -521,6 +610,165 @@ async fn desktop_claim_details(
                 }
                 Err(error) => Err(error),
             }
+        }
+        .await,
+    )
+}
+
+#[tauri::command]
+async fn desktop_investigation_details(
+    investigation_id: String,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    command_result(
+        async {
+            state.require_unlocked()?;
+            state.require_capability("investigations.view")?;
+            if investigation_id.trim().is_empty() || investigation_id.len() > 64 {
+                return Err(DesktopError::InvalidResponse);
+            }
+            let (enrollment, signing_key, _) = state.load_enrollment()?;
+            let mut cache = state.open_cache(&enrollment)?;
+            if state.offline.load(Ordering::SeqCst) {
+                return cache
+                    .investigation_detail(&investigation_id)?
+                    .ok_or(DesktopError::NetworkUnavailable);
+            }
+            let cookie = state
+                .secure_store
+                .get(SESSION_COOKIE)?
+                .ok_or(DesktopError::AuthenticationRequired)?;
+            let cookie = std::str::from_utf8(&cookie).map_err(|_| DesktopError::CredentialStore)?;
+            let encoded: String =
+                url::form_urlencoded::byte_serialize(investigation_id.as_bytes()).collect();
+            match state
+                .http
+                .enrolled(
+                    Method::GET,
+                    &format!("/desktop/investigations/{encoded}"),
+                    Vec::new(),
+                    &enrollment,
+                    &signing_key,
+                    Some(cookie),
+                )
+                .await
+            {
+                Ok(response) => {
+                    cache.store_investigation_detail(&investigation_id, &response.body)?;
+                    state.offline.store(false, Ordering::SeqCst);
+                    Ok(response.body)
+                }
+                Err(DesktopError::NetworkUnavailable) => {
+                    state.offline.store(true, Ordering::SeqCst);
+                    cache
+                        .investigation_detail(&investigation_id)?
+                        .ok_or(DesktopError::NetworkUnavailable)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        .await,
+    )
+}
+
+#[derive(Serialize)]
+struct InvestigationUpdateRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<&'a str>,
+}
+
+#[tauri::command]
+async fn desktop_update_investigation(
+    investigation_id: String,
+    expected_updated_at: String,
+    status: Option<String>,
+    priority: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    command_result(
+        async {
+            state.require_unlocked()?;
+            if investigation_id.trim().is_empty()
+                || investigation_id.len() > 64
+                || DateTime::parse_from_rfc3339(&expected_updated_at).is_err()
+                || (status.is_none() && priority.is_none())
+            {
+                return Err(DesktopError::InvalidResponse);
+            }
+            let allowed_statuses = [
+                "OPEN",
+                "UNDER_REVIEW",
+                "AWAITING_EVIDENCE",
+                "CONFIRMED_FRAUD",
+                "REVERSED",
+                "NO_FRAUD_FOUND",
+                "CLOSED",
+            ];
+            let allowed_priorities = ["LOW", "NORMAL", "HIGH", "CRITICAL"];
+            if status
+                .as_deref()
+                .is_some_and(|value| !allowed_statuses.contains(&value))
+                || priority
+                    .as_deref()
+                    .is_some_and(|value| !allowed_priorities.contains(&value))
+            {
+                return Err(DesktopError::InvalidResponse);
+            }
+            if status.is_some() {
+                state.require_capability("investigations.update_status")?;
+            }
+            if priority.is_some() {
+                state.require_capability("investigations.change_priority")?;
+            }
+            let (enrollment, signing_key, _) = state.load_enrollment()?;
+            let cookie = state
+                .secure_store
+                .get(SESSION_COOKIE)?
+                .ok_or(DesktopError::AuthenticationRequired)?;
+            let cookie = std::str::from_utf8(&cookie).map_err(|_| DesktopError::CredentialStore)?;
+            let body = serde_json::to_vec(&InvestigationUpdateRequest {
+                status: status.as_deref(),
+                priority: priority.as_deref(),
+            })
+            .map_err(|_| DesktopError::InvalidResponse)?;
+            let encoded: String =
+                url::form_urlencoded::byte_serialize(investigation_id.as_bytes()).collect();
+            let response = match state
+                .http
+                .enrolled_versioned(
+                    Method::PATCH,
+                    &format!("/desktop/investigations/{encoded}"),
+                    body,
+                    VersionedEnrollment {
+                        enrollment: &enrollment,
+                        signing_key: &signing_key,
+                        session_cookie: Some(cookie),
+                        expected_version: &expected_updated_at,
+                    },
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(DesktopError::NetworkUnavailable) => {
+                    state.offline.store(true, Ordering::SeqCst);
+                    return Err(DesktopError::NetworkUnavailable);
+                }
+                Err(error) => return Err(error),
+            };
+            let investigation = response
+                .body
+                .get("investigation")
+                .cloned()
+                .ok_or(DesktopError::InvalidResponse)?;
+            let mut cache = state.open_cache(&enrollment)?;
+            cache.apply_investigation_update(&response.body)?;
+            state.offline.store(false, Ordering::SeqCst);
+            Ok(json!({
+                "status": state.status()?,
+                "investigation": investigation,
+            }))
         }
         .await,
     )
@@ -594,6 +842,8 @@ pub fn run() {
             lock_desktop,
             synchronize_desktop,
             desktop_claim_details,
+            desktop_investigation_details,
+            desktop_update_investigation,
             reset_desktop,
         ])
         .run(tauri::generate_context!())

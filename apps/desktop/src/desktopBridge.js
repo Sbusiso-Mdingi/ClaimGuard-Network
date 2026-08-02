@@ -18,6 +18,13 @@ export const desktopBridge = Object.freeze({
   lock: () => invokeImplementation("lock_desktop"),
   sync: () => invokeImplementation("synchronize_desktop"),
   claimDetails: (claimId) => invokeImplementation("desktop_claim_details", { claimId }),
+  investigationDetails: (investigationId) => invokeImplementation("desktop_investigation_details", { investigationId }),
+  updateInvestigation: (investigationId, expectedUpdatedAt, changes) => invokeImplementation("desktop_update_investigation", {
+    investigationId,
+    expectedUpdatedAt,
+    status: changes.status || null,
+    priority: changes.priority || null,
+  }),
   reset: (confirmation) => invokeImplementation("reset_desktop", { confirmation }),
 });
 

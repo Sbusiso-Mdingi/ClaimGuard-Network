@@ -17,8 +17,21 @@ function change(index, resource = "claim") {
 function context() {
   return {
     device: { organisationId: "org-alpha" },
-    authContext: { organisation_id: "org-alpha" },
+    authContext: {
+      organisation_id: "org-alpha",
+      permissions: new Set(["claims.view_own", "investigations.view"]),
+    },
     dataPlaneContext: { organisationId: "org-alpha", operationalTenantId: "tenant-alpha" },
+  };
+}
+
+function contextWithPermissions(permissions) {
+  return {
+    ...context(),
+    authContext: {
+      ...context().authContext,
+      permissions: new Set(permissions),
+    },
   };
 }
 
@@ -91,4 +104,63 @@ test("schema and three-way organisation scope mismatches fail before reads", asy
     (error) => error.code === "DESKTOP_ORGANISATION_MISMATCH",
   );
   assert.equal(reads, 0);
+});
+
+test("investigation changes are capability filtered without replaying hidden records", async () => {
+  const records = [change(1, "claim"), change(2, "investigation")];
+  const requestedWatermarks = [];
+  const repository = {
+    async listChanges({ watermarks }) {
+      requestedWatermarks.push(structuredClone(watermarks));
+      const afterClaim = watermarks?.claims?.id || "";
+      const afterInvestigation = watermarks?.investigations?.id || "";
+      return {
+        changes: records.filter((entry) => (
+          entry.resource === "claim" ? entry.id > afterClaim : entry.id > afterInvestigation
+        )),
+        hasMore: false,
+      };
+    },
+    async currentProjections() { return {}; },
+  };
+  const service = createDesktopSyncService({
+    cursorSecret: "capability-filter-secret-that-is-at-least-thirty-two-bytes",
+    now: () => new Date("2026-08-01T00:00:00.000Z"),
+  });
+
+  const claimsOnly = await service.bootstrap({
+    repository,
+    ...contextWithPermissions(["claims.view_own"]),
+    schemaVersion: 1,
+  });
+  assert.deepEqual(claimsOnly.changes.map((entry) => entry.resource), ["claim"]);
+  assert.equal(claimsOnly.page.count, 1);
+  assert.equal(claimsOnly.scope.activeInvestigationsRegardlessOfAge, false);
+
+  const replay = await service.changes({
+    repository,
+    ...contextWithPermissions(["claims.view_own"]),
+    cursor: claimsOnly.cursor,
+    schemaVersion: 1,
+  });
+  assert.deepEqual(replay.changes, []);
+  assert.equal(requestedWatermarks[1].investigations.id, "investigation-0002");
+
+  await assert.rejects(
+    () => service.changes({
+      repository,
+      ...contextWithPermissions(["claims.view_own", "investigations.view"]),
+      cursor: claimsOnly.cursor,
+      schemaVersion: 1,
+    }),
+    (error) => error.code === "DESKTOP_CURSOR_CAPABILITY_CHANGED" && error.details.recovery === "bootstrap",
+  );
+
+  const investigator = await service.bootstrap({
+    repository,
+    ...contextWithPermissions(["claims.view_own", "investigations.view"]),
+    schemaVersion: 1,
+  });
+  assert.deepEqual(investigator.changes.map((entry) => entry.resource), ["claim", "investigation"]);
+  assert.equal(investigator.scope.activeInvestigationsRegardlessOfAge, true);
 });

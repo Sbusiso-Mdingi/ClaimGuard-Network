@@ -225,7 +225,7 @@ impl EncryptedCache {
         let detail_cutoff = (Utc::now() - Duration::hours(24)).to_rfc3339();
         transaction
             .execute(
-                "DELETE FROM encrypted_records WHERE resource = 'claim_detail' AND updated_at < ?",
+                "DELETE FROM encrypted_records WHERE resource IN ('claim_detail', 'investigation_detail') AND updated_at < ?",
                 [detail_cutoff],
             )
             .map_err(|_| DesktopError::CacheUnavailable)?;
@@ -257,8 +257,16 @@ impl EncryptedCache {
         self.records("claim", 500)
     }
 
+    pub fn investigations(&self) -> DesktopResult<Vec<Value>> {
+        self.records("investigation", 500)
+    }
+
     pub fn dashboard(&self) -> DesktopResult<Option<Value>> {
         self.record("dashboard", "current")
+    }
+
+    pub fn suspicious_network(&self) -> DesktopResult<Option<Value>> {
+        self.record("suspicious_network", "current")
     }
 
     pub fn claim_detail(&self, claim_id: &str) -> DesktopResult<Option<Value>> {
@@ -281,6 +289,80 @@ impl EncryptedCache {
                 .unwrap_or("1970-01-01T00:00:00.000Z")
                 .into(),
             record: Some(value.clone()),
+        };
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|_| DesktopError::CacheUnavailable)?;
+        apply_change(&transaction, &self.cipher, &self.organisation_id, &change)?;
+        transaction
+            .commit()
+            .map_err(|_| DesktopError::CacheUnavailable)
+    }
+
+    pub fn investigation_detail(&self, investigation_id: &str) -> DesktopResult<Option<Value>> {
+        self.record("investigation_detail", investigation_id)
+    }
+
+    pub fn store_investigation_detail(
+        &mut self,
+        investigation_id: &str,
+        value: &Value,
+    ) -> DesktopResult<()> {
+        let updated_at = value
+            .pointer("/investigation/updatedAt")
+            .and_then(Value::as_str)
+            .ok_or(DesktopError::InvalidResponse)?;
+        let change = Change {
+            resource: "investigation_detail".into(),
+            operation: "upsert".into(),
+            id: investigation_id.into(),
+            version: updated_at.into(),
+            updated_at: value
+                .get("fetchedAt")
+                .and_then(Value::as_str)
+                .unwrap_or(updated_at)
+                .into(),
+            record: Some(value.clone()),
+        };
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|_| DesktopError::CacheUnavailable)?;
+        apply_change(&transaction, &self.cipher, &self.organisation_id, &change)?;
+        transaction
+            .commit()
+            .map_err(|_| DesktopError::CacheUnavailable)
+    }
+
+    pub fn apply_investigation_update(&mut self, value: &Value) -> DesktopResult<()> {
+        let investigation = value
+            .get("investigation")
+            .and_then(Value::as_object)
+            .ok_or(DesktopError::InvalidResponse)?;
+        let investigation_id = investigation
+            .get("investigationId")
+            .and_then(Value::as_str)
+            .ok_or(DesktopError::InvalidResponse)?;
+        let updated_at = investigation
+            .get("updatedAt")
+            .and_then(Value::as_str)
+            .ok_or(DesktopError::InvalidResponse)?;
+        let closed = investigation
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| status == "CLOSED");
+        let change = Change {
+            resource: "investigation".into(),
+            operation: if closed { "delete" } else { "upsert" }.into(),
+            id: investigation_id.into(),
+            version: updated_at.into(),
+            updated_at: updated_at.into(),
+            record: if closed {
+                None
+            } else {
+                Some(Value::Object(investigation.clone()))
+            },
         };
         let transaction = self
             .connection
@@ -394,7 +476,12 @@ fn apply_change(
 ) -> DesktopResult<()> {
     if !matches!(
         change.resource.as_str(),
-        "claim" | "investigation" | "dashboard" | "suspicious_network" | "claim_detail"
+        "claim"
+            | "investigation"
+            | "dashboard"
+            | "suspicious_network"
+            | "claim_detail"
+            | "investigation_detail"
     ) || change.id.is_empty()
         || change.id.len() > 512
         || change.version.len() > 256
@@ -402,6 +489,15 @@ fn apply_change(
         return Err(DesktopError::InvalidResponse);
     }
     let key = record_key(organisation, &change.resource, &change.id);
+    if change.resource == "investigation" {
+        let detail_key = record_key(organisation, "investigation_detail", &change.id);
+        transaction
+            .execute(
+                "DELETE FROM encrypted_records WHERE resource = 'investigation_detail' AND record_key = ?",
+                [detail_key],
+            )
+            .map_err(|_| DesktopError::CacheUnavailable)?;
+    }
     if change.operation == "delete" {
         transaction
             .execute(
@@ -720,5 +816,83 @@ mod tests {
         let claims = cache.claims().unwrap();
         assert_eq!(claims.len(), 1);
         assert_eq!(claims[0]["claimId"], "claim-2");
+    }
+
+    #[test]
+    fn investigation_updates_replace_compact_state_and_invalidate_cached_detail() {
+        let directory = tempdir().unwrap();
+        let mut cache = EncryptedCache::open(
+            &directory.path().join("cache.db"),
+            &[11; 32],
+            "org-a",
+            "device-a",
+        )
+        .unwrap();
+        let initial = Change {
+            resource: "investigation".into(),
+            operation: "upsert".into(),
+            id: "investigation-1".into(),
+            version: "2026-08-01T10:00:00.000Z".into(),
+            updated_at: "2026-08-01T10:00:00.000Z".into(),
+            record: Some(serde_json::json!({
+                "investigationId": "investigation-1",
+                "claimId": "claim-1",
+                "status": "OPEN",
+                "priority": "NORMAL",
+                "updatedAt": "2026-08-01T10:00:00.000Z"
+            })),
+        };
+        cache
+            .apply_sync_page(&page("cursor-1", vec![initial]), false)
+            .unwrap();
+        cache
+            .store_investigation_detail(
+                "investigation-1",
+                &serde_json::json!({
+                    "available": true,
+                    "fetchedAt": "2026-08-01T10:00:01.000Z",
+                    "investigation": {
+                        "investigationId": "investigation-1",
+                        "status": "OPEN",
+                        "updatedAt": "2026-08-01T10:00:00.000Z",
+                        "notes": [{"noteId": "note-1"}]
+                    }
+                }),
+            )
+            .unwrap();
+        assert!(cache
+            .investigation_detail("investigation-1")
+            .unwrap()
+            .is_some());
+
+        cache
+            .apply_investigation_update(&serde_json::json!({
+                "available": true,
+                "investigation": {
+                    "investigationId": "investigation-1",
+                    "claimId": "claim-1",
+                    "status": "UNDER_REVIEW",
+                    "priority": "HIGH",
+                    "updatedAt": "2026-08-01T10:05:00.000Z"
+                }
+            }))
+            .unwrap();
+        assert_eq!(cache.investigations().unwrap()[0]["status"], "UNDER_REVIEW");
+        assert!(cache
+            .investigation_detail("investigation-1")
+            .unwrap()
+            .is_none());
+
+        cache
+            .apply_investigation_update(&serde_json::json!({
+                "available": true,
+                "investigation": {
+                    "investigationId": "investigation-1",
+                    "status": "CLOSED",
+                    "updatedAt": "2026-08-01T10:10:00.000Z"
+                }
+            }))
+            .unwrap();
+        assert!(cache.investigations().unwrap().is_empty());
     }
 }

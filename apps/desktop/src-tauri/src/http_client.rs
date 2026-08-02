@@ -13,6 +13,20 @@ pub struct HttpResponse {
     pub session_cookie: Option<String>,
 }
 
+struct EnrolledSecurity<'a> {
+    enrollment: &'a EnrollmentDocument,
+    signing_key: &'a SigningKey,
+    session_cookie: Option<&'a str>,
+    expected_version: Option<&'a str>,
+}
+
+pub(crate) struct VersionedEnrollment<'a> {
+    pub enrollment: &'a EnrollmentDocument,
+    pub signing_key: &'a SigningKey,
+    pub session_cookie: Option<&'a str>,
+    pub expected_version: &'a str,
+}
+
 #[derive(Clone)]
 pub struct DesktopHttpClient {
     client: reqwest::Client,
@@ -31,7 +45,7 @@ impl DesktopHttpClient {
     }
 
     pub async fn activate(&self, body: Vec<u8>) -> DesktopResult<HttpResponse> {
-        self.send(Method::POST, "/desktop/activate", body, None, None, None)
+        self.send(Method::POST, "/desktop/activate", body, None)
             .await
     }
 
@@ -48,9 +62,33 @@ impl DesktopHttpClient {
             method,
             path_and_query,
             body,
-            Some(enrollment),
-            Some(signing_key),
-            session_cookie,
+            Some(EnrolledSecurity {
+                enrollment,
+                signing_key,
+                session_cookie,
+                expected_version: None,
+            }),
+        )
+        .await
+    }
+
+    pub async fn enrolled_versioned(
+        &self,
+        method: Method,
+        path_and_query: &str,
+        body: Vec<u8>,
+        versioned: VersionedEnrollment<'_>,
+    ) -> DesktopResult<HttpResponse> {
+        self.send(
+            method,
+            path_and_query,
+            body,
+            Some(EnrolledSecurity {
+                enrollment: versioned.enrollment,
+                signing_key: versioned.signing_key,
+                session_cookie: versioned.session_cookie,
+                expected_version: Some(versioned.expected_version),
+            }),
         )
         .await
     }
@@ -60,9 +98,7 @@ impl DesktopHttpClient {
         method: Method,
         path_and_query: &str,
         body: Vec<u8>,
-        enrollment: Option<&EnrollmentDocument>,
-        signing_key: Option<&SigningKey>,
-        session_cookie: Option<&str>,
+        security: Option<EnrolledSecurity<'_>>,
     ) -> DesktopResult<HttpResponse> {
         if !path_and_query.starts_with('/') || path_and_query.starts_with("//") {
             return Err(DesktopError::BuildConfiguration);
@@ -77,21 +113,24 @@ impl DesktopHttpClient {
             .request(method.clone(), parsed.clone())
             .header(header::ACCEPT, "application/json")
             .header(header::CONTENT_TYPE, "application/json");
-        if let (Some(document), Some(key)) = (enrollment, signing_key) {
+        if let Some(security) = &security {
             let htu = format!("{}{}", self.origin, parsed.path());
             request = request.header(
                 "DPoP",
                 create_device_proof(
-                    key,
-                    &document.device_enrollment_id,
+                    security.signing_key,
+                    &security.enrollment.device_enrollment_id,
                     method.as_str(),
                     &htu,
                     &body,
                 )?,
             );
         }
-        if let Some(cookie) = session_cookie {
+        if let Some(cookie) = security.as_ref().and_then(|value| value.session_cookie) {
             request = request.header(header::COOKIE, cookie);
+        }
+        if let Some(version) = security.as_ref().and_then(|value| value.expected_version) {
+            request = request.header(header::IF_MATCH, version);
         }
         if !body.is_empty() {
             request = request.body(body);

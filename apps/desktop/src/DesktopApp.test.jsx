@@ -20,8 +20,11 @@ function baseStatus(overrides = {}) {
       freshness: "Stale",
       lastSuccessfulSyncAt: "2026-08-01T00:00:00.000Z",
       claims: [],
+      investigations: [],
       dashboard: null,
+      suspiciousNetwork: null,
     },
+    session: null,
     ...overrides,
   };
 }
@@ -110,5 +113,234 @@ describe("ClaimGuard desktop cache behaviour", () => {
     expect(await screen.findByText("Offline data is read-only")).toBeInTheDocument();
     expect(screen.getByText("Offline", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText(/Investigation creation, notes, evidence/i)).toBeInTheDocument();
+  });
+
+  it("filters cached claims, opens authoritative detail, and follows a linked investigation", async () => {
+    const calls = [];
+    const linkedInvestigation = {
+      investigationId: "INV-LINKED-1",
+      claimId: "CLAIM-HIGH-1",
+      status: "UNDER_REVIEW",
+      priority: "HIGH",
+      assignedInvestigator: "investigator-alpha",
+      updatedAt: "2026-08-01T10:15:00.000Z",
+    };
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: {
+        freshness: "Fresh",
+        lastSuccessfulSyncAt: "2026-08-01T10:00:00.000Z",
+        claims: [
+          {
+            claimId: "CLAIM-HIGH-1",
+            serviceDate: "2026-07-30",
+            billedAmount: 2450,
+            billingCode: "PROC-HIGH",
+            status: "FLAGGED",
+            riskScore: 88,
+            investigation: linkedInvestigation,
+          },
+          {
+            claimId: "CLAIM-LOW-1",
+            serviceDate: "2026-07-29",
+            billedAmount: 180,
+            billingCode: "PROC-LOW",
+            status: "SCORED",
+            riskScore: 18,
+          },
+        ],
+        investigations: [linkedInvestigation],
+        dashboard: { summary: { totalClaims: 2, highRiskClaims: 1 } },
+        suspiciousNetwork: null,
+      },
+      session: { clientCapabilities: ["investigations.view"] },
+    });
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      if (command === "desktop_claim_details") {
+        return {
+          available: true,
+          fetchedAt: "2026-08-01T10:16:00.000Z",
+          claim: {
+            ...currentStatus.cache.claims[0],
+            submittedAt: "2026-07-30T08:00:00.000Z",
+            memberId: "member-token-1",
+            providerId: "provider-token-1",
+            processingStatus: "SCORED",
+            currentClaimVersion: 3,
+            evidence: ["Billing frequency exceeds the peer baseline."],
+            triggeredRules: ["FREQUENCY_SPIKE"],
+          },
+        };
+      }
+      if (command === "desktop_investigation_details") {
+        return { available: true, investigation: { ...linkedInvestigation, notes: [], evidence: [] } };
+      }
+      throw new Error(`unexpected ${command}`);
+    });
+
+    render(<DesktopApp />);
+    await userEvent.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
+    await userEvent.type(screen.getByLabelText("Search claims"), "PROC-HIGH");
+    await userEvent.selectOptions(screen.getByLabelText("Risk band"), "high");
+    expect(screen.getByText("Showing 1 of 2 cached claims")).toBeInTheDocument();
+    expect(screen.queryByText("CLAIM-LOW-1")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(await screen.findByText("Authoritative claim detail")).toBeInTheDocument();
+    expect(screen.getByText("Billing frequency exceeds the peer baseline.")).toBeInTheDocument();
+    expect(screen.getByText("Frequency Spike")).toBeInTheDocument();
+    expect(screen.getByText("member-token-1")).toBeInTheDocument();
+    expect(calls).toContainEqual(["desktop_claim_details", { claimId: "CLAIM-HIGH-1" }]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Open case" }));
+    expect(await screen.findByText("Investigation workspace")).toBeInTheDocument();
+    expect(calls).toContainEqual(["desktop_investigation_details", { investigationId: "INV-LINKED-1" }]);
+  });
+});
+
+describe("ClaimGuard desktop investigation workspace", () => {
+  it("loads case evidence and submits status and priority with the loaded version", async () => {
+    const calls = [];
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: {
+        freshness: "Fresh",
+        lastSuccessfulSyncAt: "2026-08-01T10:00:00.000Z",
+        claims: [{ claimId: "CLAIM-1", status: "FLAGGED", riskScore: 91 }],
+        investigations: [{
+          investigationId: "INV-1",
+          claimId: "CLAIM-1",
+          assignedInvestigator: "investigator-alpha",
+          assignedBy: "analyst-alpha",
+          status: "OPEN",
+          priority: "NORMAL",
+          createdAt: "2026-08-01T09:00:00.000Z",
+          updatedAt: "2026-08-01T10:00:00.000Z",
+        }],
+        dashboard: null,
+        suspiciousNetwork: null,
+      },
+      session: {
+        clientCapabilities: [
+          "investigations.view",
+          "investigations.update_status",
+          "investigations.change_priority",
+        ],
+      },
+    });
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      if (command === "desktop_investigation_details") {
+        return {
+          available: true,
+          investigation: {
+            ...currentStatus.cache.investigations[0],
+            notes: [{ noteId: "NOTE-1", noteType: "MEDICAL_REVIEW", text: "Provider invoice does not match the member interview.", author: "analyst-alpha", timestamp: "2026-08-01T09:30:00.000Z" }],
+            evidence: [{ evidenceId: "EVIDENCE-1", evidenceType: "INVOICE", filename: "invoice.pdf", description: "Provider invoice", uploadedBy: "investigator-alpha", uploadedAt: "2026-08-01T09:45:00.000Z" }],
+          },
+        };
+      }
+      if (command === "desktop_update_investigation") {
+        const investigation = {
+          ...currentStatus.cache.investigations[0],
+          status: args.status,
+          priority: args.priority,
+          updatedAt: "2026-08-01T10:05:00.000Z",
+        };
+        return {
+          status: {
+            ...currentStatus,
+            cache: { ...currentStatus.cache, investigations: [investigation] },
+          },
+          investigation,
+        };
+      }
+      throw new Error(`unexpected ${command}`);
+    });
+
+    render(<DesktopApp />);
+    await userEvent.click((await screen.findAllByRole("button", { name: /Investigations 1/i }))[0]);
+    await userEvent.click(screen.getByRole("button", { name: "Open case" }));
+    expect(await screen.findByText("Provider invoice does not match the member interview.")).toBeInTheDocument();
+    expect(screen.getByText("invoice.pdf")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Investigation status"), "UNDER_REVIEW");
+    await userEvent.selectOptions(screen.getByLabelText("Investigation priority"), "HIGH");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(calls.some(([command]) => command === "desktop_update_investigation")).toBe(true));
+    expect(calls.find(([command]) => command === "desktop_update_investigation")).toEqual([
+      "desktop_update_investigation",
+      {
+        investigationId: "INV-1",
+        expectedUpdatedAt: "2026-08-01T10:00:00.000Z",
+        status: "UNDER_REVIEW",
+        priority: "HIGH",
+      },
+    ]);
+  });
+
+  it("keeps the investigation queue unavailable without the view capability", async () => {
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: { freshness: "Fresh", claims: [], investigations: [], dashboard: null, suspiciousNetwork: null },
+      session: { clientCapabilities: ["claims.view_own"] },
+    });
+    setDesktopInvokeForTests(async (command) => {
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      throw new Error(`unexpected ${command}`);
+    });
+
+    render(<DesktopApp />);
+    expect(await screen.findByText("Investigation access not assigned")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Investigations/i })).not.toBeInTheDocument();
+  });
+
+  it("refreshes authoritative case detail after a stale write is rejected", async () => {
+    const detailVersions = [];
+    const compact = {
+      investigationId: "INV-STALE",
+      claimId: "CLAIM-STALE",
+      status: "OPEN",
+      priority: "NORMAL",
+      updatedAt: "2026-08-01T10:00:00.000Z",
+    };
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: { freshness: "Fresh", claims: [], investigations: [compact], dashboard: null, suspiciousNetwork: null },
+      session: { clientCapabilities: ["investigations.view", "investigations.update_status"] },
+    });
+    setDesktopInvokeForTests(async (command) => {
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      if (command === "desktop_investigation_details") {
+        const refreshed = detailVersions.length > 0;
+        const investigation = refreshed
+          ? { ...compact, status: "AWAITING_EVIDENCE", updatedAt: "2026-08-01T10:05:00.000Z" }
+          : compact;
+        detailVersions.push(investigation.updatedAt);
+        return { available: true, investigation };
+      }
+      if (command === "desktop_update_investigation") {
+        throw new Error("STALE_RECORD_VERSION:The investigation changed after it was loaded.");
+      }
+      throw new Error(`unexpected ${command}`);
+    });
+
+    render(<DesktopApp />);
+    await userEvent.click((await screen.findAllByRole("button", { name: /Investigations 1/i }))[0]);
+    await userEvent.click(screen.getByRole("button", { name: "Open case" }));
+    await screen.findByText("Investigation workspace");
+    await userEvent.selectOptions(screen.getByLabelText("Investigation status"), "UNDER_REVIEW");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed on the server/i);
+    await waitFor(() => expect(detailVersions).toEqual([
+      "2026-08-01T10:00:00.000Z",
+      "2026-08-01T10:05:00.000Z",
+    ]));
+    expect(screen.getByLabelText("Investigation status")).toHaveValue("AWAITING_EVIDENCE");
   });
 });

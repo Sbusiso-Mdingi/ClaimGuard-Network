@@ -20,6 +20,8 @@ pub enum DesktopError {
     Locked,
     #[error("authentication is required")]
     AuthenticationRequired,
+    #[error("this account does not have the required desktop capability")]
+    CapabilityDenied,
     #[error("the server request was rejected: {0}")]
     ServerRejected(String),
     #[error("the ClaimGuard service is unavailable")]

@@ -4,14 +4,14 @@
 
 The default server scope is claims updated in the most recent 90 days plus claims with an active investigation regardless of age. Cached claim records are reduced summaries: claim/version, dates, amount/code, workflow/risk status, and compact investigation status. Full member/provider/detection/evidence data is not part of the change feed.
 
-The cache additionally holds compact investigations, current dashboard/suspicious-network projections, an opaque cursor, freshness values, and claim details that a user explicitly opened.
+The cache additionally holds compact investigations, current dashboard/suspicious-network projections, an opaque cursor, freshness values, and claim or investigation details that a user explicitly opened.
 
 ## Cleanup Rules
 
 - A bounded bootstrap atomically replaces cached claim and investigation scope.
 - At the final page of a sync sequence, claims older than `scope.claimsFrom` are deleted unless their compact investigation status is active.
 - Closed investigation tombstones delete the local investigation record.
-- On-demand claim details expire after 24 hours and are pruned during sync.
+- On-demand claim and investigation details expire after 24 hours and are pruned during sync. Any compact investigation update invalidates its cached detail immediately.
 - Dashboard and suspicious-network projections replace a single `current` record.
 - Confirmed reset deletes the SQLite database, WAL/SHM files, cache key, device key, signed enrollment, installation ID, and session cookie for the current Windows user.
 - Revocation prevents the next device proof; offline data remains readable only until the last signed `offlineGraceExpiresAt`, then the client locks it.

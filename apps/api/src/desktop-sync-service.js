@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+import { CLAIMGUARD_PERMISSIONS } from "./authorization-policy.js";
+
 const DESKTOP_SYNC_SCHEMA_VERSION = 1;
 const MAXIMUM_PAGE_SIZE = 500;
 
@@ -80,6 +82,11 @@ function advanceWatermarks(previous, changes) {
   return next;
 }
 
+function canViewInvestigations(authContext) {
+  return authContext?.permissions instanceof Set
+    && authContext.permissions.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW);
+}
+
 export function createDesktopSyncService({
   cursorSecret,
   now = () => new Date(),
@@ -88,7 +95,7 @@ export function createDesktopSyncService({
 } = {}) {
   const codec = createCursorCodec(cursorSecret);
 
-  function cursorPayload({ organisationId, tenantId, scopeStart, watermarks }) {
+  function cursorPayload({ organisationId, tenantId, scopeStart, watermarks, investigationsVisible }) {
     const issuedAt = now();
     return {
       version: DESKTOP_SYNC_SCHEMA_VERSION,
@@ -96,6 +103,7 @@ export function createDesktopSyncService({
       tenantId,
       scopeStart,
       watermarks,
+      investigationsVisible,
       issuedAt: issuedAt.toISOString(),
       expiresAt: new Date(issuedAt.getTime() + cursorLifetimeDays * 86_400_000).toISOString(),
     };
@@ -108,6 +116,7 @@ export function createDesktopSyncService({
     }
     const organisationId = device?.organisationId;
     const tenantId = dataPlaneContext?.operationalTenantId;
+    const investigationsVisible = canViewInvestigations(authContext);
     if (!organisationId || !tenantId || authContext?.organisation_id !== organisationId || dataPlaneContext.organisationId !== organisationId) {
       throw new DesktopSyncError(
         "This account is not authorised for the organisation licensed on this device.",
@@ -123,6 +132,7 @@ export function createDesktopSyncService({
         tenantId,
         scopeStart: new Date(timestamp.getTime() - retentionDays * 86_400_000).toISOString(),
         watermarks: {},
+        investigationsVisible,
       });
     } else {
       state = codec.decode(cursor);
@@ -143,6 +153,14 @@ export function createDesktopSyncService({
           { recovery: "reset" },
         );
       }
+      if (state.investigationsVisible !== investigationsVisible) {
+        throw new DesktopSyncError(
+          "Desktop permissions changed; a bounded bootstrap is required.",
+          "DESKTOP_CURSOR_CAPABILITY_CHANGED",
+          410,
+          { recovery: "bootstrap" },
+        );
+      }
     }
     const pageLimit = safeLimit(limit);
     const result = await repository.listChanges({
@@ -151,11 +169,15 @@ export function createDesktopSyncService({
       limit: pageLimit,
     });
     const watermarks = advanceWatermarks(state.watermarks, result.changes);
+    const changes = investigationsVisible
+      ? result.changes
+      : result.changes.filter((change) => change.resource !== "investigation");
     const nextState = cursorPayload({
       organisationId,
       tenantId,
       scopeStart: state.scopeStart,
       watermarks,
+      investigationsVisible,
     });
     const projections = await repository.currentProjections();
     return {
@@ -165,13 +187,13 @@ export function createDesktopSyncService({
         organisationId,
         retentionDays,
         claimsFrom: state.scopeStart,
-        activeInvestigationsRegardlessOfAge: true,
+        activeInvestigationsRegardlessOfAge: investigationsVisible,
       },
-      changes: result.changes,
+      changes,
       projections,
       page: {
         limit: pageLimit,
-        count: result.changes.length,
+        count: changes.length,
         hasMore: Boolean(result.hasMore),
       },
       cursor: codec.encode(nextState),

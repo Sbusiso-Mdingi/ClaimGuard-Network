@@ -128,7 +128,12 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
       user_id: "user-alpha",
       organisation_id: "org-alpha",
       roles: ["claims_analyst", "investigator"],
-      permissions: new Set(["claims.view_own", "investigations.update_status"]),
+      permissions: new Set([
+        "claims.view_own",
+        "investigations.view",
+        "investigations.update_status",
+        "investigations.change_priority",
+      ]),
     });
     await next();
   });
@@ -160,12 +165,35 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
       },
     },
     investigationService: {
+      async getInvestigationDetails(investigationId) {
+        if (investigationId === "missing") return null;
+        if (investigationId === "broken") throw new Error("Database unavailable");
+        return {
+          investigationId,
+          tenantId: "tenant-alpha",
+          claimId: "claim-1",
+          assignedInvestigator: "investigator-alpha",
+          assignedBy: "analyst-alpha",
+          status: "OPEN",
+          priority: "HIGH",
+          createdAt: "2026-08-01T09:00:00.000Z",
+          updatedAt: "2026-08-01T10:00:00.000Z",
+          notes: [{ noteId: "note-1", tenantId: "tenant-alpha", text: "Review provider invoice." }],
+          evidence: [{ evidenceId: "evidence-1", tenantId: "tenant-alpha", filename: "invoice.pdf" }],
+        };
+      },
       async updateInvestigation(input) {
         updateInputs.push(input);
         if (input.investigationId === "stale") {
           throw Object.assign(new Error("stale"), { code: "stale_record_version" });
         }
-        return { investigationId: input.investigationId, status: input.status, updatedAt: "2026-08-01T10:00:00.000Z" };
+        return {
+          investigationId: input.investigationId,
+          tenantId: "tenant-alpha",
+          status: input.status,
+          priority: input.priority,
+          updatedAt: "2026-08-01T10:00:00.000Z",
+        };
       },
     },
   });
@@ -191,6 +219,17 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
   assert.equal((await app.request("/desktop/claims/missing")).status, 404);
   assert.equal((await app.request("/desktop/claims/broken")).status, 500);
 
+  const investigationDetail = await app.request("/desktop/investigations/investigation-1");
+  assert.equal(investigationDetail.status, 200);
+  assert.equal(investigationDetail.headers.get("etag"), "W/\"2026-08-01T10:00:00.000Z\"");
+  const investigationBody = await investigationDetail.json();
+  assert.equal(investigationBody.investigation.investigationId, "investigation-1");
+  assert.equal(investigationBody.investigation.tenantId, undefined);
+  assert.equal(investigationBody.investigation.notes[0].tenantId, undefined);
+  assert.equal(investigationBody.investigation.evidence[0].tenantId, undefined);
+  assert.equal((await app.request("/desktop/investigations/missing")).status, 404);
+  assert.equal((await app.request("/desktop/investigations/broken")).status, 500);
+
   const missingVersion = await app.request("/desktop/investigations/investigation-1", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
@@ -212,6 +251,7 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
   });
   assert.equal(updated.status, 200);
   assert.equal(updated.headers.get("etag"), "W/\"2026-08-01T10:00:00.000Z\"");
+  assert.equal((await updated.json()).investigation.tenantId, undefined);
   assert.equal(updateInputs[0].expectedUpdatedAt, "version-1");
 
   const stale = await app.request("/desktop/investigations/stale", {
@@ -221,6 +261,27 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
   });
   assert.equal(stale.status, 412);
   assert.equal((await stale.json()).code, "STALE_RECORD_VERSION");
+});
+
+test("desktop investigation detail fails closed when its service is unavailable", async () => {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("desktopDevice", deviceContext());
+    c.set("dataPlaneContext", { organisationId: "org-alpha", operationalTenantId: "tenant-alpha" });
+    c.set("authContext", {
+      is_authenticated: true,
+      user_id: "user-alpha",
+      organisation_id: "org-alpha",
+      roles: ["investigator"],
+      permissions: new Set(["investigations.view"]),
+    });
+    await next();
+  });
+  registerDesktopRoutes(app);
+
+  const response = await app.request("/desktop/investigations/investigation-1");
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "DESKTOP_INVESTIGATION_UNAVAILABLE");
 });
 
 test("desktop administration routes require scope, step-up, and exact destructive confirmations", async () => {

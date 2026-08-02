@@ -1,18 +1,45 @@
 import { describe, expect, it } from "vitest";
 
-import { desktopBridge, nextBackoff, operationalWriteAllowed, pollingDelay } from "./desktopBridge";
+import { desktopBridge, nextBackoff, operationalWriteAllowed, pollingDelay, setDesktopInvokeForTests } from "./desktopBridge";
 
 describe("desktop polling and offline mutation policy", () => {
   it("exposes no platform-governance or device-fleet administration commands", () => {
     expect(Object.keys(desktopBridge).sort()).toEqual([
       "activate",
       "claimDetails",
+      "investigationDetails",
       "lock",
       "login",
       "logout",
       "reset",
       "status",
       "sync",
+      "updateInvestigation",
+    ]);
+  });
+
+  it("maps investigation reads and versioned updates to the narrow Tauri commands", async () => {
+    const calls = [];
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      return { available: true };
+    });
+
+    await desktopBridge.investigationDetails("investigation-1");
+    await desktopBridge.updateInvestigation(
+      "investigation-1",
+      "2026-08-01T10:00:00.000Z",
+      { status: "UNDER_REVIEW", priority: "HIGH" },
+    );
+
+    expect(calls).toEqual([
+      ["desktop_investigation_details", { investigationId: "investigation-1" }],
+      ["desktop_update_investigation", {
+        investigationId: "investigation-1",
+        expectedUpdatedAt: "2026-08-01T10:00:00.000Z",
+        status: "UNDER_REVIEW",
+        priority: "HIGH",
+      }],
     ]);
   });
 
