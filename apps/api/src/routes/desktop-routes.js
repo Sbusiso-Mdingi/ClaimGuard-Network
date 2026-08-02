@@ -1,4 +1,5 @@
 import { CLAIMGUARD_PERMISSIONS, OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
+import { createEvidenceUploadBodyLimit } from "./evidence-upload-middleware.js";
 import {
   createRequireOperationalRouteAuthorizationMiddleware,
   createRequirePermissionMiddleware,
@@ -57,6 +58,20 @@ function minimumNecessaryInvestigation(investigation) {
   };
 }
 
+function desktopExpectedVersion(c, prefix) {
+  const raw = String(c.req.header("if-match") || "").replace(/^W\//, "").replace(/^\"|\"$/g, "");
+  const match = raw.match(new RegExp(`^${prefix}-(\\d+)$`));
+  return match ? Number(match[1]) : null;
+}
+
+async function eligibleInvestigators(identityRepository, organisationId) {
+  if (!identityRepository?.listUsersByOrganisation) return null;
+  const users = await identityRepository.listUsersByOrganisation(organisationId);
+  return users.filter((user) => user.userStatus === "active"
+    && user.membershipStatus === "active"
+    && user.roles?.includes("investigator"));
+}
+
 export function registerDesktopRoutes(app, {
   desktopEnrollmentService = null,
   desktopSyncService = null,
@@ -65,7 +80,9 @@ export function registerDesktopRoutes(app, {
   claimsReadRepository = null,
   desktopSyncRepository = null,
   investigationService = null,
+  identityRepository = null,
 } = {}) {
+  const enforceEvidenceBodyLimit = createEvidenceUploadBodyLimit();
   app.post("/desktop/activate", async (c) => {
     if (!desktopEnrollmentService?.activate) {
       return c.json({ available: false, code: "DESKTOP_ACTIVATION_UNAVAILABLE", message: "Desktop activation is not configured." }, 503);
@@ -169,6 +186,18 @@ export function registerDesktopRoutes(app, {
   const requireDesktopInvestigationPatch = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_PATCH,
   });
+  const requireDesktopInvestigatorsList = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATORS_LIST,
+  });
+  const requireDesktopInvestigationCreate = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_CREATE,
+  });
+  const requireDesktopInvestigationAddNote = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_ADD_NOTE,
+  });
+  const requireDesktopInvestigationUploadEvidence = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_UPLOAD_EVIDENCE,
+  });
 
   app.get("/desktop/sync/bootstrap", requireDesktopBootstrap, async (c) => {
     const override = rejectRoutingOverrides(c);
@@ -226,6 +255,60 @@ export function registerDesktopRoutes(app, {
     }
   });
 
+  app.get("/desktop/investigators", requireDesktopInvestigatorsList, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    const organisationId = c.get("desktopDevice")?.organisationId || null;
+    try {
+      const users = await eligibleInvestigators(identityRepository, organisationId);
+      if (!users) return c.json({ available: false, code: "DESKTOP_INVESTIGATORS_UNAVAILABLE", message: "Investigator assignment is temporarily unavailable." }, 503);
+      return c.json({
+        available: true,
+        investigators: users.map(({ userId, displayName }) => ({ userId, displayName })),
+      });
+    } catch (error) {
+      return desktopError(c, error, "Investigator assignment is temporarily unavailable.", "DESKTOP_INVESTIGATORS_FETCH_FAILED");
+    }
+  });
+
+  app.post("/desktop/investigations", requireDesktopInvestigationCreate, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    if (!investigationService?.createInvestigation) return c.json({ available: false, code: "DESKTOP_INVESTIGATION_UNAVAILABLE", message: "Investigation creation is temporarily unavailable." }, 503);
+    const expectedClaimVersion = desktopExpectedVersion(c, "claim");
+    if (!expectedClaimVersion) return c.json({ available: false, code: "PRECONDITION_REQUIRED", message: "A current claim record version is required." }, 428);
+    const payload = await c.req.json().catch(() => ({}));
+    if (Object.keys(payload).some((key) => !["claimId", "assignedInvestigator", "priority"].includes(key))) {
+      return c.json({ available: false, code: "DESKTOP_MUTATION_INPUT_INVALID", message: "The investigation creation request is invalid." }, 400);
+    }
+    try {
+      if (payload.assignedInvestigator) {
+        const users = await eligibleInvestigators(identityRepository, c.get("desktopDevice")?.organisationId);
+        if (!users) return c.json({ available: false, code: "DESKTOP_INVESTIGATORS_UNAVAILABLE", message: "Investigator assignment is temporarily unavailable." }, 503);
+        if (!users.some((user) => user.userId === payload.assignedInvestigator)) {
+          return c.json({ available: false, code: "INVESTIGATOR_NOT_ELIGIBLE", message: "The selected investigator is not active in this medical scheme." }, 409);
+        }
+      }
+      const investigation = await investigationService.createInvestigation({
+        claimId: payload.claimId,
+        assignedInvestigator: payload.assignedInvestigator || null,
+        assignedBy: c.get("authContext")?.user_id || null,
+        priority: payload.priority,
+        expectedClaimVersion,
+        correlationId: c.get("requestId") || null,
+      });
+      c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
+      return c.json({ available: true, investigation: minimumNecessaryInvestigation(investigation) }, 201);
+    } catch (error) {
+      const stale = ["stale_claim_version", "stale_record_version"].includes(error?.code);
+      return c.json({
+        available: false,
+        code: stale ? "STALE_RECORD_VERSION" : error?.code || "DESKTOP_MUTATION_FAILED",
+        message: stale ? "The claim changed after it was loaded. Refresh before creating an investigation." : error?.message || "The investigation could not be created.",
+      }, stale ? 412 : Number.isInteger(error?.status) ? error.status : error?.code?.includes("conflict") || error?.code === "investigation_already_exists" ? 409 : 400);
+    }
+  });
+
   app.get("/desktop/investigations/:id", requireDesktopInvestigationDetail, async (c) => {
     const override = rejectRoutingOverrides(c);
     if (override) return override;
@@ -237,7 +320,7 @@ export function registerDesktopRoutes(app, {
       if (!investigation) {
         return c.json({ available: false, code: "INVESTIGATION_NOT_FOUND", message: "The investigation was not found in the licensed organisation." }, 404);
       }
-      c.header("ETag", `W/\"${investigation.updatedAt}\"`);
+      c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
       return c.json({
         available: true,
         investigation: minimumNecessaryInvestigation(investigation),
@@ -251,22 +334,32 @@ export function registerDesktopRoutes(app, {
   app.patch("/desktop/investigations/:id", requireDesktopInvestigationPatch, async (c) => {
     const override = rejectRoutingOverrides(c);
     if (override) return override;
-    const ifMatch = String(c.req.header("if-match") || "").replace(/^W\//, "").replace(/^\"|\"$/g, "");
-    if (!ifMatch) {
+    const expectedRecordVersion = desktopExpectedVersion(c, "investigation");
+    if (!expectedRecordVersion) {
       return c.json({ available: false, code: "PRECONDITION_REQUIRED", message: "A current investigation version is required." }, 428);
     }
     const payload = await c.req.json().catch(() => ({}));
-    if (Object.keys(payload).some((key) => !["status", "priority"].includes(key))) {
+    if (Object.keys(payload).some((key) => !["status", "priority", "assignedInvestigator"].includes(key))) {
       return c.json({ available: false, code: "DESKTOP_MUTATION_INPUT_INVALID", message: "The investigation update is invalid." }, 400);
     }
     try {
+      if (Object.hasOwn(payload, "assignedInvestigator") && payload.assignedInvestigator) {
+        const users = await eligibleInvestigators(identityRepository, c.get("desktopDevice")?.organisationId);
+        if (!users) return c.json({ available: false, code: "DESKTOP_INVESTIGATORS_UNAVAILABLE", message: "Investigator assignment is temporarily unavailable." }, 503);
+        if (!users.some((user) => user.userId === payload.assignedInvestigator)) {
+          return c.json({ available: false, code: "INVESTIGATOR_NOT_ELIGIBLE", message: "The selected investigator is not active in this medical scheme." }, 409);
+        }
+      }
       const investigation = await investigationService.updateInvestigation({
         investigationId: c.req.param("id"),
         status: payload.status,
         priority: payload.priority,
-        expectedUpdatedAt: ifMatch,
+        assignedInvestigator: Object.hasOwn(payload, "assignedInvestigator") ? payload.assignedInvestigator : undefined,
+        expectedRecordVersion,
+        actorId: c.get("authContext")?.user_id || null,
+        correlationId: c.get("requestId") || null,
       });
-      c.header("ETag", `W/\"${investigation.updatedAt}\"`);
+      c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
       return c.json({ available: true, investigation: minimumNecessaryInvestigation(investigation) });
     } catch (error) {
       const stale = error?.code === "stale_record_version";
@@ -277,6 +370,64 @@ export function registerDesktopRoutes(app, {
           ? "The investigation changed after it was loaded. Authoritative state must be refreshed."
           : "The investigation could not be updated.",
       }, stale ? 412 : Number.isInteger(error?.status) ? error.status : 400);
+    }
+  });
+
+  app.post("/desktop/investigations/:id/notes", requireDesktopInvestigationAddNote, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    if (!investigationService?.addNote) return c.json({ available: false, code: "DESKTOP_INVESTIGATION_UNAVAILABLE", message: "Investigation notes are temporarily unavailable." }, 503);
+    const expectedRecordVersion = desktopExpectedVersion(c, "investigation");
+    if (!expectedRecordVersion) return c.json({ available: false, code: "PRECONDITION_REQUIRED", message: "A current investigation record version is required." }, 428);
+    const payload = await c.req.json().catch(() => ({}));
+    if (Object.keys(payload).some((key) => !["text", "noteType"].includes(key))) {
+      return c.json({ available: false, code: "DESKTOP_MUTATION_INPUT_INVALID", message: "The investigation note is invalid." }, 400);
+    }
+    try {
+      const result = await investigationService.addNote({
+        investigationId: c.req.param("id"),
+        author: c.get("authContext")?.user_id || null,
+        text: payload.text,
+        noteType: payload.noteType,
+        expectedRecordVersion,
+        correlationId: c.get("requestId") || null,
+      });
+      c.header("ETag", `W/\"investigation-${result.investigation.recordVersion}\"`);
+      return c.json({ available: true, note: result.note, investigation: minimumNecessaryInvestigation(result.investigation) }, 201);
+    } catch (error) {
+      const stale = error?.code === "stale_record_version";
+      return c.json({ available: false, code: stale ? "STALE_RECORD_VERSION" : error?.code || "DESKTOP_MUTATION_FAILED", message: stale ? "The investigation changed after it was loaded. Refresh before adding the note." : error?.message || "The note could not be added." }, stale ? 412 : Number.isInteger(error?.status) ? error.status : 400);
+    }
+  });
+
+  app.post("/desktop/investigations/:id/evidence", enforceEvidenceBodyLimit, requireDesktopInvestigationUploadEvidence, async (c) => {
+    const override = rejectRoutingOverrides(c);
+    if (override) return override;
+    if (!investigationService?.uploadEvidence) return c.json({ available: false, code: "DESKTOP_INVESTIGATION_UNAVAILABLE", message: "Evidence upload is temporarily unavailable." }, 503);
+    const expectedRecordVersion = desktopExpectedVersion(c, "investigation");
+    if (!expectedRecordVersion) return c.json({ available: false, code: "PRECONDITION_REQUIRED", message: "A current investigation record version is required." }, 428);
+    const payload = await c.req.json().catch(() => ({}));
+    if (Object.keys(payload).some((key) => !["filename", "description", "evidenceType", "contentType", "contentBase64"].includes(key))) {
+      return c.json({ available: false, code: "DESKTOP_MUTATION_INPUT_INVALID", message: "The evidence upload is invalid." }, 400);
+    }
+    try {
+      const result = await investigationService.uploadEvidence({
+        tenantId: c.get("tenantContext")?.tenant_id || null,
+        investigationId: c.req.param("id"),
+        filename: payload.filename,
+        description: payload.description,
+        uploadedBy: c.get("authContext")?.user_id || null,
+        evidenceType: payload.evidenceType,
+        contentType: payload.contentType,
+        contentBase64: payload.contentBase64,
+        expectedRecordVersion,
+        correlationId: c.get("requestId") || null,
+      });
+      c.header("ETag", `W/\"investigation-${result.investigation.recordVersion}\"`);
+      return c.json({ available: true, evidence: result.evidence, investigation: minimumNecessaryInvestigation(result.investigation) }, 201);
+    } catch (error) {
+      const stale = error?.code === "stale_record_version";
+      return c.json({ available: false, code: stale ? "STALE_RECORD_VERSION" : error?.code || "DESKTOP_MUTATION_FAILED", message: stale ? "The investigation changed after it was loaded. Refresh before uploading evidence." : error?.message || "The evidence could not be uploaded." }, stale ? 412 : Number.isInteger(error?.status) ? error.status : 400);
     }
   });
 }

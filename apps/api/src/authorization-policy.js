@@ -21,6 +21,7 @@ export const CLAIMGUARD_PERMISSIONS = Object.freeze({
   INVESTIGATIONS_UPDATE_STATUS: "investigations.update_status",
   INVESTIGATIONS_ADD_NOTE: "investigations.add_note",
   INVESTIGATIONS_CHANGE_PRIORITY: "investigations.change_priority",
+  INVESTIGATIONS_ASSIGN: "investigations.assign",
   INVESTIGATIONS_OPEN: "investigations.open",
   INVESTIGATIONS_COMPLETE: "investigations.complete",
   INVESTIGATIONS_UPLOAD_EVIDENCE: "investigations.upload_evidence",
@@ -68,6 +69,7 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY,
+    CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
@@ -79,6 +81,7 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE,
+    CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_OPEN,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_COMPLETE,
     CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE,
@@ -223,13 +226,17 @@ export const OPERATIONAL_ROUTE_IDS = Object.freeze({
   DESKTOP_SYNC_BOOTSTRAP: "desktop.sync.bootstrap",
   DESKTOP_SYNC_CHANGES: "desktop.sync.changes",
   DESKTOP_CLAIM_DETAIL: "desktop.claim.detail",
+  DESKTOP_INVESTIGATORS_LIST: "desktop.investigators.list",
+  DESKTOP_INVESTIGATION_CREATE: "desktop.investigation.create",
   DESKTOP_INVESTIGATION_DETAIL: "desktop.investigation.detail",
   DESKTOP_INVESTIGATION_PATCH: "desktop.investigation.patch",
+  DESKTOP_INVESTIGATION_ADD_NOTE: "desktop.investigation.add_note",
+  DESKTOP_INVESTIGATION_UPLOAD_EVIDENCE: "desktop.investigation.upload_evidence",
 });
 
 export const OPERATIONAL_ROUTE_PREFIXES = Object.freeze([
   "/claims", "/investigations", "/detection", "/ledger", "/registry", "/internal/data-plane",
-  "/desktop/sync", "/desktop/claims", "/desktop/investigations",
+  "/desktop/sync", "/desktop/claims", "/desktop/investigators", "/desktop/investigations",
 ]);
 
 function normalizeRequestPath(path) {
@@ -264,7 +271,22 @@ const operationalRoutePolicyEntries = [
   { id: OPERATIONAL_ROUTE_IDS.CLAIMS_OVERVIEW, method: "GET", pathPattern: "/claims/overview", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.CLAIMS_DETAIL, method: "GET", pathPattern: "/claims/:claimId", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.CLAIMS_INGEST, method: "POST", pathPattern: "/claims/ingest", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST], permissionMode: "all", requiresOperationalDataPlane: true },
-  { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CREATE, method: "POST", pathPattern: "/investigations", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE], permissionMode: "all", requiresOperationalDataPlane: true },
+  {
+    id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CREATE,
+    method: "POST",
+    pathPattern: "/investigations",
+    permissionMode: "all",
+    requiresOperationalDataPlane: true,
+    resolvePermissionRequirement({ payload } = {}) {
+      return {
+        permissions: [
+          CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE,
+          ...(payload?.assignedInvestigator ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN] : []),
+        ],
+        mode: "all",
+      };
+    },
+  },
   { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_VIEW, method: "GET", pathPattern: "/investigations/:id", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW], permissionMode: "all", requiresOperationalDataPlane: true },
   {
     id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_PATCH,
@@ -275,10 +297,13 @@ const operationalRoutePolicyEntries = [
     resolvePermissionRequirement({ payload } = {}) {
       const hasStatus = Boolean(payload && Object.hasOwn(payload, "status"));
       const hasPriority = Boolean(payload && Object.hasOwn(payload, "priority"));
-      if (hasStatus && hasPriority) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "all" };
-      if (hasStatus) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS], mode: "all" };
-      if (hasPriority) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "all" };
-      return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "any" };
+      const hasAssignment = Boolean(payload && Object.hasOwn(payload, "assignedInvestigator"));
+      const permissions = [
+        ...(hasStatus ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS] : []),
+        ...(hasPriority ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY] : []),
+        ...(hasAssignment ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN] : []),
+      ];
+      return { permissions: permissions.length ? permissions : [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN], mode: permissions.length ? "all" : "any" };
     },
   },
   { id: OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_ADD_NOTE, method: "POST", pathPattern: "/investigations/:id/notes", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE], permissionMode: "all", requiresOperationalDataPlane: true },
@@ -300,6 +325,23 @@ const operationalRoutePolicyEntries = [
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_SYNC_BOOTSTRAP, method: "GET", pathPattern: "/desktop/sync/bootstrap", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_SYNC_CHANGES, method: "GET", pathPattern: "/desktop/sync/changes", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_CLAIM_DETAIL, method: "GET", pathPattern: "/desktop/claims/:claimId", permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATORS_LIST, method: "GET", pathPattern: "/desktop/investigators", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN], permissionMode: "all", requiresOperationalDataPlane: true },
+  {
+    id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_CREATE,
+    method: "POST",
+    pathPattern: "/desktop/investigations",
+    permissionMode: "all",
+    requiresOperationalDataPlane: true,
+    resolvePermissionRequirement({ payload } = {}) {
+      return {
+        permissions: [
+          CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CREATE,
+          ...(payload?.assignedInvestigator ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN] : []),
+        ],
+        mode: "all",
+      };
+    },
+  },
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_DETAIL, method: "GET", pathPattern: "/desktop/investigations/:id", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_VIEW], permissionMode: "all", requiresOperationalDataPlane: true },
   {
     id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_PATCH,
@@ -310,12 +352,17 @@ const operationalRoutePolicyEntries = [
     resolvePermissionRequirement({ payload } = {}) {
       const hasStatus = Boolean(payload && Object.hasOwn(payload, "status"));
       const hasPriority = Boolean(payload && Object.hasOwn(payload, "priority"));
-      if (hasStatus && hasPriority) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "all" };
-      if (hasStatus) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS], mode: "all" };
-      if (hasPriority) return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "all" };
-      return { permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY], mode: "any" };
+      const hasAssignment = Boolean(payload && Object.hasOwn(payload, "assignedInvestigator"));
+      const permissions = [
+        ...(hasStatus ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS] : []),
+        ...(hasPriority ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY] : []),
+        ...(hasAssignment ? [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN] : []),
+      ];
+      return { permissions: permissions.length ? permissions : [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPDATE_STATUS, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CHANGE_PRIORITY, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ASSIGN], mode: permissions.length ? "all" : "any" };
     },
   },
+  { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_ADD_NOTE, method: "POST", pathPattern: "/desktop/investigations/:id/notes", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_UPLOAD_EVIDENCE, method: "POST", pathPattern: "/desktop/investigations/:id/evidence", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE], permissionMode: "all", requiresOperationalDataPlane: true },
 ];
 
 export const OPERATIONAL_ROUTE_POLICIES = Object.freeze(operationalRoutePolicyEntries.map((entry) => Object.freeze(entry)));

@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   applyMigrations,
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   createInvestigationQueueRepository,
   createMysqlConnection,
+  defaultMigrationPaths,
   getOperationalMigrationStatus,
   runWithTenantContext,
 } from "../src/index.js";
@@ -17,7 +20,7 @@ const databaseUrl =
 
 
 test(
-  "real MySQL operational migrations enforce schema-14 prospective scoring foundations",
+  `real MySQL operational migrations enforce canonical schema-${CANONICAL_OPERATIONAL_SCHEMA_VERSION} foundations`,
   {
     skip:
       !databaseUrl,
@@ -54,15 +57,18 @@ test(
           pool,
         );
 
+      const canonicalMigrationCount =
+        defaultMigrationPaths.length;
+
       /*
-       * A clean database applies all fourteen
-       * operational migrations. A reused integration
+       * A clean database applies every canonical
+       * operational migration. A reused integration
        * database may report them as skipped instead.
        */
       assert.equal(
         first.applied.length
         + first.skipped.length,
-        14,
+        canonicalMigrationCount,
       );
 
       assert.equal(
@@ -77,12 +83,12 @@ test(
 
       assert.equal(
         second.skipped.length,
-        14,
+        canonicalMigrationCount,
       );
 
       assert.equal(
         status.applied.length,
-        14,
+        canonicalMigrationCount,
       );
 
       assert.equal(
@@ -92,7 +98,7 @@ test(
 
       /*
        * The singleton data-plane marker must expose
-       * the complete canonical schema-14 identity.
+       * the complete canonical schema identity.
        */
       const [
         metadataColumns,
@@ -214,13 +220,13 @@ test(
             "legacy-operational-shared",
 
           schemaVersion:
-            "14",
+            CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
           environmentKey:
             "legacy",
 
           migrationVersion:
-            14,
+            CANONICAL_OPERATIONAL_MIGRATION_VERSION,
         },
       );
 
@@ -245,11 +251,15 @@ test(
                 'secondary',
                 'legacy_shared',
                 'legacy-operational-shared',
-                '14',
+                ?,
                 'legacy',
-                14
+                ?
               )
             `,
+            [
+              CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+              CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+            ],
           ),
         (
           error,
@@ -274,11 +284,15 @@ test(
                 'primary',
                 'legacy_shared',
                 'legacy-operational-shared',
-                '14',
+                ?,
                 'legacy',
-                14
+                ?
               )
             `,
+            [
+              CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+              CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+            ],
           ),
         (
           error,

@@ -2,6 +2,7 @@ import {
   createRequireOperationalRouteAuthorizationMiddleware,
 } from "../middleware/authorization-middleware.js";
 import { CLAIMGUARD_ROLES, OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
+import { createEvidenceUploadBodyLimit } from "./evidence-upload-middleware.js";
 import {
   investigationErrorResponse,
   investigationRepositoryUnavailable,
@@ -24,6 +25,25 @@ function workflowActor(c) {
   };
 }
 
+function expectedVersion(c, prefix) {
+  const raw = String(c.req.header("if-match") || "").replace(/^W\//, "").replace(/^\"|\"$/g, "");
+  const match = raw.match(new RegExp(`^${prefix}-(\\d+)$`));
+  return match ? Number(match[1]) : null;
+}
+
+function requireVersion(c, prefix, noun) {
+  const version = expectedVersion(c, prefix);
+  if (version) return { ok: true, version };
+  return {
+    ok: false,
+    response: c.json({
+      available: false,
+      code: "PRECONDITION_REQUIRED",
+      message: `A current ${noun} record version is required.`,
+    }, 428),
+  };
+}
+
 function workflowErrorResponse(c, error, fallbackMessage) {
   const isTypedError = Number.isInteger(error?.status) && typeof error?.code === "string";
   const status = isTypedError ? error.status : 500;
@@ -37,6 +57,15 @@ function workflowErrorResponse(c, error, fallbackMessage) {
   );
 }
 
+async function eligibleAssignee(identityRepository, organisationId, userId) {
+  if (!identityRepository?.listUsersByOrganisation) return null;
+  const users = await identityRepository.listUsersByOrganisation(organisationId);
+  return users.some((user) => user.userId === userId
+    && user.userStatus === "active"
+    && user.membershipStatus === "active"
+    && user.roles?.includes(CLAIMGUARD_ROLES.INVESTIGATOR));
+}
+
 export function registerInvestigationsRoutes(
   app,
   {
@@ -44,9 +73,11 @@ export function registerInvestigationsRoutes(
     fraudConfirmationService,
     fraudReversalService,
     tenantRepository = null,
+    identityRepository = null,
     logger,
   } = {},
 ) {
+  const enforceEvidenceBodyLimit = createEvidenceUploadBodyLimit();
   const respondToInvestigationError = (c, error, event) =>
     investigationErrorResponse(c, error, { logger, event });
 
@@ -82,15 +113,33 @@ export function registerInvestigationsRoutes(
 
       const payload = await c.req.json().catch(() => null);
       const assignedBy = c.get("authContext")?.user_id || null;
+      const version = requireVersion(c, "claim", "claim");
+      if (!version.ok) return version.response;
 
       try {
+        if (payload?.assignedInvestigator) {
+          const eligible = await eligibleAssignee(
+            identityRepository,
+            c.get("authContext")?.organisation_id || null,
+            payload.assignedInvestigator,
+          );
+          if (eligible === null) {
+            return c.json({ available: false, code: "INVESTIGATOR_DIRECTORY_UNAVAILABLE", message: "Investigator assignment is temporarily unavailable." }, 503);
+          }
+          if (!eligible) {
+            return c.json({ available: false, code: "INVESTIGATOR_NOT_ELIGIBLE", message: "The selected investigator is not active in this medical scheme." }, 409);
+          }
+        }
         const investigation = await investigationService.createInvestigation({
           claimId: payload?.claimId,
           assignedInvestigator: payload?.assignedInvestigator || null,
           assignedBy,
           priority: payload?.priority,
+          expectedClaimVersion: version.version,
+          correlationId: c.get("requestId") || null,
         });
 
+        c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
         return c.json({ available: true, investigation }, 201);
       } catch (error) {
         return respondToInvestigationError(c, error, "investigation_create_failed");
@@ -143,6 +192,7 @@ export function registerInvestigationsRoutes(
           );
         }
 
+        c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
         return c.json({ available: true, investigation }, 200);
       } catch (error) {
         return respondToInvestigationError(c, error, "investigation_detail_failed");
@@ -158,24 +208,45 @@ export function registerInvestigationsRoutes(
     const payload = await c.req.json().catch(() => null);
     const hasStatus = payload && Object.hasOwn(payload, "status");
     const hasPriority = payload && Object.hasOwn(payload, "priority");
+    const hasAssignment = payload && Object.hasOwn(payload, "assignedInvestigator");
 
-    if (!hasStatus && !hasPriority) {
+    if (!hasStatus && !hasPriority && !hasAssignment) {
       return c.json(
         {
           available: false,
-          message: "status or priority must be provided.",
+          message: "status, priority, or assignedInvestigator must be provided.",
         },
         400,
       );
     }
+    const version = requireVersion(c, "investigation", "investigation");
+    if (!version.ok) return version.response;
 
     try {
+      if (hasAssignment && payload.assignedInvestigator) {
+        const eligible = await eligibleAssignee(
+          identityRepository,
+          c.get("authContext")?.organisation_id || null,
+          payload.assignedInvestigator,
+        );
+        if (eligible === null) {
+          return c.json({ available: false, code: "INVESTIGATOR_DIRECTORY_UNAVAILABLE", message: "Investigator assignment is temporarily unavailable." }, 503);
+        }
+        if (!eligible) {
+          return c.json({ available: false, code: "INVESTIGATOR_NOT_ELIGIBLE", message: "The selected investigator is not active in this medical scheme." }, 409);
+        }
+      }
       const investigation = await investigationService.updateInvestigation({
         investigationId: c.req.param("id"),
         status: hasStatus ? payload.status : undefined,
         priority: hasPriority ? payload.priority : undefined,
+        assignedInvestigator: hasAssignment ? payload.assignedInvestigator : undefined,
+        expectedRecordVersion: version.version,
+        actorId: c.get("authContext")?.user_id || null,
+        correlationId: c.get("requestId") || null,
       });
 
+      c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
       return c.json({ available: true, investigation }, 200);
     } catch (error) {
       return respondToInvestigationError(c, error, "investigation_update_failed");
@@ -197,15 +268,22 @@ export function registerInvestigationsRoutes(
       }
 
       const payload = await c.req.json().catch(() => null);
+      const version = requireVersion(c, "investigation", "investigation");
+      if (!version.ok) return version.response;
       try {
-        const note = await investigationService.addNote({
+        const result = await investigationService.addNote({
           investigationId,
           author: c.get("authContext")?.user_id || null,
           text: payload?.text,
           noteType: payload?.noteType,
+          expectedRecordVersion: version.version,
+          correlationId: c.get("requestId") || null,
         });
 
-        return c.json({ available: true, note }, 201);
+        const note = result?.note || result;
+        const investigation = result?.investigation || null;
+        if (investigation) c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
+        return c.json({ available: true, note, investigation }, 201);
       } catch (error) {
         return respondToInvestigationError(c, error, "investigation_note_create_failed");
       }
@@ -214,6 +292,7 @@ export function registerInvestigationsRoutes(
 
   app.post(
     "/investigations/:id/evidence",
+    enforceEvidenceBodyLimit,
     requireInvestigationsUploadEvidence,
     async (c) => {
       if (!investigationService.hasMethod("getInvestigationById") || !investigationService.hasMethod("registerEvidence")) {
@@ -227,16 +306,26 @@ export function registerInvestigationsRoutes(
       }
 
       const payload = await c.req.json().catch(() => null);
+      const version = requireVersion(c, "investigation", "investigation");
+      if (!version.ok) return version.response;
       try {
-        const evidence = await investigationService.registerEvidence({
+        const result = await investigationService.uploadEvidence({
+          tenantId: c.get("tenantContext")?.tenant_id || null,
           investigationId,
           filename: payload?.filename,
           description: payload?.description,
           uploadedBy: c.get("authContext")?.user_id || null,
           evidenceType: payload?.evidenceType,
+          contentType: payload?.contentType,
+          contentBase64: payload?.contentBase64,
+          expectedRecordVersion: version.version,
+          correlationId: c.get("requestId") || null,
         });
 
-        return c.json({ available: true, evidence }, 201);
+        const evidence = result?.evidence || result;
+        const investigation = result?.investigation || null;
+        if (investigation) c.header("ETag", `W/\"investigation-${investigation.recordVersion}\"`);
+        return c.json({ available: true, evidence, investigation }, 201);
       } catch (error) {
         return respondToInvestigationError(c, error, "investigation_evidence_create_failed");
       }

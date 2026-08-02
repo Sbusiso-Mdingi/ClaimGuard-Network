@@ -18,6 +18,7 @@ import {
   createControlPlaneService,
 } from "../packages/control-plane-database/src/index.js";
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   createLegacySharedAdapter,
   createOperationalRepositories,
   createTenantConnectionManager,
@@ -43,7 +44,7 @@ const EXPECTED = Object.freeze({
   workerCron: "0 0 1 1 *",
   modelApp: "claimguard-ml-prospective",
   routeType: "private_database",
-  schemaVersion: "14",
+  schemaVersion: CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 });
 
 const CONTROL_PLANE_SECRET =

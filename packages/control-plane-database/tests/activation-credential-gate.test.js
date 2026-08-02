@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createControlPlaneService } from "../src/index.js";
+import {
+  CANONICAL_PRIVATE_SCHEMA_VERSION,
+  createControlPlaneService,
+} from "../src/index.js";
 
 function activationFixture({ adminReady = 1 } = {}) {
   const auditEvents = [];
@@ -59,7 +62,7 @@ function activationFixture({ adminReady = 1 } = {}) {
         return {
           route_id: "route-ubuntu",
           route_type: "private_database",
-          schema_version: "14",
+          schema_version: CANONICAL_PRIVATE_SCHEMA_VERSION,
         };
       },
 
@@ -70,7 +73,7 @@ function activationFixture({ adminReady = 1 } = {}) {
           routeId,
           organisationId,
           routeType: "private_database",
-          schemaVersion: "14",
+          schemaVersion: CANONICAL_PRIVATE_SCHEMA_VERSION,
           provisioningStatus: "active",
         };
       },
@@ -109,7 +112,10 @@ test("organisation activation requires a usable scheme administrator credential"
   );
 
   assert.equal(result.organisation.status, "active");
-  assert.equal(result.route.schemaVersion, "14");
+  assert.equal(
+    result.route.schemaVersion,
+    CANONICAL_PRIVATE_SCHEMA_VERSION,
+  );
   assert.equal(gateQueries.length, 1);
 
   const sql = gateQueries[0].sql;
@@ -127,8 +133,8 @@ test("organisation activation requires a usable scheme administrator credential"
     [
       "org-ubuntu",
       "route-ubuntu",
-      "14",
-      "14",
+      CANONICAL_PRIVATE_SCHEMA_VERSION,
+      CANONICAL_PRIVATE_SCHEMA_VERSION,
       "org-ubuntu",
       "org-ubuntu",
       "org-ubuntu",

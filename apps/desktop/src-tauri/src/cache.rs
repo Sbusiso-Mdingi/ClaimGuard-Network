@@ -348,6 +348,11 @@ impl EncryptedCache {
             .get("updatedAt")
             .and_then(Value::as_str)
             .ok_or(DesktopError::InvalidResponse)?;
+        let record_version = investigation
+            .get("recordVersion")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or(DesktopError::InvalidResponse)?;
         let closed = investigation
             .get("status")
             .and_then(Value::as_str)
@@ -356,7 +361,7 @@ impl EncryptedCache {
             resource: "investigation".into(),
             operation: if closed { "delete" } else { "upsert" }.into(),
             id: investigation_id.into(),
-            version: updated_at.into(),
+            version: record_version.to_string(),
             updated_at: updated_at.into(),
             record: if closed {
                 None
@@ -839,6 +844,7 @@ mod tests {
                 "claimId": "claim-1",
                 "status": "OPEN",
                 "priority": "NORMAL",
+                "recordVersion": 1,
                 "updatedAt": "2026-08-01T10:00:00.000Z"
             })),
         };
@@ -854,6 +860,7 @@ mod tests {
                     "investigation": {
                         "investigationId": "investigation-1",
                         "status": "OPEN",
+                        "recordVersion": 1,
                         "updatedAt": "2026-08-01T10:00:00.000Z",
                         "notes": [{"noteId": "note-1"}]
                     }
@@ -873,6 +880,7 @@ mod tests {
                     "claimId": "claim-1",
                     "status": "UNDER_REVIEW",
                     "priority": "HIGH",
+                    "recordVersion": 2,
                     "updatedAt": "2026-08-01T10:05:00.000Z"
                 }
             }))
@@ -889,6 +897,7 @@ mod tests {
                 "investigation": {
                     "investigationId": "investigation-1",
                     "status": "CLOSED",
+                    "recordVersion": 3,
                     "updatedAt": "2026-08-01T10:10:00.000Z"
                 }
             }))

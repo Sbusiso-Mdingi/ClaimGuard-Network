@@ -192,6 +192,9 @@ importers:
 
   packages/control-plane-database:
     dependencies:
+      '@claimguard/database':
+        specifier: workspace:*
+        version: link:../database
       argon2:
         specifier: ^0.44.0
         version: 0.44.0

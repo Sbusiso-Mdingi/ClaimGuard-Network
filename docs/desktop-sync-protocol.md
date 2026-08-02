@@ -9,8 +9,12 @@ The current schema is `1`. Clients send `schemaVersion=1` (an equivalent `x-clai
 | `GET /desktop/sync/bootstrap?limit=500` | first page or expired-cursor recovery | 1–500 changes |
 | `GET /desktop/sync/changes?cursor=…&limit=500` | changes after durable per-resource watermarks | 1–500 changes |
 | `GET /desktop/claims/:claimId` | encrypted on-demand detail | one claim |
+| `GET /desktop/investigators` | active same-organisation assignment candidates | bounded organisation directory |
+| `POST /desktop/investigations` | connected-only versioned creation | one investigation |
 | `GET /desktop/investigations/:id` | encrypted on-demand case, notes, and evidence metadata | one investigation |
 | `PATCH /desktop/investigations/:id` | connected-only optimistic update | one investigation |
+| `POST /desktop/investigations/:id/notes` | connected-only versioned note creation | one note |
+| `POST /desktop/investigations/:id/evidence` | connected-only private evidence upload | one file, maximum 10 MiB |
 
 All endpoints require an active enrolled-device proof and an authenticated session for the same organisation. The API resolves the operational route from authenticated control-plane state; request routing overrides are invalid.
 
@@ -76,6 +80,6 @@ Visible/active polling starts around 15 seconds and backs off with jitter to 120
 
 All operational changes are online-only. Offline or stale mode blocks investigation creation, notes, evidence changes, status transitions, fraud decisions, and administration.
 
-Investigation updates require `If-Match` with the last authoritative `updatedAt`. The repository updates only when the version still matches. A race returns `412 STALE_RECORD_VERSION`; the client must refresh and let the user reconcile instead of overwriting.
+Investigation creation requires `If-Match: W/"claim-<currentClaimVersion>"`. Assignment, status or priority updates, notes, and evidence uploads require `If-Match: W/"investigation-<recordVersion>"`. Each successful investigation write increments `recordVersion`; a race returns `412 STALE_RECORD_VERSION`, and the client must refresh and let the user reconcile instead of overwriting.
 
-The current desktop mutation surface allows only `status` and `priority`. The server evaluates `investigations.update_status` and `investigations.change_priority` independently based on the fields present. Successful updates replace the encrypted compact case and invalidate cached detail; closing a case removes it from the active local queue. Case detail, notes, and evidence metadata remain available offline only when that case was opened online within the 24-hour detail-cache window.
+The desktop mutation surface supports investigation creation, assignment, status, priority, notes, and private evidence upload. The server evaluates `investigations.create`, `investigations.assign`, `investigations.update_status`, `investigations.change_priority`, `investigations.add_note`, and `investigations.upload_evidence` independently from the operation and fields present. Successful updates replace the encrypted compact case and invalidate cached detail; closing a case removes it from the active local queue. Case detail, notes, and evidence integrity metadata remain available offline only when that case was opened online within the 24-hour detail-cache window.

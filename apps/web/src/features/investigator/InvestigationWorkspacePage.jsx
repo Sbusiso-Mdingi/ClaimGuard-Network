@@ -25,12 +25,32 @@ const NEXT_STATUS_OPTIONS = Object.freeze({
   CLOSED: [],
 });
 
+function fileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("The evidence file could not be read."));
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      const separator = value.indexOf(",");
+      if (separator < 0) reject(new Error("The evidence file could not be encoded."));
+      else resolve(value.slice(separator + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function evidenceContentType(file) {
+  const extension = String(file?.name || "").split(".").pop()?.toLowerCase();
+  return ({ pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", txt: "text/plain", csv: "text/csv" })[extension] || file?.type || "application/octet-stream";
+}
+
 export function InvestigationWorkspacePage() {
   const { investigationId } = useParams();
   const { identity } = useRole();
   const [state, setState] = useState({ status: "loading", investigation: null, error: null });
   const [noteText, setNoteText] = useState("");
-  const [evidenceForm, setEvidenceForm] = useState({ filename: "", description: "", evidenceType: "" });
+  const [evidenceForm, setEvidenceForm] = useState({ file: null, description: "", evidenceType: "" });
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [decisionReason, setDecisionReason] = useState("");
   const [actionMessage, setActionMessage] = useState(null);
 
@@ -56,9 +76,13 @@ export function InvestigationWorkspacePage() {
   async function callAction(path, body, method = "POST") {
     setActionMessage(null);
     try {
+      const versioned = path.startsWith(`/investigations/${encodeURIComponent(investigationId)}`);
       const response = await apiRequest(path, {
         method,
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(versioned ? { "if-match": `W/\"investigation-${state.investigation?.recordVersion || 1}\"` } : {}),
+        },
         body: JSON.stringify(body),
       });
       const json = await response.json();
@@ -247,6 +271,7 @@ export function InvestigationWorkspacePage() {
                     </div>
                     <p className="mt-1 font-medium">{item.filename}</p>
                     {item.description && <p className="text-muted-foreground">{item.description}</p>}
+                    {item.contentSha256 ? <p className="mt-1 font-data text-xs text-muted-foreground">{item.byteSize} bytes · SHA-256 {item.contentSha256.slice(0, 16)}…</p> : null}
                     <StatusIndicator variant="badge">{item.evidenceType}</StatusIndicator>
                   </div>
                 ))}
@@ -286,10 +311,10 @@ export function InvestigationWorkspacePage() {
       )}
 
       {canUploadEvidence && (
-        <SectionCard title="Register evidence reference" description="Record evidence metadata. The current workflow does not upload or store the file itself.">
+        <SectionCard title="Upload evidence" description="Files are validated, hashed, and stored in private tenant-scoped evidence storage.">
           <div className="grid gap-3 md:grid-cols-3">
-            <FormField label="Filename or reference" htmlFor="evidence-filename">
-              <Input id="evidence-filename" placeholder="claim-review.pdf" value={evidenceForm.filename} onChange={(event) => setEvidenceForm((previous) => ({ ...previous, filename: event.target.value }))} />
+            <FormField label="Evidence file" htmlFor="evidence-file" hint="PDF, PNG, JPEG, TXT, or CSV; maximum 10 MB.">
+              <Input key={fileInputKey} id="evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv" onChange={(event) => setEvidenceForm((previous) => ({ ...previous, file: event.target.files?.[0] || null }))} />
             </FormField>
             <FormField label="Description" htmlFor="evidence-description">
               <Input id="evidence-description" placeholder="What this evidence establishes" value={evidenceForm.description} onChange={(event) => setEvidenceForm((previous) => ({ ...previous, description: event.target.value }))} />
@@ -310,17 +335,23 @@ export function InvestigationWorkspacePage() {
           </div>
           <Button
             className="mt-3"
-            disabled={!evidenceForm.filename.trim() || !evidenceForm.evidenceType.trim()}
+            disabled={!evidenceForm.file || evidenceForm.file.size > 10 * 1024 * 1024 || !evidenceForm.evidenceType.trim()}
             onClick={async () => {
+              const contentBase64 = await fileAsBase64(evidenceForm.file);
               const ok = await callAction(`/investigations/${investigation.investigationId}/evidence`, {
-                filename: evidenceForm.filename,
+                filename: evidenceForm.file.name,
                 description: evidenceForm.description || null,
                 evidenceType: evidenceForm.evidenceType,
+                contentType: evidenceContentType(evidenceForm.file),
+                contentBase64,
               });
-              if (ok) setEvidenceForm({ filename: "", description: "", evidenceType: "" });
+              if (ok) {
+                setEvidenceForm({ file: null, description: "", evidenceType: "" });
+                setFileInputKey((value) => value + 1);
+              }
             }}
           >
-            Register evidence reference
+            Upload evidence
           </Button>
         </SectionCard>
       )}

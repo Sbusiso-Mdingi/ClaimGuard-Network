@@ -2,7 +2,7 @@
 
 Phase 11D makes control-plane route metadata authoritative for operational database access. Phase 11E extends that foundation by supporting provisioned `private_database` routes alongside the existing `legacy_shared` route.
 
-The current canonical operational schema is **schema 14**, represented by migrations `0001` through `0014`. Both route types must expose metadata compatible with schema and migration version 14 before a connection pool is made available to API or worker code.
+The canonical operational schema is defined once in `packages/database/src/operational-schema.js`; migration and runtime compatibility checks consume that contract. Both route types must expose metadata matching its schema and migration versions before a connection pool is made available to API or worker code. After changing the canonical contract for a new migration, run `npm run schema:sync`; `npm run schema:check` rejects stale cross-language bindings.
 
 ## Runtime routing flow
 
@@ -42,13 +42,13 @@ It requires:
 - an active medical-scheme organisation;
 - exactly one active route;
 - logical database identifier `legacy-operational-shared`;
-- schema version `14`;
+- the canonical operational schema version;
 - a positive, monotonically increasing route generation;
 - provisioning status `active`;
 - a health status other than `suspended` or `unreachable`;
 - a verified legacy tenant mapping linked to the active route;
 - operational metadata identifying the database as `legacy_shared`;
-- migration version `14`;
+- the canonical operational migration version;
 - the configured legacy environment, normally `legacy`.
 
 The verified legacy mapping provides the operational tenant ID and slug used by tenant-scoped repositories.
@@ -64,8 +64,8 @@ It requires:
 - an active medical-scheme organisation;
 - exactly one active private route;
 - logical database identifier `private:<organisationId>`;
-- schema version `14`;
-- migration version `14`;
+- the canonical operational schema version;
+- the canonical operational migration version;
 - a positive route generation;
 - provisioning status `active`;
 - a health status other than `suspended` or `unreachable`;
@@ -108,8 +108,6 @@ MYSQL_URL=mysql://.../claimguard_operational
 
 DATA_PLANE_ENVIRONMENT=legacy
 DATA_PLANE_PRIVATE_ENVIRONMENT=production
-DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS=14
-
 DATA_PLANE_MAX_POOLS=32
 DATA_PLANE_POOL_CONNECTION_LIMIT=5
 DATA_PLANE_POOL_IDLE_MS=600000
@@ -121,7 +119,7 @@ DATA_PLANE_POOL_DRAIN_TIMEOUT_MS=10000
 
 The API supports both `legacy_shared` and `private_database` adapters in session mode. Route resolution determines which adapter is used; callers cannot select a database or route through request headers, hostnames, slugs, or payload fields.
 
-The API’s supported schema allowlist is controlled by `DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS` and currently defaults to `14`.
+The API’s supported schema allowlist is controlled by `DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS`. When omitted, it defaults to the canonical operational schema export; an explicit override must be kept equal to that contract during a single-version rollout.
 
 ## Database compatibility verification
 
@@ -177,7 +175,7 @@ The scheduled report producer uses control-plane routing and supports both:
 - `legacy_shared`;
 - `private_database`.
 
-It accepts only schema 14 by default.
+It accepts only the canonical operational schema by default.
 
 The worker discovers eligible organisations, resolves each route independently, verifies its operational metadata, and creates a tenant-pinned processing scope. A job payload cannot expand that scope or redirect processing to another tenant.
 

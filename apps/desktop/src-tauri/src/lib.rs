@@ -10,6 +10,7 @@ use std::{
 };
 
 use cache::{EncryptedCache, SyncPage};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use enrollment::{
@@ -616,6 +617,128 @@ async fn desktop_claim_details(
 }
 
 #[tauri::command]
+async fn desktop_investigators(state: State<'_, DesktopState>) -> Result<Value, String> {
+    command_result(
+        async {
+            state.require_unlocked()?;
+            state.require_capability("investigations.assign")?;
+            let (enrollment, signing_key, _) = state.load_enrollment()?;
+            let cookie = state
+                .secure_store
+                .get(SESSION_COOKIE)?
+                .ok_or(DesktopError::AuthenticationRequired)?;
+            let cookie = std::str::from_utf8(&cookie).map_err(|_| DesktopError::CredentialStore)?;
+            match state
+                .http
+                .enrolled(
+                    Method::GET,
+                    "/desktop/investigators",
+                    Vec::new(),
+                    &enrollment,
+                    &signing_key,
+                    Some(cookie),
+                )
+                .await
+            {
+                Ok(response) => {
+                    state.offline.store(false, Ordering::SeqCst);
+                    Ok(response.body)
+                }
+                Err(DesktopError::NetworkUnavailable) => {
+                    state.offline.store(true, Ordering::SeqCst);
+                    Err(DesktopError::NetworkUnavailable)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        .await,
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InvestigationCreateRequest<'a> {
+    claim_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assigned_investigator: Option<&'a str>,
+    priority: &'a str,
+}
+
+#[tauri::command]
+async fn desktop_create_investigation(
+    claim_id: String,
+    expected_claim_version: u32,
+    assigned_investigator: Option<String>,
+    priority: String,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    command_result(
+        async {
+            state.require_unlocked()?;
+            state.require_capability("investigations.create")?;
+            if claim_id.trim().is_empty()
+                || claim_id.len() > 128
+                || expected_claim_version < 1
+                || !["LOW", "NORMAL", "HIGH", "CRITICAL"].contains(&priority.as_str())
+                || assigned_investigator
+                    .as_deref()
+                    .is_some_and(|value| value.is_empty() || value.len() > 255)
+            {
+                return Err(DesktopError::InvalidResponse);
+            }
+            if assigned_investigator.is_some() {
+                state.require_capability("investigations.assign")?;
+            }
+            let (enrollment, signing_key, _) = state.load_enrollment()?;
+            let cookie = state
+                .secure_store
+                .get(SESSION_COOKIE)?
+                .ok_or(DesktopError::AuthenticationRequired)?;
+            let cookie = std::str::from_utf8(&cookie).map_err(|_| DesktopError::CredentialStore)?;
+            let body = serde_json::to_vec(&InvestigationCreateRequest {
+                claim_id: claim_id.trim(),
+                assigned_investigator: assigned_investigator.as_deref(),
+                priority: &priority,
+            })
+            .map_err(|_| DesktopError::InvalidResponse)?;
+            let version = format!("claim-{expected_claim_version}");
+            let response = match state
+                .http
+                .enrolled_versioned(
+                    Method::POST,
+                    "/desktop/investigations",
+                    body,
+                    VersionedEnrollment {
+                        enrollment: &enrollment,
+                        signing_key: &signing_key,
+                        session_cookie: Some(cookie),
+                        expected_version: &version,
+                    },
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(DesktopError::NetworkUnavailable) => {
+                    state.offline.store(true, Ordering::SeqCst);
+                    return Err(DesktopError::NetworkUnavailable);
+                }
+                Err(error) => return Err(error),
+            };
+            let investigation = response
+                .body
+                .get("investigation")
+                .cloned()
+                .ok_or(DesktopError::InvalidResponse)?;
+            let mut cache = state.open_cache(&enrollment)?;
+            cache.apply_investigation_update(&response.body)?;
+            state.offline.store(false, Ordering::SeqCst);
+            Ok(json!({ "status": state.status()?, "investigation": investigation }))
+        }
+        .await,
+    )
+}
+
+#[tauri::command]
 async fn desktop_investigation_details(
     investigation_id: String,
     state: State<'_, DesktopState>,
@@ -677,14 +800,17 @@ struct InvestigationUpdateRequest<'a> {
     status: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     priority: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assigned_investigator: Option<&'a str>,
 }
 
 #[tauri::command]
 async fn desktop_update_investigation(
     investigation_id: String,
-    expected_updated_at: String,
+    expected_record_version: u32,
     status: Option<String>,
     priority: Option<String>,
+    assigned_investigator: Option<String>,
     state: State<'_, DesktopState>,
 ) -> Result<Value, String> {
     command_result(
@@ -692,8 +818,8 @@ async fn desktop_update_investigation(
             state.require_unlocked()?;
             if investigation_id.trim().is_empty()
                 || investigation_id.len() > 64
-                || DateTime::parse_from_rfc3339(&expected_updated_at).is_err()
-                || (status.is_none() && priority.is_none())
+                || expected_record_version < 1
+                || (status.is_none() && priority.is_none() && assigned_investigator.is_none())
             {
                 return Err(DesktopError::InvalidResponse);
             }
@@ -722,6 +848,15 @@ async fn desktop_update_investigation(
             if priority.is_some() {
                 state.require_capability("investigations.change_priority")?;
             }
+            if assigned_investigator.is_some() {
+                state.require_capability("investigations.assign")?;
+                if assigned_investigator
+                    .as_deref()
+                    .is_some_and(|value| value.is_empty() || value.len() > 255)
+                {
+                    return Err(DesktopError::InvalidResponse);
+                }
+            }
             let (enrollment, signing_key, _) = state.load_enrollment()?;
             let cookie = state
                 .secure_store
@@ -731,10 +866,12 @@ async fn desktop_update_investigation(
             let body = serde_json::to_vec(&InvestigationUpdateRequest {
                 status: status.as_deref(),
                 priority: priority.as_deref(),
+                assigned_investigator: assigned_investigator.as_deref(),
             })
             .map_err(|_| DesktopError::InvalidResponse)?;
             let encoded: String =
                 url::form_urlencoded::byte_serialize(investigation_id.as_bytes()).collect();
+            let version = format!("investigation-{expected_record_version}");
             let response = match state
                 .http
                 .enrolled_versioned(
@@ -745,7 +882,7 @@ async fn desktop_update_investigation(
                         enrollment: &enrollment,
                         signing_key: &signing_key,
                         session_cookie: Some(cookie),
-                        expected_version: &expected_updated_at,
+                        expected_version: &version,
                     },
                 )
                 .await
@@ -769,6 +906,199 @@ async fn desktop_update_investigation(
                 "status": state.status()?,
                 "investigation": investigation,
             }))
+        }
+        .await,
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InvestigationNoteRequest<'a> {
+    text: &'a str,
+    note_type: &'a str,
+}
+
+#[tauri::command]
+async fn desktop_add_investigation_note(
+    investigation_id: String,
+    expected_record_version: u32,
+    text: String,
+    note_type: String,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    command_result(
+        async {
+            state.require_unlocked()?;
+            state.require_capability("investigations.add_note")?;
+            let allowed_types = [
+                "EVIDENCE",
+                "INTERVIEW",
+                "MEDICAL_REVIEW",
+                "PROVIDER_REVIEW",
+                "INTERNAL_NOTE",
+            ];
+            if investigation_id.trim().is_empty()
+                || investigation_id.len() > 64
+                || expected_record_version < 1
+                || text.trim().is_empty()
+                || text.len() > 20_000
+                || !allowed_types.contains(&note_type.as_str())
+            {
+                return Err(DesktopError::InvalidResponse);
+            }
+            let (enrollment, signing_key, _) = state.load_enrollment()?;
+            let cookie = state
+                .secure_store
+                .get(SESSION_COOKIE)?
+                .ok_or(DesktopError::AuthenticationRequired)?;
+            let cookie = std::str::from_utf8(&cookie).map_err(|_| DesktopError::CredentialStore)?;
+            let encoded: String =
+                url::form_urlencoded::byte_serialize(investigation_id.as_bytes()).collect();
+            let body = serde_json::to_vec(&InvestigationNoteRequest {
+                text: text.trim(),
+                note_type: &note_type,
+            })
+            .map_err(|_| DesktopError::InvalidResponse)?;
+            let version = format!("investigation-{expected_record_version}");
+            let response = match state
+                .http
+                .enrolled_versioned(
+                    Method::POST,
+                    &format!("/desktop/investigations/{encoded}/notes"),
+                    body,
+                    VersionedEnrollment {
+                        enrollment: &enrollment,
+                        signing_key: &signing_key,
+                        session_cookie: Some(cookie),
+                        expected_version: &version,
+                    },
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(DesktopError::NetworkUnavailable) => {
+                    state.offline.store(true, Ordering::SeqCst);
+                    return Err(DesktopError::NetworkUnavailable);
+                }
+                Err(error) => return Err(error),
+            };
+            let investigation = response
+                .body
+                .get("investigation")
+                .cloned()
+                .ok_or(DesktopError::InvalidResponse)?;
+            let note = response
+                .body
+                .get("note")
+                .cloned()
+                .ok_or(DesktopError::InvalidResponse)?;
+            let mut cache = state.open_cache(&enrollment)?;
+            cache.apply_investigation_update(&response.body)?;
+            state.offline.store(false, Ordering::SeqCst);
+            Ok(json!({ "status": state.status()?, "investigation": investigation, "note": note }))
+        }
+        .await,
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InvestigationEvidenceRequest<'a> {
+    filename: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    evidence_type: &'a str,
+    content_type: &'a str,
+    content_base64: &'a str,
+}
+
+#[tauri::command]
+async fn desktop_upload_investigation_evidence(
+    investigation_id: String,
+    expected_record_version: u32,
+    filename: String,
+    description: Option<String>,
+    evidence_type: String,
+    content_type: String,
+    content_base64: String,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    command_result(
+        async {
+            state.require_unlocked()?;
+            state.require_capability("investigations.upload_evidence")?;
+            let decoded = BASE64_STANDARD
+                .decode(content_base64.as_bytes())
+                .map_err(|_| DesktopError::InvalidResponse)?;
+            if investigation_id.trim().is_empty()
+                || investigation_id.len() > 64
+                || expected_record_version < 1
+                || filename.trim().is_empty()
+                || filename.len() > 255
+                || description.as_deref().is_some_and(|value| value.len() > 20_000)
+                || evidence_type.trim().is_empty()
+                || evidence_type.len() > 64
+                || content_type.trim().is_empty()
+                || content_type.len() > 128
+                || decoded.is_empty()
+                || decoded.len() > 10 * 1024 * 1024
+            {
+                return Err(DesktopError::InvalidResponse);
+            }
+            drop(decoded);
+            let (enrollment, signing_key, _) = state.load_enrollment()?;
+            let cookie = state
+                .secure_store
+                .get(SESSION_COOKIE)?
+                .ok_or(DesktopError::AuthenticationRequired)?;
+            let cookie = std::str::from_utf8(&cookie).map_err(|_| DesktopError::CredentialStore)?;
+            let encoded: String =
+                url::form_urlencoded::byte_serialize(investigation_id.as_bytes()).collect();
+            let body = serde_json::to_vec(&InvestigationEvidenceRequest {
+                filename: filename.trim(),
+                description: description.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+                evidence_type: evidence_type.trim(),
+                content_type: content_type.trim(),
+                content_base64: &content_base64,
+            })
+            .map_err(|_| DesktopError::InvalidResponse)?;
+            let version = format!("investigation-{expected_record_version}");
+            let response = match state
+                .http
+                .enrolled_versioned(
+                    Method::POST,
+                    &format!("/desktop/investigations/{encoded}/evidence"),
+                    body,
+                    VersionedEnrollment {
+                        enrollment: &enrollment,
+                        signing_key: &signing_key,
+                        session_cookie: Some(cookie),
+                        expected_version: &version,
+                    },
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(DesktopError::NetworkUnavailable) => {
+                    state.offline.store(true, Ordering::SeqCst);
+                    return Err(DesktopError::NetworkUnavailable);
+                }
+                Err(error) => return Err(error),
+            };
+            let investigation = response
+                .body
+                .get("investigation")
+                .cloned()
+                .ok_or(DesktopError::InvalidResponse)?;
+            let evidence = response
+                .body
+                .get("evidence")
+                .cloned()
+                .ok_or(DesktopError::InvalidResponse)?;
+            let mut cache = state.open_cache(&enrollment)?;
+            cache.apply_investigation_update(&response.body)?;
+            state.offline.store(false, Ordering::SeqCst);
+            Ok(json!({ "status": state.status()?, "investigation": investigation, "evidence": evidence }))
         }
         .await,
     )
@@ -842,8 +1172,12 @@ pub fn run() {
             lock_desktop,
             synchronize_desktop,
             desktop_claim_details,
+            desktop_investigators,
+            desktop_create_investigation,
             desktop_investigation_details,
             desktop_update_investigation,
+            desktop_add_investigation_note,
+            desktop_upload_investigation_evidence,
             reset_desktop,
         ])
         .run(tauri::generate_context!())

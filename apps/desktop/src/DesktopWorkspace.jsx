@@ -22,6 +22,9 @@ import { desktopBridge, nextBackoff, operationalWriteAllowed } from "./desktopBr
 
 const AUTO_LOCK_MS = 15 * 60_000;
 const PRIORITIES = ["LOW", "NORMAL", "HIGH", "CRITICAL"];
+const NOTE_TYPES = ["INTERNAL_NOTE", "EVIDENCE", "INTERVIEW", "MEDICAL_REVIEW", "PROVIDER_REVIEW"];
+const EVIDENCE_TYPES = ["DOCUMENT", "PROVIDER_INVOICE", "MEDICAL_RECORD", "CORRESPONDENCE", "IMAGE", "OTHER"];
+const EVIDENCE_ACCEPT = ".pdf,.png,.jpg,.jpeg,.txt,.csv";
 const STATUS_TRANSITIONS = Object.freeze({
   OPEN: ["OPEN", "UNDER_REVIEW", "AWAITING_EVIDENCE", "CLOSED"],
   UNDER_REVIEW: ["UNDER_REVIEW", "AWAITING_EVIDENCE", "CONFIRMED_FRAUD", "NO_FRAUD_FOUND", "CLOSED"],
@@ -50,6 +53,25 @@ function enumLabel(value) {
     .split("_")
     .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
     .join(" ");
+}
+
+function fileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("The evidence file could not be read."));
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      const separator = value.indexOf(",");
+      if (separator < 0) reject(new Error("The evidence file could not be encoded."));
+      else resolve(value.slice(separator + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function evidenceContentType(file) {
+  const extension = String(file?.name || "").split(".").pop()?.toLowerCase();
+  return ({ pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", txt: "text/plain", csv: "text/csv" })[extension] || file?.type || "application/octet-stream";
 }
 
 function freshnessClasses(freshness) {
@@ -162,7 +184,23 @@ function Overview({ claims, investigations, summary, network, openClaim, openInv
   );
 }
 
-function ClaimDetail({ payload, loading, onClose, onOpenInvestigation, canViewInvestigations }) {
+function InvestigationCreationPanel({ claim, writesAllowed, canCreate, canAssign, investigators, onCreate }) {
+  const [priority, setPriority] = useState("NORMAL");
+  const [assignedInvestigator, setAssignedInvestigator] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  if (claim.investigation || !canCreate) return null;
+  async function create() {
+    setSubmitting(true);
+    try {
+      await onCreate(claim, { priority, assignedInvestigator: canAssign ? assignedInvestigator || null : null });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  return <div className="rounded-xl border border-primary/20 bg-primary/5 p-4"><div><p className="text-sm font-semibold">Create an investigation</p><p className="mt-1 text-xs text-muted-foreground">Creation is sent directly to the authoritative scheme data plane and checked against claim version {claim.currentClaimVersion}.</p></div><div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]"><label className="grid gap-2 text-sm font-medium">Priority<select aria-label="New investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={priority} onChange={(event) => setPriority(event.target.value)} disabled={!writesAllowed}>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label>{canAssign ? <label className="grid gap-2 text-sm font-medium">Assign investigator<select aria-label="New investigation assignee" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={assignedInvestigator} onChange={(event) => setAssignedInvestigator(event.target.value)} disabled={!writesAllowed}><option value="">Leave unassigned</option>{investigators.map((user) => <option key={user.userId} value={user.userId}>{user.displayName}</option>)}</select></label> : <div />}<div className="flex items-end"><Button onClick={create} disabled={!writesAllowed || submitting}>{submitting ? "Creating…" : "Create investigation"}</Button></div></div>{!writesAllowed ? <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">Reconnect and synchronize before creating the case.</p> : null}</div>;
+}
+
+function ClaimDetail({ payload, loading, onClose, onOpenInvestigation, onCreateInvestigation, canViewInvestigations, canCreateInvestigations, canAssignInvestigations, investigators, writesAllowed }) {
   if (!payload && !loading) return null;
   const claim = payload?.claim || null;
   return (
@@ -180,13 +218,14 @@ function ClaimDetail({ payload, loading, onClose, onOpenInvestigation, canViewIn
             <section><h3 className="text-sm font-semibold">Detection rationale</h3>{claim.evidence?.length ? <ul className="mt-3 space-y-2">{claim.evidence.map((item) => <li key={item} className="rounded-lg border border-border bg-secondary/20 p-3 text-sm leading-6">{item}</li>)}</ul> : <p className="mt-3 text-sm text-muted-foreground">No persisted detection rationale is available for this claim version.</p>}{claim.triggeredRules?.length ? <div className="mt-3 flex flex-wrap gap-2">{claim.triggeredRules.map((rule) => <StatusPill key={rule} value={rule} tone="warning" />)}</div> : null}</section>
           </div>
           {claim.investigation ? <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold">Linked investigation</p><p className="mt-1 font-data text-xs text-muted-foreground">{claim.investigation.investigationId}</p></div><div className="flex items-center gap-2"><StatusPill value={claim.investigation.status} />{canViewInvestigations ? <Button variant="outline" size="sm" onClick={() => onOpenInvestigation(claim.investigation)}>Open case</Button> : null}</div></div> : null}
+          <InvestigationCreationPanel claim={claim} writesAllowed={writesAllowed} canCreate={canCreateInvestigations} canAssign={canAssignInvestigations} investigators={investigators} onCreate={onCreateInvestigation} />
         </div> : null}
       </CardContent>
     </Card>
   );
 }
 
-function ClaimsView({ claims, selectedClaim, loading, openClaim, closeClaim, openInvestigation, canViewInvestigations }) {
+function ClaimsView({ claims, selectedClaim, loading, openClaim, closeClaim, openInvestigation, createInvestigation, canViewInvestigations, canCreateInvestigations, canAssignInvestigations, investigators, writesAllowed }) {
   const [search, setSearch] = useState("");
   const [risk, setRisk] = useState("all");
   const filtered = useMemo(() => claims.filter((claim) => {
@@ -198,46 +237,85 @@ function ClaimsView({ claims, selectedClaim, loading, openClaim, closeClaim, ope
   }), [claims, risk, search]);
   return <div className="space-y-6">
     <Card><CardHeader><CardTitle>Claims queue</CardTitle><CardDescription>Search the bounded local cache. Opening a claim refreshes its authoritative detail when connected.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-3 sm:flex-row"><SearchField label="Search claims" placeholder="Claim ID, billing code, or status" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Risk band</span><select aria-label="Risk band" className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={risk} onChange={(event) => setRisk(event.target.value)}><option value="all">All risk bands</option><option value="high">High risk</option><option value="medium">Medium risk</option><option value="low">Low risk</option><option value="unscored">Unscored</option></select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {claims.length} cached claims</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[860px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Service date</th><th className="px-5 py-3">Amount</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Risk</th><th className="px-5 py-3">Investigation</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((claim) => <tr key={claim.claimId}><td className="px-5 py-4 font-data text-xs font-semibold">{claim.claimId}</td><td className="px-5 py-4">{claim.serviceDate || "—"}</td><td className="px-5 py-4 font-data">{money(claim.billedAmount)}</td><td className="px-5 py-4"><StatusPill value={claim.status} /></td><td className="px-5 py-4"><RiskLabel score={claim.riskScore} /></td><td className="px-5 py-4">{claim.investigation ? <StatusPill value={claim.investigation.priority} /> : <span className="text-xs text-muted-foreground">None</span>}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openClaim(claim)}>Open</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={FileSearch} title="No matching claims" description="Adjust the search or risk filter. Older claims remain available through the web application." /> : null}</CardContent></Card>
-    <ClaimDetail payload={selectedClaim} loading={loading} onClose={closeClaim} onOpenInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} />
+    <ClaimDetail payload={selectedClaim} loading={loading} onClose={closeClaim} onOpenInvestigation={openInvestigation} onCreateInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} />
   </div>;
 }
 
-function InvestigationWorkspace({ compact, detail, loading, writesAllowed, canUpdateStatus, canChangePriority, onSave, onClose, onOpenClaim }) {
+function InvestigationWorkspace({
+  compact, detail, loading, writesAllowed, canUpdateStatus, canChangePriority, canAssign,
+  canAddNote, canUploadEvidence, investigators, onSave, onAddNote, onUploadEvidence, onClose, onOpenClaim,
+}) {
   const record = detail?.investigation || compact;
   const [draftStatus, setDraftStatus] = useState(record?.status || "OPEN");
   const [draftPriority, setDraftPriority] = useState(record?.priority || "NORMAL");
+  const [draftAssignee, setDraftAssignee] = useState(record?.assignedInvestigator || "");
+  const [note, setNote] = useState({ text: "", noteType: "INTERNAL_NOTE" });
+  const [evidence, setEvidence] = useState({ file: null, description: "", evidenceType: "DOCUMENT" });
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [addingNote, setAddingNote] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     setDraftStatus(record?.status || "OPEN");
     setDraftPriority(record?.priority || "NORMAL");
-  }, [record?.investigationId, record?.priority, record?.status, record?.updatedAt]);
+    setDraftAssignee(record?.assignedInvestigator || "");
+  }, [record?.assignedInvestigator, record?.investigationId, record?.priority, record?.recordVersion, record?.status]);
 
   if (!record && !loading) return null;
   const changedStatus = canUpdateStatus && draftStatus !== record?.status;
   const changedPriority = canChangePriority && draftPriority !== record?.priority;
+  const changedAssignee = canAssign && draftAssignee && draftAssignee !== record?.assignedInvestigator;
   async function save() {
     setSaving(true);
     try {
       await onSave(record, {
         ...(changedStatus ? { status: draftStatus } : {}),
         ...(changedPriority ? { priority: draftPriority } : {}),
+        ...(changedAssignee ? { assignedInvestigator: draftAssignee } : {}),
       });
     } finally {
       setSaving(false);
     }
   }
-  return <Card className="border-primary/20 shadow-lg"><CardHeader className="flex-row items-start justify-between gap-4"><div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Investigation workspace</p><CardTitle className="mt-2">{record?.investigationId || "Loading investigation…"}</CardTitle><CardDescription>Claim {record?.claimId || "—"} · version {displayDate(record?.updatedAt)}</CardDescription></div><Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close investigation workspace</span></Button></CardHeader><CardContent className="space-y-6">
+  async function addNote() {
+    setAddingNote(true);
+    try {
+      await onAddNote(record, note);
+      setNote({ text: "", noteType: "INTERNAL_NOTE" });
+    } finally {
+      setAddingNote(false);
+    }
+  }
+  async function uploadEvidence() {
+    setUploading(true);
+    try {
+      const contentBase64 = await fileAsBase64(evidence.file);
+      await onUploadEvidence(record, {
+        filename: evidence.file.name,
+        description: evidence.description,
+        evidenceType: evidence.evidenceType,
+        contentType: evidenceContentType(evidence.file),
+        contentBase64,
+      });
+      setEvidence({ file: null, description: "", evidenceType: "DOCUMENT" });
+      setFileInputKey((value) => value + 1);
+    } finally {
+      setUploading(false);
+    }
+  }
+  return <Card className="border-primary/20 shadow-lg"><CardHeader className="flex-row items-start justify-between gap-4"><div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Investigation workspace</p><CardTitle className="mt-2">{record?.investigationId || "Loading investigation…"}</CardTitle><CardDescription>Claim {record?.claimId || "—"} · record version {record?.recordVersion || "—"} · updated {displayDate(record?.updatedAt)}</CardDescription></div><Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close investigation workspace</span></Button></CardHeader><CardContent className="space-y-6">
     {loading && !detail ? <div className="flex items-center gap-3 py-4 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" />Loading notes and evidence…</div> : null}
-    <div className="grid gap-4 lg:grid-cols-[1fr_1fr_auto]"><label className="grid gap-2 text-sm font-medium">Status<select aria-label="Investigation status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftStatus} onChange={(event) => setDraftStatus(event.target.value)} disabled={!writesAllowed || !canUpdateStatus}>{(STATUS_TRANSITIONS[record?.status] || [record?.status]).map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Priority<select aria-label="Investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftPriority} onChange={(event) => setDraftPriority(event.target.value)} disabled={!writesAllowed || !canChangePriority}>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><div className="flex items-end"><Button onClick={save} disabled={saving || !writesAllowed || (!changedStatus && !changedPriority)}>{saving ? "Saving…" : "Save changes"}</Button></div></div>
+    <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr_auto]"><label className="grid gap-2 text-sm font-medium">Status<select aria-label="Investigation status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftStatus} onChange={(event) => setDraftStatus(event.target.value)} disabled={!writesAllowed || !canUpdateStatus}>{(STATUS_TRANSITIONS[record?.status] || [record?.status]).map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Priority<select aria-label="Investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftPriority} onChange={(event) => setDraftPriority(event.target.value)} disabled={!writesAllowed || !canChangePriority}>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Assigned investigator<select aria-label="Assigned investigator" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftAssignee} onChange={(event) => setDraftAssignee(event.target.value)} disabled={!writesAllowed || !canAssign}><option value="" disabled>Select an investigator</option>{record?.assignedInvestigator && !investigators.some((user) => user.userId === record.assignedInvestigator) ? <option value={record.assignedInvestigator}>{record.assignedInvestigator} (currently assigned)</option> : null}{investigators.map((user) => <option key={user.userId} value={user.userId}>{user.displayName}</option>)}</select></label><div className="flex items-end"><Button onClick={save} disabled={saving || !writesAllowed || (!changedStatus && !changedPriority && !changedAssignee)}>{saving ? "Saving…" : "Save changes"}</Button></div></div>
     {!writesAllowed ? <p className="text-sm text-amber-700 dark:text-amber-300">Reconnect and synchronize before changing authoritative case state.</p> : null}
-    {writesAllowed && !canUpdateStatus && !canChangePriority ? <p className="text-sm text-muted-foreground">This account can review the case but does not have case-update capabilities.</p> : null}
+    {writesAllowed && !canUpdateStatus && !canChangePriority && !canAssign ? <p className="text-sm text-muted-foreground">This account can review the case but does not have case-update capabilities.</p> : null}
     <div className="grid gap-6 lg:grid-cols-2"><section><h3 className="text-sm font-semibold">Case information</h3><dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm"><dt className="text-muted-foreground">Status</dt><dd><StatusPill value={record?.status} /></dd><dt className="text-muted-foreground">Priority</dt><dd><StatusPill value={record?.priority} /></dd><dt className="text-muted-foreground">Assigned to</dt><dd>{record?.assignedInvestigator || "Unassigned"}</dd><dt className="text-muted-foreground">Opened by</dt><dd>{record?.assignedBy || "—"}</dd><dt className="text-muted-foreground">Opened</dt><dd>{displayDate(record?.createdAt)}</dd></dl><Button variant="outline" size="sm" className="mt-4" onClick={() => onOpenClaim(record?.claimId)}>Open related claim</Button></section><section><h3 className="text-sm font-semibold">Recorded milestones</h3><div className="mt-3 space-y-2 text-sm"><p className="rounded-lg border border-border p-3"><span className="text-muted-foreground">Last updated</span><br />{displayDate(record?.updatedAt)}</p>{record?.fraudConfirmedAt ? <p className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3"><span className="text-muted-foreground">Fraud confirmed</span><br />{displayDate(record.fraudConfirmedAt)}</p> : null}{record?.closedAt ? <p className="rounded-lg border border-border p-3"><span className="text-muted-foreground">Closed</span><br />{displayDate(record.closedAt)}</p> : null}</div></section></div>
-    <div className="grid gap-6 xl:grid-cols-2"><section><h3 className="text-sm font-semibold">Investigation notes</h3>{detail?.investigation?.notes?.length ? <div className="mt-3 space-y-3">{detail.investigation.notes.map((note) => <article key={note.noteId} className="rounded-xl border border-border bg-secondary/20 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><StatusPill value={note.noteType} /><time className="text-xs text-muted-foreground">{displayDate(note.timestamp)}</time></div><p className="mt-3 whitespace-pre-wrap text-sm leading-6">{note.text}</p><p className="mt-2 text-xs text-muted-foreground">Author {note.author}</p></article>)}</div> : <p className="mt-3 text-sm text-muted-foreground">No notes are recorded for this investigation.</p>}</section><section><h3 className="text-sm font-semibold">Evidence register</h3>{detail?.investigation?.evidence?.length ? <div className="mt-3 divide-y divide-border rounded-xl border border-border">{detail.investigation.evidence.map((item) => <article key={item.evidenceId} className="p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{item.filename}</p><StatusPill value={item.evidenceType} /></div><p className="mt-2 text-sm text-muted-foreground">{item.description || "No description supplied."}</p><p className="mt-2 text-xs text-muted-foreground">Registered {displayDate(item.uploadedAt)} by {item.uploadedBy}</p></article>)}</div> : <p className="mt-3 text-sm text-muted-foreground">No evidence metadata is recorded for this investigation.</p>}</section></div>
+    <div className="grid gap-6 xl:grid-cols-2"><section><h3 className="text-sm font-semibold">Investigation notes</h3>{canAddNote ? <div className="mt-3 space-y-3 rounded-xl border border-border bg-secondary/10 p-4"><label className="grid gap-2 text-sm font-medium">Note type<select aria-label="Investigation note type" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={note.noteType} onChange={(event) => setNote((previous) => ({ ...previous, noteType: event.target.value }))} disabled={!writesAllowed}>{NOTE_TYPES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Note<textarea aria-label="Investigation note" className="min-h-28 rounded-md border border-input bg-background p-3 text-sm" maxLength={20000} value={note.text} onChange={(event) => setNote((previous) => ({ ...previous, text: event.target.value }))} disabled={!writesAllowed} /></label><Button size="sm" onClick={addNote} disabled={!writesAllowed || addingNote || !note.text.trim()}>{addingNote ? "Adding…" : "Add note"}</Button></div> : null}{detail?.investigation?.notes?.length ? <div className="mt-3 space-y-3">{detail.investigation.notes.map((item) => <article key={item.noteId} className="rounded-xl border border-border bg-secondary/20 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><StatusPill value={item.noteType} /><time className="text-xs text-muted-foreground">{displayDate(item.timestamp)}</time></div><p className="mt-3 whitespace-pre-wrap text-sm leading-6">{item.text}</p><p className="mt-2 text-xs text-muted-foreground">Author {item.author}</p></article>)}</div> : <p className="mt-3 text-sm text-muted-foreground">No notes are recorded for this investigation.</p>}</section><section><h3 className="text-sm font-semibold">Evidence register</h3>{canUploadEvidence ? <div className="mt-3 space-y-3 rounded-xl border border-border bg-secondary/10 p-4"><label className="grid gap-2 text-sm font-medium">Evidence file<input key={fileInputKey} aria-label="Evidence file" type="file" accept={EVIDENCE_ACCEPT} className="block w-full text-sm" onChange={(event) => setEvidence((previous) => ({ ...previous, file: event.target.files?.[0] || null }))} disabled={!writesAllowed} /></label><p className="text-xs text-muted-foreground">Private upload. PDF, PNG, JPEG, TXT, or CSV; maximum 10 MB.</p>{evidence.file?.size > 10 * 1024 * 1024 ? <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">The selected file is larger than 10 MB.</p> : null}<label className="grid gap-2 text-sm font-medium">Evidence type<select aria-label="Evidence type" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={evidence.evidenceType} onChange={(event) => setEvidence((previous) => ({ ...previous, evidenceType: event.target.value }))} disabled={!writesAllowed}>{EVIDENCE_TYPES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Description<textarea aria-label="Evidence description" className="min-h-20 rounded-md border border-input bg-background p-3 text-sm" maxLength={20000} value={evidence.description} onChange={(event) => setEvidence((previous) => ({ ...previous, description: event.target.value }))} disabled={!writesAllowed} /></label><Button size="sm" onClick={uploadEvidence} disabled={!writesAllowed || uploading || !evidence.file || evidence.file.size > 10 * 1024 * 1024}>{uploading ? "Uploading…" : "Upload evidence"}</Button></div> : null}{detail?.investigation?.evidence?.length ? <div className="mt-3 divide-y divide-border rounded-xl border border-border">{detail.investigation.evidence.map((item) => <article key={item.evidenceId} className="p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{item.filename}</p><StatusPill value={item.evidenceType} /></div><p className="mt-2 text-sm text-muted-foreground">{item.description || "No description supplied."}</p><p className="mt-2 text-xs text-muted-foreground">{item.contentSha256 ? `${item.byteSize ? `${new Intl.NumberFormat("en-ZA").format(item.byteSize)} bytes · ` : ""}SHA-256 ${item.contentSha256.slice(0, 16)}…` : "Legacy metadata record; no stored content hash."}</p><p className="mt-1 text-xs text-muted-foreground">Uploaded {displayDate(item.uploadedAt)} by {item.uploadedBy}</p></article>)}</div> : <p className="mt-3 text-sm text-muted-foreground">No evidence is recorded for this investigation.</p>}</section></div>
+    {detail?.investigation?.activity?.length ? <section><h3 className="text-sm font-semibold">Case activity audit</h3><div className="mt-3 divide-y divide-border rounded-xl border border-border">{detail.investigation.activity.map((event) => <div key={event.activityEventId} className="flex flex-wrap items-center justify-between gap-3 p-4"><div><p className="text-sm font-medium">{enumLabel(event.action)}</p><p className="mt-1 text-xs text-muted-foreground">Actor {event.actorId} · {displayDate(event.occurredAt)}</p></div><span className="break-all font-data text-[10px] text-muted-foreground">{event.activityEventId}</span></div>)}</div></section> : null}
   </CardContent></Card>;
 }
 
-function InvestigationsView({ investigations, selection, detail, loading, writesAllowed, capabilities, openInvestigation, closeInvestigation, updateInvestigation, openClaimById }) {
+function InvestigationsView({ investigations, selection, detail, loading, writesAllowed, capabilities, investigators, openInvestigation, closeInvestigation, updateInvestigation, addInvestigationNote, uploadInvestigationEvidence, openClaimById }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
@@ -247,7 +325,7 @@ function InvestigationsView({ investigations, selection, detail, loading, writes
       && (statusFilter === "all" || item.status === statusFilter)
       && (priorityFilter === "all" || item.priority === priorityFilter);
   }), [investigations, priorityFilter, search, statusFilter]);
-  return <div className="space-y-6"><Card><CardHeader><CardTitle>Investigation queue</CardTitle><CardDescription>All active cases in the organisation-bound cache, including investigations older than the 90-day claim window.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]"><SearchField label="Search investigations" placeholder="Investigation, claim, or assignee" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Status</span><select aria-label="Filter investigation status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{Object.keys(STATUS_TRANSITIONS).filter((value) => value !== "CLOSED").map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-1 text-xs text-muted-foreground"><span>Priority</span><select aria-label="Filter investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}><option value="all">All priorities</option>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {investigations.length} active investigations</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[900px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Investigation</th><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Priority</th><th className="px-5 py-3">Assigned investigator</th><th className="px-5 py-3">Updated</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((item) => <tr key={item.investigationId} className={selection?.investigationId === item.investigationId ? "bg-primary/5" : ""}><td className="px-5 py-4 font-data text-xs font-semibold">{item.investigationId}</td><td className="px-5 py-4 font-data text-xs">{item.claimId}</td><td className="px-5 py-4"><StatusPill value={item.status} /></td><td className="px-5 py-4"><StatusPill value={item.priority} /></td><td className="px-5 py-4">{item.assignedInvestigator || "Unassigned"}</td><td className="px-5 py-4 text-xs text-muted-foreground">{displayDate(item.updatedAt)}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openInvestigation(item)}>Open case</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={AlertTriangle} title="No matching investigations" description="Adjust the filters or synchronize to receive current active cases." /> : null}</CardContent></Card><InvestigationWorkspace compact={selection} detail={detail} loading={loading} writesAllowed={writesAllowed} canUpdateStatus={capabilities.includes("investigations.update_status")} canChangePriority={capabilities.includes("investigations.change_priority")} onSave={updateInvestigation} onClose={closeInvestigation} onOpenClaim={openClaimById} /></div>;
+  return <div className="space-y-6"><Card><CardHeader><CardTitle>Investigation queue</CardTitle><CardDescription>All active cases in the organisation-bound cache, including investigations older than the 90-day claim window.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]"><SearchField label="Search investigations" placeholder="Investigation, claim, or assignee" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Status</span><select aria-label="Filter investigation status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{Object.keys(STATUS_TRANSITIONS).filter((value) => value !== "CLOSED").map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-1 text-xs text-muted-foreground"><span>Priority</span><select aria-label="Filter investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}><option value="all">All priorities</option>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {investigations.length} active investigations</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[900px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Investigation</th><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Priority</th><th className="px-5 py-3">Assigned investigator</th><th className="px-5 py-3">Updated</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((item) => <tr key={item.investigationId} className={selection?.investigationId === item.investigationId ? "bg-primary/5" : ""}><td className="px-5 py-4 font-data text-xs font-semibold">{item.investigationId}</td><td className="px-5 py-4 font-data text-xs">{item.claimId}</td><td className="px-5 py-4"><StatusPill value={item.status} /></td><td className="px-5 py-4"><StatusPill value={item.priority} /></td><td className="px-5 py-4">{item.assignedInvestigator || "Unassigned"}</td><td className="px-5 py-4 text-xs text-muted-foreground">{displayDate(item.updatedAt)}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openInvestigation(item)}>Open case</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={AlertTriangle} title="No matching investigations" description="Adjust the filters or synchronize to receive current active cases." /> : null}</CardContent></Card><InvestigationWorkspace compact={selection} detail={detail} loading={loading} writesAllowed={writesAllowed} canUpdateStatus={capabilities.includes("investigations.update_status")} canChangePriority={capabilities.includes("investigations.change_priority")} canAssign={capabilities.includes("investigations.assign")} canAddNote={capabilities.includes("investigations.add_note")} canUploadEvidence={capabilities.includes("investigations.upload_evidence")} investigators={investigators} onSave={updateInvestigation} onAddNote={addInvestigationNote} onUploadEvidence={uploadInvestigationEvidence} onClose={closeInvestigation} onOpenClaim={openClaimById} /></div>;
 }
 
 function RiskSignalsView({ network, openClaimById }) {
@@ -264,6 +342,7 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
   const [selectedInvestigation, setSelectedInvestigation] = useState(null);
   const [investigationDetail, setInvestigationDetail] = useState(null);
   const [investigationLoading, setInvestigationLoading] = useState(false);
+  const [investigators, setInvestigators] = useState([]);
   const [resetConfirmation, setResetConfirmation] = useState("");
   const [syncing, setSyncing] = useState(false);
   const syncAttempt = useRef(0);
@@ -275,7 +354,21 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
   const network = status.cache?.suspiciousNetwork || {};
   const capabilities = status.session?.clientCapabilities || [];
   const canViewInvestigations = capabilities.includes("investigations.view");
+  const canCreateInvestigations = capabilities.includes("investigations.create");
+  const canAssignInvestigations = capabilities.includes("investigations.assign");
   const writesAllowed = operationalWriteAllowed(status);
+
+  useEffect(() => {
+    let active = true;
+    if (!canAssignInvestigations || !writesAllowed) {
+      setInvestigators([]);
+      return undefined;
+    }
+    desktopBridge.investigators()
+      .then((result) => { if (active) setInvestigators(result.investigators || []); })
+      .catch((error) => { if (active) onError(error?.message || "Investigator assignment is unavailable."); });
+    return () => { active = false; };
+  }, [canAssignInvestigations, onError, status.session?.user?.userId, writesAllowed]);
 
   const syncNow = useCallback(async () => {
     if (syncingRef.current || !status.authenticated || status.locked) return null;
@@ -358,9 +451,34 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
     }
   }, [investigations, onError, status.cache?.freshness]);
 
+  const createInvestigation = useCallback(async (claim, input) => {
+    try {
+      const result = await desktopBridge.createInvestigation(
+        claim.claimId,
+        claim.currentClaimVersion,
+        input.assignedInvestigator,
+        input.priority,
+      );
+      onStatus(result.status);
+      setSelectedClaim((previous) => previous?.claim ? {
+        ...previous,
+        claim: { ...previous.claim, investigation: result.investigation },
+      } : previous);
+      await openInvestigation(result.investigation);
+    } catch (error) {
+      const message = error?.message || "The investigation could not be created.";
+      if (message.includes("STALE_RECORD_VERSION")) {
+        await openClaim(claim.claimId);
+        onError("The claim changed on the server. It was refreshed; review it before creating the case.");
+      } else {
+        onError(message, message.toLowerCase().includes("unavailable"));
+      }
+    }
+  }, [onError, onStatus, openClaim, openInvestigation]);
+
   const updateInvestigation = useCallback(async (record, changes) => {
     try {
-      const result = await desktopBridge.updateInvestigation(record.investigationId, record.updatedAt, changes);
+      const result = await desktopBridge.updateInvestigation(record.investigationId, record.recordVersion, changes);
       onStatus(result.status);
       if (result.investigation.status === "CLOSED") {
         setSelectedInvestigation(null);
@@ -391,6 +509,36 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
     }
   }, [onError, onStatus, syncNow]);
 
+  const refreshAfterInvestigationMutation = useCallback(async (result) => {
+    onStatus(result.status);
+    setSelectedInvestigation(result.investigation);
+    const refreshed = await desktopBridge.investigationDetails(result.investigation.investigationId);
+    setInvestigationDetail(refreshed);
+    setSelectedInvestigation(refreshed.investigation);
+  }, [onStatus]);
+
+  const addInvestigationNote = useCallback(async (record, input) => {
+    try {
+      const result = await desktopBridge.addInvestigationNote(record.investigationId, record.recordVersion, input.text, input.noteType);
+      await refreshAfterInvestigationMutation(result);
+    } catch (error) {
+      const message = error?.message || "The investigation note could not be added.";
+      if (message.includes("STALE_RECORD_VERSION")) await openInvestigation(record);
+      onError(message.includes("STALE_RECORD_VERSION") ? "The investigation changed on the server. It was refreshed; review it before adding the note." : message, message.toLowerCase().includes("unavailable"));
+    }
+  }, [onError, openInvestigation, refreshAfterInvestigationMutation]);
+
+  const uploadInvestigationEvidence = useCallback(async (record, input) => {
+    try {
+      const result = await desktopBridge.uploadInvestigationEvidence(record.investigationId, record.recordVersion, input);
+      await refreshAfterInvestigationMutation(result);
+    } catch (error) {
+      const message = error?.message || "The evidence could not be uploaded.";
+      if (message.includes("STALE_RECORD_VERSION")) await openInvestigation(record);
+      onError(message.includes("STALE_RECORD_VERSION") ? "The investigation changed on the server. It was refreshed; review it before uploading evidence." : message, message.toLowerCase().includes("unavailable"));
+    }
+  }, [onError, openInvestigation, refreshAfterInvestigationMutation]);
+
   async function signOut() {
     await desktopBridge.logout();
     onStatus(await desktopBridge.status());
@@ -419,8 +567,8 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
       {status.error ? <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-700 dark:text-rose-300">{status.error}</div> : null}
       {!writesAllowed ? <div className="flex gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200"><WifiOff className="h-5 w-5 shrink-0" /><div><p className="font-semibold">Offline data is read-only</p><p className="mt-1">Investigation creation, notes, evidence, status transitions, and fraud decisions are blocked until authoritative connectivity returns. Scheme device and activation-key management remains on the ClaimGuard web application.</p></div></div> : null}
       {activeView === "overview" ? <Overview claims={claims} investigations={investigations} summary={summary} network={network} openClaim={openClaim} openInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} /> : null}
-      {activeView === "claims" ? <ClaimsView claims={claims} selectedClaim={selectedClaim} loading={claimLoading} openClaim={openClaim} closeClaim={() => setSelectedClaim(null)} openInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} /> : null}
-      {activeView === "investigations" && canViewInvestigations ? <InvestigationsView investigations={investigations} selection={selectedInvestigation} detail={investigationDetail} loading={investigationLoading} writesAllowed={writesAllowed} capabilities={capabilities} openInvestigation={openInvestigation} closeInvestigation={() => { setSelectedInvestigation(null); setInvestigationDetail(null); }} updateInvestigation={updateInvestigation} openClaimById={openClaim} /> : null}
+      {activeView === "claims" ? <ClaimsView claims={claims} selectedClaim={selectedClaim} loading={claimLoading} openClaim={openClaim} closeClaim={() => setSelectedClaim(null)} openInvestigation={openInvestigation} createInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} /> : null}
+      {activeView === "investigations" && canViewInvestigations ? <InvestigationsView investigations={investigations} selection={selectedInvestigation} detail={investigationDetail} loading={investigationLoading} writesAllowed={writesAllowed} capabilities={capabilities} investigators={investigators} openInvestigation={openInvestigation} closeInvestigation={() => { setSelectedInvestigation(null); setInvestigationDetail(null); }} updateInvestigation={updateInvestigation} addInvestigationNote={addInvestigationNote} uploadInvestigationEvidence={uploadInvestigationEvidence} openClaimById={openClaim} /> : null}
       {activeView === "risk" ? <RiskSignalsView network={network} openClaimById={openClaim} /> : null}
       <details className="rounded-xl border border-border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Reset this device</summary><div className="mt-4 max-w-xl space-y-3"><p className="text-sm text-muted-foreground">This local recovery action permanently deletes this Windows user’s encrypted cache, session material, device key, and organisation enrollment. A web administrator must issue a new activation key.</p><label className="grid gap-2 text-sm font-medium">Type RESET CLAIMGUARD<Input value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} /></label><Button variant="destructive" onClick={reset} disabled={resetConfirmation !== "RESET CLAIMGUARD"}><RotateCcw className="mr-2 h-4 w-4" />Delete cache and reset organisation</Button></div></details>
     </main>

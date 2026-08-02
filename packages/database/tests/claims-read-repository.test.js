@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createClaimsReadRepository } from "../src/claims-read-repository.js";
+import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from "../src/operational-schema.js";
 import { runWithTenantContext } from "../src/tenant-context-store.js";
 
 function baseClaim(overrides = {}) {
@@ -150,7 +151,7 @@ function context() {
     operationalTenantSlug: "alpha",
     logicalDatabaseIdentifier: "legacy-operational-shared",
     databaseName: "operational",
-    schemaVersion: "14",
+    schemaVersion: CANONICAL_OPERATIONAL_SCHEMA_VERSION,
     deploymentClass: "demo",
     region: "westeurope",
   };

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from "../src/operational-schema.js";
 import { createClaimsReadRepository } from "../src/prospective-claims-read-repository.js";
 
 function context() {
@@ -15,7 +16,7 @@ function context() {
     operationalTenantSlug: "alpha",
     logicalDatabaseIdentifier: "legacy-operational-shared",
     databaseName: "operational",
-    schemaVersion: "14",
+    schemaVersion: CANONICAL_OPERATIONAL_SCHEMA_VERSION,
     deploymentClass: "demo",
     region: "westeurope",
   };

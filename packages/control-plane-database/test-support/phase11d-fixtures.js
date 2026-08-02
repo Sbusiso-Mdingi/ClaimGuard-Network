@@ -1,12 +1,14 @@
 import crypto from "node:crypto";
 
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+} from "@claimguard/database";
+
+import {
   ARGON2ID_VERSION,
   hashPassword,
   passwordParametersRecord,
 } from "../src/password.js";
-
-const CANONICAL_OPERATIONAL_SCHEMA_VERSION = "14";
 
 const SCHEME_TEST_ROLES = Object.freeze([
   ["claims_analyst", "claims.analyst.phase11d", "Claims Analyst"],

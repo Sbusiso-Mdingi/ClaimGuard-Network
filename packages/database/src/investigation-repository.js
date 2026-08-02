@@ -124,6 +124,7 @@ function mapInvestigation(row) {
     assignedBy: row.assigned_by,
     status: row.status,
     priority: row.priority,
+    recordVersion: Number(row.record_version || 1),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
@@ -154,6 +155,26 @@ function mapEvidence(row) {
     uploadedBy: row.uploaded_by,
     uploadedAt: row.uploaded_at,
     evidenceType: row.evidence_type,
+    contentType: row.content_type ?? null,
+    byteSize: row.byte_size == null ? null : Number(row.byte_size),
+    contentSha256: row.content_sha256 ?? null,
+  };
+}
+
+function mapActivity(row) {
+  const parse = (value) => {
+    if (value == null || typeof value === "object") return value;
+    try { return JSON.parse(value); } catch { return null; }
+  };
+  return {
+    activityEventId: row.activity_event_id,
+    investigationId: row.investigation_id,
+    actorId: row.actor_id,
+    action: row.action,
+    before: parse(row.before_summary),
+    after: parse(row.after_summary),
+    correlationId: row.correlation_id || null,
+    occurredAt: row.occurred_at,
   };
 }
 
@@ -161,6 +182,74 @@ function requirePool(pool) {
   if (!pool || typeof pool.execute !== "function") {
     throw new Error("A mysql2 pool with execute support is required for investigation repository.");
   }
+}
+
+async function withTransaction(pool, operation) {
+  if (typeof pool.getConnection !== "function") return operation(pool);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await operation(connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function loadInvestigation(executor, tenantId, investigationId, { forUpdate = false } = {}) {
+  const [rows] = await executor.execute(
+    `SELECT investigation_id, tenant_id, claim_id, assigned_investigator, assigned_by,
+            status, priority, record_version, created_at, updated_at, closed_at,
+            fraud_confirmed_at, reversed_at
+     FROM investigations
+     WHERE investigation_id = ? AND tenant_id = ?
+     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+    [investigationId, tenantId],
+  );
+  return mapInvestigation(rows?.[0] || null);
+}
+
+async function recordActivity(executor, {
+  tenantId, investigationId, actorId, action, before = null, after = null,
+  correlationId = null,
+}) {
+  const activityEventId = crypto.randomUUID();
+  await executor.execute(
+    `INSERT INTO investigation_activity_events
+       (activity_event_id, tenant_id, investigation_id, actor_id, action,
+        before_summary, after_summary, correlation_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [activityEventId, tenantId, investigationId, actorId, action,
+      before == null ? null : JSON.stringify(before), after == null ? null : JSON.stringify(after),
+      correlationId],
+  );
+  return activityEventId;
+}
+
+function requireExpectedVersion(value, noun = "investigation") {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new InvestigationValidationError(
+      `A current ${noun} record version is required.`,
+      noun === "claim" ? "claim_version_required" : "record_version_required",
+    );
+  }
+  return parsed;
+}
+
+function assertCurrentVersion(investigation, expectedRecordVersion) {
+  const expected = requireExpectedVersion(expectedRecordVersion);
+  if (investigation.recordVersion !== expected) {
+    throw new InvestigationConflictError(
+      "The investigation changed after it was loaded. Refresh and retry the update.",
+      "stale_record_version",
+    );
+  }
+  return expected;
 }
 
 export function normalizeInvestigationStatus(status) {
@@ -204,9 +293,16 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
   const canonicalTenantId = () => repositoryTenantId(dataPlaneContext, { allowLegacyTenantContext });
 
   return {
-    async createInvestigation({ claimId, assignedInvestigator = null, assignedBy, priority = INVESTIGATION_PRIORITY.NORMAL }) {
+    async createInvestigation({
+      claimId,
+      assignedInvestigator = null,
+      assignedBy,
+      priority = INVESTIGATION_PRIORITY.NORMAL,
+      expectedClaimVersion,
+      correlationId = null,
+    }) {
       const tenantId = canonicalTenantId();
-      const normalizedClaimId = normalizeRequiredString(claimId, "claimId", 32);
+      const normalizedClaimId = normalizeRequiredString(claimId, "claimId", 128);
       const normalizedAssignedBy = normalizeRequiredString(assignedBy, "assignedBy", 255);
       const normalizedAssignedInvestigator = normalizeOptionalString(
         assignedInvestigator,
@@ -214,66 +310,64 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
         255,
       );
       const normalizedPriority = normalizeInvestigationPriority(priority);
+      const claimVersion = requireExpectedVersion(expectedClaimVersion, "claim");
 
-      const [claimRows] = await pool.execute(
-        "SELECT claim_id FROM claims WHERE claim_id = ? AND tenant_id = ? LIMIT 1",
-        [normalizedClaimId, tenantId],
-      );
+      return withTransaction(pool, async (executor) => {
+        const [claimRows] = await executor.execute(
+          "SELECT claim_id, current_claim_version FROM claims WHERE claim_id = ? AND tenant_id = ? LIMIT 1 FOR UPDATE",
+          [normalizedClaimId, tenantId],
+        );
+        if (!claimRows?.[0]) {
+          throw new InvestigationNotFoundError("The claim was not found in the active tenant.");
+        }
+        if (Number(claimRows[0].current_claim_version) !== claimVersion) {
+          throw new InvestigationConflictError(
+            "The claim changed after it was loaded. Refresh and retry investigation creation.",
+            "stale_claim_version",
+          );
+        }
 
-      if (!claimRows?.[0]) {
-        throw new InvestigationNotFoundError("The claim was not found in the active tenant.");
-      }
-
-      const investigationId = crypto.randomUUID();
-      const now = new Date().toISOString();
-      await pool.execute(
-        `
-          INSERT INTO investigations (
-            investigation_id, tenant_id, claim_id, assigned_investigator, assigned_by, status, priority
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `,
-        [
-          investigationId,
+        const investigationId = crypto.randomUUID();
+        try {
+          await executor.execute(
+            `INSERT INTO investigations
+               (investigation_id, tenant_id, claim_id, assigned_investigator, assigned_by,
+                status, priority, record_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+            [investigationId, tenantId, normalizedClaimId, normalizedAssignedInvestigator,
+              normalizedAssignedBy, INVESTIGATION_STATUS.OPEN, normalizedPriority],
+          );
+        } catch (error) {
+          if (error?.code === "ER_DUP_ENTRY") {
+            throw new InvestigationConflictError(
+              "This claim already has an investigation.",
+              "investigation_already_exists",
+            );
+          }
+          throw error;
+        }
+        await recordActivity(executor, {
           tenantId,
-          normalizedClaimId,
-          normalizedAssignedInvestigator,
-          normalizedAssignedBy,
-          INVESTIGATION_STATUS.OPEN,
-          normalizedPriority,
-        ],
-      );
-
-      return {
-        investigationId,
-        tenantId,
-        claimId: normalizedClaimId,
-        assignedInvestigator: normalizedAssignedInvestigator,
-        assignedBy: normalizedAssignedBy,
-        status: INVESTIGATION_STATUS.OPEN,
-        priority: normalizedPriority,
-        createdAt: now,
-        updatedAt: now,
-        closedAt: null,
-        fraudConfirmedAt: null,
-      };
+          investigationId,
+          actorId: normalizedAssignedBy,
+          action: "investigation.created",
+          after: {
+            claimId: normalizedClaimId,
+            assignedInvestigator: normalizedAssignedInvestigator,
+            priority: normalizedPriority,
+            claimVersion,
+            recordVersion: 1,
+          },
+          correlationId,
+        });
+        return loadInvestigation(executor, tenantId, investigationId);
+      });
     },
 
     async getInvestigationById(investigationId) {
       const tenantId = canonicalTenantId();
       const normalizedInvestigationId = normalizeRequiredString(investigationId, "investigationId", 64);
-      const [rows] = await pool.execute(
-        `
-          SELECT
-            investigation_id, tenant_id, claim_id, assigned_investigator, assigned_by,
-            status, priority, created_at, updated_at, closed_at, fraud_confirmed_at, reversed_at
-          FROM investigations
-          WHERE investigation_id = ? AND tenant_id = ?
-          LIMIT 1
-        `,
-        [normalizedInvestigationId, tenantId],
-      );
-
-      return mapInvestigation(rows?.[0] ?? null);
+      return loadInvestigation(pool, tenantId, normalizedInvestigationId);
     },
 
     async getInvestigationDetails(investigationId) {
@@ -282,7 +376,7 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
         return null;
       }
 
-      const [noteRows, evidenceRows] = await Promise.all([
+      const [noteRows, evidenceRows, activityRows] = await Promise.all([
         pool.execute(
           `
             SELECT note_id, investigation_id, tenant_id, author, note_text, note_type, created_at
@@ -295,11 +389,20 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
         pool.execute(
           `
             SELECT evidence_id, investigation_id, tenant_id, filename, description,
-              uploaded_by, uploaded_at, evidence_type
+              uploaded_by, uploaded_at, evidence_type, content_type, byte_size,
+              content_sha256, storage_object_key
             FROM investigation_evidence
             WHERE investigation_id = ? AND tenant_id = ?
             ORDER BY uploaded_at ASC
           `,
+          [investigation.investigationId, investigation.tenantId],
+        ),
+        pool.execute(
+          `SELECT activity_event_id, investigation_id, actor_id, action,
+                  before_summary, after_summary, correlation_id, occurred_at
+           FROM investigation_activity_events
+           WHERE investigation_id = ? AND tenant_id = ?
+           ORDER BY occurred_at ASC, activity_event_id ASC`,
           [investigation.investigationId, investigation.tenantId],
         ),
       ]);
@@ -308,149 +411,216 @@ export function createInvestigationRepository(pool, { dataPlaneContext = null, a
         ...investigation,
         notes: (noteRows[0] || []).map(mapNote),
         evidence: (evidenceRows[0] || []).map(mapEvidence),
+        activity: (activityRows[0] || []).map(mapActivity),
       };
     },
 
-    async updateInvestigation({ investigationId, status = undefined, priority = undefined, expectedUpdatedAt = null }) {
-      const investigation = await this.getInvestigationById(investigationId);
-      if (!investigation) {
-        throw new InvestigationNotFoundError();
+    async updateInvestigation({
+      investigationId,
+      status = undefined,
+      priority = undefined,
+      assignedInvestigator = undefined,
+      expectedRecordVersion,
+      actorId,
+      correlationId = null,
+    }) {
+      const tenantId = canonicalTenantId();
+      const normalizedInvestigationId = normalizeRequiredString(investigationId, "investigationId", 64);
+      const normalizedActorId = normalizeRequiredString(actorId, "actorId", 255);
+      if (status === undefined && priority === undefined && assignedInvestigator === undefined) {
+        throw new InvestigationValidationError("status, priority, or assignedInvestigator must be provided.");
       }
 
-      if (status === undefined && priority === undefined) {
-        throw new InvestigationValidationError("status or priority must be provided.");
-      }
-
-      if (expectedUpdatedAt) {
-        const expected = new Date(expectedUpdatedAt).getTime();
-        const current = new Date(investigation.updatedAt).getTime();
-        if (!Number.isFinite(expected) || expected !== current) {
+      return withTransaction(pool, async (executor) => {
+        const investigation = await loadInvestigation(executor, tenantId, normalizedInvestigationId, { forUpdate: true });
+        if (!investigation) throw new InvestigationNotFoundError();
+        const expected = assertCurrentVersion(investigation, expectedRecordVersion);
+        const nextStatus = status === undefined ? investigation.status : normalizeInvestigationStatus(status);
+        const nextPriority = priority === undefined ? investigation.priority : normalizeInvestigationPriority(priority);
+        const nextAssignedInvestigator = assignedInvestigator === undefined
+          ? investigation.assignedInvestigator
+          : normalizeOptionalString(assignedInvestigator, "assignedInvestigator", 255);
+        if (status !== undefined && nextStatus !== investigation.status) {
+          assertInvestigationStatusTransition(investigation.status, nextStatus);
+        }
+        const [result] = await executor.execute(
+          `UPDATE investigations
+           SET status = ?, priority = ?, assigned_investigator = ?,
+               record_version = record_version + 1,
+               closed_at = CASE WHEN ? = 'CLOSED' THEN COALESCE(closed_at, CURRENT_TIMESTAMP(3)) ELSE closed_at END
+           WHERE investigation_id = ? AND tenant_id = ? AND record_version = ?`,
+          [nextStatus, nextPriority, nextAssignedInvestigator, nextStatus,
+            normalizedInvestigationId, tenantId, expected],
+        );
+        if (Number(result.affectedRows || 0) !== 1) {
           throw new InvestigationConflictError(
             "The investigation changed after it was loaded. Refresh and retry the update.",
             "stale_record_version",
           );
         }
-      }
-
-      const nextStatus = status === undefined ? investigation.status : normalizeInvestigationStatus(status);
-      const nextPriority = priority === undefined ? investigation.priority : normalizeInvestigationPriority(priority);
-
-      if (status !== undefined) {
-        assertInvestigationStatusTransition(investigation.status, nextStatus);
-      }
-
-      const [result] = await pool.execute(
-        `
-          UPDATE investigations
-          SET
-            status = ?,
-            priority = ?,
-            closed_at = CASE
-              WHEN ? = 'CLOSED' THEN COALESCE(closed_at, CURRENT_TIMESTAMP(3))
-              ELSE closed_at
-            END
-          WHERE investigation_id = ? AND tenant_id = ?
-            ${expectedUpdatedAt ? "AND updated_at = ?" : ""}
-        `,
-        [nextStatus, nextPriority, nextStatus, investigation.investigationId, investigation.tenantId,
-          ...(expectedUpdatedAt ? [investigation.updatedAt] : [])],
-      );
-
-      if (expectedUpdatedAt && Number(result.affectedRows || 0) !== 1) {
-        throw new InvestigationConflictError(
-          "The investigation changed after it was loaded. Refresh and retry the update.",
-          "stale_record_version",
-        );
-      }
-
-      const updated = await this.getInvestigationById(investigation.investigationId);
-      if (!updated) throw new InvestigationNotFoundError();
-      return updated;
+        const changes = {};
+        if (nextStatus !== investigation.status) changes.status = { from: investigation.status, to: nextStatus };
+        if (nextPriority !== investigation.priority) changes.priority = { from: investigation.priority, to: nextPriority };
+        if (nextAssignedInvestigator !== investigation.assignedInvestigator) {
+          changes.assignedInvestigator = { from: investigation.assignedInvestigator, to: nextAssignedInvestigator };
+        }
+        await recordActivity(executor, {
+          tenantId,
+          investigationId: normalizedInvestigationId,
+          actorId: normalizedActorId,
+          action: Object.hasOwn(changes, "assignedInvestigator") ? "investigation.assignment_changed" : "investigation.updated",
+          before: { recordVersion: expected },
+          after: { recordVersion: expected + 1, changes },
+          correlationId,
+        });
+        return loadInvestigation(executor, tenantId, normalizedInvestigationId);
+      });
     },
 
-    async addNote({ investigationId, author, text, noteType = INVESTIGATION_NOTE_TYPE.INTERNAL_NOTE }) {
+    async addNote({
+      investigationId,
+      author,
+      text,
+      noteType = INVESTIGATION_NOTE_TYPE.INTERNAL_NOTE,
+      expectedRecordVersion,
+      correlationId = null,
+    }) {
+      const tenantId = canonicalTenantId();
       const normalizedInvestigationId = normalizeRequiredString(investigationId, "investigationId", 64);
       const normalizedAuthor = normalizeRequiredString(author, "author", 255);
       const normalizedText = normalizeRequiredString(text, "text");
       const normalizedNoteType = normalizeInvestigationNoteType(noteType);
-      const investigation = await this.getInvestigationById(normalizedInvestigationId);
-
-      if (!investigation) {
-        throw new InvestigationNotFoundError();
+      if (normalizedText.length > 20_000) {
+        throw new InvestigationValidationError("text must be at most 20000 characters.");
       }
 
-      const noteId = crypto.randomUUID();
-      const timestamp = new Date().toISOString();
-
-      await pool.execute(
-        `
-          INSERT INTO investigation_notes (
-            note_id, investigation_id, tenant_id, author, note_text, note_type
-          ) VALUES (?, ?, ?, ?, ?, ?)
-        `,
-        [
-          noteId,
-          normalizedInvestigationId,
-          investigation.tenantId,
-          normalizedAuthor,
-          normalizedText,
-          normalizedNoteType,
-        ],
-      );
-
-      return {
-        noteId,
-        investigationId: normalizedInvestigationId,
-        tenantId: investigation.tenantId,
-        author: normalizedAuthor,
-        text: normalizedText,
-        noteType: normalizedNoteType,
-        timestamp,
-      };
+      return withTransaction(pool, async (executor) => {
+        const investigation = await loadInvestigation(executor, tenantId, normalizedInvestigationId, { forUpdate: true });
+        if (!investigation) throw new InvestigationNotFoundError();
+        const expected = assertCurrentVersion(investigation, expectedRecordVersion);
+        const noteId = crypto.randomUUID();
+        await executor.execute(
+          `INSERT INTO investigation_notes
+             (note_id, investigation_id, tenant_id, author, note_text, note_type)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [noteId, normalizedInvestigationId, tenantId, normalizedAuthor, normalizedText, normalizedNoteType],
+        );
+        const [updated] = await executor.execute(
+          `UPDATE investigations SET record_version = record_version + 1
+           WHERE investigation_id = ? AND tenant_id = ? AND record_version = ?`,
+          [normalizedInvestigationId, tenantId, expected],
+        );
+        if (Number(updated.affectedRows || 0) !== 1) {
+          throw new InvestigationConflictError("The investigation changed after it was loaded.", "stale_record_version");
+        }
+        await recordActivity(executor, {
+          tenantId,
+          investigationId: normalizedInvestigationId,
+          actorId: normalizedAuthor,
+          action: "investigation.note_added",
+          after: { noteId, noteType: normalizedNoteType, recordVersion: expected + 1 },
+          correlationId,
+        });
+        const current = await loadInvestigation(executor, tenantId, normalizedInvestigationId);
+        return {
+          note: {
+            noteId,
+            investigationId: normalizedInvestigationId,
+            tenantId,
+            author: normalizedAuthor,
+            text: normalizedText,
+            noteType: normalizedNoteType,
+            timestamp: new Date().toISOString(),
+          },
+          investigation: current,
+        };
+      });
     },
 
-    async registerEvidence({ investigationId, filename, description = null, uploadedBy, evidenceType }) {
+    async registerEvidence({
+      evidenceId,
+      investigationId,
+      filename,
+      description = null,
+      uploadedBy,
+      evidenceType,
+      contentType,
+      byteSize,
+      contentSha256,
+      storageObjectKey,
+      expectedRecordVersion,
+      correlationId = null,
+    }) {
+      const tenantId = canonicalTenantId();
+      const normalizedEvidenceId = normalizeRequiredString(evidenceId, "evidenceId", 64);
       const normalizedInvestigationId = normalizeRequiredString(investigationId, "investigationId", 64);
       const normalizedFilename = normalizeRequiredString(filename, "filename", 512);
       const normalizedDescription = normalizeOptionalString(description, "description");
       const normalizedUploadedBy = normalizeRequiredString(uploadedBy, "uploadedBy", 255);
       const normalizedEvidenceType = normalizeEvidenceType(evidenceType);
-      const investigation = await this.getInvestigationById(normalizedInvestigationId);
-
-      if (!investigation) {
-        throw new InvestigationNotFoundError();
+      const normalizedContentType = normalizeRequiredString(contentType, "contentType", 128);
+      const normalizedByteSize = Number(byteSize);
+      const normalizedHash = normalizeRequiredString(contentSha256, "contentSha256", 64);
+      const normalizedObjectKey = normalizeRequiredString(storageObjectKey, "storageObjectKey", 1024);
+      if (!Number.isInteger(normalizedByteSize) || normalizedByteSize < 1 || normalizedByteSize > 10 * 1024 * 1024
+        || !/^[0-9a-f]{64}$/.test(normalizedHash)) {
+        throw new InvestigationValidationError("The persisted evidence metadata is invalid.");
       }
 
-      const evidenceId = crypto.randomUUID();
-      const uploadedAt = new Date().toISOString();
-
-      await pool.execute(
-        `
-          INSERT INTO investigation_evidence (
-            evidence_id, investigation_id, tenant_id, filename, description, uploaded_by, evidence_type
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `,
-        [
-          evidenceId,
-          normalizedInvestigationId,
-          investigation.tenantId,
-          normalizedFilename,
-          normalizedDescription,
-          normalizedUploadedBy,
-          normalizedEvidenceType,
-        ],
-      );
-
-      return {
-        evidenceId,
-        investigationId: normalizedInvestigationId,
-        tenantId: investigation.tenantId,
-        filename: normalizedFilename,
-        description: normalizedDescription,
-        uploadedBy: normalizedUploadedBy,
-        uploadedAt,
-        evidenceType: normalizedEvidenceType,
-      };
+      return withTransaction(pool, async (executor) => {
+        const investigation = await loadInvestigation(executor, tenantId, normalizedInvestigationId, { forUpdate: true });
+        if (!investigation) throw new InvestigationNotFoundError();
+        const expected = assertCurrentVersion(investigation, expectedRecordVersion);
+        await executor.execute(
+          `INSERT INTO investigation_evidence
+             (evidence_id, investigation_id, tenant_id, filename, description, uploaded_by,
+              evidence_type, content_type, byte_size, content_sha256, storage_object_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [normalizedEvidenceId, normalizedInvestigationId, tenantId, normalizedFilename,
+            normalizedDescription, normalizedUploadedBy, normalizedEvidenceType, normalizedContentType,
+            normalizedByteSize, normalizedHash, normalizedObjectKey],
+        );
+        const [updated] = await executor.execute(
+          `UPDATE investigations SET record_version = record_version + 1
+           WHERE investigation_id = ? AND tenant_id = ? AND record_version = ?`,
+          [normalizedInvestigationId, tenantId, expected],
+        );
+        if (Number(updated.affectedRows || 0) !== 1) {
+          throw new InvestigationConflictError("The investigation changed after it was loaded.", "stale_record_version");
+        }
+        await recordActivity(executor, {
+          tenantId,
+          investigationId: normalizedInvestigationId,
+          actorId: normalizedUploadedBy,
+          action: "investigation.evidence_uploaded",
+          after: {
+            evidenceId: normalizedEvidenceId,
+            evidenceType: normalizedEvidenceType,
+            contentType: normalizedContentType,
+            byteSize: normalizedByteSize,
+            contentSha256: normalizedHash,
+            recordVersion: expected + 1,
+          },
+          correlationId,
+        });
+        const current = await loadInvestigation(executor, tenantId, normalizedInvestigationId);
+        return {
+          evidence: {
+            evidenceId: normalizedEvidenceId,
+            investigationId: normalizedInvestigationId,
+            tenantId,
+            filename: normalizedFilename,
+            description: normalizedDescription,
+            uploadedBy: normalizedUploadedBy,
+            uploadedAt: new Date().toISOString(),
+            evidenceType: normalizedEvidenceType,
+            contentType: normalizedContentType,
+            byteSize: normalizedByteSize,
+            contentSha256: normalizedHash,
+          },
+          investigation: current,
+        };
+      });
     },
 
     async markFraudPublished(investigationId) {

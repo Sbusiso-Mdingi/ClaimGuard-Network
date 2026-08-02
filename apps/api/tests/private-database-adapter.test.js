@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+} from "@claimguard/database";
+
+import {
   createPrivateDatabaseAdapter,
 } from "../src/private-database-adapter.js";
 
@@ -32,7 +37,7 @@ function baseContext(
       "private-db-1",
 
     schemaVersion:
-      "14",
+      CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
     deploymentClass:
       "production",
@@ -110,7 +115,7 @@ test(
     const adapter =
       createPrivateDatabaseAdapter({
         supportedSchemaVersions: [
-          "14",
+          CANONICAL_OPERATIONAL_SCHEMA_VERSION,
         ],
 
         expectedEnvironment:
@@ -129,13 +134,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
               environment_key:
                 "staging",
 
               migration_version:
-                14,
+                CANONICAL_OPERATIONAL_MIGRATION_VERSION,
             },
           ],
           [],
@@ -160,7 +165,7 @@ test(
     const adapter =
       createPrivateDatabaseAdapter({
         supportedSchemaVersions: [
-          "14",
+          CANONICAL_OPERATIONAL_SCHEMA_VERSION,
         ],
       });
 
@@ -219,13 +224,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
               environment_key:
                 "production",
 
               migration_version:
-                14,
+                CANONICAL_OPERATIONAL_MIGRATION_VERSION,
             },
           ],
           [],
@@ -238,7 +243,7 @@ test(
         pool,
         baseContext({
           schemaVersion:
-            "15",
+            "14",
         }),
       ),
       /does not match active route/,
@@ -265,13 +270,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
               environment_key:
                 "production",
 
               migration_version:
-                13,
+                14,
             },
           ],
           [],
@@ -296,7 +301,7 @@ test(
     const adapter =
       createPrivateDatabaseAdapter({
         supportedSchemaVersions: [
-          "14",
+          CANONICAL_OPERATIONAL_SCHEMA_VERSION,
         ],
 
         expectedEnvironment:
@@ -315,13 +320,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
               environment_key:
                 "production",
 
               migration_version:
-                14,
+                CANONICAL_OPERATIONAL_MIGRATION_VERSION,
             },
           ],
           [],
@@ -345,10 +350,10 @@ test(
           "private-db-1",
 
         schemaVersion:
-          "14",
+          CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
         migrationVersion:
-          14,
+          CANONICAL_OPERATIONAL_MIGRATION_VERSION,
       },
     );
 

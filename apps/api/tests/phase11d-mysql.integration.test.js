@@ -6,6 +6,8 @@ import {
 
 import {
   applyMigrations,
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   CLAIM_PROCESSING_DATASET_SCOPE,
   CLAIM_PROCESSING_JOB_TYPE,
   CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
@@ -983,7 +985,7 @@ function createAuthenticationService(
 
 
 test(
-  "Phase 11D real-MySQL gate enforces schema-14 tenant isolation and prospective claim-version scoring",
+  "Phase 11D real-MySQL gate enforces canonical tenant isolation and prospective claim-version scoring",
   {
     skip:
       !enabled,
@@ -1177,13 +1179,13 @@ test(
             "legacy-operational-shared",
 
           schemaVersion:
-            "14",
+            CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 
           environment:
             "legacy",
 
           migrationVersion:
-            14,
+            CANONICAL_OPERATIONAL_MIGRATION_VERSION,
         },
       );
 
@@ -1356,12 +1358,12 @@ test(
 
       assert.equal(
         alphaContext.schemaVersion,
-        "14",
+        CANONICAL_OPERATIONAL_SCHEMA_VERSION,
       );
 
       assert.equal(
         betaContext.schemaVersion,
-        "14",
+        CANONICAL_OPERATIONAL_SCHEMA_VERSION,
       );
 
       assert.notEqual(
@@ -1794,6 +1796,11 @@ test(
           {
             method:
               "POST",
+
+            extraHeaders: {
+              "if-match":
+                "W/\"claim-1\"",
+            },
 
             body: {
               claimId:
@@ -2975,14 +2982,18 @@ test(
               logical_database_identifier =
                 'legacy-operational-shared',
               schema_version =
-                '14',
+                ?,
               environment_key =
                 'legacy',
               migration_version =
-                14
+                ?
             WHERE metadata_key =
               'primary'
           `,
+          [
+            CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+            CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+          ],
         );
       }
 
@@ -3029,11 +3040,15 @@ test(
             'primary',
             'legacy_shared',
             'legacy-operational-shared',
-            '14',
+            ?,
             'legacy',
-            14
+            ?
           )
         `,
+        [
+          CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+          CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+        ],
       );
 
       await assert.rejects(
@@ -3052,11 +3067,15 @@ test(
                 'secondary',
                 'legacy_shared',
                 'legacy-operational-shared',
-                '14',
+                ?,
                 'legacy',
-                14
+                ?
               )
             `,
+            [
+              CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+              CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+            ],
           ),
         (error) =>
           error.code

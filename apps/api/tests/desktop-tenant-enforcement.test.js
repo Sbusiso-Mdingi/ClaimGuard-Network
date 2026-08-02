@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Hono } from "hono";
 
+import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from "@claimguard/database";
+
 import { createBackendApp } from "../src/backend.js";
 import { createAuthenticatedAuthContext } from "../src/middleware/auth-context.js";
 import { createDesktopOrganisationEnforcementMiddleware } from "../src/desktop-device-proof.js";
@@ -221,7 +223,7 @@ test("an enrolled organisation cannot be changed by query or headers", async () 
             routeGeneration: 1,
             logicalDatabaseIdentifier: "legacy-shared",
             databaseName: "operational",
-            schemaVersion: "14",
+            schemaVersion: CANONICAL_OPERATIONAL_SCHEMA_VERSION,
             deploymentClass: "test",
           };
         },

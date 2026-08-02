@@ -5,6 +5,10 @@ import {
 } from "node:fs/promises";
 
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION as SHARED_OPERATIONAL_SCHEMA_VERSION,
+} from "@claimguard/database";
+
+import {
   CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   REQUIRED_STEPS,
   REQUIRED_UPGRADE_STEPS,
@@ -76,7 +80,7 @@ test(
 
     assert.equal(
       CANONICAL_OPERATIONAL_SCHEMA_VERSION,
-      "14",
+      SHARED_OPERATIONAL_SCHEMA_VERSION,
     );
 
     assert.match(
@@ -112,11 +116,6 @@ test(
     assert.match(
       worker,
       /canonicalMigrationVersion\(schemaVersion\)/,
-    );
-
-    assert.match(
-      worker,
-      /CANONICAL_OPERATIONAL_SCHEMA_VERSION = "14"/,
     );
 
     assert.match(

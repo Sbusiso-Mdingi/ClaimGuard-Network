@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CANONICAL_PRIVATE_SCHEMA_VERSION,
   compareLegacyTenantInventory,
   createControlPlaneService,
   readLegacyTenantInventory,
@@ -54,7 +55,7 @@ test("organisation lifecycle is explicit and audited", async () => {
 });
 
 test(
-  "organisation activation accepts the canonical schema-14 private route",
+  `organisation activation accepts the canonical schema-${CANONICAL_PRIVATE_SCHEMA_VERSION} private route`,
   async () => {
     const gateQueries =
       [];
@@ -139,7 +140,7 @@ test(
               "private_database",
 
             schema_version:
-              "14",
+              CANONICAL_PRIVATE_SCHEMA_VERSION,
           };
         },
 
@@ -154,7 +155,7 @@ test(
               "private_database",
 
             schemaVersion:
-              "14",
+              CANONICAL_PRIVATE_SCHEMA_VERSION,
 
             provisioningStatus:
               "active",
@@ -208,7 +209,7 @@ test(
       result
         .route
         .schemaVersion,
-      "14",
+      CANONICAL_PRIVATE_SCHEMA_VERSION,
     );
 
     assert.equal(
@@ -222,8 +223,8 @@ test(
       [
         "org-14",
         "route-14",
-        "14",
-        "14",
+        CANONICAL_PRIVATE_SCHEMA_VERSION,
+        CANONICAL_PRIVATE_SCHEMA_VERSION,
         "org-14",
         "org-14",
         "org-14",

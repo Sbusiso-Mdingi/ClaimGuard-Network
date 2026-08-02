@@ -39,11 +39,16 @@ export function investigationErrorResponse(c, error, { logger = null, event = "i
     error?.code === "fraud_already_confirmed" ||
     error?.code === "ER_DUP_ENTRY"
   ) {
-    return c.json({ available: false, message: error.message }, 409);
+    const stale = ["stale_record_version", "stale_claim_version"].includes(error?.code);
+    return c.json({ available: false, code: stale ? "STALE_RECORD_VERSION" : error?.code, message: error.message }, stale ? 412 : 409);
   }
 
-  if (error instanceof InvestigationValidationError) {
-    return c.json({ available: false, message: error.message }, 400);
+  if (error instanceof InvestigationValidationError || Number.isInteger(error?.status) && error.status < 500) {
+    return c.json({ available: false, code: error?.code, message: error.message }, error?.status || 400);
+  }
+
+  if (Number.isInteger(error?.status)) {
+    return c.json({ available: false, code: error?.code, message: error.message }, error.status);
   }
 
   const requestId = c.get("requestId") || null;

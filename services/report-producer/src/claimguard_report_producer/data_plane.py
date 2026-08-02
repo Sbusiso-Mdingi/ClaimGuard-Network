@@ -10,11 +10,8 @@ from urllib.parse import (
     urlparse,
 )
 
-
-DEFAULT_SUPPORTED_SCHEMA_VERSIONS = frozenset(
-    {
-        "14",
-    }
+from .operational_schema import (
+    DEFAULT_SUPPORTED_SCHEMA_VERSIONS,
 )
 
 _SUPPORTED_ROUTE_TYPES = frozenset(

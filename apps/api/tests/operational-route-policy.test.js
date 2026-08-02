@@ -125,6 +125,7 @@ test("matcher handles specific-vs-parameterized edge cases for claims and invest
 test("desktop investigation reads and mutations use capability-specific policy", () => {
   const detail = resolveOperationalRoutePolicy({ method: "GET", path: "/desktop/investigations/INV-1" });
   const patch = resolveOperationalRoutePolicy({ method: "PATCH", path: "/desktop/investigations/INV-1" });
+  const create = resolveOperationalRoutePolicy({ method: "POST", path: "/desktop/investigations" });
 
   assert.equal(detail?.id, OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_DETAIL);
   assert.deepEqual(detail.permissions, ["investigations.view"]);
@@ -139,6 +140,14 @@ test("desktop investigation reads and mutations use capability-specific policy",
   assert.deepEqual(
     resolveOperationalRoutePermissionRequirement({ routePolicy: patch, payload: { status: "UNDER_REVIEW", priority: "HIGH" } }),
     { permissions: ["investigations.update_status", "investigations.change_priority"], mode: "all" },
+  );
+  assert.deepEqual(
+    resolveOperationalRoutePermissionRequirement({ routePolicy: patch, payload: { assignedInvestigator: "user-1" } }),
+    { permissions: ["investigations.assign"], mode: "all" },
+  );
+  assert.deepEqual(
+    resolveOperationalRoutePermissionRequirement({ routePolicy: create, payload: { assignedInvestigator: "user-1" } }),
+    { permissions: ["investigations.create", "investigations.assign"], mode: "all" },
   );
 });
 

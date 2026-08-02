@@ -6,8 +6,11 @@ describe("desktop polling and offline mutation policy", () => {
   it("exposes no platform-governance or device-fleet administration commands", () => {
     expect(Object.keys(desktopBridge).sort()).toEqual([
       "activate",
+      "addInvestigationNote",
       "claimDetails",
+      "createInvestigation",
       "investigationDetails",
+      "investigators",
       "lock",
       "login",
       "logout",
@@ -15,6 +18,7 @@ describe("desktop polling and offline mutation policy", () => {
       "status",
       "sync",
       "updateInvestigation",
+      "uploadInvestigationEvidence",
     ]);
   });
 
@@ -28,7 +32,7 @@ describe("desktop polling and offline mutation policy", () => {
     await desktopBridge.investigationDetails("investigation-1");
     await desktopBridge.updateInvestigation(
       "investigation-1",
-      "2026-08-01T10:00:00.000Z",
+      7,
       { status: "UNDER_REVIEW", priority: "HIGH" },
     );
 
@@ -36,9 +40,47 @@ describe("desktop polling and offline mutation policy", () => {
       ["desktop_investigation_details", { investigationId: "investigation-1" }],
       ["desktop_update_investigation", {
         investigationId: "investigation-1",
-        expectedUpdatedAt: "2026-08-01T10:00:00.000Z",
+        expectedRecordVersion: 7,
         status: "UNDER_REVIEW",
         priority: "HIGH",
+      }],
+    ]);
+  });
+
+  it("maps connected investigation creation, assignment, notes, and evidence to versioned commands", async () => {
+    const calls = [];
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      return { available: true };
+    });
+
+    await desktopBridge.investigators();
+    await desktopBridge.createInvestigation("claim-1", 4, "investigator-alpha", "HIGH");
+    await desktopBridge.addInvestigationNote("investigation-1", 7, "Provider called.", "INTERVIEW");
+    await desktopBridge.uploadInvestigationEvidence("investigation-1", 8, {
+      filename: "invoice.txt",
+      description: "Provider invoice",
+      evidenceType: "INVOICE",
+      contentType: "text/plain",
+      contentBase64: "aW52b2ljZQ==",
+    });
+
+    expect(calls).toEqual([
+      ["desktop_investigators", undefined],
+      ["desktop_create_investigation", {
+        claimId: "claim-1", expectedClaimVersion: 4, assignedInvestigator: "investigator-alpha", priority: "HIGH",
+      }],
+      ["desktop_add_investigation_note", {
+        investigationId: "investigation-1", expectedRecordVersion: 7, text: "Provider called.", noteType: "INTERVIEW",
+      }],
+      ["desktop_upload_investigation_evidence", {
+        investigationId: "investigation-1",
+        expectedRecordVersion: 8,
+        filename: "invoice.txt",
+        description: "Provider invoice",
+        evidenceType: "INVOICE",
+        contentType: "text/plain",
+        contentBase64: "aW52b2ljZQ==",
       }],
     ]);
   });

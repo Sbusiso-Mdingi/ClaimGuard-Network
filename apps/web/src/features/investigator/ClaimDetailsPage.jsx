@@ -37,6 +37,7 @@ function mapClaimPayload(claim) {
     processing: claim?.processing || null,
     billedAmount: Number.isFinite(claim?.billedAmount) ? claim.billedAmount : null,
     billingCode: claim?.billingCode || null,
+    currentClaimVersion: Number(claim?.currentClaimVersion || 1),
   };
 }
 
@@ -289,7 +290,10 @@ export function ClaimDetailsPage({ report, graph }) {
     try {
       const response = await apiRequest("/investigations", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "if-match": `W/\"claim-${claim?.currentClaimVersion || 1}\"`,
+        },
         body: JSON.stringify({ claimId: claim?.claimId }),
       });
       const json = await response.json();

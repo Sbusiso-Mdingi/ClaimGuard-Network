@@ -1,15 +1,16 @@
 import crypto from "node:crypto";
 
 import mysql from "mysql2/promise";
-import { applyMigrations } from "@claimguard/database/migrate";
+import {
+  applyMigrations,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+} from "@claimguard/database/migrate";
 import {
   createControlPlanePool,
   createControlPlaneRepositories,
   createControlPlaneService,
   withControlPlaneTransaction,
 } from "@claimguard/control-plane-database";
-
-const CANONICAL_OPERATIONAL_SCHEMA_VERSION = "14";
 
 const REQUIRED_STEPS = Object.freeze([
   "validate_request",

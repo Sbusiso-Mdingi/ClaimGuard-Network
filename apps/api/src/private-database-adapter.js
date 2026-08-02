@@ -1,6 +1,10 @@
 import mysql from "mysql2/promise";
 
-import { buildConnectionOptions, requireOperationalDataPlaneContext } from "@claimguard/database";
+import {
+  buildConnectionOptions,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSIONS,
+  requireOperationalDataPlaneContext,
+} from "@claimguard/database";
 
 function parseSecretId(secretId) {
   const url = new URL(secretId);
@@ -55,7 +59,7 @@ function expectedMigrationVersion(schemaVersion) {
 }
 
 export function createPrivateDatabaseAdapter({
-  supportedSchemaVersions = ["14"],
+  supportedSchemaVersions = CANONICAL_OPERATIONAL_SCHEMA_VERSIONS,
   expectedEnvironment = "production",
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),

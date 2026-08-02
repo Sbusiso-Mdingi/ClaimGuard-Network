@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   createLegacySharedAdapter,
   createTenantConnectionManager,
 } from "@claimguard/database";
@@ -38,6 +39,7 @@ import { createPrivateDatabaseAdapter } from "./private-database-adapter.js";
 import { logEvent } from "./services/log-event.js";
 import { createDesktopDeviceProofVerifier } from "./desktop-device-proof.js";
 import { createDesktopSyncService } from "./desktop-sync-service.js";
+import { createInvestigationEvidenceStorageFromEnvironment } from "./investigation-evidence-storage.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
@@ -45,7 +47,8 @@ const moduleDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
 const authenticationConfiguration = resolveAuthenticationConfiguration();
 const supportedDataPlaneSchemaVersions = String(
-  process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "14",
+  process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS
+  || CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 )
   .split(",")
   .map((value) => value.trim())
@@ -176,6 +179,7 @@ const reportStorage = await createReportStorageFromEnvironment({
   reportPath: process.env.DETECTION_REPORT_PATH,
   repoRoot,
 });
+const investigationEvidenceStorage = await createInvestigationEvidenceStorageFromEnvironment();
 
 const app = createBackendApp({
   reportStorage,
@@ -188,6 +192,7 @@ const app = createBackendApp({
   desktopEnrollmentService,
   desktopDeviceProofVerifier,
   desktopSyncService,
+  investigationEvidenceStorage,
 });
 
 serve({
@@ -209,6 +214,7 @@ console.log(
     explicitDataPlaneRouting: true,
     supportedDataPlaneSchemaVersions,
     desktopEnrollmentConfigured: Boolean(desktopEnrollmentService),
+    investigationEvidenceStorageConfigured: Boolean(investigationEvidenceStorage),
   }),
 );
 

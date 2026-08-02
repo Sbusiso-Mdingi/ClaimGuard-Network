@@ -85,16 +85,22 @@ function createActorApp({
   });
 }
 
-function jsonRequest(body, method = "POST") {
+function jsonRequest(body, method = "POST", ifMatch = null) {
   return {
     method,
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(ifMatch ? { "if-match": ifMatch } : {}),
+    },
     body: JSON.stringify(body),
   };
 }
 
 function createInvestigationRepositoryStub({ investigations = [] } = {}) {
-  const records = new Map(investigations.map((investigation) => [investigation.investigationId, { ...investigation }]));
+  const records = new Map(investigations.map((investigation) => [investigation.investigationId, {
+    recordVersion: 1,
+    ...investigation,
+  }]));
   const notes = [];
   const evidence = [];
   let sequence = records.size;
@@ -131,6 +137,7 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
         updatedAt: timestamp,
         closedAt: null,
         fraudConfirmedAt: null,
+        recordVersion: 1,
       };
       records.set(investigation.investigationId, investigation);
       return { ...investigation };
@@ -148,8 +155,11 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
         evidence: evidence.filter((item) => item.investigationId === investigationId).map((item) => ({ ...item })),
       };
     },
-    async updateInvestigation({ investigationId, status = undefined, priority = undefined }) {
+    async updateInvestigation({ investigationId, status = undefined, priority = undefined, assignedInvestigator = undefined, expectedRecordVersion }) {
       const investigation = requiredInvestigation(investigationId);
+      if (investigation.recordVersion !== expectedRecordVersion) {
+        throw Object.assign(new InvestigationConflictError("The investigation changed after it was loaded."), { code: "stale_record_version" });
+      }
       if (status !== undefined) {
         const nextStatus = status.trim().toUpperCase().replace(/[\s-]+/g, "_");
         assertInvestigationStatusTransition(investigation.status, nextStatus);
@@ -159,11 +169,16 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
         }
       }
       if (priority !== undefined) investigation.priority = priority.trim().toUpperCase();
+      if (assignedInvestigator !== undefined) investigation.assignedInvestigator = assignedInvestigator;
+      investigation.recordVersion += 1;
       investigation.updatedAt = new Date().toISOString();
       return { ...investigation };
     },
-    async addNote({ investigationId, author, text, noteType = "INTERNAL_NOTE" }) {
+    async addNote({ investigationId, author, text, noteType = "INTERNAL_NOTE", expectedRecordVersion }) {
       const investigation = requiredInvestigation(investigationId);
+      if (investigation.recordVersion !== expectedRecordVersion) {
+        throw Object.assign(new InvestigationConflictError("The investigation changed after it was loaded."), { code: "stale_record_version" });
+      }
       const note = {
         noteId: `note-${notes.length + 1}`,
         investigationId,
@@ -174,12 +189,17 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
         timestamp: new Date().toISOString(),
       };
       notes.push(note);
-      return { ...note };
+      investigation.recordVersion += 1;
+      investigation.updatedAt = new Date().toISOString();
+      return { note: { ...note }, investigation: { ...investigation } };
     },
-    async registerEvidence({ investigationId, filename, description = null, uploadedBy, evidenceType }) {
+    async registerEvidence({ investigationId, evidenceId, filename, description = null, uploadedBy, evidenceType, contentType, byteSize, contentSha256, expectedRecordVersion }) {
       const investigation = requiredInvestigation(investigationId);
+      if (investigation.recordVersion !== expectedRecordVersion) {
+        throw Object.assign(new InvestigationConflictError("The investigation changed after it was loaded."), { code: "stale_record_version" });
+      }
       const item = {
-        evidenceId: `evidence-${evidence.length + 1}`,
+        evidenceId,
         investigationId,
         tenantId: investigation.tenantId,
         filename,
@@ -187,9 +207,14 @@ function createInvestigationRepositoryStub({ investigations = [] } = {}) {
         uploadedBy,
         uploadedAt: new Date().toISOString(),
         evidenceType: evidenceType.trim().toUpperCase().replace(/[\s-]+/g, "_"),
+        contentType,
+        byteSize,
+        contentSha256,
       };
       evidence.push(item);
-      return { ...item };
+      investigation.recordVersion += 1;
+      investigation.updatedAt = new Date().toISOString();
+      return { evidence: { ...item }, investigation: { ...investigation } };
     },
     async markFraudPublished(investigationId) {
       const investigation = requiredInvestigation(investigationId);
@@ -237,6 +262,24 @@ test("investigation endpoints create, progress, annotate, and retrieve the lifec
   const dependencies = {
     investigationRepository,
     tenantRepository: createTenantRepositoryStub(),
+    investigationEvidenceStorage: {
+      async store({ tenantId, investigationId, evidenceId }) {
+        return { objectKey: `${tenantId}/investigations/${investigationId}/${evidenceId}` };
+      },
+      async delete() {},
+    },
+    controlPlaneRepositories: {
+      identity: {
+        async listUsersByOrganisation() {
+          return [{
+            userId: "investigator-alpha",
+            userStatus: "active",
+            membershipStatus: "active",
+            roles: ["investigator"],
+          }];
+        },
+      },
+    },
   };
   const analystApp = createActorApp({
     userId: "analyst-alpha",
@@ -255,33 +298,33 @@ test("investigation endpoints create, progress, annotate, and retrieve the lifec
       claimId: "claim-alpha-100",
       assignedInvestigator: "investigator-alpha",
       priority: "critical",
-    }),
+    }, "POST", "W/\"claim-1\""),
   );
   const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 201, JSON.stringify(created));
   const investigationId = created.investigation.investigationId;
 
-  assert.equal(createdResponse.status, 201);
   assert.equal(created.investigation.assignedBy, "analyst-alpha");
   assert.equal(created.investigation.status, "OPEN");
   assert.equal(created.investigation.priority, "CRITICAL");
 
   const statusResponse = await investigatorApp.request(
     `http://localhost/investigations/${investigationId}`,
-    jsonRequest({ status: "UNDER_REVIEW" }, "PATCH"),
+    jsonRequest({ status: "UNDER_REVIEW" }, "PATCH", "W/\"investigation-1\""),
   );
   assert.equal(statusResponse.status, 200);
   assert.equal((await statusResponse.json()).investigation.status, "UNDER_REVIEW");
 
   const priorityResponse = await analystApp.request(
     `http://localhost/investigations/${investigationId}`,
-    jsonRequest({ priority: "high" }, "PATCH"),
+    jsonRequest({ priority: "high" }, "PATCH", "W/\"investigation-2\""),
   );
   assert.equal(priorityResponse.status, 200);
   assert.equal((await priorityResponse.json()).investigation.priority, "HIGH");
 
   const noteResponse = await analystApp.request(
     `http://localhost/investigations/${investigationId}/notes`,
-    jsonRequest({ text: "Provider review requested.", noteType: "Provider Review" }),
+    jsonRequest({ text: "Provider review requested.", noteType: "Provider Review" }, "POST", "W/\"investigation-3\""),
   );
   assert.equal(noteResponse.status, 201);
   assert.equal((await noteResponse.json()).note.noteType, "PROVIDER_REVIEW");
@@ -289,13 +332,16 @@ test("investigation endpoints create, progress, annotate, and retrieve the lifec
   const evidenceResponse = await investigatorApp.request(
     `http://localhost/investigations/${investigationId}/evidence`,
     jsonRequest({
-      filename: "provider-invoice.pdf",
+      filename: "provider-invoice.txt",
       description: "Invoice used for provider review.",
       evidenceType: "provider invoice",
-    }),
+      contentType: "text/plain",
+      contentBase64: Buffer.from("Invoice used for provider review.").toString("base64"),
+    }, "POST", "W/\"investigation-4\""),
   );
-  assert.equal(evidenceResponse.status, 201);
-  assert.equal((await evidenceResponse.json()).evidence.evidenceType, "PROVIDER_INVOICE");
+  const evidenceBody = await evidenceResponse.json();
+  assert.equal(evidenceResponse.status, 201, JSON.stringify(evidenceBody));
+  assert.equal(evidenceBody.evidence.evidenceType, "PROVIDER_INVOICE");
 
   const retrievedResponse = await investigatorApp.request(
     `http://localhost/investigations/${investigationId}`,
@@ -343,13 +389,13 @@ test("investigation APIs enforce status transitions and investigator or analyst 
 
   const invalidTransition = await investigatorApp.request(
     url,
-    jsonRequest({ status: "CONFIRMED_FRAUD" }, "PATCH"),
+    jsonRequest({ status: "CONFIRMED_FRAUD" }, "PATCH", "W/\"investigation-1\""),
   );
   assert.equal(invalidTransition.status, 409);
 
   const analystStatus = await analystApp.request(
     url,
-    jsonRequest({ status: "UNDER_REVIEW" }, "PATCH"),
+    jsonRequest({ status: "UNDER_REVIEW" }, "PATCH", "W/\"investigation-1\""),
   );
   assert.equal(analystStatus.status, 403);
 

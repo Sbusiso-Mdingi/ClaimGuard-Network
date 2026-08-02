@@ -31,6 +31,9 @@ param modelPseudonymizationKey string
 @description('Immutable report-worker image reference, preferably an ACR digest.')
 param reportWorkerImage string
 
+@description('Canonical operational schema version exported by the database package.')
+param operationalSchemaVersion string
+
 @description('HTTPS origin of the infrastructure-owned model service.')
 param modelServiceBaseUrl string
 
@@ -154,7 +157,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
     component: 'report-producer'
     managedBy: 'bicep'
     modelDeploymentId: modelDeploymentId
-    schemaVersion: '14'
+    schemaVersion: operationalSchemaVersion
   }
   identity: {
     type: 'UserAssigned'
@@ -314,7 +317,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
             }
             {
               name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS'
-              value: '14'
+              value: operationalSchemaVersion
             }
             {
               name: 'REPORT_WORKER_BATCH_SIZE'

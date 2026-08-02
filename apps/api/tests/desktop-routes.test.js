@@ -119,10 +119,14 @@ test("desktop activation and session routes preserve one fixed licensed organisa
 test("desktop data routes cover bounded sync, cached detail, and optimistic concurrency", async () => {
   const syncInputs = [];
   const updateInputs = [];
+  const createInputs = [];
+  const noteInputs = [];
+  const evidenceInputs = [];
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.set("desktopDevice", deviceContext());
     c.set("dataPlaneContext", { organisationId: "org-alpha", operationalTenantId: "tenant-alpha" });
+    c.set("tenantContext", { tenant_id: "tenant-alpha" });
     c.set("authContext", {
       is_authenticated: true,
       user_id: "user-alpha",
@@ -131,8 +135,12 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
       permissions: new Set([
         "claims.view_own",
         "investigations.view",
+        "investigations.create",
+        "investigations.assign",
         "investigations.update_status",
         "investigations.change_priority",
+        "investigations.add_note",
+        "investigations.upload_evidence",
       ]),
     });
     await next();
@@ -164,7 +172,29 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
         return { claimId, currentClaimVersion: 4, status: "FLAGGED" };
       },
     },
+    identityRepository: {
+      async listUsersByOrganisation() {
+        return [
+          { userId: "investigator-alpha", displayName: "Alpha Investigator", userStatus: "active", membershipStatus: "active", roles: ["investigator"] },
+          { userId: "investigator-disabled", displayName: "Disabled Investigator", userStatus: "disabled", membershipStatus: "active", roles: ["investigator"] },
+          { userId: "analyst-alpha", displayName: "Alpha Analyst", userStatus: "active", membershipStatus: "active", roles: ["fraud_analyst"] },
+        ];
+      },
+    },
     investigationService: {
+      async createInvestigation(input) {
+        createInputs.push(input);
+        return {
+          investigationId: "investigation-created",
+          tenantId: "tenant-alpha",
+          claimId: input.claimId,
+          assignedInvestigator: input.assignedInvestigator,
+          assignedBy: input.assignedBy,
+          status: "OPEN",
+          priority: input.priority,
+          recordVersion: 1,
+        };
+      },
       async getInvestigationDetails(investigationId) {
         if (investigationId === "missing") return null;
         if (investigationId === "broken") throw new Error("Database unavailable");
@@ -176,6 +206,7 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
           assignedBy: "analyst-alpha",
           status: "OPEN",
           priority: "HIGH",
+          recordVersion: 7,
           createdAt: "2026-08-01T09:00:00.000Z",
           updatedAt: "2026-08-01T10:00:00.000Z",
           notes: [{ noteId: "note-1", tenantId: "tenant-alpha", text: "Review provider invoice." }],
@@ -192,7 +223,23 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
           tenantId: "tenant-alpha",
           status: input.status,
           priority: input.priority,
+          assignedInvestigator: input.assignedInvestigator,
+          recordVersion: input.expectedRecordVersion + 1,
           updatedAt: "2026-08-01T10:00:00.000Z",
+        };
+      },
+      async addNote(input) {
+        noteInputs.push(input);
+        return {
+          note: { noteId: "note-created", tenantId: "tenant-alpha", text: input.text, noteType: input.noteType },
+          investigation: { investigationId: input.investigationId, tenantId: "tenant-alpha", recordVersion: input.expectedRecordVersion + 1 },
+        };
+      },
+      async uploadEvidence(input) {
+        evidenceInputs.push(input);
+        return {
+          evidence: { evidenceId: "evidence-created", tenantId: "tenant-alpha", filename: input.filename, contentSha256: "a".repeat(64) },
+          investigation: { investigationId: input.investigationId, tenantId: "tenant-alpha", recordVersion: input.expectedRecordVersion + 1 },
         };
       },
     },
@@ -219,9 +266,32 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
   assert.equal((await app.request("/desktop/claims/missing")).status, 404);
   assert.equal((await app.request("/desktop/claims/broken")).status, 500);
 
+  const investigators = await app.request("/desktop/investigators");
+  assert.equal(investigators.status, 200);
+  assert.deepEqual((await investigators.json()).investigators, [
+    { userId: "investigator-alpha", displayName: "Alpha Investigator" },
+  ]);
+
+  const createdInvestigation = await app.request("/desktop/investigations", {
+    method: "POST",
+    headers: { "content-type": "application/json", "if-match": "W/\"claim-4\"" },
+    body: JSON.stringify({ claimId: "claim-1", assignedInvestigator: "investigator-alpha", priority: "HIGH" }),
+  });
+  assert.equal(createdInvestigation.status, 201);
+  assert.equal(createdInvestigation.headers.get("etag"), "W/\"investigation-1\"");
+  assert.equal(createInputs[0].expectedClaimVersion, 4);
+  assert.equal(createInputs[0].assignedBy, "user-alpha");
+
+  const ineligibleAssignment = await app.request("/desktop/investigations", {
+    method: "POST",
+    headers: { "content-type": "application/json", "if-match": "W/\"claim-4\"" },
+    body: JSON.stringify({ claimId: "claim-1", assignedInvestigator: "investigator-disabled", priority: "HIGH" }),
+  });
+  assert.equal(ineligibleAssignment.status, 409);
+
   const investigationDetail = await app.request("/desktop/investigations/investigation-1");
   assert.equal(investigationDetail.status, 200);
-  assert.equal(investigationDetail.headers.get("etag"), "W/\"2026-08-01T10:00:00.000Z\"");
+  assert.equal(investigationDetail.headers.get("etag"), "W/\"investigation-7\"");
   const investigationBody = await investigationDetail.json();
   assert.equal(investigationBody.investigation.investigationId, "investigation-1");
   assert.equal(investigationBody.investigation.tenantId, undefined);
@@ -239,24 +309,49 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
 
   const invalidMutation = await app.request("/desktop/investigations/investigation-1", {
     method: "PATCH",
-    headers: { "content-type": "application/json", "if-match": "version-1" },
+    headers: { "content-type": "application/json", "if-match": "W/\"investigation-7\"" },
     body: JSON.stringify({ note: "not supported" }),
   });
   assert.equal(invalidMutation.status, 400);
 
   const updated = await app.request("/desktop/investigations/investigation-1", {
     method: "PATCH",
-    headers: { "content-type": "application/json", "if-match": "W/\"version-1\"" },
+    headers: { "content-type": "application/json", "if-match": "W/\"investigation-7\"" },
     body: JSON.stringify({ status: "under_review", priority: "high" }),
   });
   assert.equal(updated.status, 200);
-  assert.equal(updated.headers.get("etag"), "W/\"2026-08-01T10:00:00.000Z\"");
+  assert.equal(updated.headers.get("etag"), "W/\"investigation-8\"");
   assert.equal((await updated.json()).investigation.tenantId, undefined);
-  assert.equal(updateInputs[0].expectedUpdatedAt, "version-1");
+  assert.equal(updateInputs[0].expectedRecordVersion, 7);
+
+  const note = await app.request("/desktop/investigations/investigation-1/notes", {
+    method: "POST",
+    headers: { "content-type": "application/json", "if-match": "W/\"investigation-7\"" },
+    body: JSON.stringify({ text: "Provider called.", noteType: "CONTACT" }),
+  });
+  assert.equal(note.status, 201);
+  assert.equal(note.headers.get("etag"), "W/\"investigation-8\"");
+  assert.equal(noteInputs[0].author, "user-alpha");
+
+  const evidence = await app.request("/desktop/investigations/investigation-1/evidence", {
+    method: "POST",
+    headers: { "content-type": "application/json", "if-match": "W/\"investigation-7\"" },
+    body: JSON.stringify({
+      filename: "invoice.txt",
+      description: "Invoice extract",
+      evidenceType: "INVOICE",
+      contentType: "text/plain",
+      contentBase64: "aW52b2ljZQ==",
+    }),
+  });
+  const evidenceBody = await evidence.json();
+  assert.equal(evidence.status, 201, JSON.stringify(evidenceBody));
+  assert.equal(evidence.headers.get("etag"), "W/\"investigation-8\"");
+  assert.equal(evidenceInputs[0].tenantId, "tenant-alpha");
 
   const stale = await app.request("/desktop/investigations/stale", {
     method: "PATCH",
-    headers: { "content-type": "application/json", "if-match": "version-1" },
+    headers: { "content-type": "application/json", "if-match": "W/\"investigation-1\"" },
     body: JSON.stringify({ status: "closed" }),
   });
   assert.equal(stale.status, 412);

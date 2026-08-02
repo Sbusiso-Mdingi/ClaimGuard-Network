@@ -8,6 +8,7 @@ RECOVERY_JOB_NAME="${REPORT_WORKER_RECOVERY_JOB_NAME:-claimguard-report-recovery
 RECOVERY_CRON="${REPORT_WORKER_RECOVERY_CRON:-0 0 1 1 *}"
 ACR_NAME="${REPORT_WORKER_ACR_NAME:-claimguardacr11e}"
 MODEL_DEPLOYMENT_ID="${MODEL_DEPLOYMENT_ID:-claimguard-claim-fraud-baseline:1.0.0}"
+OPERATIONAL_SCHEMA_VERSION=""
 BOOTSTRAP_IMAGE="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
 BOOTSTRAP_CONTAINER="recovery-bootstrap"
 EXPECTED_EXECUTION_COUNT="${RECOVERY_EXECUTION_COUNT_BEFORE:?RECOVERY_EXECUTION_COUNT_BEFORE is required}"
@@ -153,6 +154,7 @@ create_identity_free_shell_if_absent() {
     --template-file infra/recovery-job-bootstrap.bicep \
     --parameters \
       containerAppsEnvironmentName="$CONTAINER_APPS_ENVIRONMENT" \
+      operationalSchemaVersion="$OPERATIONAL_SCHEMA_VERSION" \
       recoveryJobName="$RECOVERY_JOB_NAME" \
     --only-show-errors \
     --output none
@@ -181,6 +183,12 @@ main() {
   local worker_identity_id recovery_job recovery_trigger
   require_command az
   require_command jq
+  require_command node
+
+  OPERATIONAL_SCHEMA_VERSION="$(
+    node --input-type=module --eval \
+      "import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from './packages/database/src/operational-schema.js'; process.stdout.write(CANONICAL_OPERATIONAL_SCHEMA_VERSION)"
+  )"
 
   [ "$RECOVERY_CRON" = "0 0 1 1 *" ] \
     || fail "recovery cron is not the exact parked value"

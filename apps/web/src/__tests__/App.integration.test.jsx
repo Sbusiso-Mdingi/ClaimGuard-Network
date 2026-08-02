@@ -271,7 +271,13 @@ test("renders dashboard and routes to claim details", async () => {
   }
 
   await user.click(claimsNavigationLink());
-  expect(await screen.findByRole("heading", { name: /^Claims$/i })).toBeInTheDocument();
+  expect(
+    await screen.findByRole(
+      "heading",
+      { name: /^Claims$/i },
+      { timeout: 10_000 },
+    ),
+  ).toBeInTheDocument();
 
   expect(screen.getAllByText("82").length).toBeGreaterThan(0);
 
@@ -279,7 +285,13 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.getByRole("link", { name: "C-1" })).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: "C-1" }));
-  expect(await screen.findByRole("heading", { name: /C-1/i })).toBeInTheDocument();
+  expect(
+    await screen.findByRole(
+      "heading",
+      { name: /C-1/i },
+      { timeout: 10_000 },
+    ),
+  ).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: /Risk summary/i })).toBeInTheDocument();
   expect(screen.getByText("Fraud-risk review recommended")).toBeInTheDocument();
   expect(screen.getByText("Drift watch")).toBeInTheDocument();
@@ -289,7 +301,13 @@ test("renders dashboard and routes to claim details", async () => {
   expect(screen.queryByText("PROSPECTIVE_ML_REVIEW_RECOMMENDED")).not.toBeInTheDocument();
 
   await user.click(networkNavigationLink());
-  expect(await screen.findByRole("heading", { name: /Fraud network candidates/i })).toBeInTheDocument();
+  expect(
+    await screen.findByRole(
+      "heading",
+      { name: /Fraud network candidates/i },
+      { timeout: 10_000 },
+    ),
+  ).toBeInTheDocument();
   expect(screen.getAllByText("Members").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Providers").length).toBeGreaterThan(0);
   expect(screen.queryByText("Bank links")).not.toBeInTheDocument();

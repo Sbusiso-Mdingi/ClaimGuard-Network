@@ -111,6 +111,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          EXPECTED_SCHEMA_VERSION="$(
+            node --input-type=module --eval \
+              "import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from './packages/database/src/operational-schema.js'; process.stdout.write(CANONICAL_OPERATIONAL_SCHEMA_VERSION)"
+          )"
 
           ENABLED="$(
             az webapp config appsettings list \
@@ -165,7 +169,10 @@ jobs:
           test "$CONFIGURED_RESOURCE_GROUP" = "$AZURE_RESOURCE_GROUP"
           test "$CONFIGURED_JOB" = "$AZURE_PROVISIONING_JOB_NAME"
           test "$API_VERSION" = "2025-07-01"
-          test "$SCHEMA_VERSION" = "14"
+          if [ -n "$SCHEMA_VERSION" ] && [ "$SCHEMA_VERSION" != "$EXPECTED_SCHEMA_VERSION" ]; then
+            echo "Error: API schema override is '$SCHEMA_VERSION', expected '$EXPECTED_SCHEMA_VERSION'."
+            exit 1
+          fi
 
           echo "Verified automatic API provisioning-trigger settings."
 
@@ -173,6 +180,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          EXPECTED_SCHEMA_VERSION="$(
+            node --input-type=module --eval \
+              "import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from './packages/database/src/operational-schema.js'; process.stdout.write(CANONICAL_OPERATIONAL_SCHEMA_VERSION)"
+          )"
 
           WORKER_IMAGE="$(
             az containerapp job show \
@@ -195,13 +206,13 @@ jobs:
             exit 1
           fi
 
-          if [ "$WORKER_SCHEMA_VERSION" != "14" ]; then
-            echo "Error: provisioning-worker schema version is '$WORKER_SCHEMA_VERSION', expected '14'."
+          if [ -n "$WORKER_SCHEMA_VERSION" ] && [ "$WORKER_SCHEMA_VERSION" != "$EXPECTED_SCHEMA_VERSION" ]; then
+            echo "Error: provisioning-worker schema override is '$WORKER_SCHEMA_VERSION', expected '$EXPECTED_SCHEMA_VERSION'."
             exit 1
           fi
 
           echo "Provisioning worker image: $WORKER_IMAGE"
-          echo "Provisioning worker schema: $WORKER_SCHEMA_VERSION"
+          echo "Provisioning worker schema: ${WORKER_SCHEMA_VERSION:-$EXPECTED_SCHEMA_VERSION (image default)}"
 
       - name: Verification summary
         shell: bash
