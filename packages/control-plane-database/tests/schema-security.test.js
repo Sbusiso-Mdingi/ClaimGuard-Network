@@ -91,6 +91,15 @@ test("desktop enrollment schema binds every activation key and device to one imm
   assert.match(sql, /UNIQUE KEY uq_desktop_public_key \(public_key_thumbprint\)/);
 });
 
+test("desktop fleet policy removes the implicit production allowance and grants changes only to platform administrators", async () => {
+  const sql = await readFile(new URL("../migrations/0017_desktop_fleet_policy.sql", import.meta.url), "utf8");
+  assert.match(sql, /ALTER COLUMN device_limit DROP DEFAULT/);
+  assert.match(sql, /event_details JSON NULL/);
+  assert.match(sql, /desktop_fleet_policy\.manage/);
+  assert.match(sql, /\('platform_administrator', 'desktop_fleet_policy\.manage'\)/);
+  assert.doesNotMatch(sql, /\('scheme_administrator', 'desktop_fleet_policy\.manage'\)/);
+});
+
 test("Phase 11C migration adds only hashed CSRF/session authority and durable throttling", async () => {
   const sql = await readFile(new URL("../migrations/0005_session_authority_and_throttling.sql", import.meta.url), "utf8");
   assert.match(sql, /csrf_token_hash CHAR\(64\) NOT NULL/);

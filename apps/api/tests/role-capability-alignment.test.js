@@ -62,6 +62,7 @@ test("platform administrator sessions retain administrator-management authority"
     "platform_releases.request",
     "platform_releases.approve",
     "platform_administrators.manage",
+    "desktop_fleet_policy.manage",
   ]);
 
   assert.equal(
@@ -69,6 +70,10 @@ test("platform administrator sessions retain administrator-management authority"
       context,
       CLAIMGUARD_PERMISSIONS.PLATFORM_ADMINISTRATORS_MANAGE,
     ),
+    true,
+  );
+  assert.equal(
+    hasPermission(context, CLAIMGUARD_PERMISSIONS.DESKTOP_FLEET_POLICY_MANAGE),
     true,
   );
 });

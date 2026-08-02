@@ -14,6 +14,7 @@ import {
   formatEnumLabel,
 } from "./InvestigatorUI";
 import { GlobalDetectionEngineSettings } from "./GlobalDetectionEngineSettings";
+import { DesktopFleetPolicyEditor } from "./DesktopDeviceManagement";
 import { PlatformAdministratorAccessPanel } from "./PlatformAdministratorAccessPanel";
 import { ReleaseGovernancePanel } from "./ReleaseGovernancePanel";
 import { usePlatformAdminLifecycle } from "./usePlatformAdminLifecycle";
@@ -170,6 +171,10 @@ export function PlatformAdminLifecyclePage() {
               />
             </SectionCard>
           </div>
+
+          <SectionCard title="Windows desktop fleet licence" description="Set the explicit licensed computer allowance for this medical scheme. Scheme administrators manage activation keys and device revocation within it.">
+            <DesktopFleetPolicyEditor organisationId={selected.organisationId} />
+          </SectionCard>
 
           <SectionCard title="Claims-server integration" description="Issue and revoke separate credentials for claims-sending systems. Raw tokens are shown once only.">
             {!permissions.isActive ? (
