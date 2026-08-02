@@ -40,7 +40,7 @@ function expectedMigrationVersion(schemaVersion) {
 export function createLegacySharedAdapter({
   databaseUrl,
   expectedEnvironment = "legacy",
-  supportedSchemaVersions = ["14"],
+  supportedSchemaVersions = ["15"],
   expectedLogicalDatabaseIdentifier = "legacy-operational-shared",
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),

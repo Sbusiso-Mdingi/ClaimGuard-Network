@@ -18,12 +18,35 @@ export const desktopBridge = Object.freeze({
   lock: () => invokeImplementation("lock_desktop"),
   sync: () => invokeImplementation("synchronize_desktop"),
   claimDetails: (claimId) => invokeImplementation("desktop_claim_details", { claimId }),
+  investigators: () => invokeImplementation("desktop_investigators"),
+  createInvestigation: (claimId, expectedClaimVersion, assignedInvestigator, priority) => invokeImplementation("desktop_create_investigation", {
+    claimId,
+    expectedClaimVersion,
+    assignedInvestigator: assignedInvestigator || null,
+    priority,
+  }),
   investigationDetails: (investigationId) => invokeImplementation("desktop_investigation_details", { investigationId }),
-  updateInvestigation: (investigationId, expectedUpdatedAt, changes) => invokeImplementation("desktop_update_investigation", {
+  updateInvestigation: (investigationId, expectedRecordVersion, changes) => invokeImplementation("desktop_update_investigation", {
     investigationId,
-    expectedUpdatedAt,
+    expectedRecordVersion,
     status: changes.status || null,
     priority: changes.priority || null,
+    ...(Object.hasOwn(changes, "assignedInvestigator") ? { assignedInvestigator: changes.assignedInvestigator } : {}),
+  }),
+  addInvestigationNote: (investigationId, expectedRecordVersion, text, noteType) => invokeImplementation("desktop_add_investigation_note", {
+    investigationId,
+    expectedRecordVersion,
+    text,
+    noteType,
+  }),
+  uploadInvestigationEvidence: (investigationId, expectedRecordVersion, evidence) => invokeImplementation("desktop_upload_investigation_evidence", {
+    investigationId,
+    expectedRecordVersion,
+    filename: evidence.filename,
+    description: evidence.description || null,
+    evidenceType: evidence.evidenceType,
+    contentType: evidence.contentType,
+    contentBase64: evidence.contentBase64,
   }),
   reset: (confirmation) => invokeImplementation("reset_desktop", { confirmation }),
 });

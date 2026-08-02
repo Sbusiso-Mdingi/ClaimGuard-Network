@@ -32,7 +32,7 @@ function baseContext(
       "private-db-1",
 
     schemaVersion:
-      "14",
+      "15",
 
     deploymentClass:
       "production",
@@ -110,7 +110,7 @@ test(
     const adapter =
       createPrivateDatabaseAdapter({
         supportedSchemaVersions: [
-          "14",
+          "15",
         ],
 
         expectedEnvironment:
@@ -129,13 +129,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                "15",
 
               environment_key:
                 "staging",
 
               migration_version:
-                14,
+                15,
             },
           ],
           [],
@@ -160,7 +160,7 @@ test(
     const adapter =
       createPrivateDatabaseAdapter({
         supportedSchemaVersions: [
-          "14",
+          "15",
         ],
       });
 
@@ -219,13 +219,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                "15",
 
               environment_key:
                 "production",
 
               migration_version:
-                14,
+                15,
             },
           ],
           [],
@@ -238,7 +238,7 @@ test(
         pool,
         baseContext({
           schemaVersion:
-            "15",
+            "14",
         }),
       ),
       /does not match active route/,
@@ -265,13 +265,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                "15",
 
               environment_key:
                 "production",
 
               migration_version:
-                13,
+                14,
             },
           ],
           [],
@@ -296,7 +296,7 @@ test(
     const adapter =
       createPrivateDatabaseAdapter({
         supportedSchemaVersions: [
-          "14",
+          "15",
         ],
 
         expectedEnvironment:
@@ -315,13 +315,13 @@ test(
                 "private-db-1",
 
               schema_version:
-                "14",
+                "15",
 
               environment_key:
                 "production",
 
               migration_version:
-                14,
+                15,
             },
           ],
           [],
@@ -345,10 +345,10 @@ test(
           "private-db-1",
 
         schemaVersion:
-          "14",
+          "15",
 
         migrationVersion:
-          14,
+          15,
       },
     );
 

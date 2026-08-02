@@ -1,4 +1,8 @@
-export function createInvestigationService({ investigationRepository = null } = {}) {
+import crypto from "node:crypto";
+
+import { validateEvidenceUpload } from "../investigation-evidence-storage.js";
+
+export function createInvestigationService({ investigationRepository = null, evidenceStorage = null } = {}) {
   function hasMethod(name) {
     return Boolean(investigationRepository && typeof investigationRepository[name] === "function");
   }
@@ -10,12 +14,16 @@ export function createInvestigationService({ investigationRepository = null } = 
       return investigationRepository.listInvestigations(filters);
     },
 
-    async createInvestigation({ claimId, assignedInvestigator = null, assignedBy, priority }) {
+    async createInvestigation({
+      claimId, assignedInvestigator = null, assignedBy, priority, expectedClaimVersion, correlationId = null,
+    }) {
       return investigationRepository.createInvestigation({
         claimId,
         assignedInvestigator,
         assignedBy,
         priority,
+        expectedClaimVersion,
+        correlationId,
       });
     },
 
@@ -27,32 +35,82 @@ export function createInvestigationService({ investigationRepository = null } = 
       return investigationRepository.getInvestigationDetails(investigationId);
     },
 
-    async updateInvestigation({ investigationId, status = undefined, priority = undefined, expectedUpdatedAt = null }) {
+    async updateInvestigation({
+      investigationId,
+      status = undefined,
+      priority = undefined,
+      assignedInvestigator = undefined,
+      expectedRecordVersion,
+      actorId,
+      correlationId = null,
+    }) {
       return investigationRepository.updateInvestigation({
         investigationId,
         status,
         priority,
-        expectedUpdatedAt,
+        assignedInvestigator,
+        expectedRecordVersion,
+        actorId,
+        correlationId,
       });
     },
 
-    async addNote({ investigationId, author, text, noteType }) {
+    async addNote({ investigationId, author, text, noteType, expectedRecordVersion, correlationId = null }) {
       return investigationRepository.addNote({
         investigationId,
         author,
         text,
         noteType,
+        expectedRecordVersion,
+        correlationId,
       });
     },
 
-    async registerEvidence({ investigationId, filename, description, uploadedBy, evidenceType }) {
-      return investigationRepository.registerEvidence({
+    async uploadEvidence({
+      tenantId,
+      investigationId,
+      filename,
+      description,
+      uploadedBy,
+      evidenceType,
+      contentType,
+      contentBase64,
+      expectedRecordVersion,
+      correlationId = null,
+    }) {
+      if (!evidenceStorage?.store || !evidenceStorage?.delete) {
+        const error = new Error("Secure evidence storage is not configured.");
+        error.code = "EVIDENCE_STORAGE_UNAVAILABLE";
+        error.status = 503;
+        throw error;
+      }
+      const validated = validateEvidenceUpload({ filename, contentType, contentBase64 });
+      const evidenceId = crypto.randomUUID();
+      const stored = await evidenceStorage.store({
+        tenantId,
         investigationId,
-        filename,
-        description,
-        uploadedBy,
-        evidenceType,
+        evidenceId,
+        ...validated,
       });
+      try {
+        return await investigationRepository.registerEvidence({
+          evidenceId,
+          investigationId,
+          filename: validated.filename,
+          description,
+          uploadedBy,
+          evidenceType,
+          contentType: validated.contentType,
+          byteSize: validated.byteSize,
+          contentSha256: validated.contentSha256,
+          storageObjectKey: stored.objectKey,
+          expectedRecordVersion,
+          correlationId,
+        });
+      } catch (error) {
+        await evidenceStorage.delete(stored.objectKey).catch(() => {});
+        throw error;
+      }
     },
 
     async markFraudPublished(investigationId) {

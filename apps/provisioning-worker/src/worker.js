@@ -9,7 +9,7 @@ import {
   withControlPlaneTransaction,
 } from "@claimguard/control-plane-database";
 
-const CANONICAL_OPERATIONAL_SCHEMA_VERSION = "14";
+const CANONICAL_OPERATIONAL_SCHEMA_VERSION = "15";
 
 const REQUIRED_STEPS = Object.freeze([
   "validate_request",

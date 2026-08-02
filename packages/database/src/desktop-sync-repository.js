@@ -17,7 +17,7 @@ function investigationChange(row) {
     resource: "investigation",
     operation: closed ? "delete" : "upsert",
     id: row.investigation_id,
-    version: String(row.updated_at || ""),
+    version: String(row.record_version || 1),
     updatedAt: row.updated_at,
     ...(closed ? {} : {
       record: {
@@ -27,6 +27,7 @@ function investigationChange(row) {
         assignedBy: row.assigned_by,
         status: row.status,
         priority: row.priority,
+        recordVersion: Number(row.record_version || 1),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         closedAt: row.closed_at || null,
@@ -76,7 +77,7 @@ export function createDesktopSyncRepository(
       }
       const [rows] = await pool.execute(
         `SELECT i.investigation_id, i.claim_id, i.assigned_investigator, i.assigned_by,
-                i.status, i.priority, i.created_at, i.updated_at, i.closed_at,
+                i.status, i.priority, i.record_version, i.created_at, i.updated_at, i.closed_at,
                 i.fraud_confirmed_at, i.reversed_at
          FROM investigations i
          WHERE i.tenant_id = ?

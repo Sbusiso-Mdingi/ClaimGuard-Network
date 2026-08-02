@@ -13,7 +13,7 @@ from urllib.parse import (
 
 DEFAULT_SUPPORTED_SCHEMA_VERSIONS = frozenset(
     {
-        "14",
+        "15",
     }
 )
 

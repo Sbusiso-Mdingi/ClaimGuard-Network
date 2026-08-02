@@ -2,7 +2,7 @@ import {
   createControlPlanePool,
 } from "@claimguard/control-plane-database";
 
-export const CANONICAL_PRIVATE_SCHEMA_VERSION = "14";
+export const CANONICAL_PRIVATE_SCHEMA_VERSION = "15";
 
 export async function promoteCompatiblePrivateRoutes(
   {

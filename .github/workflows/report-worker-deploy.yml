@@ -31,6 +31,7 @@ env:
   REPORT_STORAGE_ACCOUNT_NAME: ${{ vars.REPORT_STORAGE_ACCOUNT_NAME || 'cgrpt0715sa' }}
   REPORT_STORAGE_ACCOUNT_URL: ${{ vars.REPORT_STORAGE_ACCOUNT_URL || 'https://cgrpt0715sa.blob.core.windows.net' }}
   REPORT_STORAGE_CONTAINER: ${{ vars.REPORT_STORAGE_CONTAINER || 'claimguard-reports' }}
+  EVIDENCE_STORAGE_CONTAINER: ${{ vars.EVIDENCE_STORAGE_CONTAINER || 'claimguard-investigation-evidence' }}
   CLAIM_SCORING_QUEUE_NAME: ${{ vars.CLAIM_SCORING_QUEUE_NAME || 'claimguard-claim-scoring' }}
   MODEL_SERVICE_BASE_URL: ${{ vars.PROSPECTIVE_MODEL_SERVICE_BASE_URL }}
   MODEL_SERVICE_AUDIENCE: ${{ vars.MODEL_SERVICE_AUDIENCE }}
@@ -90,7 +91,7 @@ jobs:
             REPORT_WORKER_IDENTITY_NAME REPORT_WORKER_JOB_NAME
             REPORT_WORKER_RECOVERY_JOB_NAME REPORT_WORKER_RECOVERY_CRON
             REPORT_STORAGE_ACCOUNT_NAME REPORT_STORAGE_ACCOUNT_URL
-            REPORT_STORAGE_CONTAINER CLAIM_SCORING_QUEUE_NAME
+            REPORT_STORAGE_CONTAINER EVIDENCE_STORAGE_CONTAINER CLAIM_SCORING_QUEUE_NAME
             MODEL_SERVICE_BASE_URL MODEL_SERVICE_AUDIENCE
             MODEL_SERVICE_ENDPOINT_PATH MODEL_DEPLOYMENT_ID
             MODEL_EXPECTED_ID MODEL_EXPECTED_VERSION
@@ -228,6 +229,7 @@ jobs:
           KEY_VAULT_ID="$(az keyvault show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_KEYVAULT_NAME" --query id -o tsv)"
           STORAGE_ID="$(az storage account show --resource-group "$AZURE_RESOURCE_GROUP" --name "$REPORT_STORAGE_ACCOUNT_NAME" --query id -o tsv)"
           CONTAINER_SCOPE="${STORAGE_ID}/blobServices/default/containers/${REPORT_STORAGE_CONTAINER}"
+          EVIDENCE_CONTAINER_SCOPE="${STORAGE_ID}/blobServices/default/containers/${EVIDENCE_STORAGE_CONTAINER}"
           QUEUE_SCOPE="${STORAGE_ID}/queueServices/default/queues/${CLAIM_SCORING_QUEUE_NAME}"
 
           require_role() {
@@ -250,6 +252,7 @@ jobs:
           require_role "$WORKER_PRINCIPAL_ID" "Storage Blob Data Contributor" "$CONTAINER_SCOPE"
           require_role "$WORKER_PRINCIPAL_ID" "Storage Queue Data Contributor" "$QUEUE_SCOPE"
           require_role "$API_PRINCIPAL_ID" "Storage Blob Data Reader" "$CONTAINER_SCOPE"
+          require_role "$API_PRINCIPAL_ID" "Storage Blob Data Contributor" "$EVIDENCE_CONTAINER_SCOPE"
           require_role "$API_PRINCIPAL_ID" "Storage Queue Data Message Sender" "$QUEUE_SCOPE"
 
       - name: Build and push immutable report-worker image
@@ -320,6 +323,9 @@ jobs:
               REPORT_STORAGE_BACKEND=azure_blob \
               REPORT_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
               REPORT_STORAGE_CONTAINER="$REPORT_STORAGE_CONTAINER" \
+              EVIDENCE_STORAGE_BACKEND=azure_blob \
+              EVIDENCE_STORAGE_ACCOUNT_URL="$REPORT_STORAGE_ACCOUNT_URL" \
+              EVIDENCE_STORAGE_CONTAINER="$EVIDENCE_STORAGE_CONTAINER" \
               APPROVED_MODEL_DEPLOYMENT_IDS="$API_APPROVED_MODEL_DEPLOYMENT_IDS" \
               CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID="$API_MANAGED_MODEL_DEPLOYMENT_ID" \
               CLAIMGUARD_RELEASE_CANDIDATE_DEPLOYMENT_ID="$ENSEMBLE_DEPLOYMENT_ID" \
@@ -395,12 +401,14 @@ jobs:
           SETTINGS="$(az webapp config appsettings list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_WEBAPP_API" \
-            --query "[?name=='REPORT_STORAGE_BACKEND' || name=='REPORT_STORAGE_ACCOUNT_URL' || name=='REPORT_STORAGE_CONTAINER' || name=='APPROVED_MODEL_DEPLOYMENT_IDS' || name=='CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID' || name=='CLAIM_SCORING_QUEUE_URL'].{name:name,value:value}" \
+            --query "[?name=='REPORT_STORAGE_BACKEND' || name=='REPORT_STORAGE_ACCOUNT_URL' || name=='REPORT_STORAGE_CONTAINER' || name=='EVIDENCE_STORAGE_BACKEND' || name=='EVIDENCE_STORAGE_ACCOUNT_URL' || name=='EVIDENCE_STORAGE_CONTAINER' || name=='APPROVED_MODEL_DEPLOYMENT_IDS' || name=='CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID' || name=='CLAIM_SCORING_QUEUE_URL'].{name:name,value:value}" \
             --output json)"
-          test "$(echo "$SETTINGS" | jq length)" -eq 6
+          test "$(echo "$SETTINGS" | jq length)" -eq 9
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIM_SCORING_QUEUE_URL") | .value')" = "https://${REPORT_STORAGE_ACCOUNT_NAME}.queue.core.windows.net/${CLAIM_SCORING_QUEUE_NAME}"
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "APPROVED_MODEL_DEPLOYMENT_IDS") | .value')" = "$API_APPROVED_MODEL_DEPLOYMENT_IDS"
           test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "CLAIMGUARD_MANAGED_MODEL_DEPLOYMENT_ID") | .value')" = "$API_MANAGED_MODEL_DEPLOYMENT_ID"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "EVIDENCE_STORAGE_BACKEND") | .value')" = "azure_blob"
+          test "$(echo "$SETTINGS" | jq -r '.[] | select(.name == "EVIDENCE_STORAGE_CONTAINER") | .value')" = "$EVIDENCE_STORAGE_CONTAINER"
 
           {
             echo "### Report-worker deployment audit"

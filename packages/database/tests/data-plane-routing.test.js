@@ -13,8 +13,8 @@ import {
 } from "../src/index.js";
 
 
-const OPERATIONAL_SCHEMA_VERSION = "14";
-const OPERATIONAL_MIGRATION_VERSION = 14;
+const OPERATIONAL_SCHEMA_VERSION = "15";
+const OPERATIONAL_MIGRATION_VERSION = 15;
 
 
 function context(
@@ -782,7 +782,7 @@ test(
 
 
 test(
-  "legacy_shared adapter verifies schema 14 metadata before publication and closes mismatched pools",
+  "legacy_shared adapter verifies schema 15 metadata before publication and closes mismatched pools",
   async () => {
     const created = [];
 

@@ -22,7 +22,7 @@ flowchart LR
   API -->|bounded changes + signed cursor| D
   D -->|AES-256-GCM records| SQ[(Per-user SQLite cache)]
   D -->|private key, cache key, enrollment, session| CM[Windows Credential Manager]
-  W[Bundled React WebView] -->|ten named commands only| D
+  W[Bundled React WebView] -->|fourteen named commands only| D
 ```
 
 The WebView has `connect-src 'none'` and no Tauri HTTP, filesystem, shell, process, or updater permission. It can invoke only:
@@ -34,11 +34,15 @@ The WebView has `connect-src 'none'` and no Tauri HTTP, filesystem, shell, proce
 - `lock_desktop`
 - `synchronize_desktop`
 - `desktop_claim_details`
+- `desktop_investigators`
+- `desktop_create_investigation`
 - `desktop_investigation_details`
 - `desktop_update_investigation`
+- `desktop_add_investigation_note`
+- `desktop_upload_investigation_evidence`
 - `reset_desktop`
 
-All network access, proof creation, enrollment verification, cache encryption, and secret storage happen in Rust. The investigation update command is restricted to status and priority fields and always sends the last authoritative `updatedAt` value as `If-Match`.
+All network access, proof creation, enrollment verification, cache encryption, and secret storage happen in Rust. Connected investigation writes send the last authoritative claim or investigation integer record version as `If-Match`. Rust independently checks the capability required for creation, assignment, status or priority changes, notes, and evidence before issuing a request.
 
 ## Organisation Boundary
 
@@ -57,6 +61,8 @@ The API consumes each proof nonce once, checks enrollment status and expiry, and
 ## Storage Boundary
 
 The SQLite file is in Tauri's per-Windows-user local app-data directory. Record IDs are SHA-256-derived lookup keys; JSON record bodies and sync metadata are AES-256-GCM ciphertext with random nonces and organisation/resource/version AAD. The AES key, Ed25519 private seed, signed enrollment, installation ID, session cookie, and minimum session capability profile are stored separately through the OS-native keyring (Windows Credential Manager).
+
+Evidence content is validated and hashed by the API, then written to a private Azure Blob container under an immutable tenant/investigation/evidence key. The operational database stores the content type, byte size, SHA-256 digest, and private object key; clients receive integrity metadata but no public blob URL or storage credential.
 
 This is record-level authenticated encryption, not full-database page encryption. SQLite table names, resource types, encrypted record counts, versions, and update timestamps remain metadata. Use BitLocker/device encryption to protect the full volume, swap/pagefile, and filesystem metadata at rest.
 
@@ -80,6 +86,14 @@ API runtime settings are an all-or-none group. If none are present, the web appl
 | `DESKTOP_SYNC_CURSOR_LIFETIME_DAYS` | config, optional | cursor lifetime, default 30 |
 | `DESKTOP_CACHE_RETENTION_DAYS` | config, optional | claim update window, default 90 |
 
+Evidence uploads are enabled only when these API settings are present:
+
+| Setting | Sensitivity | Purpose |
+| --- | --- | --- |
+| `EVIDENCE_STORAGE_BACKEND` | config | must be `azure_blob` when configured |
+| `EVIDENCE_STORAGE_ACCOUNT_URL` | config | Azure Blob account URL; falls back to `REPORT_STORAGE_ACCOUNT_URL` |
+| `EVIDENCE_STORAGE_CONTAINER` | config | private evidence container name |
+
 Desktop compile-time settings:
 
 | Setting | Sensitivity | Purpose |
@@ -94,6 +108,6 @@ The corresponding private keys are never compiled into the application.
 
 `desktop.devices.manage` is used only by the browser application and its API boundary; it is never exposed as a Tauri command. Scheme administrators can use the Windows client for their enrolled medical scheme and remain hard-bound to that organisation. Platform administrators manage platform/enrollment metadata on the web, are rejected as desktop users, and do not gain operational claim access. Issuance and revocation require recent password reauthentication plus an exact typed confirmation; raw keys are shown once and never returned by list APIs.
 
-Desktop navigation and controls are capability driven. `investigations.view` enables the investigation queue and encrypted on-demand case detail. `investigations.update_status` and `investigations.change_priority` independently enable their corresponding connected-only controls. Rust rechecks those capabilities before returning online or cached records through IPC, which prevents a lower-privileged scheme account using the same Windows profile from inheriting a prior user's investigation view. Notes and evidence are currently review-only in the desktop; creating cases, adding notes/evidence, assignment, and final fraud workflow actions remain on the web until each write has an explicit optimistic-concurrency contract.
+Desktop navigation and controls are capability driven. `investigations.view` enables the investigation queue and encrypted on-demand case detail. `investigations.create`, `investigations.assign`, `investigations.update_status`, `investigations.change_priority`, `investigations.add_note`, and `investigations.upload_evidence` independently enable their corresponding connected-only controls. Each write has an explicit integer-version optimistic-concurrency contract, and assignment is limited to active investigators in the enrolled organisation. Rust rechecks capabilities before returning records or issuing mutations through IPC, which prevents a lower-privileged scheme account using the same Windows profile from inheriting prior authority. Final fraud confirmation and reversal remain web-only workflows.
 
 See [desktop-sync-protocol.md](desktop-sync-protocol.md), [desktop-cache-retention.md](desktop-cache-retention.md), and [desktop-security-and-threat-model.md](desktop-security-and-threat-model.md).

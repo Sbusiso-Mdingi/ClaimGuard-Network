@@ -42,6 +42,7 @@ function createDomainServices({
   claimIngestionRepository,
   claimReadRepository,
   generationRepository,
+  evidenceStorage,
 } = {}) {
   const reportService = createReportService({
     reportStorage,
@@ -56,6 +57,7 @@ function createDomainServices({
 
   const investigationService = createInvestigationService({
     investigationRepository,
+    evidenceStorage,
   });
 
   const fraudConfirmationService = createFraudConfirmationService({
@@ -103,6 +105,7 @@ export function createBackendApp({
   desktopEnrollmentService = null,
   desktopSyncService = null,
   desktopDeviceProofVerifier = null,
+  investigationEvidenceStorage = null,
 } = {}) {
   if (authenticationConfiguration.mode !== "session") {
     throw new TypeError("Only session authentication mode is supported.");
@@ -130,6 +133,7 @@ export function createBackendApp({
     claimIngestionRepository: claimIngestionService,
     claimReadRepository,
     generationRepository,
+    evidenceStorage: investigationEvidenceStorage,
   });
 
   const dependencies = dataPlaneRuntime ? {
@@ -213,6 +217,7 @@ export function createBackendApp({
           claimIngestionRepository: repositories.claims,
           claimReadRepository: repositories.claimsRead,
           generationRepository: repositories.claimProcessingOutbox,
+          evidenceStorage: investigationEvidenceStorage,
         });
         if (!reportServices.has(pool)) reportServices.set(pool, new Map());
         const tenantReportServices = reportServices.get(pool);
@@ -261,6 +266,7 @@ export function createBackendApp({
     claimsReadRepository: dependencies.claimsReadRepository,
     desktopSyncRepository: dependencies.desktopSyncRepository,
     investigationService: dependencies.investigationService,
+    identityRepository: controlPlaneRepositories?.identity || null,
   });
 
   if (controlPlaneRepositories && controlPlaneService) {
@@ -315,6 +321,7 @@ export function createBackendApp({
     fraudConfirmationService: dependencies.fraudConfirmationService,
     fraudReversalService: dependencies.fraudReversalService,
     tenantRepository: dependencies.tenantRepository,
+    identityRepository: controlPlaneRepositories?.identity || null,
     logger: logEvent,
   });
 

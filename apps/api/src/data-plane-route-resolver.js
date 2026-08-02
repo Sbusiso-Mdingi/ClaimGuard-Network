@@ -5,7 +5,7 @@ import {
 
 const DEFAULT_SUPPORTED_SCHEMA_VERSIONS =
   Object.freeze([
-    "14",
+    "15",
   ]);
 
 

@@ -154,7 +154,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
     component: 'report-producer'
     managedBy: 'bicep'
     modelDeploymentId: modelDeploymentId
-    schemaVersion: '14'
+    schemaVersion: '15'
   }
   identity: {
     type: 'UserAssigned'
@@ -314,7 +314,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
             }
             {
               name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS'
-              value: '14'
+              value: '15'
             }
             {
               name: 'REPORT_WORKER_BATCH_SIZE'

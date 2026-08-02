@@ -7,7 +7,7 @@ import {
 } from "./errors.js";
 import { withControlPlaneTransaction } from "./transaction.js";
 
-const CANONICAL_PRIVATE_SCHEMA_VERSION = "14";
+const CANONICAL_PRIVATE_SCHEMA_VERSION = "15";
 
 export function createSignupCredentialGuardedIdentityRepository(identity) {
   if (!identity || typeof identity !== "object") {

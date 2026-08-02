@@ -123,6 +123,7 @@ describe("ClaimGuard desktop cache behaviour", () => {
       status: "UNDER_REVIEW",
       priority: "HIGH",
       assignedInvestigator: "investigator-alpha",
+      recordVersion: 2,
       updatedAt: "2026-08-01T10:15:00.000Z",
     };
     const currentStatus = baseStatus({
@@ -216,6 +217,7 @@ describe("ClaimGuard desktop investigation workspace", () => {
           assignedBy: "analyst-alpha",
           status: "OPEN",
           priority: "NORMAL",
+          recordVersion: 7,
           createdAt: "2026-08-01T09:00:00.000Z",
           updatedAt: "2026-08-01T10:00:00.000Z",
         }],
@@ -248,6 +250,7 @@ describe("ClaimGuard desktop investigation workspace", () => {
           ...currentStatus.cache.investigations[0],
           status: args.status,
           priority: args.priority,
+          recordVersion: args.expectedRecordVersion + 1,
           updatedAt: "2026-08-01T10:05:00.000Z",
         };
         return {
@@ -276,7 +279,7 @@ describe("ClaimGuard desktop investigation workspace", () => {
       "desktop_update_investigation",
       {
         investigationId: "INV-1",
-        expectedUpdatedAt: "2026-08-01T10:00:00.000Z",
+        expectedRecordVersion: 7,
         status: "UNDER_REVIEW",
         priority: "HIGH",
       },
@@ -306,6 +309,7 @@ describe("ClaimGuard desktop investigation workspace", () => {
       claimId: "CLAIM-STALE",
       status: "OPEN",
       priority: "NORMAL",
+      recordVersion: 3,
       updatedAt: "2026-08-01T10:00:00.000Z",
     };
     const currentStatus = baseStatus({
@@ -318,7 +322,7 @@ describe("ClaimGuard desktop investigation workspace", () => {
       if (command === "desktop_investigation_details") {
         const refreshed = detailVersions.length > 0;
         const investigation = refreshed
-          ? { ...compact, status: "AWAITING_EVIDENCE", updatedAt: "2026-08-01T10:05:00.000Z" }
+          ? { ...compact, status: "AWAITING_EVIDENCE", recordVersion: 4, updatedAt: "2026-08-01T10:05:00.000Z" }
           : compact;
         detailVersions.push(investigation.updatedAt);
         return { available: true, investigation };

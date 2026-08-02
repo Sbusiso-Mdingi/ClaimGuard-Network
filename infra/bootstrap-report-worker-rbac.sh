@@ -8,6 +8,7 @@ WORKER_IDENTITY_NAME="${REPORT_WORKER_IDENTITY_NAME:-claimguard-report-worker-id
 API_APP_NAME="${AZURE_WEBAPP_API:-claimguard-api}"
 STORAGE_ACCOUNT_NAME="${REPORT_STORAGE_ACCOUNT_NAME:-cgrpt0715sa}"
 STORAGE_CONTAINER_NAME="${REPORT_STORAGE_CONTAINER:-claimguard-reports}"
+EVIDENCE_STORAGE_CONTAINER_NAME="${EVIDENCE_STORAGE_CONTAINER:-claimguard-investigation-evidence}"
 CLAIM_SCORING_QUEUE_NAME="${CLAIM_SCORING_QUEUE_NAME:-claimguard-claim-scoring}"
 CONTROL_PLANE_SECRET_NAME="${CONTROL_PLANE_MYSQL_URL_SECRET_NAME:-claimguard--api--control-plane-mysql-url}"
 OPERATIONAL_SECRET_NAME="${MYSQL_URL_SECRET_NAME:-claimguard--api--mysql-url}"
@@ -43,12 +44,20 @@ az storage queue create \
   --auth-mode key \
   -o none
 
+az storage container create \
+  --account-name "$STORAGE_ACCOUNT_NAME" \
+  --name "$EVIDENCE_STORAGE_CONTAINER_NAME" \
+  --auth-mode key \
+  --public-access off \
+  -o none
+
 WORKER_PRINCIPAL_ID="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$WORKER_IDENTITY_NAME" --query principalId -o tsv)"
 API_PRINCIPAL_ID="$(az webapp identity assign --resource-group "$RESOURCE_GROUP" --name "$API_APP_NAME" --query principalId -o tsv)"
 ACR_ID="$(az acr show --resource-group "$RESOURCE_GROUP" --name "$ACR_NAME" --query id -o tsv)"
 KEY_VAULT_ID="$(az keyvault show --resource-group "$RESOURCE_GROUP" --name "$KEY_VAULT_NAME" --query id -o tsv)"
 STORAGE_ACCOUNT_ID="$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$STORAGE_ACCOUNT_NAME" --query id -o tsv)"
 CONTAINER_SCOPE="${STORAGE_ACCOUNT_ID}/blobServices/default/containers/${STORAGE_CONTAINER_NAME}"
+EVIDENCE_CONTAINER_SCOPE="${STORAGE_ACCOUNT_ID}/blobServices/default/containers/${EVIDENCE_STORAGE_CONTAINER_NAME}"
 QUEUE_SCOPE="${STORAGE_ACCOUNT_ID}/queueServices/default/queues/${CLAIM_SCORING_QUEUE_NAME}"
 
 ensure_assignment "$WORKER_PRINCIPAL_ID" "AcrPull" "$ACR_ID"
@@ -58,6 +67,7 @@ ensure_assignment "$WORKER_PRINCIPAL_ID" "Key Vault Secrets User" "${KEY_VAULT_I
 ensure_assignment "$WORKER_PRINCIPAL_ID" "Storage Blob Data Contributor" "$CONTAINER_SCOPE"
 ensure_assignment "$WORKER_PRINCIPAL_ID" "Storage Queue Data Contributor" "$QUEUE_SCOPE"
 ensure_assignment "$API_PRINCIPAL_ID" "Storage Blob Data Reader" "$CONTAINER_SCOPE"
+ensure_assignment "$API_PRINCIPAL_ID" "Storage Blob Data Contributor" "$EVIDENCE_CONTAINER_SCOPE"
 ensure_assignment "$API_PRINCIPAL_ID" "Storage Queue Data Message Sender" "$QUEUE_SCOPE"
 
 echo

@@ -7,7 +7,7 @@ import {
 
 
 const SUPPORTED_SCHEMA_VERSION =
-  "14";
+  "15";
 
 
 function fixture({

@@ -15,7 +15,7 @@ resource recoveryWorkerBootstrap 'Microsoft.App/jobs@2024-03-01' = {
   tags: {
     component: 'report-producer-recovery'
     safetyState: 'manual-identity-free-bootstrap'
-    schemaVersion: '14'
+    schemaVersion: '15'
   }
   properties: {
     environmentId: environment.id

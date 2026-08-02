@@ -26,7 +26,7 @@ const PROVISIONING_TRANSITIONS = Object.freeze({
 });
 
 const CANONICAL_PRIVATE_SCHEMA_VERSION =
-  "14";
+  "15";
 
 const ADMIN_INVITATION_TYPES = Object.freeze({
   SCHEME: "scheme_administrator",

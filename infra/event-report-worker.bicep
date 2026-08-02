@@ -140,7 +140,7 @@ var workerEnvironment = [
   { name: 'REPORT_STORAGE_CONTAINER', value: reportStorageContainerName }
   { name: 'DATA_PLANE_ENVIRONMENT', value: 'legacy' }
   { name: 'DATA_PLANE_PRIVATE_ENVIRONMENT', value: 'production' }
-  { name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS', value: '14' }
+  { name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS', value: '15' }
   { name: 'REPORT_WORKER_BATCH_SIZE', value: '1' }
   { name: 'REPORT_WORKER_SCHEME_CONCURRENCY', value: '5' }
   { name: 'REPORT_WORKER_MAX_BATCHES_PER_RUN', value: '100' }
@@ -164,7 +164,7 @@ resource reportWorker 'Microsoft.App/jobs@2025-01-01' = {
     component: 'report-producer'
     trigger: 'claim-scoring-queue'
     scaleToZero: 'true'
-    schemaVersion: '14'
+    schemaVersion: '15'
     stagedModelDeployment: ensembleDeploymentId
   }
   identity: {
@@ -238,7 +238,7 @@ resource recoveryWorker 'Microsoft.App/jobs@2024-03-01' = {
     component: 'report-producer-recovery'
     trigger: 'scheduled-outbox-recovery'
     scaleToZero: 'true'
-    schemaVersion: '14'
+    schemaVersion: '15'
     stagedModelDeployment: ensembleDeploymentId
   }
   identity: {

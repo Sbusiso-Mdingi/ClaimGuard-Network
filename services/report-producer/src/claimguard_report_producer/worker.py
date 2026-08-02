@@ -1835,7 +1835,7 @@ def create_worker_from_environment(
             _csv_values(
                 os.environ.get(
                     "DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS",
-                    "14",
+                    "15",
                 )
             )
         )
@@ -2058,7 +2058,7 @@ def create_event_worker_from_environment(
         _csv_values(
             os.environ.get(
                 "DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS",
-                "14",
+                "15",
             )
         )
     )
@@ -2115,7 +2115,7 @@ def create_discovered_workers_from_environment(
             _csv_values(
                 os.environ.get(
                     "DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS",
-                    "14",
+                    "15",
                 )
             )
         )

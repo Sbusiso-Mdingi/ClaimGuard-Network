@@ -76,7 +76,7 @@ test(
 
     assert.equal(
       CANONICAL_OPERATIONAL_SCHEMA_VERSION,
-      "14",
+      "15",
     );
 
     assert.match(
@@ -116,7 +116,7 @@ test(
 
     assert.match(
       worker,
-      /CANONICAL_OPERATIONAL_SCHEMA_VERSION = "14"/,
+      /CANONICAL_OPERATIONAL_SCHEMA_VERSION = "15"/,
     );
 
     assert.match(

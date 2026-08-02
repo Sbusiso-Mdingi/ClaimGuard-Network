@@ -55,7 +55,7 @@ function expectedMigrationVersion(schemaVersion) {
 }
 
 export function createPrivateDatabaseAdapter({
-  supportedSchemaVersions = ["14"],
+  supportedSchemaVersions = ["15"],
   expectedEnvironment = "production",
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),

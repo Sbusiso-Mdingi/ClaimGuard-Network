@@ -87,16 +87,22 @@ export const defaultMigrationPaths = Object.freeze([
       import.meta.url,
     ),
   ),
+  fileURLToPath(
+    new URL(
+      "../migrations/0015_investigation_workflow.sql",
+      import.meta.url,
+    ),
+  ),
 ]);
 
 const MIGRATION_LOCK_NAME =
   "claimguard_operational_migrations";
 
-const PROSPECTIVE_MIGRATION_ID =
-  "0014_prospective_claim_detection";
+const CANONICAL_MIGRATION_ID =
+  "0015_investigation_workflow";
 
-const PROSPECTIVE_SCHEMA_VERSION = "14";
-const PROSPECTIVE_MIGRATION_VERSION = 14;
+const CANONICAL_SCHEMA_VERSION = "15";
+const CANONICAL_MIGRATION_VERSION = 15;
 
 const MIGRATION_ID_PATTERN =
   /^\d{4}_[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -826,7 +832,7 @@ function requiresProspectiveMetadataVerification(
   return migrations.some(
     (migration) =>
       migration.id
-      === PROSPECTIVE_MIGRATION_ID,
+      === CANONICAL_MIGRATION_ID,
   );
 }
 
@@ -865,15 +871,15 @@ async function verifyProspectiveMetadata(
       row.schema_version
       ?? "",
     ).trim()
-      !== PROSPECTIVE_SCHEMA_VERSION
+      !== CANONICAL_SCHEMA_VERSION
     || Number(
       row.migration_version,
     )
-      !== PROSPECTIVE_MIGRATION_VERSION
+      !== CANONICAL_MIGRATION_VERSION
   ) {
     throw new OperationalMigrationMetadataError(
       "Operational data-plane metadata "
-      + "was not advanced to schema version 14.",
+      + "was not advanced to schema version 15.",
     );
   }
 }
@@ -1221,7 +1227,7 @@ export async function applyMigrations(
 
           if (
             migration.id
-            === PROSPECTIVE_MIGRATION_ID
+            === CANONICAL_MIGRATION_ID
           ) {
             await verifyProspectiveMetadata(
               connection,

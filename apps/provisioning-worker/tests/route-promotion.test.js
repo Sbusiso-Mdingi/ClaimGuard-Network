@@ -6,7 +6,7 @@ import {
   promoteCompatiblePrivateRoutes,
 } from "../src/route-promotion.js";
 
-test("promotes only compatible inactive schema-14 private routes", async () => {
+test("promotes only compatible inactive schema-15 private routes", async () => {
   const calls = [];
   let ended = false;
 
@@ -24,11 +24,11 @@ test("promotes only compatible inactive schema-14 private routes", async () => {
 
   assert.deepEqual(result, {
     promoted: 1,
-    schemaVersion: "14",
+    schemaVersion: "15",
   });
-  assert.equal(CANONICAL_PRIVATE_SCHEMA_VERSION, "14");
+  assert.equal(CANONICAL_PRIVATE_SCHEMA_VERSION, "15");
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].parameters, ["14", "14", "14"]);
+  assert.deepEqual(calls[0].parameters, ["15", "15", "15"]);
   assert.match(calls[0].sql, /active_route_slot IS NULL/);
   assert.match(calls[0].sql, /compatibility_status = 'compatible'/);
   assert.match(calls[0].sql, /provisioning_status = 'ready'/);

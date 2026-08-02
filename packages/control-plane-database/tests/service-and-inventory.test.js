@@ -54,7 +54,7 @@ test("organisation lifecycle is explicit and audited", async () => {
 });
 
 test(
-  "organisation activation accepts the canonical schema-14 private route",
+  "organisation activation accepts the canonical schema-15 private route",
   async () => {
     const gateQueries =
       [];
@@ -139,7 +139,7 @@ test(
               "private_database",
 
             schema_version:
-              "14",
+              "15",
           };
         },
 
@@ -154,7 +154,7 @@ test(
               "private_database",
 
             schemaVersion:
-              "14",
+              "15",
 
             provisioningStatus:
               "active",
@@ -208,7 +208,7 @@ test(
       result
         .route
         .schemaVersion,
-      "14",
+      "15",
     );
 
     assert.equal(
@@ -222,8 +222,8 @@ test(
       [
         "org-14",
         "route-14",
-        "14",
-        "14",
+        "15",
+        "15",
         "org-14",
         "org-14",
         "org-14",

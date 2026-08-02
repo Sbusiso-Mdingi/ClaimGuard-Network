@@ -59,7 +59,7 @@ function activationFixture({ adminReady = 1 } = {}) {
         return {
           route_id: "route-ubuntu",
           route_type: "private_database",
-          schema_version: "14",
+          schema_version: "15",
         };
       },
 
@@ -70,7 +70,7 @@ function activationFixture({ adminReady = 1 } = {}) {
           routeId,
           organisationId,
           routeType: "private_database",
-          schemaVersion: "14",
+          schemaVersion: "15",
           provisioningStatus: "active",
         };
       },
@@ -109,7 +109,7 @@ test("organisation activation requires a usable scheme administrator credential"
   );
 
   assert.equal(result.organisation.status, "active");
-  assert.equal(result.route.schemaVersion, "14");
+  assert.equal(result.route.schemaVersion, "15");
   assert.equal(gateQueries.length, 1);
 
   const sql = gateQueries[0].sql;
@@ -127,8 +127,8 @@ test("organisation activation requires a usable scheme administrator credential"
     [
       "org-ubuntu",
       "route-ubuntu",
-      "14",
-      "14",
+      "15",
+      "15",
       "org-ubuntu",
       "org-ubuntu",
       "org-ubuntu",
