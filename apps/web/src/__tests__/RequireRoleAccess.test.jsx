@@ -6,7 +6,7 @@ import { RequireRoleAccess } from "../features/investigator/RequireRoleAccess";
 test("blocks a navKey the active demo identity does not have access to", () => {
   render(
     <RoleProvider>
-      <RequireRoleAccess navKey="platform-admin">
+      <RequireRoleAccess navKey="platform-overview">
         <div>platform content</div>
       </RequireRoleAccess>
     </RoleProvider>,

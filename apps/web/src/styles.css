@@ -141,7 +141,7 @@
   }
 
   .investigator-table thead {
-    @apply bg-muted/60 text-[10px] uppercase tracking-[0.16em] text-muted-foreground;
+    @apply sticky top-0 z-[2] bg-muted/60 text-[10px] uppercase tracking-[0.16em] text-muted-foreground;
   }
 
   .investigator-table th {

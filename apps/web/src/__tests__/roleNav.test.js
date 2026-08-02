@@ -31,13 +31,13 @@ describe("capability-driven navigation", () => {
 
     expect(canAccessNavItem(
       { capabilities: ["platform_health.view"] },
-      navItem("platform-admin"),
+      navItem("platform-overview"),
     )).toBe(true);
   });
 
   test("fails closed when required capabilities are absent", () => {
     expect(canAccessNavItem({ capabilities: [] }, navItem("claims"))).toBe(false);
-    expect(canAccessNavItem(null, navItem("platform-admin"))).toBe(false);
+    expect(canAccessNavItem(null, navItem("platform-overview"))).toBe(false);
     expect(canAccessNavItem({ capabilities: [] }, null)).toBe(true);
   });
 });

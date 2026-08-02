@@ -11,14 +11,18 @@ import { Input } from "../../components/ui/input";
 import { ApiError, apiJson, safeApiErrorMessage } from "../../lib/apiClient";
 import {
   DataTableShell,
+  CopyableIdentifier,
   DefinitionList,
   EmptyState,
   FormField,
   SectionCard,
   StatusIndicator,
+  TablePagination,
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
+
+const PROMOTION_PAGE_SIZE = 10;
 
 function formatTimestamp(value) {
   if (!value) return "Not recorded";
@@ -168,6 +172,7 @@ export function ReleaseGovernancePanel() {
   const [message, setMessage] = useState("");
   const [requestRelease, setRequestRelease] = useState(null);
   const [approvalRequest, setApprovalRequest] = useState(null);
+  const [promotionPage, setPromotionPage] = useState(1);
 
   const loadOverview = useCallback(() => {
     setLoading(true);
@@ -189,6 +194,16 @@ export function ReleaseGovernancePanel() {
     const releaseId = overview?.currentDeployment?.releaseId;
     return overview?.releases?.find((release) => release.releaseId === releaseId) || null;
   }, [overview]);
+  const promotionRequests = overview?.promotionRequests || [];
+  const promotionPageCount = Math.max(1, Math.ceil(promotionRequests.length / PROMOTION_PAGE_SIZE));
+  const visiblePromotionRequests = useMemo(() => {
+    const start = (promotionPage - 1) * PROMOTION_PAGE_SIZE;
+    return promotionRequests.slice(start, start + PROMOTION_PAGE_SIZE);
+  }, [promotionPage, promotionRequests]);
+
+  useEffect(() => {
+    setPromotionPage((current) => Math.min(current, promotionPageCount));
+  }, [promotionPageCount]);
 
   async function requestPromotion(values) {
     if (!requestRelease) return;
@@ -284,8 +299,8 @@ export function ReleaseGovernancePanel() {
             <DefinitionList
               columns={3}
               items={[
-                { label: "Git commit", value: overview.currentDeployment.commitSha, mono: true },
-                { label: "Release artifact SHA-256", value: overview.currentDeployment.artifactDigest, mono: true },
+                { label: "Git commit", value: <CopyableIdentifier value={overview.currentDeployment.commitSha} label="Git commit" /> },
+                { label: "Release artifact SHA-256", value: <CopyableIdentifier value={overview.currentDeployment.artifactDigest} label="release artifact digest" /> },
                 { label: "Deployed", value: formatTimestamp(overview.currentDeployment.deployedAt) },
                 {
                   label: "Workflow run",
@@ -296,7 +311,7 @@ export function ReleaseGovernancePanel() {
                   ),
                 },
                 { label: "Repository", value: overview.currentDeployment.sourceRepository, mono: true },
-                { label: "Promotion request", value: overview.currentDeployment.promotionRequestId, mono: true },
+                { label: "Promotion request", value: <CopyableIdentifier value={overview.currentDeployment.promotionRequestId} label="promotion request ID" /> },
               ]}
             />
           </div>
@@ -334,7 +349,7 @@ export function ReleaseGovernancePanel() {
                         <GitCommitHorizontal className="h-4 w-4 text-primary" aria-hidden="true" />
                         <code className="font-data text-sm font-semibold">{release.commitSha.slice(0, 12)}</code>
                       </div>
-                      <p className="mt-1 break-all font-data text-[10px] text-muted-foreground">{release.commitSha}</p>
+                      <div className="mt-1"><CopyableIdentifier value={release.commitSha} label="Git commit" compact /></div>
                       <p className="mt-1 text-xs text-muted-foreground">{release.sourceRepository} · {release.sourceBranch}</p>
                     </div>
                     <StatusIndicator variant="badge" tone={release.current ? "success" : release.promotionOpen ? "warning" : "info"}>
@@ -345,7 +360,7 @@ export function ReleaseGovernancePanel() {
                     columns={2}
                     className="mt-4"
                     items={[
-                      { label: "Artifact SHA-256", value: release.artifactDigest, mono: true },
+                      { label: "Artifact SHA-256", value: <CopyableIdentifier value={release.artifactDigest} label="release artifact digest" /> },
                       { label: "Eligible since", value: formatTimestamp(release.eligibleAt) },
                       {
                         label: "CI",
@@ -391,60 +406,63 @@ export function ReleaseGovernancePanel() {
             compact
           />
         ) : (
-          <DataTableShell ariaLabel="Release promotion requests" minWidth="980px">
-            <thead>
-              <tr>
-                <th scope="col">Release</th>
-                <th scope="col">Status</th>
-                <th scope="col">Requested by</th>
-                <th scope="col">Requested</th>
-                <th scope="col">Approved by</th>
-                <th scope="col">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {overview.promotionRequests.map((request) => {
-                const ownRequest = request.requestedBy === overview.actor?.userId;
-                const canApprove = request.status === "pending_approval"
-                  && overview.actor?.canApprove
-                  && !ownRequest;
-                return (
-                  <tr key={request.promotionRequestId}>
-                    <td>
-                      <code className="font-data text-xs">{request.commitSha?.slice(0, 12)}</code>
-                      <p className="mt-1 font-data text-[10px] text-muted-foreground">{request.promotionRequestId.slice(0, 8)}</p>
-                    </td>
-                    <td>
-                      <StatusIndicator variant="badge" tone={requestTone(request.status)}>
-                        {formatEnumLabel(request.status)}
-                      </StatusIndicator>
-                    </td>
-                    <td className="font-data text-xs">{request.requestedBy}</td>
-                    <td>{formatTimestamp(request.requestedAt)}</td>
-                    <td className="font-data text-xs">{request.approvedBy || "Awaiting second administrator"}</td>
-                    <td>
-                      {request.status === "pending_approval" ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={canApprove ? "default" : "outline"}
-                          disabled={!canApprove}
-                          title={ownRequest ? "The requester cannot approve their own production promotion." : undefined}
-                          onClick={() => setApprovalRequest(request)}
-                        >
-                          {ownRequest ? "Second approver required" : "Approve"}
-                        </Button>
-                      ) : request.status === "approved" ? (
-                        <span className="text-xs text-muted-foreground">Ready for GitHub Actions</span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">No action available</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </DataTableShell>
+          <div className="grid gap-3">
+            <DataTableShell ariaLabel="Release promotion requests" minWidth="980px" maxHeight="520px">
+              <thead>
+                <tr>
+                  <th scope="col">Release</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Requested by</th>
+                  <th scope="col">Requested</th>
+                  <th scope="col">Approved by</th>
+                  <th scope="col">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visiblePromotionRequests.map((request) => {
+                  const ownRequest = request.requestedBy === overview.actor?.userId;
+                  const canApprove = request.status === "pending_approval"
+                    && overview.actor?.canApprove
+                    && !ownRequest;
+                  return (
+                    <tr key={request.promotionRequestId}>
+                      <td>
+                        <code className="font-data text-xs">{request.commitSha?.slice(0, 12)}</code>
+                        <div className="mt-1"><CopyableIdentifier value={request.promotionRequestId} label="promotion request ID" compact /></div>
+                      </td>
+                      <td>
+                        <StatusIndicator variant="badge" tone={requestTone(request.status)}>
+                          {formatEnumLabel(request.status)}
+                        </StatusIndicator>
+                      </td>
+                      <td><CopyableIdentifier value={request.requestedBy} label="requester ID" compact /></td>
+                      <td>{formatTimestamp(request.requestedAt)}</td>
+                      <td>{request.approvedBy ? <CopyableIdentifier value={request.approvedBy} label="approver ID" compact /> : <span className="text-xs text-muted-foreground">Awaiting second administrator</span>}</td>
+                      <td>
+                        {request.status === "pending_approval" ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={canApprove ? "default" : "outline"}
+                            disabled={!canApprove}
+                            title={ownRequest ? "The requester cannot approve their own production promotion." : undefined}
+                            onClick={() => setApprovalRequest(request)}
+                          >
+                            {ownRequest ? "Second approver required" : "Approve"}
+                          </Button>
+                        ) : request.status === "approved" ? (
+                          <span className="text-xs text-muted-foreground">Ready for GitHub Actions</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No action available</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </DataTableShell>
+            <TablePagination page={promotionPage} pageCount={promotionPageCount} onPageChange={setPromotionPage} itemLabel="promotion requests" />
+          </div>
         )}
       </SectionCard>
 
@@ -462,8 +480,8 @@ export function ReleaseGovernancePanel() {
 
       {approvalRequest ? (
         <StepUpDialog
-          title={`Approve request ${approvalRequest.promotionRequestId.slice(0, 8)}`}
-          description="Your identity must differ from the requester. Approval authorises GitHub Actions to consume this exact commit and artifact."
+          title="Approve production promotion request"
+          description={<>Your identity must differ from the requester. Approval authorises GitHub Actions to consume this exact commit and artifact. Request ID: <code className="break-all font-data text-xs">{approvalRequest.promotionRequestId}</code></>}
           confirmation={approvalRequest.approvalConfirmation}
           submitting={submitting}
           onClose={() => setApprovalRequest(null)}

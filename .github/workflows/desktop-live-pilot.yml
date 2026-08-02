@@ -104,6 +104,7 @@ jobs:
       - name: Normalize and label disposable pilot artifact
         shell: pwsh
         run: |
+          & "tools/verify-windows-gui-subsystem.ps1" -ExecutablePath "apps/desktop/src-tauri/target/release/claim-guard-desktop.exe"
           New-Item -ItemType Directory -Force artifacts | Out-Null
           $installers = @(Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe")
           if ($installers.Count -ne 1) { throw "Expected exactly one NSIS setup executable." }
