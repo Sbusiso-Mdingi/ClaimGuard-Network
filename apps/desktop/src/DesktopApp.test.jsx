@@ -114,6 +114,90 @@ describe("ClaimGuard desktop cache behaviour", () => {
     expect(screen.getByText("Offline", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText(/Investigation creation, notes, evidence/i)).toBeInTheDocument();
   });
+
+  it("filters cached claims, opens authoritative detail, and follows a linked investigation", async () => {
+    const calls = [];
+    const linkedInvestigation = {
+      investigationId: "INV-LINKED-1",
+      claimId: "CLAIM-HIGH-1",
+      status: "UNDER_REVIEW",
+      priority: "HIGH",
+      assignedInvestigator: "investigator-alpha",
+      updatedAt: "2026-08-01T10:15:00.000Z",
+    };
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: {
+        freshness: "Fresh",
+        lastSuccessfulSyncAt: "2026-08-01T10:00:00.000Z",
+        claims: [
+          {
+            claimId: "CLAIM-HIGH-1",
+            serviceDate: "2026-07-30",
+            billedAmount: 2450,
+            billingCode: "PROC-HIGH",
+            status: "FLAGGED",
+            riskScore: 88,
+            investigation: linkedInvestigation,
+          },
+          {
+            claimId: "CLAIM-LOW-1",
+            serviceDate: "2026-07-29",
+            billedAmount: 180,
+            billingCode: "PROC-LOW",
+            status: "SCORED",
+            riskScore: 18,
+          },
+        ],
+        investigations: [linkedInvestigation],
+        dashboard: { summary: { totalClaims: 2, highRiskClaims: 1 } },
+        suspiciousNetwork: null,
+      },
+      session: { clientCapabilities: ["investigations.view"] },
+    });
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      if (command === "desktop_claim_details") {
+        return {
+          available: true,
+          fetchedAt: "2026-08-01T10:16:00.000Z",
+          claim: {
+            ...currentStatus.cache.claims[0],
+            submittedAt: "2026-07-30T08:00:00.000Z",
+            memberId: "member-token-1",
+            providerId: "provider-token-1",
+            processingStatus: "SCORED",
+            currentClaimVersion: 3,
+            evidence: ["Billing frequency exceeds the peer baseline."],
+            triggeredRules: ["FREQUENCY_SPIKE"],
+          },
+        };
+      }
+      if (command === "desktop_investigation_details") {
+        return { available: true, investigation: { ...linkedInvestigation, notes: [], evidence: [] } };
+      }
+      throw new Error(`unexpected ${command}`);
+    });
+
+    render(<DesktopApp />);
+    await userEvent.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
+    await userEvent.type(screen.getByLabelText("Search claims"), "PROC-HIGH");
+    await userEvent.selectOptions(screen.getByLabelText("Risk band"), "high");
+    expect(screen.getByText("Showing 1 of 2 cached claims")).toBeInTheDocument();
+    expect(screen.queryByText("CLAIM-LOW-1")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(await screen.findByText("Authoritative claim detail")).toBeInTheDocument();
+    expect(screen.getByText("Billing frequency exceeds the peer baseline.")).toBeInTheDocument();
+    expect(screen.getByText("Frequency Spike")).toBeInTheDocument();
+    expect(screen.getByText("member-token-1")).toBeInTheDocument();
+    expect(calls).toContainEqual(["desktop_claim_details", { claimId: "CLAIM-HIGH-1" }]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Open case" }));
+    expect(await screen.findByText("Investigation workspace")).toBeInTheDocument();
+    expect(calls).toContainEqual(["desktop_investigation_details", { investigationId: "INV-LINKED-1" }]);
+  });
 });
 
 describe("ClaimGuard desktop investigation workspace", () => {

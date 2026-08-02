@@ -263,6 +263,27 @@ test("desktop data routes cover bounded sync, cached detail, and optimistic conc
   assert.equal((await stale.json()).code, "STALE_RECORD_VERSION");
 });
 
+test("desktop investigation detail fails closed when its service is unavailable", async () => {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("desktopDevice", deviceContext());
+    c.set("dataPlaneContext", { organisationId: "org-alpha", operationalTenantId: "tenant-alpha" });
+    c.set("authContext", {
+      is_authenticated: true,
+      user_id: "user-alpha",
+      organisation_id: "org-alpha",
+      roles: ["investigator"],
+      permissions: new Set(["investigations.view"]),
+    });
+    await next();
+  });
+  registerDesktopRoutes(app);
+
+  const response = await app.request("/desktop/investigations/investigation-1");
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "DESKTOP_INVESTIGATION_UNAVAILABLE");
+});
+
 test("desktop administration routes require scope, step-up, and exact destructive confirmations", async () => {
   const calls = [];
   const app = new Hono();
