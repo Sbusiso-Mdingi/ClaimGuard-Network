@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+} from "@claimguard/database";
+
+import {
   createControlPlaneDataPlaneRouteResolver,
 } from "../src/data-plane-route-resolver.js";
 
 
 const SUPPORTED_SCHEMA_VERSION =
-  "15";
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION;
 
 
 function fixture({

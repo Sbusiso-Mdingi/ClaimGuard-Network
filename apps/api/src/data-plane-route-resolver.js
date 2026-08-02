@@ -1,12 +1,11 @@
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSIONS,
   createDataPlaneContext,
 } from "@claimguard/database";
 
 
 const DEFAULT_SUPPORTED_SCHEMA_VERSIONS =
-  Object.freeze([
-    "15",
-  ]);
+  CANONICAL_OPERATIONAL_SCHEMA_VERSIONS;
 
 
 export class DataPlaneRouteError

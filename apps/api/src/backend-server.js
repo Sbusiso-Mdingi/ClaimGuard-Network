@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   createLegacySharedAdapter,
   createTenantConnectionManager,
 } from "@claimguard/database";
@@ -46,7 +47,8 @@ const moduleDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
 const authenticationConfiguration = resolveAuthenticationConfiguration();
 const supportedDataPlaneSchemaVersions = String(
-  process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS || "15",
+  process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS
+  || CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 )
   .split(",")
   .map((value) => value.trim())

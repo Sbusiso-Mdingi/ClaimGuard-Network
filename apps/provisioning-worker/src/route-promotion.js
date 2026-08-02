@@ -1,8 +1,12 @@
 import {
   createControlPlanePool,
 } from "@claimguard/control-plane-database";
+import {
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+} from "@claimguard/database";
 
-export const CANONICAL_PRIVATE_SCHEMA_VERSION = "15";
+export const CANONICAL_PRIVATE_SCHEMA_VERSION =
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION;
 
 export async function promoteCompatiblePrivateRoutes(
   {

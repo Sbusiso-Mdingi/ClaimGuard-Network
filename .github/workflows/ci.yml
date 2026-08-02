@@ -450,7 +450,7 @@ jobs:
             exec node \
             --test tests/mysql.integration.test.js
 
-      - name: Run operational schema-14 MySQL gate
+      - name: Run canonical operational MySQL gate
         run: |
           set -euo pipefail
 

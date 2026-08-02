@@ -2,6 +2,7 @@ targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
 param containerAppsEnvironmentName string
+param operationalSchemaVersion string
 param recoveryJobName string = 'claimguard-report-recovery'
 param bootstrapImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -15,7 +16,7 @@ resource recoveryWorkerBootstrap 'Microsoft.App/jobs@2024-03-01' = {
   tags: {
     component: 'report-producer-recovery'
     safetyState: 'manual-identity-free-bootstrap'
-    schemaVersion: '15'
+    schemaVersion: operationalSchemaVersion
   }
   properties: {
     environmentId: environment.id

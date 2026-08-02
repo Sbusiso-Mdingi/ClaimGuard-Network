@@ -2,6 +2,7 @@ import mysql from "mysql2/promise";
 
 import { buildConnectionOptions } from "./client.js";
 import { requireOperationalDataPlaneContext } from "./data-plane-context.js";
+import { CANONICAL_OPERATIONAL_SCHEMA_VERSIONS } from "./operational-schema.js";
 
 export class DataPlaneMetadataMismatchError extends Error {
   constructor(message, code = "DATA_PLANE_METADATA_MISMATCH") {
@@ -40,7 +41,7 @@ function expectedMigrationVersion(schemaVersion) {
 export function createLegacySharedAdapter({
   databaseUrl,
   expectedEnvironment = "legacy",
-  supportedSchemaVersions = ["15"],
+  supportedSchemaVersions = CANONICAL_OPERATIONAL_SCHEMA_VERSIONS,
   expectedLogicalDatabaseIdentifier = "legacy-operational-shared",
   connectionLimit = 5,
   poolFactory = (options) => mysql.createPool(options),

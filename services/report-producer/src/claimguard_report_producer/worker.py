@@ -39,6 +39,9 @@ from .outbox import (
     OutboxJob,
     PyMySqlOutboxRepository,
 )
+from .operational_schema import (
+    CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+)
 from .publisher import (
     AzureBlobReportPublisher,
     FileReportPublisher,
@@ -1835,7 +1838,7 @@ def create_worker_from_environment(
             _csv_values(
                 os.environ.get(
                     "DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS",
-                    "15",
+                    CANONICAL_OPERATIONAL_SCHEMA_VERSION,
                 )
             )
         )
@@ -2058,7 +2061,7 @@ def create_event_worker_from_environment(
         _csv_values(
             os.environ.get(
                 "DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS",
-                "15",
+                CANONICAL_OPERATIONAL_SCHEMA_VERSION,
             )
         )
     )
@@ -2115,7 +2118,7 @@ def create_discovered_workers_from_environment(
             _csv_values(
                 os.environ.get(
                     "DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS",
-                    "15",
+                    CANONICAL_OPERATIONAL_SCHEMA_VERSION,
                 )
             )
         )

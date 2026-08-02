@@ -10,6 +10,9 @@ import test from "node:test";
 
 import {
   applyMigrations,
+  CANONICAL_OPERATIONAL_MIGRATION_ID,
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
   defaultMigrationPaths,
   getOperationalMigrationStatus,
 } from "../src/migrate.js";
@@ -17,8 +20,6 @@ import {
 
 const SCHEMA_14_MIGRATION_ID =
   "0014_prospective_claim_detection";
-const SCHEMA_15_MIGRATION_ID =
-  "0015_investigation_workflow";
 
 
 function normalizeSql(
@@ -311,13 +312,19 @@ function createFakePool({
       ];
     }
 
+    const metadataVersionMatch =
+      normalized.match(
+        /schema_version\s*=\s*'([1-9]\d*)'/,
+      );
+
     if (
       normalized.includes(
         "UPDATE data_plane_metadata",
       )
-      && /schema_version = '(14|15)'/.test(normalized)
+      && metadataVersionMatch
     ) {
-      const version = Number(normalized.match(/schema_version = '(14|15)'/)[1]);
+      const version =
+        Number(metadataVersionMatch[1]);
       if (advanceMetadata) {
         metadataState.schema_version =
           String(version);
@@ -449,7 +456,7 @@ async function withTemporaryMigration(
 
 
 test(
-  "applyMigrations records statement and migration history, advances schema 15, and skips completed migrations",
+  `applyMigrations records statement and migration history, advances schema ${CANONICAL_OPERATIONAL_SCHEMA_VERSION}, and skips completed migrations`,
   async () => {
     const pool =
       createFakePool();
@@ -466,7 +473,7 @@ test(
 
     assert.equal(
       first.applied.length,
-      15,
+      defaultMigrationPaths.length,
     );
 
     assert.equal(
@@ -492,7 +499,7 @@ test(
 
     assert.equal(
       pool.history.size,
-      15,
+      defaultMigrationPaths.length,
     );
 
     assert.equal(
@@ -512,19 +519,19 @@ test(
     assert.equal(
       pool.metadata
         .schema_version,
-      "15",
+      CANONICAL_OPERATIONAL_SCHEMA_VERSION,
     );
 
     assert.equal(
       pool.metadata
         .migration_version,
-      15,
+      CANONICAL_OPERATIONAL_MIGRATION_VERSION,
     );
 
     assert.equal(
       pool.history
         .get(
-          SCHEMA_15_MIGRATION_ID,
+          CANONICAL_OPERATIONAL_MIGRATION_ID,
         )
         .application_version,
       "migration-test-suite",
@@ -607,7 +614,7 @@ test(
 
     assert.equal(
       second.skipped.length,
-      15,
+      defaultMigrationPaths.length,
     );
 
     assert.equal(
@@ -639,7 +646,7 @@ test(
 
     assert.equal(
       status.applied.length,
-      15,
+      defaultMigrationPaths.length,
     );
 
     assert.deepEqual(
@@ -986,13 +993,13 @@ test(
 
 
 test(
-  "migration 0015 is not marked complete until data-plane metadata reports schema and migration version 15",
+  `canonical migration ${CANONICAL_OPERATIONAL_MIGRATION_ID} is not complete until metadata reports schema ${CANONICAL_OPERATIONAL_SCHEMA_VERSION}`,
   async () => {
     const migrationPath =
       defaultMigrationPaths.find(
         (candidate) =>
           candidate.endsWith(
-            "0015_investigation_workflow.sql",
+            `${CANONICAL_OPERATIONAL_MIGRATION_ID}.sql`,
           ),
       );
 
@@ -1019,7 +1026,7 @@ test(
 
     assert.equal(
       pool.history.has(
-        SCHEMA_15_MIGRATION_ID,
+        CANONICAL_OPERATIONAL_MIGRATION_ID,
       ),
       false,
     );
@@ -1035,11 +1042,11 @@ test(
 
     pool.metadata
       .schema_version =
-        "15";
+        CANONICAL_OPERATIONAL_SCHEMA_VERSION;
 
     pool.metadata
       .migration_version =
-        15;
+        CANONICAL_OPERATIONAL_MIGRATION_VERSION;
 
     const resumed =
       await applyMigrations(
@@ -1064,7 +1071,7 @@ test(
 
     assert.equal(
       pool.history.has(
-        SCHEMA_15_MIGRATION_ID,
+        CANONICAL_OPERATIONAL_MIGRATION_ID,
       ),
       true,
     );

@@ -4,6 +4,7 @@ import { ControlPlaneConflictError, ControlPlaneNotFoundError, ControlPlaneValid
 import { hashPassword, passwordParametersRecord, ARGON2ID_VERSION } from "./password.js";
 import { normalizeUsername } from "./validation.js";
 import { withControlPlaneTransaction } from "./transaction.js";
+import { CANONICAL_PRIVATE_SCHEMA_VERSION } from "./operational-schema.js";
 
 const ORGANISATION_TRANSITIONS = Object.freeze({
   draft: ["provisioning", "failed", "archived"],
@@ -24,9 +25,6 @@ const PROVISIONING_TRANSITIONS = Object.freeze({
   compensated: [],
   quarantined: ["compensating"],
 });
-
-const CANONICAL_PRIVATE_SCHEMA_VERSION =
-  "15";
 
 const ADMIN_INVITATION_TYPES = Object.freeze({
   SCHEME: "scheme_administrator",

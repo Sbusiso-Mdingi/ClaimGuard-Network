@@ -12,6 +12,7 @@ export {
 export {
   createSignupCredentialGuardedIdentityRepository,
 } from "./credential-guarded-control-plane-service.js";
+export { CANONICAL_PRIVATE_SCHEMA_VERSION } from "./operational-schema.js";
 export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
 export { getShadowDiagnostics } from "./diagnostics.js";
 export {

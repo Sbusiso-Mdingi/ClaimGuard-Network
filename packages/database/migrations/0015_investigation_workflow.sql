@@ -6,7 +6,7 @@ ALTER TABLE investigation_evidence
   ADD COLUMN content_type VARCHAR(128) NULL AFTER evidence_type,
   ADD COLUMN byte_size INT UNSIGNED NULL AFTER content_type,
   ADD COLUMN content_sha256 CHAR(64) NULL AFTER byte_size,
-  ADD COLUMN storage_object_key VARCHAR(1024) NULL AFTER content_sha256,
+  ADD COLUMN storage_object_key VARCHAR(1024) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER content_sha256,
   ADD UNIQUE KEY uq_investigation_evidence_storage_object (storage_object_key),
   ADD CONSTRAINT chk_investigation_evidence_byte_size CHECK (byte_size IS NULL OR byte_size BETWEEN 1 AND 10485760),
   ADD CONSTRAINT chk_investigation_evidence_sha256 CHECK (content_sha256 IS NULL OR content_sha256 REGEXP '^[0-9a-f]{64}$'),

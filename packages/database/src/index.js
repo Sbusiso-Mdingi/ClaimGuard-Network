@@ -37,6 +37,14 @@ export {
 
 
 export {
+  CANONICAL_OPERATIONAL_MIGRATION_ID,
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSIONS,
+} from "./operational-schema.js";
+
+
+export {
   createLegacySharedAdapter,
   DataPlaneMetadataMismatchError,
 } from "./legacy-shared-adapter.js";

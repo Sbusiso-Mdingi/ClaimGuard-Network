@@ -3,6 +3,19 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  CANONICAL_OPERATIONAL_MIGRATION_ID,
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+} from "./operational-schema.js";
+
+export {
+  CANONICAL_OPERATIONAL_MIGRATION_ID,
+  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+  CANONICAL_OPERATIONAL_SCHEMA_VERSIONS,
+} from "./operational-schema.js";
+
 export const defaultMigrationPath = fileURLToPath(
   new URL("../migrations/0001_initial.sql", import.meta.url),
 );
@@ -97,12 +110,6 @@ export const defaultMigrationPaths = Object.freeze([
 
 const MIGRATION_LOCK_NAME =
   "claimguard_operational_migrations";
-
-const CANONICAL_MIGRATION_ID =
-  "0015_investigation_workflow";
-
-const CANONICAL_SCHEMA_VERSION = "15";
-const CANONICAL_MIGRATION_VERSION = 15;
 
 const MIGRATION_ID_PATTERN =
   /^\d{4}_[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -832,7 +839,7 @@ function requiresProspectiveMetadataVerification(
   return migrations.some(
     (migration) =>
       migration.id
-      === CANONICAL_MIGRATION_ID,
+      === CANONICAL_OPERATIONAL_MIGRATION_ID,
   );
 }
 
@@ -871,15 +878,16 @@ async function verifyProspectiveMetadata(
       row.schema_version
       ?? "",
     ).trim()
-      !== CANONICAL_SCHEMA_VERSION
+      !== CANONICAL_OPERATIONAL_SCHEMA_VERSION
     || Number(
       row.migration_version,
     )
-      !== CANONICAL_MIGRATION_VERSION
+      !== CANONICAL_OPERATIONAL_MIGRATION_VERSION
   ) {
     throw new OperationalMigrationMetadataError(
       "Operational data-plane metadata "
-      + "was not advanced to schema version 15.",
+      + "was not advanced to schema version "
+      + `${CANONICAL_OPERATIONAL_SCHEMA_VERSION}.`,
     );
   }
 }
@@ -1227,7 +1235,7 @@ export async function applyMigrations(
 
           if (
             migration.id
-            === CANONICAL_MIGRATION_ID
+            === CANONICAL_OPERATIONAL_MIGRATION_ID
           ) {
             await verifyProspectiveMetadata(
               connection,

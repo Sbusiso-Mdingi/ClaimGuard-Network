@@ -5,9 +5,8 @@ import {
   ControlPlaneConflictError,
   ControlPlaneNotFoundError,
 } from "./errors.js";
+import { CANONICAL_PRIVATE_SCHEMA_VERSION } from "./operational-schema.js";
 import { withControlPlaneTransaction } from "./transaction.js";
-
-const CANONICAL_PRIVATE_SCHEMA_VERSION = "15";
 
 export function createSignupCredentialGuardedIdentityRepository(identity) {
   if (!identity || typeof identity !== "object") {

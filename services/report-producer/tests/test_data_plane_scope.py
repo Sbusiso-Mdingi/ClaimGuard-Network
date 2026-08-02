@@ -20,10 +20,14 @@ from claimguard_report_producer.outbox import (
     OutboxJob,
     PyMySqlOutboxRepository,
 )
+from claimguard_report_producer.operational_schema import (
+    CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+    CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+)
 
 
-SCHEMA_VERSION = "15"
-MIGRATION_VERSION = 15
+SCHEMA_VERSION = CANONICAL_OPERATIONAL_SCHEMA_VERSION
+MIGRATION_VERSION = CANONICAL_OPERATIONAL_MIGRATION_VERSION
 
 CONTROL_URL = (
     "mysql://control-user:control-secret"
@@ -495,14 +499,14 @@ def resolve_scope(
 class DataPlaneScopeTests(
     unittest.TestCase,
 ):
-    def test_default_supported_schema_is_15(
+    def test_default_supported_schema_is_canonical(
         self,
     ) -> None:
         self.assertEqual(
             DEFAULT_SUPPORTED_SCHEMA_VERSIONS,
             frozenset(
                 {
-                    "15",
+                    SCHEMA_VERSION,
                 }
             ),
         )
@@ -605,7 +609,7 @@ class DataPlaneScopeTests(
             [],
         )
 
-    def test_discovery_uses_schema_15_and_returns_control_plane_order(
+    def test_discovery_uses_canonical_schema_and_returns_control_plane_order(
         self,
     ) -> None:
         fake = FakePyMySql(
@@ -664,7 +668,7 @@ class DataPlaneScopeTests(
                 "params"
             ],
             [
-                "15",
+                SCHEMA_VERSION,
             ],
         )
 
@@ -755,12 +759,12 @@ class DataPlaneScopeTests(
 
         self.assertEqual(
             scope.schema_version,
-            "15",
+            SCHEMA_VERSION,
         )
 
         self.assertEqual(
             scope.migration_version,
-            15,
+            MIGRATION_VERSION,
         )
 
         self.assertEqual(
@@ -844,8 +848,8 @@ class DataPlaneScopeTests(
         self,
     ) -> None:
         fake = FakePyMySql(
-            schema_version="15",
-            migration_version=15,
+            schema_version=SCHEMA_VERSION,
+            migration_version=MIGRATION_VERSION,
         )
 
         scope = resolve_scope(
@@ -853,7 +857,7 @@ class DataPlaneScopeTests(
             supported_schema_versions=(
                 frozenset(
                     {
-                        "15",
+                        SCHEMA_VERSION,
                     }
                 )
             ),
@@ -861,12 +865,12 @@ class DataPlaneScopeTests(
 
         self.assertEqual(
             scope.schema_version,
-            "15",
+            SCHEMA_VERSION,
         )
 
         self.assertEqual(
             scope.migration_version,
-            15,
+            MIGRATION_VERSION,
         )
 
     def test_metadata_identity_mismatches_fail_closed(
@@ -878,11 +882,11 @@ class DataPlaneScopeTests(
             "logical_database_identifier":
                 "legacy-operational-shared",
             "schema_version":
-                "15",
+                SCHEMA_VERSION,
             "environment_key":
                 "legacy",
             "migration_version":
-                15,
+                MIGRATION_VERSION,
         }
 
         cases = [
@@ -964,11 +968,11 @@ class DataPlaneScopeTests(
             "logical_database_identifier":
                 "legacy-operational-shared",
             "schema_version":
-                "15",
+                SCHEMA_VERSION,
             "environment_key":
                 "legacy",
             "migration_version":
-                15,
+                MIGRATION_VERSION,
         }
 
         for rows in (
@@ -1189,12 +1193,12 @@ class DataPlaneScopeTests(
 
         self.assertEqual(
             scope.schema_version,
-            "15",
+            SCHEMA_VERSION,
         )
 
         self.assertEqual(
             scope.migration_version,
-            15,
+            MIGRATION_VERSION,
         )
 
         self.assertIn(

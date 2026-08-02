@@ -271,6 +271,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          OPERATIONAL_SCHEMA_VERSION="$(
+            node --input-type=module --eval \
+              "import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from './packages/database/src/operational-schema.js'; process.stdout.write(CANONICAL_OPERATIONAL_SCHEMA_VERSION)"
+          )"
           az deployment group create \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "event-report-worker-${VALIDATED_MAIN_SHA::12}" \
@@ -284,6 +288,7 @@ jobs:
               operationalSecretName="$MYSQL_URL_SECRET_NAME" \
               modelPseudonymSecretName="$MODEL_PSEUDONYM_SECRET_NAME" \
               reportWorkerImage="$REPORT_WORKER_IMAGE" \
+              operationalSchemaVersion="$OPERATIONAL_SCHEMA_VERSION" \
               storageAccountName="$REPORT_STORAGE_ACCOUNT_NAME" \
               reportStorageAccountUrl="$REPORT_STORAGE_ACCOUNT_URL" \
               reportStorageContainerName="$REPORT_STORAGE_CONTAINER" \
