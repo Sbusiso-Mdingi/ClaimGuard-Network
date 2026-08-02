@@ -9,11 +9,15 @@ vi.mock("../context/RoleContext", () => ({
 }));
 
 import { apiJson } from "../lib/apiClient";
-import { DesktopDeviceManagement } from "../features/investigator/DesktopDeviceManagement";
+import {
+  DesktopDeviceManagement,
+  DesktopFleetPolicyEditor,
+} from "../features/investigator/DesktopDeviceManagement";
 
 const snapshot = {
   available: true,
-  policy: { deviceLimit: 7, offlineGraceDays: 5 },
+  policy: { deviceLimit: 7, offlineGraceDays: 5, configured: true, source: "licensed" },
+  usage: { activeDevices: 1, deviceLimit: 7, remainingCapacity: 6, overLimit: false, enrollmentBlocked: false },
   devices: [{
     deviceEnrollmentId: "device-1",
     installationId: "WINDOWS-ALPHA",
@@ -169,5 +173,74 @@ describe("DesktopDeviceManagement", () => {
     await user.type(screen.getByLabelText("Confirmation"), "ISSUE DESKTOP KEY");
     await user.click(screen.getByRole("button", { name: "Issue activation key" }));
     expect(await screen.findByText("Activation key rejected")).toBeInTheDocument();
+  });
+
+  test("warns scheme administrators when a reduced allowance is exceeded and blocks new keys", async () => {
+    apiJson.mockResolvedValue({
+      ...snapshot,
+      policy: { ...snapshot.policy, deviceLimit: 1 },
+      usage: { activeDevices: 2, deviceLimit: 1, remainingCapacity: 0, overLimit: true, enrollmentBlocked: true },
+      devices: [
+        snapshot.devices[0],
+        { ...snapshot.devices[0], deviceEnrollmentId: "device-2", installationId: "WINDOWS-BETA" },
+      ],
+    });
+
+    render(<DesktopDeviceManagement />);
+
+    expect(await screen.findByText("Desktop fleet is over its licensed allowance")).toBeInTheDocument();
+    expect(screen.getByText(/Existing devices remain active/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Issue activation key" })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "Revoke device" })).toHaveLength(2);
+  });
+
+  test("lets platform administrators step up and set an explicit 1-to-10000 allowance", async () => {
+    apiJson.mockImplementation((_path, options) => {
+      if (options?.method === "PUT") {
+        return Promise.resolve({
+          policy: { ...snapshot.policy, deviceLimit: 4 },
+          usage: { activeDevices: 6, deviceLimit: 4, remainingCapacity: 0, overLimit: true, enrollmentBlocked: true },
+          auditEvent: {
+            desktopAuditEventId: "audit-policy-1",
+            actorId: "platform-admin-1",
+            action: "desktop_fleet_policy.updated",
+            outcome: "success",
+            details: { previousDeviceLimit: 7, deviceLimit: 4 },
+            occurredAt: "2026-08-02T08:00:00.000Z",
+          },
+        });
+      }
+      return Promise.resolve({
+        ...snapshot,
+        policy: { ...snapshot.policy, deviceLimit: 7 },
+        usage: { activeDevices: 6, deviceLimit: 7, remainingCapacity: 1, overLimit: false, enrollmentBlocked: false },
+      });
+    });
+    render(<DesktopFleetPolicyEditor organisationId="org-alpha" />);
+    const user = userEvent.setup();
+
+    await screen.findByDisplayValue("7");
+    await user.clear(screen.getByLabelText("Licensed computers"));
+    await user.type(screen.getByLabelText("Licensed computers"), "4");
+    expect(screen.getByText("This will put the scheme over its allowance")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Current password"), "StrongPass123!");
+    await user.type(screen.getByLabelText("Confirmation"), "SET DESKTOP LIMIT 4");
+    await user.click(screen.getByRole("button", { name: "Update licensed allowance" }));
+
+    await waitFor(() => expect(apiJson).toHaveBeenCalledWith(
+      "/admin/desktop/organisations/org-alpha/policy",
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          deviceLimit: 4,
+          password: "StrongPass123!",
+          confirmation: "SET DESKTOP LIMIT 4",
+        }),
+      },
+    ));
+    expect(await screen.findByText("Licensed desktop allowance updated and audited.")).toBeInTheDocument();
+    expect(screen.getByText("Scheme is over its licensed allowance")).toBeInTheDocument();
+    expect(screen.getByText(/7 → 4 licensed computers/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Current password")).toHaveValue("");
   });
 });

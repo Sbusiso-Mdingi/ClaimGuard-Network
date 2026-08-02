@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 
 const ACTIVATION_KEY_PATTERN = /^cgak_[A-Za-z0-9_-]{43}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PILOT_DEFAULT_DEVICE_LIMIT = 5;
+const DEFAULT_ACTIVATION_KEY_LIFETIME_HOURS = 24;
+const DEFAULT_OFFLINE_GRACE_DAYS = 7;
 
 export class DesktopEnrollmentError extends Error {
   constructor(message, code = "DESKTOP_ENROLLMENT_REJECTED", status = 400) {
@@ -32,6 +35,18 @@ function safeInteger(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isInteger(parsed)) return fallback;
   return Math.max(minimum, Math.min(maximum, parsed));
+}
+
+function requiredInteger(value, fieldName, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new DesktopEnrollmentError(
+      `${fieldName} must be an integer between ${minimum} and ${maximum}.`,
+      "DESKTOP_POLICY_INPUT_INVALID",
+      400,
+    );
+  }
+  return parsed;
 }
 
 function normalizeOrigin(value) {
@@ -146,6 +161,41 @@ export function createDesktopEnrollmentService({
   }
   const permittedApiOrigin = normalizeOrigin(apiOrigin);
   const deploymentEnvironment = String(environment || "production").slice(0, 64);
+  const allowsPilotDefault = !["production", "prod"].includes(deploymentEnvironment.toLowerCase());
+
+  async function resolvePolicy(repository, organisationId) {
+    const stored = await repository.getPolicy(organisationId);
+    if (stored) return { ...stored, configured: true, source: "licensed" };
+    return {
+      organisationId,
+      deviceLimit: allowsPilotDefault ? PILOT_DEFAULT_DEVICE_LIMIT : null,
+      activationKeyLifetimeHours: DEFAULT_ACTIVATION_KEY_LIFETIME_HOURS,
+      offlineGraceDays: DEFAULT_OFFLINE_GRACE_DAYS,
+      configured: false,
+      source: allowsPilotDefault ? "pilot_default" : "unconfigured",
+    };
+  }
+
+  function requireEnrollmentAllowance(policy) {
+    if (!Number.isInteger(policy?.deviceLimit)) {
+      throw new DesktopEnrollmentError(
+        "The licensed organisation does not have a configured desktop device allowance.",
+        "DESKTOP_POLICY_UNCONFIGURED",
+        409,
+      );
+    }
+  }
+
+  function usageProjection(policy, activeDevices) {
+    const limit = Number.isInteger(policy?.deviceLimit) ? policy.deviceLimit : null;
+    return {
+      activeDevices,
+      deviceLimit: limit,
+      remainingCapacity: limit == null ? null : Math.max(0, limit - activeDevices),
+      overLimit: limit != null && activeDevices > limit,
+      enrollmentBlocked: limit == null || activeDevices >= limit,
+    };
+  }
 
   async function audit(repository, input) {
     return repository.recordAudit({ occurredAt: now(), ...input });
@@ -199,7 +249,16 @@ export function createDesktopEnrollmentService({
         throw new DesktopEnrollmentError("The activation-key request is invalid.", "ACTIVATION_KEY_INPUT_INVALID", 400);
       }
       const repository = repositories.desktopEnrollment;
-      const policy = await repository.getPolicy(organisationId);
+      const policy = await resolvePolicy(repository, organisationId);
+      requireEnrollmentAllowance(policy);
+      const usage = usageProjection(policy, await repository.countActiveDevices(organisationId, now()));
+      if (usage.enrollmentBlocked) {
+        throw new DesktopEnrollmentError(
+          "The licensed organisation has reached its desktop device allowance.",
+          "DEVICE_LIMIT_REACHED",
+          409,
+        );
+      }
       const lifetimeHours = safeInteger(
         expiresInHours,
         policy.activationKeyLifetimeHours,
@@ -281,30 +340,55 @@ export function createDesktopEnrollmentService({
           if (!lockedOrganisation) {
             throw Object.assign(new Error("organisation_unavailable"), { activationRejected: true, key });
           }
+          const policy = await resolvePolicy(repository, key.organisationId);
+          requireEnrollmentAllowance(policy);
           const activeDevices = await repository.countActiveDevices(key.organisationId, timestamp);
-          if (activeDevices >= key.deviceLimit) {
+          if (activeDevices >= policy.deviceLimit) {
             throw new DesktopEnrollmentError(
-              "The licensed organisation has reached its desktop device limit.",
+              "The licensed organisation has reached its desktop device allowance.",
               "DEVICE_LIMIT_REACHED",
               409,
             );
           }
           const expiresAt = addMilliseconds(timestamp, safeInteger(enrollmentLifetimeDays, 365, 1, 3650) * 86_400_000);
-          const offlineGraceExpiresAt = addMilliseconds(timestamp, key.offlineGraceDays * 86_400_000);
-          const created = await repository.createDevice({
+          const offlineGraceExpiresAt = addMilliseconds(timestamp, policy.offlineGraceDays * 86_400_000);
+          const previousDevice = await repository.getDeviceByInstallationId(installationId, { forUpdate: true });
+          if (previousDevice && previousDevice.organisationId !== key.organisationId) {
+            throw new DesktopEnrollmentError("This installation cannot be enrolled.", "DEVICE_ENROLLMENT_CONFLICT", 409);
+          }
+          const previousExpired = previousDevice
+            && asDate(previousDevice.expiresAt).getTime() <= timestamp.getTime();
+          if (previousDevice && previousDevice.status === "active" && !previousDevice.revokedAt && !previousExpired) {
+            throw new DesktopEnrollmentError("This installation is already enrolled.", "DEVICE_ENROLLMENT_CONFLICT", 409);
+          }
+          const documentVersion = previousDevice ? previousDevice.documentVersion + 1 : 1;
+          const enrollmentInput = {
             organisationId: key.organisationId,
             activationKeyId: key.activationKeyId,
             installationId,
             devicePublicKey: publicKey,
             publicKeyThumbprint,
-            documentVersion: 1,
+            documentVersion,
             signingKeyId: enrollmentSigner.keyId,
             permittedApiOrigin,
             environment: deploymentEnvironment,
             activatedAt: timestamp,
             expiresAt,
             offlineGraceExpiresAt,
-          });
+          };
+          let created;
+          if (previousDevice) {
+            const reactivated = await repository.reactivateDevice({
+              ...enrollmentInput,
+              deviceEnrollmentId: previousDevice.deviceEnrollmentId,
+            });
+            if (!reactivated) {
+              throw new DesktopEnrollmentError("This installation cannot be re-enrolled.", "DEVICE_ENROLLMENT_CONFLICT", 409);
+            }
+            created = { deviceEnrollmentId: previousDevice.deviceEnrollmentId };
+          } else {
+            created = await repository.createDevice(enrollmentInput);
+          }
           const consumed = await repository.consumeActivationKey(key.activationKeyId, timestamp);
           if (!consumed) throw Object.assign(new Error("activation_key_raced"), { activationRejected: true, key });
           await audit(repository, {
@@ -313,7 +397,7 @@ export function createDesktopEnrollmentService({
             deviceEnrollmentId: created.deviceEnrollmentId,
             actorType: "device",
             actorId: created.deviceEnrollmentId,
-            action: "desktop_device.activated",
+            action: previousDevice ? "desktop_device.reactivated" : "desktop_device.activated",
             outcome: "success",
             sourceNetworkHash,
             correlationId: metadata.correlationId || null,
@@ -327,7 +411,7 @@ export function createDesktopEnrollmentService({
             devicePublicKey: publicKey,
             publicKeyThumbprint,
             status: "active",
-            documentVersion: 1,
+            documentVersion,
             signingKeyId: enrollmentSigner.keyId,
             permittedApiOrigin,
             environment: deploymentEnvironment,
@@ -363,7 +447,7 @@ export function createDesktopEnrollmentService({
 
     async renewEnrollment(device) {
       const timestamp = now();
-      const policy = await repositories.desktopEnrollment.getPolicy(device.organisationId);
+      const policy = await resolvePolicy(repositories.desktopEnrollment, device.organisationId);
       const offlineGraceExpiresAt = addMilliseconds(timestamp, policy.offlineGraceDays * 86_400_000);
       const renewed = await repositories.desktopEnrollment.renewDeviceGrace({
         deviceEnrollmentId: device.deviceEnrollmentId,
@@ -382,12 +466,73 @@ export function createDesktopEnrollmentService({
 
     async getAdminSnapshot(organisationId) {
       const [policy, activationKeys, devices, auditHistory] = await Promise.all([
-        repositories.desktopEnrollment.getPolicy(organisationId),
+        resolvePolicy(repositories.desktopEnrollment, organisationId),
         repositories.desktopEnrollment.listActivationKeys(organisationId),
         repositories.desktopEnrollment.listDevices(organisationId),
         repositories.desktopEnrollment.listAudit(organisationId),
       ]);
-      return { policy, activationKeys, devices, auditHistory };
+      const activeDevices = devices.filter((device) => (
+        device.status === "active"
+        && !device.revokedAt
+        && asDate(device.expiresAt).getTime() > now().getTime()
+      )).length;
+      return { policy, usage: usageProjection(policy, activeDevices), activationKeys, devices, auditHistory };
+    },
+
+    async setFleetPolicy({ organisationId, deviceLimit }, actor = {}) {
+      if (!UUID_PATTERN.test(String(organisationId || "")) || !UUID_PATTERN.test(String(actor.id || ""))) {
+        throw new DesktopEnrollmentError("The desktop fleet policy request is invalid.", "DESKTOP_POLICY_INPUT_INVALID", 400);
+      }
+      const normalizedLimit = requiredInteger(deviceLimit, "Device allowance", 1, 10000);
+      const updatedAt = now();
+      const result = await repositories.runInTransaction(async (transactionRepositories) => {
+        const repository = transactionRepositories.desktopEnrollment;
+        const organisation = await repository.lockOrganisationForDesktopEnrollment(organisationId);
+        if (!organisation || organisation.organisationType !== "medical_scheme") {
+          throw new DesktopEnrollmentError("Desktop fleet policy applies only to medical schemes.", "DESKTOP_POLICY_ORGANISATION_INVALID", 409);
+        }
+        const previous = await repository.getPolicy(organisationId);
+        const updated = await repository.setPolicy({
+          organisationId,
+          deviceLimit: normalizedLimit,
+          activationKeyLifetimeHours: previous?.activationKeyLifetimeHours || DEFAULT_ACTIVATION_KEY_LIFETIME_HOURS,
+          offlineGraceDays: previous?.offlineGraceDays || DEFAULT_OFFLINE_GRACE_DAYS,
+        });
+        const details = {
+          previousDeviceLimit: previous?.deviceLimit ?? null,
+          deviceLimit: normalizedLimit,
+        };
+        const recorded = await audit(repository, {
+          organisationId,
+          actorType: "user",
+          actorId: actor.id,
+          action: "desktop_fleet_policy.updated",
+          outcome: "success",
+          details,
+          correlationId: actor.correlationId || null,
+          occurredAt: updatedAt,
+        });
+        return {
+          policy: { ...updated, configured: true, source: "licensed" },
+          auditEvent: {
+            desktopAuditEventId: recorded.desktopAuditEventId,
+            organisationId,
+            actorType: "user",
+            actorId: actor.id,
+            action: "desktop_fleet_policy.updated",
+            outcome: "success",
+            details,
+            correlationId: actor.correlationId || null,
+            occurredAt: updatedAt.toISOString(),
+          },
+        };
+      });
+      const activeDevices = await repositories.desktopEnrollment.countActiveDevices(organisationId, updatedAt);
+      return {
+        policy: result.policy,
+        usage: usageProjection(result.policy, activeDevices),
+        auditEvent: result.auditEvent,
+      };
     },
 
     async revokeActivationKey({ organisationId, activationKeyId, reason = "administrative" }, actor = {}) {

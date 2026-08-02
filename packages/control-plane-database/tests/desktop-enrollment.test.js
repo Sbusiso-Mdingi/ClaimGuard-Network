@@ -28,9 +28,10 @@ function createMemoryRepositories() {
   const rateLimits = new Map();
   const nonces = new Set();
   const audits = [];
+  let transactionTail = Promise.resolve();
   const repository = {
     async getPolicy(organisationId) {
-      return { organisationId, deviceLimit: 5, activationKeyLifetimeHours: 24, offlineGraceDays: 7, ...policies.get(organisationId) };
+      return policies.get(organisationId) || null;
     },
     async setPolicy(policy) { policies.set(policy.organisationId, policy); return this.getPolicy(policy.organisationId); },
     async createActivationKey(input) {
@@ -51,8 +52,8 @@ function createMemoryRepositories() {
         organisationType: organisation.type,
         organisationStatus: "active",
         organisationActivationState: "activated",
-        deviceLimit: policy.deviceLimit,
-        offlineGraceDays: policy.offlineGraceDays,
+        deviceLimit: policy?.deviceLimit ?? null,
+        offlineGraceDays: policy?.offlineGraceDays ?? 7,
       };
     },
     async listActivationKeys(organisationId) {
@@ -76,7 +77,15 @@ function createMemoryRepositories() {
     async countActiveDevices(organisationId, at) {
       return [...devices.values()].filter((device) => device.organisationId === organisationId && device.status === "active" && device.expiresAt > at).length;
     },
-    async lockOrganisationForDesktopEnrollment(organisationId) { return organisations.has(organisationId); },
+    async lockOrganisationForDesktopEnrollment(organisationId) {
+      const organisation = organisations.get(organisationId);
+      return organisation ? {
+        organisationId,
+        organisationType: organisation.type,
+        status: "active",
+        activationState: "activated",
+      } : null;
+    },
     async createDevice(input) {
       const deviceEnrollmentId = crypto.randomUUID();
       devices.set(deviceEnrollmentId, { deviceEnrollmentId, status: "active", ...input });
@@ -87,6 +96,25 @@ function createMemoryRepositories() {
       if (!device) return null;
       const organisation = organisations.get(device.organisationId);
       return { ...device, organisationDisplayName: organisation.displayName, organisationSlug: organisation.slug };
+    },
+    async getDeviceByInstallationId(installationId) {
+      const device = [...devices.values()].find((item) => item.installationId === installationId);
+      if (!device) return null;
+      const organisation = organisations.get(device.organisationId);
+      return { ...device, organisationDisplayName: organisation.displayName, organisationSlug: organisation.slug };
+    },
+    async reactivateDevice(input) {
+      const device = devices.get(input.deviceEnrollmentId);
+      if (!device || device.organisationId !== input.organisationId) return false;
+      if (device.status === "active" && !device.revokedAt && device.expiresAt > input.activatedAt) return false;
+      Object.assign(device, input, {
+        status: "active",
+        revokedAt: null,
+        revokedBy: null,
+        revocationReason: null,
+        lastSeenAt: input.activatedAt,
+      });
+      return true;
     },
     async listDevices(organisationId) { return [...devices.values()].filter((device) => device.organisationId === organisationId); },
     async revokeDevice({ deviceEnrollmentId, organisationId, revokedAt }) {
@@ -118,12 +146,22 @@ function createMemoryRepositories() {
   };
   const repositories = {
     desktopEnrollment: repository,
-    async runInTransaction(operation) { return operation(repositories); },
+    async runInTransaction(operation) {
+      const previous = transactionTail;
+      let release;
+      transactionTail = new Promise((resolve) => { release = resolve; });
+      await previous;
+      try {
+        return await operation(repositories);
+      } finally {
+        release();
+      }
+    },
   };
   return { repositories, policies, keys, devices, audits };
 }
 
-function createFixture({ clock = new Date("2026-08-01T00:00:00.000Z") } = {}) {
+function createFixture({ clock = new Date("2026-08-01T00:00:00.000Z"), environment = "test" } = {}) {
   let current = clock;
   const memory = createMemoryRepositories();
   const signingPair = keyPair();
@@ -132,7 +170,7 @@ function createFixture({ clock = new Date("2026-08-01T00:00:00.000Z") } = {}) {
     activationKeyHasher: createActivationKeyHasher({ pepper: "test-pepper-that-is-at-least-thirty-two-bytes-long" }),
     enrollmentSigner: createEnrollmentDocumentSigner({ privateKey: signingPair.privateKey, keyId: "enrollment-test-1" }),
     apiOrigin: "https://api.claimguard.example",
-    environment: "test",
+    environment,
     now: () => new Date(current),
   });
   return {
@@ -212,17 +250,125 @@ test("organisation device limits are enforced", async () => {
   const fixture = createFixture();
   fixture.policies.set(ORG_ALPHA, { deviceLimit: 1, activationKeyLifetimeHours: 24, offlineGraceDays: 7 });
   const first = await fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR });
+  const second = await fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR });
   await fixture.service.activate({
     activationKey: first.activationKey,
     installationId: "77777777-7777-4777-8777-777777777777",
     devicePublicKey: keyPair().publicJwk,
   }, { sourceNetworkHash: "5".repeat(64) });
-  const second = await fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR });
   await assert.rejects(() => fixture.service.activate({
     activationKey: second.activationKey,
     installationId: "88888888-8888-4888-8888-888888888888",
     devicePublicKey: keyPair().publicJwk,
   }, { sourceNetworkHash: "6".repeat(64) }), (error) => error.code === "DEVICE_LIMIT_REACHED");
+});
+
+test("production requires an explicit licensed allowance while test environments retain the five-device pilot default", async () => {
+  const production = createFixture({ environment: "production" });
+  const productionSnapshot = await production.service.getAdminSnapshot(ORG_ALPHA);
+  assert.equal(productionSnapshot.policy.configured, false);
+  assert.equal(productionSnapshot.policy.deviceLimit, null);
+  assert.equal(productionSnapshot.policy.source, "unconfigured");
+  assert.equal(productionSnapshot.usage.enrollmentBlocked, true);
+  await assert.rejects(
+    production.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR }),
+    (error) => error.code === "DESKTOP_POLICY_UNCONFIGURED",
+  );
+
+  const pilot = createFixture({ environment: "test" });
+  const pilotSnapshot = await pilot.service.getAdminSnapshot(ORG_ALPHA);
+  assert.equal(pilotSnapshot.policy.configured, false);
+  assert.equal(pilotSnapshot.policy.deviceLimit, 5);
+  assert.equal(pilotSnapshot.policy.source, "pilot_default");
+  assert.equal((await pilot.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR })).maximumUses, 1);
+});
+
+test("platform policy changes are bounded and audited without revoking devices when a scheme becomes over-limit", async () => {
+  const fixture = createFixture({ environment: "production" });
+  await fixture.service.setFleetPolicy({ organisationId: ORG_ALPHA, deviceLimit: 2 }, { id: ACTOR, correlationId: "policy-1" });
+  for (const installationId of [
+    "10111111-1111-4111-8111-111111111111",
+    "20222222-2222-4222-8222-222222222222",
+  ]) {
+    const issued = await fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR });
+    await fixture.service.activate({
+      activationKey: issued.activationKey,
+      installationId,
+      devicePublicKey: keyPair().publicJwk,
+    }, { sourceNetworkHash: installationId.replaceAll("-", "").padEnd(64, "0").slice(0, 64) });
+  }
+
+  const reduced = await fixture.service.setFleetPolicy({ organisationId: ORG_ALPHA, deviceLimit: 1 }, { id: ACTOR, correlationId: "policy-2" });
+  assert.equal(reduced.usage.activeDevices, 2);
+  assert.equal(reduced.usage.overLimit, true);
+  assert.equal(reduced.usage.enrollmentBlocked, true);
+  assert.equal([...fixture.devices.values()].every((device) => device.status === "active"), true);
+  assert.deepEqual(fixture.audits.filter((event) => event.action === "desktop_fleet_policy.updated").at(-1).details, {
+    previousDeviceLimit: 2,
+    deviceLimit: 1,
+  });
+  await assert.rejects(
+    fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR }),
+    (error) => error.code === "DEVICE_LIMIT_REACHED",
+  );
+  await assert.rejects(
+    fixture.service.setFleetPolicy({ organisationId: ORG_ALPHA, deviceLimit: 10001 }, { id: ACTOR }),
+    (error) => error.code === "DESKTOP_POLICY_INPUT_INVALID",
+  );
+});
+
+test("a revoked installation can be explicitly re-enrolled with a fresh key and enrollment version", async () => {
+  const fixture = createFixture();
+  const installationId = "30333333-3333-4333-8333-333333333333";
+  const firstKey = await fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR });
+  const first = await fixture.service.activate({
+    activationKey: firstKey.activationKey,
+    installationId,
+    devicePublicKey: keyPair().publicJwk,
+  }, { sourceNetworkHash: "a".repeat(64) });
+  await fixture.service.revokeDevice({
+    organisationId: ORG_ALPHA,
+    deviceEnrollmentId: first.device.deviceEnrollmentId,
+    reason: "reinstall recovery",
+  }, { id: ACTOR });
+
+  const replacementKey = await fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR });
+  const replacement = await fixture.service.activate({
+    activationKey: replacementKey.activationKey,
+    installationId,
+    devicePublicKey: keyPair().publicJwk,
+  }, { sourceNetworkHash: "b".repeat(64) });
+
+  assert.equal(replacement.device.deviceEnrollmentId, first.device.deviceEnrollmentId);
+  assert.equal(replacement.document.documentVersion, 2);
+  assert.equal(fixture.devices.size, 1);
+  assert.equal(fixture.devices.get(first.device.deviceEnrollmentId).status, "active");
+  assert.equal(fixture.audits.some((event) => event.action === "desktop_device.reactivated"), true);
+});
+
+test("concurrent enrollment attempts cannot exceed the licensed allowance", async () => {
+  const fixture = createFixture();
+  fixture.policies.set(ORG_ALPHA, {
+    organisationId: ORG_ALPHA,
+    deviceLimit: 1,
+    activationKeyLifetimeHours: 24,
+    offlineGraceDays: 7,
+  });
+  const keys = await Promise.all([
+    fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR }),
+    fixture.service.issueActivationKey({ organisationId: ORG_ALPHA }, { id: ACTOR }),
+  ]);
+  const results = await Promise.allSettled(keys.map((issued, index) => fixture.service.activate({
+    activationKey: issued.activationKey,
+    installationId: index === 0
+      ? "40444444-4444-4444-8444-444444444444"
+      : "50555555-5555-4555-8555-555555555555",
+    devicePublicKey: keyPair().publicJwk,
+  }, { sourceNetworkHash: String(index + 1).repeat(64) })));
+
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected" && result.reason.code === "DEVICE_LIMIT_REACHED").length, 1);
+  assert.equal(await fixture.repositories.desktopEnrollment.countActiveDevices(ORG_ALPHA, new Date("2026-08-01T00:00:00.000Z")), 1);
 });
 
 test("activation brute forcing is throttled without logging raw candidates", async () => {

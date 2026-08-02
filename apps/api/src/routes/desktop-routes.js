@@ -439,6 +439,9 @@ export function registerDesktopAdminRoutes(app, {
   const requireDesktopManage = createRequirePermissionMiddleware({
     permission: CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE,
   });
+  const requireFleetPolicyManage = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.DESKTOP_FLEET_POLICY_MANAGE,
+  });
 
   app.get("/admin/desktop/organisations/:organisationId", requireDesktopManage, async (c) => {
     if (!desktopEnrollmentService?.getAdminSnapshot) {
@@ -450,6 +453,35 @@ export function registerDesktopAdminRoutes(app, {
       return c.json({ available: true, ...(await desktopEnrollmentService.getAdminSnapshot(organisationId)) });
     } catch (error) {
       return desktopError(c, error, "Desktop device administration is temporarily unavailable.");
+    }
+  });
+
+  app.put("/admin/desktop/organisations/:organisationId/policy", requireFleetPolicyManage, async (c) => {
+    if (!desktopEnrollmentService?.setFleetPolicy || !authenticationService?.reauthenticate) {
+      return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop fleet policy administration is not configured." }, 503);
+    }
+    const auth = c.get("authContext") || {};
+    if (!auth.roles?.includes("platform_administrator")) {
+      return c.json({ available: false, code: "FORBIDDEN", message: "Only ClaimGuard platform administrators can set licensed desktop allowances." }, 403);
+    }
+    const organisationId = targetOrganisation(c);
+    if (!organisationId) return c.json({ available: false, code: "FORBIDDEN", message: "You do not have permission to manage this organisation." }, 403);
+    const payload = await c.req.json().catch(() => ({}));
+    const confirmation = `SET DESKTOP LIMIT ${payload.deviceLimit}`;
+    if (payload.confirmation !== confirmation) {
+      return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The desktop allowance confirmation did not match." }, 400);
+    }
+    try {
+      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      return c.json({
+        available: true,
+        ...(await desktopEnrollmentService.setFleetPolicy({
+          organisationId,
+          deviceLimit: payload.deviceLimit,
+        }, actorFromContext(c))),
+      });
+    } catch (error) {
+      return desktopError(c, error, "The desktop fleet policy could not be updated.");
     }
   });
 

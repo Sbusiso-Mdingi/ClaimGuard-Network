@@ -11,6 +11,8 @@ import {
 describe("capability helpers", () => {
   test("route landing follows effective authority rather than a hard-coded tenant or role", () => {
     expect(defaultRouteForIdentity({ capabilities: ["tenants.manage"] })).toBe("/admin/platform");
+    expect(defaultRouteForIdentity({ capabilities: ["platform_releases.view"] })).toBe("/admin/platform");
+    expect(defaultRouteForIdentity({ capabilities: ["platform_administrators.manage"] })).toBe("/admin/platform");
     expect(defaultRouteForIdentity({ capabilities: ["users.manage_tenant"] })).toBe("/admin/scheme");
     expect(defaultRouteForIdentity({ capabilities: ["claims.view_own"] })).toBe("/dashboard");
     expect(defaultRouteForIdentity({ capabilities: ["investigations.view"] })).toBe("/investigations");

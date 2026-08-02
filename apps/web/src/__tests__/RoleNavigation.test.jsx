@@ -66,7 +66,12 @@ test("platform administrators see platform governance without tenant operations"
   const workspaceNavigationRegion = screen.getByRole("complementary", { name: /workspace navigation/i });
   const mainRegion = screen.getByRole("main");
 
-  expect(await within(nav).findByRole("link", { name: /platform admin(istration)?|platform control/i })).toBeInTheDocument();
+  expect(await within(nav).findByRole("link", { name: /^Platform Overview$/i })).toBeInTheDocument();
+  expect(within(nav).getByRole("link", { name: /^Schemes & Provisioning$/i })).toBeInTheDocument();
+  expect(within(nav).getByRole("link", { name: /^Claims Integrations$/i })).toBeInTheDocument();
+  expect(within(nav).getByRole("link", { name: /^Releases & Promotions$/i })).toBeInTheDocument();
+  expect(within(nav).getByRole("link", { name: /^Platform Administrators$/i })).toBeInTheDocument();
+  expect(within(nav).getByRole("link", { name: /^Detection Engine$/i })).toBeInTheDocument();
   expect(within(workspaceNavigationRegion).getByText("Platform operations")).toBeInTheDocument();
   expect(within(mainRegion).getByText("Organisation:")).toBeInTheDocument();
   expect(screen.queryByText("Scheme workspace")).not.toBeInTheDocument();

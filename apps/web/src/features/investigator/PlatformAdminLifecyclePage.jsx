@@ -13,9 +13,7 @@ import {
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
-import { GlobalDetectionEngineSettings } from "./GlobalDetectionEngineSettings";
-import { PlatformAdministratorAccessPanel } from "./PlatformAdministratorAccessPanel";
-import { ReleaseGovernancePanel } from "./ReleaseGovernancePanel";
+import { DesktopFleetPolicyEditor } from "./DesktopDeviceManagement";
 import { usePlatformAdminLifecycle } from "./usePlatformAdminLifecycle";
 
 function LifecycleActions({ lifecycle }) {
@@ -40,17 +38,12 @@ export function PlatformAdminLifecyclePage() {
     selected,
     review,
     operation,
-    integration,
-    oneTimeToken,
     invitationUrl,
     health,
     draftForm,
     setDraftForm,
     inviteEmail,
     setInviteEmail,
-    integrationForm,
-    setIntegrationForm,
-    permissions,
   } = lifecycle;
 
   const currentStep = operation?.steps?.find((step) => step.status === "running")?.stepKey || null;
@@ -58,8 +51,8 @@ export function PlatformAdminLifecyclePage() {
   return (
     <PageFrame
       eyebrow="Platform Administration"
-      title="Platform operations console"
-      description="Govern production releases, onboard medical schemes, manage administrator access, and connect claims servers without exposing infrastructure secrets to the browser."
+      title="Schemes & provisioning"
+      description="Register medical schemes, review deployment plans, provision isolated data planes, and activate organisations through audited lifecycle operations."
       actions={[
         <StatusIndicator key="health" variant="badge" tone={health?.health?.status === "ok" ? "success" : "info"}>API {health?.health?.status || "checking"}</StatusIndicator>,
         <StatusIndicator key="ready" variant="badge" tone={health?.ready?.ready ? "success" : "warning"}>Readiness {health?.ready?.status || "checking"}</StatusIndicator>,
@@ -67,10 +60,6 @@ export function PlatformAdminLifecyclePage() {
     >
       {error ? <WorkspaceNotice title="Platform action failed" tone="danger">{error}</WorkspaceNotice> : null}
       {message ? <WorkspaceNotice title={message} tone="success" /> : null}
-
-      <ReleaseGovernancePanel />
-
-      <PlatformAdministratorAccessPanel />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <SectionCard title="Medical scheme inventory" description="Select an organisation to manage its lifecycle and access configuration.">
@@ -125,8 +114,8 @@ export function PlatformAdminLifecyclePage() {
       </div>
 
       {!selected ? (
-        <SectionCard title="Selected scheme workspace" description="Lifecycle actions appear after selecting or creating an organisation.">
-          <EmptyState icon={Building2} title="Select a medical scheme" description="Choose an organisation from the inventory to manage provisioning, activation, access and claims-server integration." />
+          <SectionCard title="Selected scheme workspace" description="Lifecycle actions appear after selecting or creating an organisation.">
+          <EmptyState icon={Building2} title="Select a medical scheme" description="Choose an organisation from the inventory to manage provisioning, activation and administrator access." />
         </SectionCard>
       ) : (
         <>
@@ -171,49 +160,77 @@ export function PlatformAdminLifecyclePage() {
             </SectionCard>
           </div>
 
-          <SectionCard title="Claims-server integration" description="Issue and revoke separate credentials for claims-sending systems. Raw tokens are shown once only.">
-            {!permissions.isActive ? (
-              <WorkspaceNotice title="Activate the scheme first" tone="warning">Claims-server credentials can only be issued after the organisation is active.</WorkspaceNotice>
-            ) : (
-              <div className="space-y-5">
-                <div className="grid gap-4 md:grid-cols-3">
-                  <FormField label="Connection name"><Input value={integrationForm.displayName} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, displayName: event.target.value }))} /></FormField>
-                  <FormField label="Stable server ID"><Input value={integrationForm.serviceActorId} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, serviceActorId: event.target.value.toLowerCase() }))} /></FormField>
-                  <FormField label="Expires in days"><Input type="number" min="1" max="365" value={integrationForm.expiresInDays} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, expiresInDays: event.target.value }))} /></FormField>
-                </div>
-                <Button type="button" disabled={busy || !integrationForm.serviceActorId} onClick={lifecycle.createCredential}>Create claims-server credential</Button>
-                {oneTimeToken ? <WorkspaceNotice title="Copy this token now" tone="warning"><code className="break-all font-data text-xs">{oneTimeToken}</code></WorkspaceNotice> : null}
-                <DefinitionList items={[
-                  { label: "Claims endpoint", value: integration?.guide?.endpoint || "Not available", mono: true },
-                  { label: "Success response", value: integration?.guide?.successStatus ? `HTTP ${integration.guide.successStatus}` : "Not available" },
-                ]} />
-                {(integration?.credentials || []).length === 0 ? (
-                  <EmptyState icon={Server} title="No integration credentials" description="Create a credential when the claims-sending server is ready to connect." compact />
-                ) : (
-                  <div className="divide-y divide-border/70 rounded-xl border border-border/70">
-                    {integration.credentials.map((credential) => (
-                      <div key={credential.integrationCredentialId} className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="font-semibold">{credential.displayName}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">{credential.serviceActorId} · {credential.tokenPrefix}…</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <StatusIndicator variant="badge" tone={credential.status === "active" ? "success" : "info"}>{formatEnumLabel(credential.status)}</StatusIndicator>
-                          {credential.status === "active" ? <Button variant="outline" size="sm" disabled={busy} onClick={() => lifecycle.revokeCredential(credential.integrationCredentialId)}>Revoke</Button> : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+          <SectionCard title="Windows desktop fleet licence" description="Set the explicit licensed computer allowance for this medical scheme. Scheme administrators manage activation keys and device revocation within it.">
+            <DesktopFleetPolicyEditor organisationId={selected.organisationId} />
           </SectionCard>
         </>
       )}
+    </PageFrame>
+  );
+}
 
-      <SectionCard title="Global ClaimGuard engine" description="Review the fleet-managed model promoted by the validated API deployment. Managed schemes adopt updates through an audited prospective transition.">
-        <GlobalDetectionEngineSettings organisations={organisations} />
+function ClaimsServerIntegration({ lifecycle }) {
+  const {
+    busy,
+    integration,
+    integrationForm,
+    oneTimeToken,
+    permissions,
+    setIntegrationForm,
+  } = lifecycle;
+  return (
+    <SectionCard title="Claims-server integration" description="Issue and revoke separate credentials for claims-sending systems. Raw tokens are shown once only.">
+      {!permissions.isActive ? (
+        <WorkspaceNotice title="Activate the scheme first" tone="warning">Claims-server credentials can only be issued after the organisation is active.</WorkspaceNotice>
+      ) : (
+        <div className="space-y-5">
+          <div className="grid gap-4 md:grid-cols-3">
+            <FormField label="Connection name"><Input value={integrationForm.displayName} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, displayName: event.target.value }))} /></FormField>
+            <FormField label="Stable server ID"><Input value={integrationForm.serviceActorId} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, serviceActorId: event.target.value.toLowerCase() }))} /></FormField>
+            <FormField label="Expires in days"><Input type="number" min="1" max="365" value={integrationForm.expiresInDays} onChange={(event) => setIntegrationForm((previous) => ({ ...previous, expiresInDays: event.target.value }))} /></FormField>
+          </div>
+          <Button type="button" disabled={busy || !integrationForm.serviceActorId} onClick={lifecycle.createCredential}>Create claims-server credential</Button>
+          {oneTimeToken ? <WorkspaceNotice title="Copy this token now" tone="warning"><code className="break-all font-data text-xs">{oneTimeToken}</code></WorkspaceNotice> : null}
+          <DefinitionList items={[
+            { label: "Claims endpoint", value: integration?.guide?.endpoint || "Not available", mono: true },
+            { label: "Success response", value: integration?.guide?.successStatus ? `HTTP ${integration.guide.successStatus}` : "Not available" },
+          ]} />
+          {(integration?.credentials || []).length === 0 ? (
+            <EmptyState icon={Server} title="No integration credentials" description="Create a credential when the claims-sending server is ready to connect." compact />
+          ) : (
+            <div className="divide-y divide-border/70 rounded-xl border border-border/70">
+              {integration.credentials.map((credential) => (
+                <div key={credential.integrationCredentialId} className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0"><p className="font-semibold">{credential.displayName}</p><p className="mt-1 break-all text-sm text-muted-foreground">{credential.serviceActorId} · {credential.tokenPrefix}…</p></div>
+                  <div className="flex items-center gap-2"><StatusIndicator variant="badge" tone={credential.status === "active" ? "success" : "info"}>{formatEnumLabel(credential.status)}</StatusIndicator>{credential.status === "active" ? <Button variant="outline" size="sm" disabled={busy} onClick={() => lifecycle.revokeCredential(credential.integrationCredentialId)}>Revoke</Button> : null}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+export function PlatformIntegrationsPage() {
+  const lifecycle = usePlatformAdminLifecycle();
+  const { busy, error, message, organisations, selected } = lifecycle;
+  return (
+    <PageFrame eyebrow="Platform Administration" title="Claims integrations" description="Select an active medical scheme, then issue or revoke its independently scoped claims-server credentials.">
+      {error ? <WorkspaceNotice title="Integration management failed" tone="danger">{error}</WorkspaceNotice> : null}
+      {message ? <WorkspaceNotice title={message} tone="success" /> : null}
+      <SectionCard title="Medical scheme" description="Integration credentials are always scoped to the selected immutable organisation.">
+        {organisations.length === 0 ? <EmptyState icon={Building2} title="No medical schemes registered" description="Create and activate a scheme before configuring a claims integration." /> : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {organisations.map((item) => {
+              const active = selected?.organisationId === item.organisationId;
+              return <button key={item.organisationId} type="button" aria-pressed={active} disabled={busy} onClick={() => lifecycle.loadOrganisation(item.organisationId)} className={`min-w-0 rounded-xl border p-4 text-left transition-colors ${active ? "border-primary bg-primary/5" : "border-border/70 hover:bg-muted/40"}`}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-semibold">{item.displayName}</p><p className="mt-1 break-all text-xs text-muted-foreground">{item.canonicalSlug}</p></div><StatusIndicator variant="badge" tone={item.status === "active" ? "success" : "info"}>{formatEnumLabel(item.status)}</StatusIndicator></div></button>;
+            })}
+          </div>
+        )}
       </SectionCard>
+      {selected ? <ClaimsServerIntegration lifecycle={lifecycle} /> : <SectionCard title="Integration workspace" description="Choose a medical scheme above to review its endpoint and credentials."><EmptyState icon={Server} title="Select a medical scheme" description="Only active schemes can issue claims-server credentials." compact /></SectionCard>}
     </PageFrame>
   );
 }

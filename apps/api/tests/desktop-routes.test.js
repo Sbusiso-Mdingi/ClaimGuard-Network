@@ -419,6 +419,11 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   assert.equal(snapshotResponse.status, 200);
   assert.equal((await snapshotResponse.json()).organisationId, "org-alpha");
   assert.equal((await app.request("/admin/desktop/organisations/org-beta")).status, 403);
+  assert.equal((await app.request("/admin/desktop/organisations/org-alpha/policy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "SET DESKTOP LIMIT 20" }),
+  })).status, 403);
 
   const mismatch = await app.request("/admin/desktop/organisations/org-alpha/activation-keys", {
     method: "POST",
@@ -465,6 +470,57 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   assert.equal(calls.filter(([kind]) => kind === "reauthenticate").length, 3);
   assert.equal(calls.find(([kind]) => kind === "issue")[1].organisationId, "org-alpha");
   assert.equal(calls.find(([kind]) => kind === "revoke-device")[2].id, "admin-alpha");
+});
+
+test("only platform fleet-policy administrators can set a bounded allowance with step-up authentication", async () => {
+  const calls = [];
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("authContext", {
+      is_authenticated: true,
+      user_id: "platform-admin",
+      organisation_id: "org-platform",
+      roles: ["platform_administrator"],
+      permissions: new Set(["desktop.fleet_policy.manage"]),
+    });
+    c.set("resolvedSession", { sessionId: "session-platform" });
+    c.set("authenticationMetadata", { ipAddress: "127.0.0.1" });
+    await next();
+  });
+  registerDesktopAdminRoutes(app, {
+    authenticationService: {
+      async reauthenticate(session, password) { calls.push(["reauthenticate", session, password]); },
+    },
+    desktopEnrollmentService: {
+      async setFleetPolicy(input, actor) {
+        calls.push(["set-policy", input, actor]);
+        return {
+          policy: { organisationId: input.organisationId, deviceLimit: input.deviceLimit, configured: true },
+          usage: { activeDevices: 25, deviceLimit: input.deviceLimit, overLimit: true, enrollmentBlocked: true },
+        };
+      },
+    },
+  });
+
+  const mismatch = await app.request("/admin/desktop/organisations/org-alpha/policy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "wrong" }),
+  });
+  assert.equal(mismatch.status, 400);
+
+  const updated = await app.request("/admin/desktop/organisations/org-alpha/policy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "SET DESKTOP LIMIT 20" }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).usage.overLimit, true);
+  assert.deepEqual(calls.find(([kind]) => kind === "set-policy")[1], {
+    organisationId: "org-alpha",
+    deviceLimit: 20,
+  });
+  assert.equal(calls.filter(([kind]) => kind === "reauthenticate").length, 1);
 });
 
 test("desktop routes fail closed when enrollment or administration is not configured", async () => {
