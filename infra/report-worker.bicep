@@ -131,7 +131,7 @@ resource modelPseudonymSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' existing = if (manageRoleAssignments) {
+resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageRoleAssignments) {
   name: guid(containerRegistry.id, workerIdentity.id, acrPullRoleDefinitionId)
   scope: containerRegistry
   properties: {
