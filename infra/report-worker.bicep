@@ -34,6 +34,9 @@ param reportWorkerImage string
 @description('Canonical operational schema version exported by the database package.')
 param operationalSchemaVersion string
 
+@description('Comma-separated operational schema versions that preserve the sealed model feature contract.')
+param modelCompatibleOperationalSchemaVersions string = '14,15'
+
 @description('HTTPS origin of the infrastructure-owned model service.')
 param modelServiceBaseUrl string
 
@@ -276,10 +279,6 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
               value: '1.1.0'
             }
             {
-              name: 'MODEL_SERVICE_EXPECTED_FEATURE_SCHEMA_VERSION'
-              value: 'claim-feature-schema-2026.2'
-            }
-            {
               name: 'MODEL_SERVICE_EXPECTED_BASELINE_THRESHOLD'
               value: '0.08760971001434723'
             }
@@ -317,7 +316,7 @@ resource reportWorkerJob 'Microsoft.App/jobs@2024-03-01' = {
             }
             {
               name: 'DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS'
-              value: operationalSchemaVersion
+              value: modelCompatibleOperationalSchemaVersions
             }
             {
               name: 'REPORT_WORKER_BATCH_SIZE'
