@@ -32,7 +32,9 @@ function referenceKey(claimId, claimVersion) {
 }
 
 function displayText(value) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
 }
 
 function memberDisplayName(firstName, lastName) {

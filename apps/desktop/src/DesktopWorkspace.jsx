@@ -152,18 +152,16 @@ function DetailOverlay({ children, labelId, onClose, open }) {
 
     const previouslyFocused = document.activeElement;
     const previousOverflow = document.body.style.overflow;
-    const backgroundElements = Array.from(document.body.children)
-      .filter((element) => element !== backdropRef.current)
-      .map((element) => ({
-        element,
-        ariaHidden: element.getAttribute("aria-hidden"),
-        hadInert: element.hasAttribute("inert"),
-      }));
+    const appRoot = document.getElementById("app");
+    const appRootState = appRoot ? {
+      ariaHidden: appRoot.getAttribute("aria-hidden"),
+      hadInert: appRoot.hasAttribute("inert"),
+    } : null;
     document.body.style.overflow = "hidden";
-    backgroundElements.forEach(({ element }) => {
-      element.setAttribute("aria-hidden", "true");
-      element.setAttribute("inert", "");
-    });
+    if (appRoot) {
+      appRoot.setAttribute("aria-hidden", "true");
+      appRoot.setAttribute("inert", "");
+    }
 
     const focusableSelector = [
       "button:not([disabled])",
@@ -216,11 +214,11 @@ function DetailOverlay({ children, labelId, onClose, open }) {
       window.cancelAnimationFrame(animationFrame);
       document.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = previousOverflow;
-      backgroundElements.forEach(({ element, ariaHidden, hadInert }) => {
-        if (ariaHidden === null) element.removeAttribute("aria-hidden");
-        else element.setAttribute("aria-hidden", ariaHidden);
-        if (!hadInert) element.removeAttribute("inert");
-      });
+      if (appRoot && appRootState) {
+        if (appRootState.ariaHidden === null) appRoot.removeAttribute("aria-hidden");
+        else appRoot.setAttribute("aria-hidden", appRootState.ariaHidden);
+        if (!appRootState.hadInert) appRoot.removeAttribute("inert");
+      }
       if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
         previouslyFocused.focus();
       }
@@ -331,7 +329,7 @@ function ClaimDetail({ payload, loading, error, offline, onClose, onOpenInvestig
   );
 }
 
-function ClaimsView({ claims, selectedClaim, loading, openClaim, closeClaim, openInvestigation, createInvestigation, canViewInvestigations, canCreateInvestigations, canAssignInvestigations, investigators, writesAllowed }) {
+function ClaimsView({ claims, openClaim }) {
   const [search, setSearch] = useState("");
   const [risk, setRisk] = useState("all");
   const filtered = useMemo(() => claims.filter((claim) => {
@@ -343,7 +341,6 @@ function ClaimsView({ claims, selectedClaim, loading, openClaim, closeClaim, ope
   }), [claims, risk, search]);
   return <div className="space-y-6">
     <Card><CardHeader><CardTitle>Claims queue</CardTitle><CardDescription>Search the bounded local cache. Opening a claim refreshes its authoritative detail when connected.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-3 sm:flex-row"><SearchField label="Search claims" placeholder="Claim, member, provider, billing code, or status" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Risk band</span><select aria-label="Risk band" className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={risk} onChange={(event) => setRisk(event.target.value)}><option value="all">All risk bands</option><option value="high">High risk</option><option value="medium">Medium risk</option><option value="low">Low risk</option><option value="unscored">Unscored</option></select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {claims.length} cached claims</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[1120px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Member</th><th className="px-5 py-3">Provider</th><th className="px-5 py-3">Service date</th><th className="px-5 py-3">Amount</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Risk</th><th className="px-5 py-3">Investigation</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((claim) => <tr key={claim.claimId}><td className="px-5 py-4 font-data text-xs font-semibold">{claim.claimId}</td><td className="px-5 py-4 font-medium">{claim.member?.displayName || "Member unavailable"}</td><td className="px-5 py-4"><p className="font-medium">{claim.provider?.displayName || "Provider unavailable"}</p>{claim.provider?.specialty ? <p className="mt-1 text-xs text-muted-foreground">{claim.provider.specialty}</p> : null}</td><td className="px-5 py-4">{claim.serviceDate || "—"}</td><td className="px-5 py-4 font-data">{money(claim.billedAmount)}</td><td className="px-5 py-4"><StatusPill value={claim.status} /></td><td className="px-5 py-4"><RiskLabel score={claim.riskScore} /></td><td className="px-5 py-4">{claim.investigation ? <StatusPill value={claim.investigation.priority} /> : <span className="text-xs text-muted-foreground">None</span>}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openClaim(claim)}>Open</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={FileSearch} title="No matching claims" description="Adjust the search or risk filter. Older claims remain available through the web application." /> : null}</CardContent></Card>
-    <ClaimDetail payload={selectedClaim} loading={loading} onClose={closeClaim} onOpenInvestigation={openInvestigation} onCreateInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} />
   </div>;
 }
 
@@ -727,7 +724,7 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
       {status.error ? <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-700 dark:text-rose-300">{status.error}</div> : null}
       {!writesAllowed ? <div className="flex gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200"><WifiOff className="h-5 w-5 shrink-0" /><div><p className="font-semibold">Offline data is read-only</p><p className="mt-1">Investigation creation, notes, evidence, status transitions, and fraud decisions are blocked until authoritative connectivity returns. Scheme device and activation-key management remains on the ClaimGuard web application.</p></div></div> : null}
       {activeView === "overview" ? <Overview claims={claims} investigations={investigations} summary={summary} network={network} openClaim={openClaim} openInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} /> : null}
-      {activeView === "claims" ? <ClaimsView claims={claims} selectedClaim={null} loading={false} openClaim={openClaim} closeClaim={closeClaim} openInvestigation={openInvestigation} createInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} /> : null}
+      {activeView === "claims" ? <ClaimsView claims={claims} openClaim={openClaim} /> : null}
       {activeView === "investigations" && canViewInvestigations ? <InvestigationsView investigations={investigations} selection={null} detail={null} loading={false} writesAllowed={writesAllowed} capabilities={capabilities} investigators={investigators} openInvestigation={openInvestigation} closeInvestigation={closeInvestigation} updateInvestigation={updateInvestigation} addInvestigationNote={addInvestigationNote} uploadInvestigationEvidence={uploadInvestigationEvidence} openClaimById={openClaim} /> : null}
       {activeView === "risk" ? <RiskSignalsView network={network} openClaimById={openClaim} /> : null}
       <details className="rounded-xl border border-border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Reset this device</summary><div className="mt-4 max-w-xl space-y-3"><p className="text-sm text-muted-foreground">This local recovery action permanently deletes this Windows user’s encrypted cache, session material, device key, and organisation enrollment. A web administrator must issue a new activation key.</p><label className="grid gap-2 text-sm font-medium">Type RESET CLAIMGUARD<Input value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} /></label><Button variant="destructive" onClick={reset} disabled={resetConfirmation !== "RESET CLAIMGUARD"}><RotateCcw className="mr-2 h-4 w-4" />Delete cache and reset organisation</Button></div></details>
