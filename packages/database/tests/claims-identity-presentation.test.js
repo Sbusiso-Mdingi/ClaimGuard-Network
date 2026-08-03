@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createClaimsReadRepository } from "../src/claims-read-repository.js";
+import { CANONICAL_OPERATIONAL_SCHEMA_VERSION } from "../src/operational-schema.js";
 
 const claimRow = {
   claim_id: "claim-identity-1",
@@ -21,6 +22,24 @@ const claimRow = {
   created_at: "2026-08-01T08:00:00.000Z",
   updated_at: "2026-08-01T08:00:00.000Z",
 };
+
+function context() {
+  return {
+    organisationId: "org-identity-test",
+    organisationType: "medical_scheme",
+    organisationStatus: "active",
+    routeId: "route-identity-test",
+    routeType: "legacy_shared",
+    routeGeneration: 1,
+    operationalTenantId: "tenant-1",
+    operationalTenantSlug: "identity-test",
+    logicalDatabaseIdentifier: "legacy-operational-shared",
+    databaseName: "operational",
+    schemaVersion: CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+    deploymentClass: "demo",
+    region: "southafricanorth",
+  };
+}
 
 function fakePool() {
   return {
@@ -42,7 +61,8 @@ function fakePool() {
 test("claim reads expose minimal member and provider presentation alongside tokens", async () => {
   const pool = fakePool();
   const repository = createClaimsReadRepository(pool, {
-    dataPlaneContext: { operationalTenantId: "tenant-1" },
+    dataPlaneContext: context(),
+    allowLegacyTenantContext: false,
   });
 
   const result = await repository.listClaims({ page: 1, pageSize: 25 });
