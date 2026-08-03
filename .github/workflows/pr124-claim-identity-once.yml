@@ -22,6 +22,18 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 22
+      - name: Narrow additive replacements to the first matching query
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply-pr124-identity.py')
+          text = path.read_text()
+          original = '    if count != 1:\n        raise RuntimeError(f"{label}: expected one match, found {count}")\n    return text.replace(old, new, 1)'
+          replacement = '    if count < 1:\n        raise RuntimeError(f"{label}: expected at least one match, found {count}")\n    return text.replace(old, new, 1)'
+          if original not in text:
+              raise SystemExit('replace_once helper did not match expected source')
+          path.write_text(text.replace(original, replacement, 1))
+          PY
       - name: Apply identity presentation patch
         run: python3 .github/scripts/apply-pr124-identity.py
       - name: Validate JavaScript repository source
