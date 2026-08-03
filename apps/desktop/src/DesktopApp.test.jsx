@@ -1,5 +1,5 @@
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -101,18 +101,136 @@ describe("ClaimGuard desktop cache behaviour", () => {
   });
 
   it("marks offline cache data visibly and blocks operational writes", async () => {
+    const offlineStatus = baseStatus({
+      authenticated: true,
+      cache: { freshness: "Offline", claims: [{ claimId: "OFFLINE-1", status: "FLAGGED" }], dashboard: null },
+    });
     setDesktopInvokeForTests(async (command) => {
-      if (command === "desktop_status") return baseStatus({
-        authenticated: true,
-        cache: { freshness: "Offline", claims: [{ claimId: "OFFLINE-1", status: "FLAGGED" }], dashboard: null },
-      });
-      if (command === "synchronize_desktop") return new Promise(() => {});
+      if (command === "desktop_status" || command === "synchronize_desktop") return offlineStatus;
+      if (command === "desktop_claim_details") return {
+        available: true,
+        fetchedAt: "2026-08-01T09:00:00.000Z",
+        claim: { claimId: "OFFLINE-1", status: "FLAGGED", currentClaimVersion: 1 },
+      };
       throw new Error(`unexpected ${command}`);
     });
     render(<DesktopApp />);
     expect(await screen.findByText("Offline data is read-only")).toBeInTheDocument();
     expect(screen.getByText("Offline", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText(/Investigation creation, notes, evidence/i)).toBeInTheDocument();
+
+    await userEvent.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    const dialog = await screen.findByRole("dialog", { name: "Claim OFFLINE-1" });
+    expect(within(dialog).getByRole("status")).toHaveTextContent(/last cached claim detail/i);
+  });
+
+  it("keeps loading and read errors inside the open detail dialog", async () => {
+    let rejectDetails;
+    const pendingDetails = new Promise((_resolve, reject) => { rejectDetails = reject; });
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: {
+        freshness: "Fresh",
+        claims: [],
+        investigations: [],
+        dashboard: null,
+        suspiciousNetwork: {
+          summary: {},
+          nodes: [],
+          edges: [{ cluster_id: "cluster-1", claim_id: "CLAIM-REMOTE-1", billed_amount: 900, risk_score: 78 }],
+        },
+      },
+    });
+    setDesktopInvokeForTests(async (command) => {
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      if (command === "desktop_claim_details") return pendingDetails;
+      throw new Error(`unexpected ${command}`);
+    });
+
+    render(<DesktopApp />);
+    await userEvent.click((await screen.findAllByRole("button", { name: "Risk signals" }))[0]);
+    await userEvent.click(screen.getByRole("button", { name: /CLAIM-REMOTE-1/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Loading claim/i });
+    expect(within(dialog).getByText("Loading claim detail…")).toBeInTheDocument();
+
+    rejectDetails(new Error("Cached claim detail is unavailable."));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Cached claim detail is unavailable.");
+    expect(screen.getByRole("dialog")).toBe(dialog);
+  });
+
+  it("traps focus, blocks the background, closes with Escape, and restores focus", async () => {
+    const claim = { claimId: "CLAIM-FOCUS-1", status: "FLAGGED", riskScore: 72, currentClaimVersion: 1 };
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: { freshness: "Fresh", claims: [claim], investigations: [], dashboard: null, suspiciousNetwork: null },
+    });
+    setDesktopInvokeForTests(async (command) => {
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      if (command === "desktop_claim_details") return { available: true, claim };
+      throw new Error(`unexpected ${command}`);
+    });
+
+    const user = userEvent.setup();
+    const previousOverflow = document.body.style.overflow;
+    render(<DesktopApp />);
+    await user.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
+    const trigger = screen.getByRole("button", { name: "Open" });
+    await user.click(trigger);
+
+    const dialog = await screen.findByRole("dialog", { name: "Claim CLAIM-FOCUS-1" });
+    const close = within(dialog).getByRole("button", { name: "Close claim detail" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    await waitFor(() => expect(close).toHaveFocus());
+    expect(document.body.style.overflow).toBe("hidden");
+    const background = Array.from(document.body.children).find((element) => element !== dialog.parentElement);
+    expect(background).toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "true");
+
+    await user.tab();
+    expect(close).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+    expect(document.body.style.overflow).toBe(previousOverflow);
+    expect(background).not.toHaveAttribute("inert");
+    expect(background).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("ignores a late detail response after switching overlays", async () => {
+    let resolveClaim;
+    const pendingClaim = new Promise((resolve) => { resolveClaim = resolve; });
+    const investigation = {
+      investigationId: "INV-RACE-1",
+      claimId: "CLAIM-RACE-1",
+      status: "OPEN",
+      priority: "NORMAL",
+      recordVersion: 1,
+    };
+    const claim = { claimId: "CLAIM-RACE-1", status: "FLAGGED", riskScore: 81, investigation };
+    const currentStatus = baseStatus({
+      authenticated: true,
+      cache: { freshness: "Fresh", claims: [claim], investigations: [investigation], dashboard: null, suspiciousNetwork: null },
+      session: { clientCapabilities: ["investigations.view"] },
+    });
+    setDesktopInvokeForTests(async (command) => {
+      if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
+      if (command === "desktop_claim_details") return pendingClaim;
+      if (command === "desktop_investigation_details") return { available: true, investigation };
+      throw new Error(`unexpected ${command}`);
+    });
+
+    render(<DesktopApp />);
+    await userEvent.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(await screen.findByRole("dialog", { name: "Claim CLAIM-RACE-1" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open case" }));
+    expect(await screen.findByRole("dialog", { name: "Investigation INV-RACE-1" })).toBeInTheDocument();
+
+    resolveClaim({ available: true, claim: { ...claim, memberId: "late-response" } });
+    await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+    expect(screen.getByRole("dialog", { name: "Investigation INV-RACE-1" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Claim CLAIM-RACE-1" })).not.toBeInTheDocument();
   });
 
   it("filters cached claims, opens authoritative detail, and follows a linked investigation", async () => {
@@ -189,15 +307,25 @@ describe("ClaimGuard desktop cache behaviour", () => {
     expect(screen.queryByText("CLAIM-LOW-1")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
-    expect(await screen.findByText("Authoritative claim detail")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Claim CLAIM-HIGH-1" })).toBeInTheDocument();
+    expect(screen.getByText("Authoritative claim detail")).toBeInTheDocument();
     expect(screen.getByText("Billing frequency exceeds the peer baseline.")).toBeInTheDocument();
     expect(screen.getByText("Frequency Spike")).toBeInTheDocument();
     expect(screen.getByText("member-token-1")).toBeInTheDocument();
     expect(calls).toContainEqual(["desktop_claim_details", { claimId: "CLAIM-HIGH-1" }]);
 
     await userEvent.click(screen.getByRole("button", { name: "Open case" }));
-    expect(await screen.findByText("Investigation workspace")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Investigation INV-LINKED-1" })).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByText("Investigation workspace")).toBeInTheDocument();
     expect(calls).toContainEqual(["desktop_investigation_details", { investigationId: "INV-LINKED-1" }]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Open related claim" }));
+    expect(await screen.findByRole("dialog", { name: "Claim CLAIM-HIGH-1" })).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await userEvent.keyboard("{Escape}");
+    expect(await screen.findByLabelText("Search claims")).toHaveValue("PROC-HIGH");
+    expect(screen.getByRole("heading", { name: "Claims" })).toBeInTheDocument();
   });
 });
 

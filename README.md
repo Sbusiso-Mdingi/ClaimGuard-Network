@@ -8,7 +8,22 @@
 
 **Author:** [Sbusiso Mdingi](https://github.com/Sbusiso-Mdingi)
 
-Tenant-isolated medical-claim ingestion, fraud detection, investigation, and reporting platform for South African medical schemes. ClaimGuard allows multiple schemes to contribute claims signals to a shared fraud-detection graph **without exposing raw member or provider PII to each other**.
+> **Naming note:** ClaimGuard is an internal project name, not a cleared commercial trademark.
+>
+> **Maturity note:** This repository describes a production-shaped prototype. It is not evidence of regulatory approval, a live medical-scheme integration, or production readiness.
+
+ClaimGuard is a privacy-preserving claims-risk, investigation, and cross-scheme intelligence platform for South African medical schemes. It identifies suspicious claims, explains the signals to authorised scheme personnel, and supports the scheme's own investigation process.
+
+ClaimGuard does **not** determine guilt, stop payments, reject claims, impose recoveries, or instruct another scheme to take adverse action. A scheme decides whether to investigate, its authorised investigators conduct the investigation, and an authorised human decision-maker records the outcome. Where an eligible substantiated outcome is shared, other schemes receive a bounded investigative lead and remain responsible for their own assessment and decisions.
+
+The platform uses an append-only, tamper-evident history while allowing active network notices to be corrected, withdrawn, appealed, superseded, and expired. It does not maintain a permanent, uncorrectable blacklist.
+
+See:
+
+- [`ClaimGuard_Technical_Spec.md`](ClaimGuard_Technical_Spec.md) for the product and governance model;
+- [`docs/production-data-boundary.md`](docs/production-data-boundary.md) for environment separation and safe go-live rules;
+- [`docs/environment-matrix.md`](docs/environment-matrix.md) for the approved environment structure;
+- [`docs/production-readiness-qualification-plan.md`](docs/production-readiness-qualification-plan.md) for the evidence required before live use.
 
 ---
 
@@ -19,55 +34,105 @@ This is a [pnpm workspace](https://pnpm.io/workspaces) monorepo orchestrated by 
 ### Applications (`apps/`)
 
 | Package | Language | Description |
-|---------|----------|-------------|
-| `@claimguard/api` | JavaScript | Authenticated claim-ingestion boundary, detection/report consumer, and platform administration API (Hono + tRPC) |
-| `@claimguard/web` | React / JSX | Investigator dashboard, scheme admin, and platform admin UI (React 19, React Router, Tailwind CSS) |
-| `@claimguard/provisioning-worker` | JavaScript | Azure Container Apps Job for automated medical-aid provisioning and route promotion |
-| `apps/simulator-worker` | — | Build-only stub for the simulator worker |
+|---|---|---|
+| `@claimguard/api` | JavaScript | Authenticated claim-ingestion boundary, report/detection consumer, investigation workflow, and platform administration API |
+| `@claimguard/web` | React / JSX | Investigator, scheme-admin, and platform-admin UI |
+| `@claimguard/provisioning-worker` | JavaScript | Azure Container Apps Job for audited organisation and route provisioning |
+| `apps/simulator-worker` | — | Build-only stub for simulation work |
 
 ### Packages (`packages/`)
 
 | Package | Language | Description |
-|---------|----------|-------------|
-| `@claimguard/database` | JavaScript | Operational data-plane: claim ingestion, outbox, investigations, fraud workflow, ledger, tenant connection management (Drizzle ORM + MySQL) |
-| `@claimguard/control-plane-database` | JavaScript | Control-plane schema, migrations, authentication/session service, identity, model deployments, release governance, provisioning, and diagnostics |
-| `@claimguard/shared-schema` | JavaScript | Shared Zod validation schemas consumed by the API and web app |
-| `@claimguard/claimguard-sdk` | Python | POPIA-compliant edge SDK for local PII tokenization and authenticated claim ingestion |
+|---|---|---|
+| `@claimguard/database` | JavaScript | Claims, outbox, investigations, human decision workflow, audit events, and tenant routing |
+| `@claimguard/control-plane-database` | JavaScript | Organisations, authentication, route governance, model deployments, releases, and diagnostics |
+| `@claimguard/shared-schema` | JavaScript | Shared validation schemas |
+| `@claimguard/claimguard-sdk` | Python | Edge pseudonymisation and authenticated ingestion |
 
 ### Services (`services/`)
 
 | Package | Language | Description |
-|---------|----------|-------------|
-| `claimguard-report-producer` | Python | Durable worker for outbox-driven report production, prospective model scoring, and report publishing |
-| `claimguard-detection-engine` | Python | Tenant-scoped fraud detection: entity extraction, relationship graph construction, modular rule engine, and deterministic risk scoring |
+|---|---|---|
+| `claimguard-report-producer` | Python | Durable scoring/report orchestration from authoritative tenant snapshots |
+| `claimguard-detection-engine` | Python | Tenant-scoped entity extraction, relationship graphs, rules, and deterministic risk scoring |
 
-### Tooling (`tools/`)
+### Tooling and infrastructure
 
-Operator scripts for production verification, deployment validation, canary testing, diagnostics, and medical-aid simulation. See [`tools/README.md`](tools/README.md).
+- `tools/` contains verification, deployment, canary, diagnostics, and simulation scripts.
+- `infra/` contains Azure Bicep and deployment support.
+- `docs/` contains architecture, privacy, security, operations, and qualification records.
 
-### Infrastructure (`infra/`)
+---
 
-Azure Bicep templates for the API, report worker, event-driven worker, recovery job, and ensemble canary infrastructure.
+## Architecture Overview
+
+```text
+Medical-aid system
+      |
+      v
+Edge SDK: pseudonymise + authenticate
+      |
+      v
+POST /claims/ingest
+      |
+      v
+Tenant-routed operational database + transactional outbox
+      |
+      v
+Report producer -> detection engine -> versioned report storage
+      |
+      v
+Scheme analyst triage -> scheme investigation -> authorised human outcome
+      |
+      v
+Optional bounded network notice, subject to approved sharing governance
+```
+
+A model or rule result is a risk signal only. It has no direct payment, recovery, sanction, or contracting effect.
+
+---
+
+## Environment Boundary
+
+### Development
+
+- Local resources and generated claims.
+- Disposable identities and databases.
+- No real patient or scheme data.
+
+### Staging
+
+- The current Azure environment and synthetic schemes, including Ubuntu.
+- Synthetic claims, model tests, migration rehearsals, and release qualification.
+
+### Production
+
+- Separate databases, queues, identities, secrets, storage, telemetry, ingestion credentials, backups, and endpoints.
+- Real medical schemes only.
+- Empty operational stores plus approved schema, model catalogue, reference data, roles, and configuration.
+- Never initialised from a staging database dump.
+
+### Production canary
+
+- An isolated internal synthetic-only tenant.
+- Separate database, queue, storage, identity, and credential route.
+- No external sharing, exports, billing, or scheme data.
+- Used only for non-destructive production verification.
+
+Code, schema migrations, approved models, and approved reference/configuration data move toward production. Synthetic claims, members, providers, outbox jobs, reports, staging audit records, and credentials do not.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install all workspace dependencies
 pnpm install
-
-# Build every package
 pnpm build
-
-# Run all tests (JavaScript + Python)
 pnpm test
-
-# Lint (includes deployment-boundary validation)
 pnpm lint
 ```
 
-Python services use [uv](https://docs.astral.sh/uv/) for dependency management. Inside each Python service or package:
+Python services use `uv`:
 
 ```bash
 uv sync
@@ -76,166 +141,51 @@ uv run pytest tests
 
 ---
 
-## Architecture Overview
-
-ClaimGuard follows a strict producer/consumer boundary:
-
-```
-Medical-Aid Server ──► Edge SDK (tokenize PII) ──► POST /claims/ingest
-                                                          │
-                                                    ┌─────▼──────┐
-                                                    │   API       │
-                                                    │  (Hono +    │
-                                                    │   tRPC)     │
-                                                    └──────┬──────┘
-                                                           │ atomic commit
-                                                    ┌──────▼──────┐
-                                                    │  Operational │
-                                                    │  Database    │
-                                                    │  (MySQL)     │
-                                                    └──────┬──────┘
-                                                           │ outbox job
-                                                    ┌──────▼──────┐
-                                                    │   Report     │
-                                                    │   Producer   │◄──► Model Service
-                                                    │   (Worker)   │     (ML Ensemble)
-                                                    └──────┬──────┘
-                                                           │ invokes
-                                                    ┌──────▼──────┐
-                                                    │  Detection   │
-                                                    │  Engine      │
-                                                    └──────┬──────┘
-                                                           │ publishes
-                                                    ┌──────▼──────┐
-                                                    │  Report      │
-                                                    │  Storage     │
-                                                    │  (Blob/File) │
-                                                    └──────────────┘
-```
-
-- **`apps/api`** — authenticated claim-ingestion boundary and read-only report/detection consumer.
-- **`apps/web`** — consumes API endpoints only; never accesses databases directly.
-- **`services/report-producer`** — leases outbox jobs and orchestrates detection runs from authoritative tenant snapshots. Integrates with an external ML model service for prospective claim screening.
-- **`services/detection-engine`** — stateless fraud analysis; produces structured detection reports with graph entities, relationships, rule hits, and risk scores.
-- **`apps/provisioning-worker`** — automated provisioning of medical-aid organisations, database routes, and Key Vault RBAC.
-
----
-
 ## Runtime Data Flow
 
-ClaimGuard does not generate runtime claims. Medical-aid systems and approved test producers submit tenant-scoped batches to `POST /claims/ingest`. The API commits reference records and claims atomically, writes an outbox job in the same transaction, and the report worker reloads the authoritative tenant snapshot before detection.
+ClaimGuard does not generate runtime claims inside the platform. Medical-aid systems and approved test producers submit bounded tenant-scoped batches. The API commits reference records, claims, and an outbox job atomically. The report worker reloads the authoritative tenant snapshot before scoring.
 
-See `docs/claim-ingestion.md` for the request contract, machine-to-machine authentication, limits, and the desktop-producer handoff.
+Every authenticated identity resolves to one tenant and one environment-specific database, queue, storage, and strategy route. The API, workers, and administration operations fail closed if the authenticated tenant or environment disagrees with the resolved route.
 
-Platform administrators can create, provision, upgrade, and activate medical aids from the web interface. After activation, the same page issues a per-server credential and displays the bounded claim-sync instructions; routine onboarding does not require Azure Portal access.
-The Windows host baseline is documented in `docs/desktop-producer-windows.md`.
+Ubuntu is a staging tenant and is not embedded in deployment, migration, or production seed logic.
 
 ---
 
-## Report Producer Worker
+## Human-Supervised Investigation Model
 
-```bash
-cd services/report-producer
-uv sync
-CONTROL_PLANE_MYSQL_URL='mysql://...' \
-MYSQL_URL='mysql://...' \
-REPORT_WORKER_ORGANISATION_ID='organisation-id' \
-INTERNAL_SERVICE_ORGANISATION_IDS='organisation-id' \
-uv run claimguard-produce-report worker once --backend file --output-dir reports
+The target lifecycle is:
+
+```text
+SIGNAL_GENERATED
+-> TRIAGE_PENDING
+-> DISMISSED / MONITORING / INVESTIGATION_OPEN
+-> NOTICE_RECORDED / RESPONSE_PENDING / EVIDENCE_REVIEW
+-> INVESTIGATION_REPORT_COMPLETED
+-> OUTCOME_REVIEW_PENDING
+-> OUTCOME_APPROVED
+-> NETWORK_NOTICE_ACTIVE (when authorised)
+-> CORRECTED / WITHDRAWN / APPEAL_OR_REVIEW / EXPIRED_OR_SUPERSEDED
 ```
 
-For Azure mode, use backend `azure_blob` with storage configuration and managed identity.
+The investigation report does not automatically activate a network notice. A separate authorised decision and sharing approval are required. Active notices can be corrected or removed while the append-only historical event remains auditable.
 
 ---
 
-## Web Application
+## Production Readiness
 
-The investigator dashboard is a React 19 SPA built with React Router, Tailwind CSS, and shadcn-style primitives. Authentication uses server-side sessions (session mode).
+The repository is production-shaped, not production-ready. Live medical-scheme use requires, among other things:
 
-### Pages
+- legal and POPIA assessment;
+- responsible-party/operator allocation and agreements;
+- prior-authorisation analysis where applicable;
+- independent security and cryptographic review;
+- penetration test and remediation;
+- backup restoration and disaster-recovery exercises;
+- access review;
+- model validation, reproducibility, fairness, and drift controls;
+- incident-response exercise;
+- retention and deletion tests;
+- a silent-mode single-scheme pilot;
+- scheme governance approval and appropriate regulator engagement.
 
-| Page | Description |
-|------|-------------|
-| **Dashboard** | KPI overview and recent detections |
-| **Claims Explorer** | Searchable, sortable, paginated claim table |
-| **Claim Details** | Entity/relationship context and claim risk panel |
-| **Network Graph** | Interactive zoom/pan/select graph view (React Flow) |
-| **Risk Panel** | Severity, explainability, triggered rules, and evidence |
-| **Detection History** | Timeline of captured detection snapshots |
-| **Investigations** | Investigation case management and workflow |
-| **Investigation Workspace** | Individual investigation detail with evidence and notes |
-| **Committee Registry** | Fraud committee membership management |
-| **Scheme Admin** | Scheme-level administration |
-| **Platform Admin** | Platform-wide administration, lifecycle management, and release governance |
-
-### Refresh Behaviour
-
-- **Live Refresh** — polls claims and detection endpoints every 15 seconds.
-- **Refresh Off** — freezes auto-refresh until re-enabled.
-- **Refresh Now** — performs an immediate fetch in both modes.
-
----
-
-## Infrastructure & CI
-
-| Tool | Purpose |
-|------|---------|
-| **GitHub Actions** | CI (`ci.yml`), infrastructure validation, report-worker deploy, ensemble release staging/finalization, CodeQL |
-| **Codecov** | Coverage gating at 70% target for both Python and JavaScript flags |
-| **Azure Bicep** | Infrastructure-as-code for API, report worker, recovery job, and ensemble canary |
-| **Sentry** | Error tracking with PII scrubbing (API and web) |
-| **New Relic** | API performance tracing and APM |
-| **Azure Key Vault** | Secrets management via managed identity |
-
----
-
-## Documentation Index
-
-### Architecture & Design
-
-- `docs/azure-production-architecture.md`
-- `docs/production-shaped-architecture.md`
-- `docs/architecture-migration-blueprint.md`
-- `docs/claim-ingestion.md`
-
-### Operations
-
-- `docs/operations-runbook.md`
-- `docs/backup-and-restore-runbook.md`
-- `docs/environment-matrix.md`
-- `docs/desktop-producer-windows.md`
-
-### Security & Access Control
-
-- `docs/secrets-and-configuration.md`
-- `docs/access-control-matrix.md`
-- `docs/threat-model.md`
-- `docs/risk-register.md`
-- `docs/incident-response-plan.md`
-
-### Observability
-
-- `docs/observability-dashboards.md`
-- `docs/observability-and-credential-rotation.md`
-- `docs/alert-definitions.md`
-
-### Authentication & Routing
-
-- `docs/phase-11c-authentication.md`
-- `docs/phase-11d-data-plane-routing.md`
-- `docs/phase11e-provisioner-rbac.md`
-
-### Production Readiness
-
-- `docs/phase-12-production-shaped-hardening.md`
-- `docs/production-readiness-qualification-plan.md`
-
-### CI
-
-- `docs/CI.md`
-
----
-
-## Runbook
-
-For production operations and incident checks, see `docs/operations-runbook.md`.
+No repository test, cloud deployment, or model result alone establishes production readiness.

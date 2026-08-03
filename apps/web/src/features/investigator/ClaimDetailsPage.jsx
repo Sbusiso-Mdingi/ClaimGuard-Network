@@ -26,7 +26,14 @@ function mapClaimPayload(claim) {
     schemeId: claim?.schemeId || null,
     memberId: claim?.memberId || null,
     providerId: claim?.providerId || null,
-    policyHolder: claim?.memberId || "Unknown",
+    member: claim?.member || { displayName: null },
+    provider: claim?.provider || {
+      displayName: null,
+      practiceNumber: null,
+      specialty: null,
+      region: null,
+    },
+    policyHolder: claim?.member?.displayName || "Member unavailable",
     status,
     detectionDate,
     riskScore: score,
@@ -344,7 +351,7 @@ export function ClaimDetailsPage({ report, graph }) {
     <PageFrame
       eyebrow="Claim Details"
       title={claim.claimId}
-      description={`Policy holder ${claim.policyHolder} · ${new Date(claim.detectionDate).toLocaleString()}`}
+      description={`Member ${claim.policyHolder} · ${new Date(claim.detectionDate).toLocaleString()}`}
       actions={[
         <MetricPill key="status" label="Status" value={claim.status} tone={claim.status === "CONFIRMED_FRAUD" ? "danger" : claim.status === "UNDER_INVESTIGATION" ? "warning" : "default"} />,
         <MetricPill key="rules" label="Rules" value={`${(claim.triggeredRules || []).length}`} />,
@@ -375,8 +382,17 @@ export function ClaimDetailsPage({ report, graph }) {
               <p className="font-data mt-1 text-sm font-semibold">{claim.claimId}</p>
             </div>
             <div className="rounded-xl border border-border/70 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Policy holder</p>
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Member</p>
               <p className="mt-1 text-sm font-semibold">{claim.policyHolder}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Provider</p>
+              <p className="mt-1 text-sm font-semibold">{claim.provider?.displayName || "Provider unavailable"}</p>
+              {[claim.provider?.specialty, claim.provider?.region].filter(Boolean).length > 0 ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[claim.provider?.specialty, claim.provider?.region].filter(Boolean).join(" · ")}
+                </p>
+              ) : null}
             </div>
             <div className="rounded-xl border border-border/70 px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Risk score</p>
@@ -387,6 +403,28 @@ export function ClaimDetailsPage({ report, graph }) {
               <p className="mt-1 text-sm font-semibold">{claim.severity}</p>
             </div>
           </div>
+
+          <details className="mt-4 rounded-xl border border-border/70">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">
+              Technical identifiers
+            </summary>
+            <dl className="grid gap-3 border-t border-border/70 p-4 text-sm md:grid-cols-2">
+              <div>
+                <dt className="text-xs text-muted-foreground">Member token</dt>
+                <dd className="mt-1 break-all font-data text-xs">{claim.memberId || "Not recorded"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Provider token</dt>
+                <dd className="mt-1 break-all font-data text-xs">{claim.providerId || "Not recorded"}</dd>
+              </div>
+              {claim.provider?.practiceNumber ? (
+                <div>
+                  <dt className="text-xs text-muted-foreground">Practice number</dt>
+                  <dd className="mt-1 font-data text-xs">{claim.provider.practiceNumber}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </details>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <div className="rounded-xl border border-border/70 p-4">

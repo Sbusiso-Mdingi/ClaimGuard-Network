@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Activity from "lucide-react/dist/esm/icons/activity.mjs";
 import AlertTriangle from "lucide-react/dist/esm/icons/alert-triangle.mjs";
 import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.mjs";
@@ -142,6 +143,109 @@ function SearchField({ value, onChange, label, placeholder }) {
   );
 }
 
+function DetailOverlay({ children, labelId, onClose, open }) {
+  const backdropRef = useRef(null);
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const previouslyFocused = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    const backgroundElements = Array.from(document.body.children)
+      .filter((element) => element !== backdropRef.current)
+      .map((element) => ({
+        element,
+        ariaHidden: element.getAttribute("aria-hidden"),
+        hadInert: element.hasAttribute("inert"),
+      }));
+    document.body.style.overflow = "hidden";
+    backgroundElements.forEach(({ element }) => {
+      element.setAttribute("aria-hidden", "true");
+      element.setAttribute("inert", "");
+    });
+
+    const focusableSelector = [
+      "button:not([disabled])",
+      "[href]",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+
+    const focusInitialControl = () => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const initialControl = dialog.querySelector("[data-overlay-initial-focus]");
+      (initialControl || dialog).focus();
+    };
+
+    const animationFrame = window.requestAnimationFrame(focusInitialControl);
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const dialog = dialogRef.current;
+      const focusable = dialog
+        ? Array.from(dialog.querySelectorAll(focusableSelector))
+        : [];
+      if (!focusable.length) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      backgroundElements.forEach(({ element, ariaHidden, hadInert }) => {
+        if (ariaHidden === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", ariaHidden);
+        if (!hadInert) element.removeAttribute("inert");
+      });
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
+        previouslyFocused.focus();
+      }
+    };
+  }, [onClose, open]);
+
+  if (!open) return null;
+  return createPortal(
+    <div ref={backdropRef} className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelId}
+        tabIndex={-1}
+        onMouseDown={(event) => event.stopPropagation()}
+        className="max-h-[calc(100vh-1.5rem)] w-full max-w-6xl overflow-y-auto overscroll-contain rounded-lg bg-card shadow-2xl outline-none sm:max-h-[calc(100vh-3rem)]"
+      >
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function Overview({ claims, investigations, summary, network, openClaim, openInvestigation, canViewInvestigations }) {
   const highRisk = claims
     .filter((claim) => Number(claim.riskScore) >= 70)
@@ -200,21 +304,23 @@ function InvestigationCreationPanel({ claim, writesAllowed, canCreate, canAssign
   return <div className="rounded-xl border border-primary/20 bg-primary/5 p-4"><div><p className="text-sm font-semibold">Create an investigation</p><p className="mt-1 text-xs text-muted-foreground">Creation is sent directly to the authoritative scheme data plane and checked against claim version {claim.currentClaimVersion}.</p></div><div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]"><label className="grid gap-2 text-sm font-medium">Priority<select aria-label="New investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={priority} onChange={(event) => setPriority(event.target.value)} disabled={!writesAllowed}>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label>{canAssign ? <label className="grid gap-2 text-sm font-medium">Assign investigator<select aria-label="New investigation assignee" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={assignedInvestigator} onChange={(event) => setAssignedInvestigator(event.target.value)} disabled={!writesAllowed}><option value="">Leave unassigned</option>{investigators.map((user) => <option key={user.userId} value={user.userId}>{user.displayName}</option>)}</select></label> : <div />}<div className="flex items-end"><Button onClick={create} disabled={!writesAllowed || submitting}>{submitting ? "Creating…" : "Create investigation"}</Button></div></div>{!writesAllowed ? <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">Reconnect and synchronize before creating the case.</p> : null}</div>;
 }
 
-function ClaimDetail({ payload, loading, onClose, onOpenInvestigation, onCreateInvestigation, canViewInvestigations, canCreateInvestigations, canAssignInvestigations, investigators, writesAllowed }) {
-  if (!payload && !loading) return null;
+function ClaimDetail({ payload, loading, error, offline, onClose, onOpenInvestigation, onCreateInvestigation, canViewInvestigations, canCreateInvestigations, canAssignInvestigations, investigators, writesAllowed }) {
+  if (!payload && !loading && !error) return null;
   const claim = payload?.claim || null;
   return (
     <Card className="border-primary/20 shadow-lg">
       <CardHeader className="flex-row items-start justify-between gap-4">
-        <div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Authoritative claim detail</p><CardTitle className="mt-2">{claim?.claimId || "Loading claim…"}</CardTitle><CardDescription>{payload?.fetchedAt ? `Fetched ${displayDate(payload.fetchedAt)}` : "Requesting minimum-necessary detail from the scheme data plane."}</CardDescription></div>
-        <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close claim detail</span></Button>
+        <div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Authoritative claim detail</p><CardTitle id="claim-detail-title" className="mt-2"><span className="sr-only">Claim </span>{claim?.claimId || "Loading claim…"}</CardTitle><CardDescription>{payload?.fetchedAt ? `Fetched ${displayDate(payload.fetchedAt)}` : "Requesting minimum-necessary detail from the scheme data plane."}</CardDescription></div>
+        <Button data-overlay-initial-focus variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close claim detail</span></Button>
       </CardHeader>
       <CardContent>
+        {error ? <div role="alert" className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300">{error}</div> : null}
+        {offline && claim ? <div role="status" className="mb-4 flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200"><WifiOff className="mt-0.5 h-4 w-4 shrink-0" />Showing the last cached claim detail. Authoritative updates require a connection.</div> : null}
         {loading && !claim ? <div className="flex items-center gap-3 py-10 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" />Loading claim detail…</div> : null}
         {claim ? <div className="space-y-6">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Billed amount</p><p className="mt-1 font-data text-lg font-semibold">{money(claim.billedAmount)}</p></div><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Risk</p><div className="mt-2"><RiskLabel score={claim.riskScore} /></div></div><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Workflow</p><p className="mt-1 text-sm font-semibold">{enumLabel(claim.status)}</p></div><div className="rounded-xl border border-border bg-secondary/30 p-4"><p className="text-xs text-muted-foreground">Processing</p><p className="mt-1 text-sm font-semibold">{enumLabel(claim.processingStatus)}</p></div></div>
           <div className="grid gap-6 lg:grid-cols-2">
-            <section><h3 className="text-sm font-semibold">Claim information</h3><dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm"><dt className="text-muted-foreground">Service date</dt><dd>{claim.serviceDate || "—"}</dd><dt className="text-muted-foreground">Submitted</dt><dd>{displayDate(claim.submittedAt)}</dd><dt className="text-muted-foreground">Billing code</dt><dd className="font-data text-xs">{claim.billingCode || "—"}</dd><dt className="text-muted-foreground">Member token</dt><dd className="break-all font-data text-xs">{claim.memberId || "—"}</dd><dt className="text-muted-foreground">Provider token</dt><dd className="break-all font-data text-xs">{claim.providerId || "—"}</dd><dt className="text-muted-foreground">Version</dt><dd>{claim.currentClaimVersion ?? "—"}</dd></dl></section>
+            <section><h3 className="text-sm font-semibold">Claim information</h3><dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm"><dt className="text-muted-foreground">Member</dt><dd className="font-medium">{claim.member?.displayName || "Member unavailable"}</dd><dt className="text-muted-foreground">Provider</dt><dd><span className="font-medium">{claim.provider?.displayName || "Provider unavailable"}</span>{[claim.provider?.specialty, claim.provider?.region].filter(Boolean).length > 0 ? <span className="mt-1 block text-xs text-muted-foreground">{[claim.provider?.specialty, claim.provider?.region].filter(Boolean).join(" · ")}</span> : null}</dd><dt className="text-muted-foreground">Service date</dt><dd>{claim.serviceDate || "—"}</dd><dt className="text-muted-foreground">Submitted</dt><dd>{displayDate(claim.submittedAt)}</dd><dt className="text-muted-foreground">Billing code</dt><dd className="font-data text-xs">{claim.billingCode || "—"}</dd><dt className="text-muted-foreground">Version</dt><dd>{claim.currentClaimVersion ?? "—"}</dd></dl><details className="mt-4 rounded-lg border border-border"><summary className="cursor-pointer px-3 py-2 text-xs font-semibold">Technical identifiers</summary><dl className="grid gap-2 border-t border-border p-3 text-xs"><div><dt className="text-muted-foreground">Member token</dt><dd className="mt-1 break-all font-data">{claim.memberId || "—"}</dd></div><div><dt className="text-muted-foreground">Provider token</dt><dd className="mt-1 break-all font-data">{claim.providerId || "—"}</dd></div>{claim.provider?.practiceNumber ? <div><dt className="text-muted-foreground">Practice number</dt><dd className="mt-1 font-data">{claim.provider.practiceNumber}</dd></div> : null}</dl></details></section>
             <section><h3 className="text-sm font-semibold">Detection rationale</h3>{claim.evidence?.length ? <ul className="mt-3 space-y-2">{claim.evidence.map((item) => <li key={item} className="rounded-lg border border-border bg-secondary/20 p-3 text-sm leading-6">{item}</li>)}</ul> : <p className="mt-3 text-sm text-muted-foreground">No persisted detection rationale is available for this claim version.</p>}{claim.triggeredRules?.length ? <div className="mt-3 flex flex-wrap gap-2">{claim.triggeredRules.map((rule) => <StatusPill key={rule} value={rule} tone="warning" />)}</div> : null}</section>
           </div>
           {claim.investigation ? <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold">Linked investigation</p><p className="mt-1 font-data text-xs text-muted-foreground">{claim.investigation.investigationId}</p></div><div className="flex items-center gap-2"><StatusPill value={claim.investigation.status} />{canViewInvestigations ? <Button variant="outline" size="sm" onClick={() => onOpenInvestigation(claim.investigation)}>Open case</Button> : null}</div></div> : null}
@@ -230,19 +336,19 @@ function ClaimsView({ claims, selectedClaim, loading, openClaim, closeClaim, ope
   const [risk, setRisk] = useState("all");
   const filtered = useMemo(() => claims.filter((claim) => {
     const query = search.trim().toLowerCase();
-    const matchesSearch = !query || [claim.claimId, claim.billingCode, claim.status].some((value) => String(value || "").toLowerCase().includes(query));
+    const matchesSearch = !query || [claim.claimId, claim.billingCode, claim.status, claim.member?.displayName, claim.provider?.displayName, claim.provider?.practiceNumber, claim.provider?.specialty, claim.provider?.region].some((value) => String(value || "").toLowerCase().includes(query));
     const score = Number(claim.riskScore);
     const bucket = !Number.isFinite(score) ? "unscored" : score >= 70 ? "high" : score >= 40 ? "medium" : "low";
     return matchesSearch && (risk === "all" || risk === bucket);
   }), [claims, risk, search]);
   return <div className="space-y-6">
-    <Card><CardHeader><CardTitle>Claims queue</CardTitle><CardDescription>Search the bounded local cache. Opening a claim refreshes its authoritative detail when connected.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-3 sm:flex-row"><SearchField label="Search claims" placeholder="Claim ID, billing code, or status" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Risk band</span><select aria-label="Risk band" className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={risk} onChange={(event) => setRisk(event.target.value)}><option value="all">All risk bands</option><option value="high">High risk</option><option value="medium">Medium risk</option><option value="low">Low risk</option><option value="unscored">Unscored</option></select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {claims.length} cached claims</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[860px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Service date</th><th className="px-5 py-3">Amount</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Risk</th><th className="px-5 py-3">Investigation</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((claim) => <tr key={claim.claimId}><td className="px-5 py-4 font-data text-xs font-semibold">{claim.claimId}</td><td className="px-5 py-4">{claim.serviceDate || "—"}</td><td className="px-5 py-4 font-data">{money(claim.billedAmount)}</td><td className="px-5 py-4"><StatusPill value={claim.status} /></td><td className="px-5 py-4"><RiskLabel score={claim.riskScore} /></td><td className="px-5 py-4">{claim.investigation ? <StatusPill value={claim.investigation.priority} /> : <span className="text-xs text-muted-foreground">None</span>}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openClaim(claim)}>Open</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={FileSearch} title="No matching claims" description="Adjust the search or risk filter. Older claims remain available through the web application." /> : null}</CardContent></Card>
+    <Card><CardHeader><CardTitle>Claims queue</CardTitle><CardDescription>Search the bounded local cache. Opening a claim refreshes its authoritative detail when connected.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-3 sm:flex-row"><SearchField label="Search claims" placeholder="Claim, member, provider, billing code, or status" value={search} onChange={setSearch} /><label className="grid gap-1 text-xs text-muted-foreground"><span>Risk band</span><select aria-label="Risk band" className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={risk} onChange={(event) => setRisk(event.target.value)}><option value="all">All risk bands</option><option value="high">High risk</option><option value="medium">Medium risk</option><option value="low">Low risk</option><option value="unscored">Unscored</option></select></label></div><p className="text-xs text-muted-foreground">Showing {filtered.length} of {claims.length} cached claims</p></CardContent><CardContent className="overflow-x-auto p-0"><table className="desktop-claim-table w-full min-w-[1120px] text-left text-sm"><thead className="border-y border-border bg-secondary/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><tr><th className="px-5 py-3">Claim</th><th className="px-5 py-3">Member</th><th className="px-5 py-3">Provider</th><th className="px-5 py-3">Service date</th><th className="px-5 py-3">Amount</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Risk</th><th className="px-5 py-3">Investigation</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-border/70">{filtered.map((claim) => <tr key={claim.claimId}><td className="px-5 py-4 font-data text-xs font-semibold">{claim.claimId}</td><td className="px-5 py-4 font-medium">{claim.member?.displayName || "Member unavailable"}</td><td className="px-5 py-4"><p className="font-medium">{claim.provider?.displayName || "Provider unavailable"}</p>{claim.provider?.specialty ? <p className="mt-1 text-xs text-muted-foreground">{claim.provider.specialty}</p> : null}</td><td className="px-5 py-4">{claim.serviceDate || "—"}</td><td className="px-5 py-4 font-data">{money(claim.billedAmount)}</td><td className="px-5 py-4"><StatusPill value={claim.status} /></td><td className="px-5 py-4"><RiskLabel score={claim.riskScore} /></td><td className="px-5 py-4">{claim.investigation ? <StatusPill value={claim.investigation.priority} /> : <span className="text-xs text-muted-foreground">None</span>}</td><td className="px-5 py-4 text-right"><Button variant="outline" size="sm" onClick={() => openClaim(claim)}>Open</Button></td></tr>)}</tbody></table>{filtered.length === 0 ? <EmptyState icon={FileSearch} title="No matching claims" description="Adjust the search or risk filter. Older claims remain available through the web application." /> : null}</CardContent></Card>
     <ClaimDetail payload={selectedClaim} loading={loading} onClose={closeClaim} onOpenInvestigation={openInvestigation} onCreateInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} />
   </div>;
 }
 
 function InvestigationWorkspace({
-  compact, detail, loading, writesAllowed, canUpdateStatus, canChangePriority, canAssign,
+  compact, detail, loading, error, offline, writesAllowed, canUpdateStatus, canChangePriority, canAssign,
   canAddNote, canUploadEvidence, investigators, onSave, onAddNote, onUploadEvidence, onClose, onOpenClaim,
 }) {
   const record = detail?.investigation || compact;
@@ -262,7 +368,7 @@ function InvestigationWorkspace({
     setDraftAssignee(record?.assignedInvestigator || "");
   }, [record?.assignedInvestigator, record?.investigationId, record?.priority, record?.recordVersion, record?.status]);
 
-  if (!record && !loading) return null;
+  if (!record && !loading && !error) return null;
   const changedStatus = canUpdateStatus && draftStatus !== record?.status;
   const changedPriority = canChangePriority && draftPriority !== record?.priority;
   const changedAssignee = canAssign && draftAssignee && draftAssignee !== record?.assignedInvestigator;
@@ -304,7 +410,9 @@ function InvestigationWorkspace({
       setUploading(false);
     }
   }
-  return <Card className="border-primary/20 shadow-lg"><CardHeader className="flex-row items-start justify-between gap-4"><div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Investigation workspace</p><CardTitle className="mt-2">{record?.investigationId || "Loading investigation…"}</CardTitle><CardDescription>Claim {record?.claimId || "—"} · record version {record?.recordVersion || "—"} · updated {displayDate(record?.updatedAt)}</CardDescription></div><Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close investigation workspace</span></Button></CardHeader><CardContent className="space-y-6">
+  return <Card className="border-primary/20 shadow-lg"><CardHeader className="flex-row items-start justify-between gap-4"><div><p className="font-data text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Investigation workspace</p><CardTitle id="investigation-detail-title" className="mt-2"><span className="sr-only">Investigation </span>{record?.investigationId || "Loading investigation…"}</CardTitle><CardDescription>Claim {record?.claimId || "—"} · record version {record?.recordVersion || "—"} · updated {displayDate(record?.updatedAt)}</CardDescription></div><Button data-overlay-initial-focus variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /><span className="sr-only">Close investigation workspace</span></Button></CardHeader><CardContent className="space-y-6">
+    {error ? <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300">{error}</div> : null}
+    {offline && record ? <div role="status" className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200"><WifiOff className="mt-0.5 h-4 w-4 shrink-0" />Showing the last cached case detail. Authoritative updates require a connection.</div> : null}
     {loading && !detail ? <div className="flex items-center gap-3 py-4 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" />Loading notes and evidence…</div> : null}
     <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr_auto]"><label className="grid gap-2 text-sm font-medium">Status<select aria-label="Investigation status" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftStatus} onChange={(event) => setDraftStatus(event.target.value)} disabled={!writesAllowed || !canUpdateStatus}>{(STATUS_TRANSITIONS[record?.status] || [record?.status]).map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Priority<select aria-label="Investigation priority" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftPriority} onChange={(event) => setDraftPriority(event.target.value)} disabled={!writesAllowed || !canChangePriority}>{PRIORITIES.map((value) => <option key={value} value={value}>{enumLabel(value)}</option>)}</select></label><label className="grid gap-2 text-sm font-medium">Assigned investigator<select aria-label="Assigned investigator" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draftAssignee} onChange={(event) => setDraftAssignee(event.target.value)} disabled={!writesAllowed || !canAssign}><option value="" disabled>Select an investigator</option>{record?.assignedInvestigator && !investigators.some((user) => user.userId === record.assignedInvestigator) ? <option value={record.assignedInvestigator}>{record.assignedInvestigator} (currently assigned)</option> : null}{investigators.map((user) => <option key={user.userId} value={user.userId}>{user.displayName}</option>)}</select></label><div className="flex items-end"><Button onClick={save} disabled={saving || !writesAllowed || (!changedStatus && !changedPriority && !changedAssignee)}>{saving ? "Saving…" : "Save changes"}</Button></div></div>
     {!writesAllowed ? <p className="text-sm text-amber-700 dark:text-amber-300">Reconnect and synchronize before changing authoritative case state.</p> : null}
@@ -339,12 +447,15 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
   const [activeView, setActiveView] = useState("overview");
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [claimLoading, setClaimLoading] = useState(false);
+  const [claimError, setClaimError] = useState("");
   const [selectedInvestigation, setSelectedInvestigation] = useState(null);
   const [investigationDetail, setInvestigationDetail] = useState(null);
   const [investigationLoading, setInvestigationLoading] = useState(false);
+  const [investigationError, setInvestigationError] = useState("");
   const [investigators, setInvestigators] = useState([]);
   const [resetConfirmation, setResetConfirmation] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const detailRequest = useRef(0);
   const syncAttempt = useRef(0);
   const syncingRef = useRef(false);
   const initialSyncStarted = useRef(false);
@@ -421,37 +532,57 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
   const openClaim = useCallback(async (claimOrId) => {
     const claimId = typeof claimOrId === "string" ? claimOrId : claimOrId?.claimId;
     if (!claimId) return;
+    const request = ++detailRequest.current;
     const cached = claims.find((claim) => claim.claimId === claimId) || (typeof claimOrId === "object" ? claimOrId : null);
-    setActiveView("claims");
+    setSelectedInvestigation(null);
+    setInvestigationDetail(null);
+    setInvestigationLoading(false);
+    setInvestigationError("");
     setSelectedClaim(cached ? { claim: cached } : null);
+    setClaimError("");
     setClaimLoading(true);
     try {
-      setSelectedClaim(await desktopBridge.claimDetails(claimId));
+      const detail = await desktopBridge.claimDetails(claimId);
+      if (detailRequest.current === request) setSelectedClaim(detail);
     } catch (error) {
-      onError(error?.message || "Claim details are unavailable.", status.cache?.freshness === "Offline");
+      const message = error?.message || "Claim details are unavailable.";
+      if (detailRequest.current === request) {
+        setClaimError(message);
+        onError(message, status.cache?.freshness === "Offline");
+      }
     } finally {
-      setClaimLoading(false);
+      if (detailRequest.current === request) setClaimLoading(false);
     }
   }, [claims, onError, status.cache?.freshness]);
 
   const openInvestigation = useCallback(async (compact) => {
     const investigationId = compact?.investigationId;
     if (!investigationId) return;
+    const request = ++detailRequest.current;
     const cached = investigations.find((item) => item.investigationId === investigationId) || compact;
-    setActiveView("investigations");
+    setSelectedClaim(null);
+    setClaimLoading(false);
+    setClaimError("");
     setSelectedInvestigation(cached);
     setInvestigationDetail(null);
+    setInvestigationError("");
     setInvestigationLoading(true);
     try {
-      setInvestigationDetail(await desktopBridge.investigationDetails(investigationId));
+      const detail = await desktopBridge.investigationDetails(investigationId);
+      if (detailRequest.current === request) setInvestigationDetail(detail);
     } catch (error) {
-      onError(error?.message || "Investigation details are unavailable.", status.cache?.freshness === "Offline");
+      const message = error?.message || "Investigation details are unavailable.";
+      if (detailRequest.current === request) {
+        setInvestigationError(message);
+        onError(message, status.cache?.freshness === "Offline");
+      }
     } finally {
-      setInvestigationLoading(false);
+      if (detailRequest.current === request) setInvestigationLoading(false);
     }
   }, [investigations, onError, status.cache?.freshness]);
 
   const createInvestigation = useCallback(async (claim, input) => {
+    setClaimError("");
     try {
       const result = await desktopBridge.createInvestigation(
         claim.claimId,
@@ -469,14 +600,18 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
       const message = error?.message || "The investigation could not be created.";
       if (message.includes("STALE_RECORD_VERSION")) {
         await openClaim(claim.claimId);
-        onError("The claim changed on the server. It was refreshed; review it before creating the case.");
+        const staleMessage = "The claim changed on the server. It was refreshed; review it before creating the case.";
+        setClaimError(staleMessage);
+        onError(staleMessage);
       } else {
+        setClaimError(message);
         onError(message, message.toLowerCase().includes("unavailable"));
       }
     }
   }, [onError, onStatus, openClaim, openInvestigation]);
 
   const updateInvestigation = useCallback(async (record, changes) => {
+    setInvestigationError("");
     try {
       const result = await desktopBridge.updateInvestigation(record.investigationId, record.recordVersion, changes);
       onStatus(result.status);
@@ -502,14 +637,18 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
           setSelectedInvestigation(null);
           setInvestigationDetail(null);
         }
-        onError("The investigation changed on the server. The queue was refreshed; review it before trying again.");
+        const staleMessage = "The investigation changed on the server. The queue was refreshed; review it before trying again.";
+        setInvestigationError(staleMessage);
+        onError(staleMessage);
       } else {
+        setInvestigationError(message);
         onError(message, message.toLowerCase().includes("unavailable"));
       }
     }
   }, [onError, onStatus, syncNow]);
 
   const refreshAfterInvestigationMutation = useCallback(async (result) => {
+    setInvestigationError("");
     onStatus(result.status);
     setSelectedInvestigation(result.investigation);
     const refreshed = await desktopBridge.investigationDetails(result.investigation.investigationId);
@@ -518,26 +657,47 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
   }, [onStatus]);
 
   const addInvestigationNote = useCallback(async (record, input) => {
+    setInvestigationError("");
     try {
       const result = await desktopBridge.addInvestigationNote(record.investigationId, record.recordVersion, input.text, input.noteType);
       await refreshAfterInvestigationMutation(result);
     } catch (error) {
       const message = error?.message || "The investigation note could not be added.";
       if (message.includes("STALE_RECORD_VERSION")) await openInvestigation(record);
-      onError(message.includes("STALE_RECORD_VERSION") ? "The investigation changed on the server. It was refreshed; review it before adding the note." : message, message.toLowerCase().includes("unavailable"));
+      const detailMessage = message.includes("STALE_RECORD_VERSION") ? "The investigation changed on the server. It was refreshed; review it before adding the note." : message;
+      setInvestigationError(detailMessage);
+      onError(detailMessage, message.toLowerCase().includes("unavailable"));
     }
   }, [onError, openInvestigation, refreshAfterInvestigationMutation]);
 
   const uploadInvestigationEvidence = useCallback(async (record, input) => {
+    setInvestigationError("");
     try {
       const result = await desktopBridge.uploadInvestigationEvidence(record.investigationId, record.recordVersion, input);
       await refreshAfterInvestigationMutation(result);
     } catch (error) {
       const message = error?.message || "The evidence could not be uploaded.";
       if (message.includes("STALE_RECORD_VERSION")) await openInvestigation(record);
-      onError(message.includes("STALE_RECORD_VERSION") ? "The investigation changed on the server. It was refreshed; review it before uploading evidence." : message, message.toLowerCase().includes("unavailable"));
+      const detailMessage = message.includes("STALE_RECORD_VERSION") ? "The investigation changed on the server. It was refreshed; review it before uploading evidence." : message;
+      setInvestigationError(detailMessage);
+      onError(detailMessage, message.toLowerCase().includes("unavailable"));
     }
   }, [onError, openInvestigation, refreshAfterInvestigationMutation]);
+
+  const closeClaim = useCallback(() => {
+    detailRequest.current += 1;
+    setSelectedClaim(null);
+    setClaimLoading(false);
+    setClaimError("");
+  }, []);
+
+  const closeInvestigation = useCallback(() => {
+    detailRequest.current += 1;
+    setSelectedInvestigation(null);
+    setInvestigationDetail(null);
+    setInvestigationLoading(false);
+    setInvestigationError("");
+  }, []);
 
   async function signOut() {
     await desktopBridge.logout();
@@ -567,10 +727,16 @@ export function DesktopWorkspace({ status, onStatus, onError }) {
       {status.error ? <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-700 dark:text-rose-300">{status.error}</div> : null}
       {!writesAllowed ? <div className="flex gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200"><WifiOff className="h-5 w-5 shrink-0" /><div><p className="font-semibold">Offline data is read-only</p><p className="mt-1">Investigation creation, notes, evidence, status transitions, and fraud decisions are blocked until authoritative connectivity returns. Scheme device and activation-key management remains on the ClaimGuard web application.</p></div></div> : null}
       {activeView === "overview" ? <Overview claims={claims} investigations={investigations} summary={summary} network={network} openClaim={openClaim} openInvestigation={openInvestigation} canViewInvestigations={canViewInvestigations} /> : null}
-      {activeView === "claims" ? <ClaimsView claims={claims} selectedClaim={selectedClaim} loading={claimLoading} openClaim={openClaim} closeClaim={() => setSelectedClaim(null)} openInvestigation={openInvestigation} createInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} /> : null}
-      {activeView === "investigations" && canViewInvestigations ? <InvestigationsView investigations={investigations} selection={selectedInvestigation} detail={investigationDetail} loading={investigationLoading} writesAllowed={writesAllowed} capabilities={capabilities} investigators={investigators} openInvestigation={openInvestigation} closeInvestigation={() => { setSelectedInvestigation(null); setInvestigationDetail(null); }} updateInvestigation={updateInvestigation} addInvestigationNote={addInvestigationNote} uploadInvestigationEvidence={uploadInvestigationEvidence} openClaimById={openClaim} /> : null}
+      {activeView === "claims" ? <ClaimsView claims={claims} selectedClaim={null} loading={false} openClaim={openClaim} closeClaim={closeClaim} openInvestigation={openInvestigation} createInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} /> : null}
+      {activeView === "investigations" && canViewInvestigations ? <InvestigationsView investigations={investigations} selection={null} detail={null} loading={false} writesAllowed={writesAllowed} capabilities={capabilities} investigators={investigators} openInvestigation={openInvestigation} closeInvestigation={closeInvestigation} updateInvestigation={updateInvestigation} addInvestigationNote={addInvestigationNote} uploadInvestigationEvidence={uploadInvestigationEvidence} openClaimById={openClaim} /> : null}
       {activeView === "risk" ? <RiskSignalsView network={network} openClaimById={openClaim} /> : null}
       <details className="rounded-xl border border-border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Reset this device</summary><div className="mt-4 max-w-xl space-y-3"><p className="text-sm text-muted-foreground">This local recovery action permanently deletes this Windows user’s encrypted cache, session material, device key, and organisation enrollment. A web administrator must issue a new activation key.</p><label className="grid gap-2 text-sm font-medium">Type RESET CLAIMGUARD<Input value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} /></label><Button variant="destructive" onClick={reset} disabled={resetConfirmation !== "RESET CLAIMGUARD"}><RotateCcw className="mr-2 h-4 w-4" />Delete cache and reset organisation</Button></div></details>
     </main>
+    <DetailOverlay labelId="claim-detail-title" onClose={closeClaim} open={Boolean(selectedClaim || claimLoading || claimError)}>
+      <ClaimDetail payload={selectedClaim} loading={claimLoading} error={claimError} offline={status.cache?.freshness === "Offline"} onClose={closeClaim} onOpenInvestigation={openInvestigation} onCreateInvestigation={createInvestigation} canViewInvestigations={canViewInvestigations} canCreateInvestigations={canCreateInvestigations} canAssignInvestigations={canAssignInvestigations} investigators={investigators} writesAllowed={writesAllowed} />
+    </DetailOverlay>
+    <DetailOverlay labelId="investigation-detail-title" onClose={closeInvestigation} open={Boolean(selectedInvestigation || investigationLoading || investigationError)}>
+      <InvestigationWorkspace compact={selectedInvestigation} detail={investigationDetail} loading={investigationLoading} error={investigationError} offline={status.cache?.freshness === "Offline"} writesAllowed={writesAllowed} canUpdateStatus={capabilities.includes("investigations.update_status")} canChangePriority={capabilities.includes("investigations.change_priority")} canAssign={capabilities.includes("investigations.assign")} canAddNote={capabilities.includes("investigations.add_note")} canUploadEvidence={capabilities.includes("investigations.upload_evidence")} investigators={investigators} onSave={updateInvestigation} onAddNote={addInvestigationNote} onUploadEvidence={uploadInvestigationEvidence} onClose={closeInvestigation} onOpenClaim={openClaim} />
+    </DetailOverlay>
   </div>;
 }

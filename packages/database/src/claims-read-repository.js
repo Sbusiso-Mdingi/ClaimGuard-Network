@@ -31,6 +31,33 @@ function referenceKey(claimId, claimVersion) {
   return `${claimId}\u0000${claimVersion}`;
 }
 
+function displayText(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function memberDisplayName(firstName, lastName) {
+  const canonicalFirstName = displayText(firstName);
+  const canonicalLastName = displayText(lastName);
+  const initial = canonicalFirstName?.charAt(0).toUpperCase() || null;
+  if (initial && canonicalLastName) return `${initial}. ${canonicalLastName}`;
+  return canonicalLastName || initial;
+}
+
+function memberPresentation(row) {
+  return {
+    displayName: memberDisplayName(row.member_first_name, row.member_last_name),
+  };
+}
+
+function providerPresentation(row) {
+  return {
+    displayName: displayText(row.provider_practice_name),
+    practiceNumber: displayText(row.provider_practice_number),
+    specialty: displayText(row.provider_specialty),
+    region: displayText(row.provider_region),
+  };
+}
+
 function parseJsonObject(value) {
   let resolved = value;
   if (Buffer.isBuffer(resolved)) resolved = resolved.toString("utf8");
@@ -472,6 +499,8 @@ function mapClaimRow(row) {
     schemeId: row.scheme_id,
     memberId: row.member_id,
     providerId: row.provider_id,
+    member: memberPresentation(row),
+    provider: providerPresentation(row),
     serviceDate: row.service_date,
     billedAmount: Number(row.amount),
     billingCode: row.billing_code,
@@ -495,6 +524,8 @@ function mapDesktopClaimRow(row) {
   return {
     claimId: claim.claimId,
     currentClaimVersion: claim.currentClaimVersion,
+    member: claim.member,
+    provider: claim.provider,
     serviceDate: claim.serviceDate,
     billedAmount: claim.billedAmount,
     billingCode: claim.billingCode,
@@ -669,6 +700,12 @@ export function createClaimsReadRepository(pool, {
             c.scheme_id,
             c.member_id,
             c.provider_id,
+            m.first_name AS member_first_name,
+            m.last_name AS member_last_name,
+            p.practice_name AS provider_practice_name,
+            p.practice_number AS provider_practice_number,
+            p.specialty AS provider_specialty,
+            p.practice_region AS provider_region,
             c.amount,
             c.created_at,
             c.updated_at,
@@ -698,6 +735,14 @@ export function createClaimsReadRepository(pool, {
             JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.inputDrift.decisionReliability')) AS input_drift_reliability,
             JSON_UNQUOTE(JSON_EXTRACT(d.result_payload, '$.inputDrift.signalCount')) AS input_drift_signal_count
           FROM claims c
+          LEFT JOIN members m
+            ON m.tenant_id = c.tenant_id
+           AND m.scheme_id = c.scheme_id
+           AND m.member_id = c.member_id
+          LEFT JOIN providers p
+            ON p.tenant_id = c.tenant_id
+           AND p.scheme_id = c.scheme_id
+           AND p.provider_id = c.provider_id
           LEFT JOIN claim_detection_results d
             ON d.tenant_id = c.tenant_id
            AND d.claim_id = c.claim_id
@@ -714,6 +759,8 @@ export function createClaimsReadRepository(pool, {
           schemeId: row.scheme_id,
           memberId: row.member_id,
           providerId: row.provider_id,
+          member: memberPresentation(row),
+          provider: providerPresentation(row),
           billedAmount: Number(row.amount),
           submittedAt: row.created_at,
           updatedAt: row.updated_at,
@@ -798,12 +845,26 @@ export function createClaimsReadRepository(pool, {
             c.scheme_id,
             c.member_id,
             c.provider_id,
+            m.first_name AS member_first_name,
+            m.last_name AS member_last_name,
+            p.practice_name AS provider_practice_name,
+            p.practice_number AS provider_practice_number,
+            p.specialty AS provider_specialty,
+            p.practice_region AS provider_region,
             c.service_date,
             c.amount,
             c.billing_code,
             c.created_at,
             c.updated_at
           FROM claims c
+          LEFT JOIN members m
+            ON m.tenant_id = c.tenant_id
+           AND m.scheme_id = c.scheme_id
+           AND m.member_id = c.member_id
+          LEFT JOIN providers p
+            ON p.tenant_id = c.tenant_id
+           AND p.scheme_id = c.scheme_id
+           AND p.provider_id = c.provider_id
           WHERE c.tenant_id = ?
           ORDER BY c.updated_at DESC, c.claim_id ASC
           LIMIT ${paging.pageSize} OFFSET ${paging.offset}
@@ -869,6 +930,12 @@ export function createClaimsReadRepository(pool, {
             c.scheme_id,
             c.member_id,
             c.provider_id,
+            m.first_name AS member_first_name,
+            m.last_name AS member_last_name,
+            p.practice_name AS provider_practice_name,
+            p.practice_number AS provider_practice_number,
+            p.specialty AS provider_specialty,
+            p.practice_region AS provider_region,
             c.service_date,
             c.amount,
             c.billing_code,
@@ -876,6 +943,14 @@ export function createClaimsReadRepository(pool, {
             c.updated_at,
             ${syncUpdatedAt} AS sync_updated_at
           FROM claims c
+          LEFT JOIN members m
+            ON m.tenant_id = c.tenant_id
+           AND m.scheme_id = c.scheme_id
+           AND m.member_id = c.member_id
+          LEFT JOIN providers p
+            ON p.tenant_id = c.tenant_id
+           AND p.scheme_id = c.scheme_id
+           AND p.provider_id = c.provider_id
           LEFT JOIN claim_detection_results d
             ON d.tenant_id = c.tenant_id
            AND d.claim_id = c.claim_id
@@ -925,12 +1000,26 @@ export function createClaimsReadRepository(pool, {
             c.scheme_id,
             c.member_id,
             c.provider_id,
+            m.first_name AS member_first_name,
+            m.last_name AS member_last_name,
+            p.practice_name AS provider_practice_name,
+            p.practice_number AS provider_practice_number,
+            p.specialty AS provider_specialty,
+            p.practice_region AS provider_region,
             c.service_date,
             c.amount,
             c.billing_code,
             c.created_at,
             c.updated_at
           FROM claims c
+          LEFT JOIN members m
+            ON m.tenant_id = c.tenant_id
+           AND m.scheme_id = c.scheme_id
+           AND m.member_id = c.member_id
+          LEFT JOIN providers p
+            ON p.tenant_id = c.tenant_id
+           AND p.scheme_id = c.scheme_id
+           AND p.provider_id = c.provider_id
           WHERE c.tenant_id = ? AND c.claim_id = ?
           LIMIT 1
         `,
