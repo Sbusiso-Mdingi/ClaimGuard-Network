@@ -1,0 +1,37 @@
+name: Apply PR 124 review follow-ups
+
+on:
+  push:
+    branches:
+      - fix/pr124-review-followups
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: fix/pr124-review-followups
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22
+      - name: Apply review follow-ups
+        run: python3 .github/scripts/apply-pr124-review-followups.py
+      - name: Validate changed sources
+        run: |
+          node --check packages/database/src/claims-read-repository.js
+          node --test packages/database/tests/claims-identity-presentation.test.js
+      - name: Commit implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: address PR 124 review follow-ups"
+          git push origin HEAD:fix/pr124-review-followups
