@@ -173,7 +173,10 @@ describe("ClaimGuard desktop cache behaviour", () => {
 
     const user = userEvent.setup();
     const previousOverflow = document.body.style.overflow;
-    render(<DesktopApp />);
+    const appRoot = document.createElement("div");
+    appRoot.id = "app";
+    document.body.appendChild(appRoot);
+    render(<DesktopApp />, { container: appRoot });
     await user.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
     const trigger = screen.getByRole("button", { name: "Open" });
     await user.click(trigger);
@@ -183,9 +186,8 @@ describe("ClaimGuard desktop cache behaviour", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
     await waitFor(() => expect(close).toHaveFocus());
     expect(document.body.style.overflow).toBe("hidden");
-    const background = Array.from(document.body.children).find((element) => element !== dialog.parentElement);
-    expect(background).toHaveAttribute("inert");
-    expect(background).toHaveAttribute("aria-hidden", "true");
+    expect(appRoot).toHaveAttribute("inert");
+    expect(appRoot).toHaveAttribute("aria-hidden", "true");
 
     await user.tab();
     expect(close).toHaveFocus();
@@ -193,8 +195,8 @@ describe("ClaimGuard desktop cache behaviour", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();
     expect(document.body.style.overflow).toBe(previousOverflow);
-    expect(background).not.toHaveAttribute("inert");
-    expect(background).not.toHaveAttribute("aria-hidden");
+    expect(appRoot).not.toHaveAttribute("inert");
+    expect(appRoot).not.toHaveAttribute("aria-hidden");
   });
 
   it("ignores a late detail response after switching overlays", async () => {
@@ -464,11 +466,12 @@ describe("ClaimGuard desktop investigation workspace", () => {
     render(<DesktopApp />);
     await userEvent.click((await screen.findAllByRole("button", { name: /Investigations 1/i }))[0]);
     await userEvent.click(screen.getByRole("button", { name: "Open case" }));
-    await screen.findByText("Investigation workspace");
+    const dialog = await screen.findByRole("dialog", { name: "Investigation INV-STALE" });
+    expect(within(dialog).getByText("Investigation workspace")).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Investigation status"), "UNDER_REVIEW");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/changed on the server/i);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/changed on the server/i);
     await waitFor(() => expect(detailVersions).toEqual([
       "2026-08-01T10:00:00.000Z",
       "2026-08-01T10:05:00.000Z",
