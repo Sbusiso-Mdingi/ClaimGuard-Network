@@ -1,167 +1,308 @@
 # ClaimGuard Network — Technical Specification
 
-**A privacy-preserving, cross-scheme fraud intelligence platform for South African medical schemes**
+**A privacy-preserving claims-risk, investigation, and cross-scheme intelligence platform for South African medical schemes**
 
-**Author:** Sbusiso Mdingi
-**Status:** Production-shaped Architecture (v1.2)
+**Author:** Sbusiso Mdingi  
+**Status:** Production-shaped architecture; not yet approved for live medical-scheme use
 
-**Revision notes (v1.2):** replaced the in-repository generated-data workflow with authenticated external claim ingestion, atomic reference/claim persistence, and durable outbox-driven report production.
-
-> Platform names in this historical design include intended capabilities and
-> are not evidence of a live integration. The authoritative production
-> integration inventory is `docs/observability-and-credential-rotation.md`.
+> ClaimGuard is an internal project name. It is not a final commercial brand and must not be treated as evidence of trademark clearance.
+>
+> Documented capabilities describe the target architecture. They are not evidence of a live medical-scheme integration, regulatory approval, production readiness, or completed legal review.
 
 ---
 
-## 1. Overview
+## 1. Product purpose
 
-Medical schemes in South Africa each run their own fraud, waste, and abuse (FWA) detection in isolation. A provider or member blacklisted by one scheme can register under a new practice number, banking detail, or dependant record at another scheme entirely undetected. Current industry solutions are static and manual.
+ClaimGuard helps medical schemes identify suspicious claims, organise scheme-controlled investigations, preserve evidence, and share bounded intelligence about properly authorised investigation outcomes.
 
-ClaimGuard Network's model draws on two real, verified South African precedents. **SAFPS** (South African Fraud Prevention Services) already runs a shared fraud-listings database across industries. **SABRIC** (South African Banking Risk Information Centre) — a non-profit set up by the banking industry itself — goes further, and is currently, publicly repositioning toward predictive analytics and privacy-preserving analytics: moving from reactive reporting to real-time, proactive intelligence. That's the exact direction ClaimGuard takes for healthcare, in an industry that hasn't built its version of it yet.
+ClaimGuard does **not**:
 
-ClaimGuard allows multiple schemes to contribute claims signals to a shared fraud-detection graph **without exposing raw member or provider PII to each other**. Fraud rings and repeat offenders that are invisible to any single scheme become visible at the network level.
+- determine that a provider, member, dependant, employee, or other person is guilty of fraud;
+- automatically reject, suspend, delay, or redirect a claim or benefit payment;
+- instruct another scheme to terminate a provider or member relationship;
+- impose recovery, sanction, or contractual consequences;
+- replace the scheme's investigators, authorised decision-makers, policies, or statutory obligations.
 
-The current build accepts claims only through an authenticated, tenant-scoped ingestion boundary. External medical-aid systems or approved test producers own data creation; ClaimGuard validates and persists their reference records and claims, then queues detection through a durable transactional outbox.
+The platform produces risk signals and explainable evidence. The relevant scheme decides whether those signals justify an investigation. The scheme's authorised investigators perform that investigation under the scheme's approved procedures. Any final outcome is based on the investigation record and an authorised human decision, not on ClaimGuard's model score.
 
----
-
-## 2. Problem Statement & Goals
-
-**The Problem:** Schemes lose billions annually to FWA. Fraudulent actors move easily between schemes because there is no real-time, graph-based, cross-scheme entity resolution. Furthermore, aggressive blacklisting without due process invites defamation lawsuits and Council for Medical Schemes (CMS) penalties.
-
-**Goals:**
-- **Tokenized Architecture:** Raw PCNS numbers and IDs must never leave the medical scheme's firewall — only keyed, tokenized values cross the boundary. (Note: this is tokenization/pseudonymization, not zero-knowledge in the cryptographic sense — see §4 for the honest version of what this guarantees.)
-- **Cross-Scheme Resolution:** Demonstrate that an entity flagged at Scheme A can be re-identified at Scheme B using tokenized fields and behavioral signals.
-- **Actuarial Integration:** Combine frequency-severity GLM anomaly scoring with graph machine learning.
-- **Legal Defensibility:** Implement a strict 3-Stage data state machine and an immutable audit ledger honoring the *audi alteram partem* principle.
-- **Professional Engineering:** Build a highly observable system using professional full-stack and DevOps tooling.
+Where a scheme records an eligible substantiated outcome, ClaimGuard may distribute a bounded network notice to participating schemes. That notice is an investigative lead only. Each receiving scheme remains responsible for verifying the match, assessing its own claims, and making its own lawful decisions.
 
 ---
 
-## 3. System Architecture & Tech Stack
+## 2. Core design principles
+
+### 2.1 Human-supervised scoring
+
+- Models, rules, and graph analytics generate signals, scores, reason codes, and evidence references.
+- A signal has no direct payment, recovery, sanction, or contractual effect.
+- An authorised scheme user decides whether to dismiss, monitor, or investigate the signal.
+- The model deployment, input provenance, feature lineage, score, reason codes, and relevant evidence snapshot are retained.
+- Any adverse outcome requires a documented human-controlled process and decision.
+
+### 2.2 Scheme accountability
+
+ClaimGuard supplies software and analytical services under scheme-controlled workflows. The scheme retains responsibility for:
+
+- investigation initiation;
+- provider or member communications;
+- evidence requests and assessment;
+- clinical, coding, legal, and forensic judgment;
+- findings, reasons, appeals, corrections, recoveries, sanctions, and payment decisions;
+- compliance with its rules, contracts, the Medical Schemes Act, POPIA, PAJA-grade fairness expectations, and applicable CMS requirements.
+
+### 2.3 Immutable history, correctable status
+
+ClaimGuard distinguishes between:
+
+1. **Append-only historical events**, which preserve who recorded or changed an outcome, when, under which process version, and with which evidence reference; and
+2. **Current active status**, which can be corrected, withdrawn, superseded, appealed, suspended, or expired.
+
+The platform does not maintain a permanent, uncorrectable blacklist. A historical event may remain auditable while the active network notice is removed or updated.
+
+### 2.4 Data minimisation and tenant isolation
+
+- Raw identifiers are processed at the scheme-controlled edge where possible.
+- Raw scheme-private claims are not exposed to other schemes.
+- Platform administrators do not receive routine access to scheme-private claims.
+- Cross-scheme notices reveal only the minimum authorised information necessary to communicate a prior outcome and its provenance.
+- Tenant and environment routes are resolved by the control plane and enforced by every API, worker, storage, and administrative operation.
+
+---
+
+## 3. Runtime architecture
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| **Client Edge** | Python SDK (`claimguard-sdk`) | Local, behind-the-firewall tokenization of PII |
-| **API Gateway** | tRPC, Hono | Edge-compatible routing, designed for low-latency claims switchboard traffic |
-| **Relational DB** | MySQL (via Drizzle ORM) | Fast lookups, state machine management, cryptographic ledger |
-| **Graph DB** | Azure Cosmos DB (Gremlin API) | Core fraud network and cross-scheme relationship traversals |
-| **Producer Runtime** | Azure Container Apps Jobs (Python) | Scheduled/event-driven orchestration for detection runs |
-| **Report Storage** | Azure Blob Storage | Versioned reports, metadata, and latest pointer (`latest.json`) |
-| **Frontend UI** | React 19, TypeScript, Tailwind CSS | Rapid, type-safe investigator dashboard |
-| **Observability** | New Relic & Sentry | Distributed tracing, APM, source-mapped error tracking |
-| **CI/CD & Sec** | GitHub Actions, Codecov, AstraSecurity | Automated pipelines, coverage gating, vulnerability scanning |
-| **Secrets/Identity** | Azure Key Vault + Managed Identity | Secret boundary and least-privilege runtime access |
+| Client edge | Python SDK | Local tokenisation/pseudonymisation and authenticated ingestion |
+| API gateway | Hono and tRPC | Tenant-scoped ingestion, administration, and read APIs |
+| Operational database | MySQL via Drizzle ORM | Claims, outbox work, investigations, decisions, routes, and audit events |
+| Graph layer | Azure Cosmos DB Gremlin API or approved equivalent | Relationship construction and network-risk analysis |
+| Producer runtime | Azure Container Apps Jobs | Durable orchestration of scoring and report production |
+| Report storage | Azure Blob Storage | Versioned reports, metadata, and latest pointers |
+| Investigator UI | React, TypeScript, Tailwind CSS | Scheme-controlled triage, investigation, evidence, and decision workflows |
+| Secrets and identity | Azure Key Vault and managed identities | Least-privilege runtime identity and secret delivery |
+| Observability | Approved Azure and external telemetry services | Operational monitoring with strict data redaction and environment separation |
 
-(The "sub-50ms" latency figure from the earlier draft has been removed — it's a reasonable design target for tRPC/Hono, but not a claim to make before anything is built and measured. Worth quoting once you actually benchmark it.)
-
----
-
-## 4. The Tokenized Edge SDK (The Anonymizer)
-
-To guarantee POPIA-aligned handling, raw identifiers must never hit the platform's API gateway.
-
-**Implementation:**
-The platform provides a lightweight Python package that medical schemes install locally. Python is the standard language for data teams in this space, making integration seamless.
-
-1. The scheme holds a unique, rotatable `Scheme_Key` in its own local secret store — never transmitted, never shared.
-2. The SDK performs a **keyed HMAC-SHA256** operation: `HMAC-SHA256(PCNS_Number, Scheme_Key)`.
-3. The SDK transmits only the resulting token to the ClaimGuard API Gateway.
-
-**Why HMAC instead of a simple salted hash:** a plain `SHA256(id + salt)` construction is weaker than it looks for structured, low-entropy identifiers like South African ID numbers, which encode date of birth, gender, and a checksum — the space of valid ID numbers is far smaller than the hash space suggests, so if a salt is ever exposed or reused broadly, it becomes feasible to enumerate and match against it offline. A keyed HMAC with a securely managed, rotatable key is deliberately built to resist exactly this: the key must remain secret, can be rotated without reissuing the whole scheme's tokens from scratch, and doesn't rely on the salt's secrecy the way the original construction implicitly did.
-
-**Known limitation, stated honestly:** HMAC alone doesn't reach a formal cryptographic privacy guarantee against an attacker who obtains the key — it raises the bar substantially over plain hashing, but it isn't equivalent to zero-knowledge or secure multi-party computation. The fuller solution, noted as future work in this spec's roadmap, is either a Bloom-filter-based PPRL construction (cryptographic long-term keys, purpose-built for this exact problem) or a mediated linkage computation where no single party — including ClaimGuard — ever holds a key capable of unmasking another scheme's tokens alone. Worth being upfront about this distinction if a technical reviewer asks, rather than letting "tokenized" imply more than it delivers.
-
-By decoupling the encryption from the API, the central platform is protected from most classes of data breach, though not from a compromise of a scheme's own key store — which is a reasonable and honestly stated boundary for this design.
+The API, workers, control plane, tenant databases, queues, storage, identities, credentials, and telemetry destinations are environment-specific. A non-production identity must be technically incapable of reaching production data-plane routes, and production identities must not reach non-production tenant data.
 
 ---
 
-## 5. The 3-Stage Fraud Lifecycle
+## 4. Edge privacy and linkage
 
-To prevent defamation lawsuits and satisfy the CMS, the platform enforces a strict data state machine governed by the MySQL relational layer.
+The edge SDK applies keyed HMAC-SHA256 or an approved successor mechanism to configured identifiers before transmission. This is pseudonymisation, not anonymity and not a complete cross-scheme linkage solution by itself.
 
-* **State 1: YELLOW FLAG (Pending Investigation)**
-  * *Trigger:* Statistical anomaly engine detects highly anomalous billing patterns.
-  * *Action:* A temporary, tokenized alert is logged. It is invisible to other schemes' automated payment engines, but triggers high-risk warnings for manual forensic review if massive bulk claims are submitted elsewhere.
-* **State 2: VERIFIED MATCH (Patient Verification)**
-  * *Trigger:* Scheme investigator manually confirms fraud (e.g., patient confirms they never saw the doctor).
-  * *Action:* Scheme uploads a cryptographic "Proof of Misrepresentation" token. Other schemes can now pause automated multi-claim payouts to that provider to limit financial exposure.
-* **State 3: RED FLAG (Permanent Tag)**
-  * *Trigger:* Legal due process complete; provider contract terminated.
-  * *Action:* The provider's tokenized PCNS is moved to the immutable blacklist. All subsequent claims across the network are instantly routed for rejection.
+A scheme-specific HMAC key protects tenant identifiers but normally produces different tokens for the same identifier at different schemes. Cross-scheme linkage therefore requires a separately governed privacy-preserving linkage design. Candidate approaches include:
+
+- mediated private-set intersection;
+- an oblivious pseudorandom function;
+- a secure enclave with split-key governance;
+- a validated privacy-preserving record-linkage protocol.
+
+The approved design must reveal only the minimum match assertion, confidence, contributing fields, provenance, and sharing authority. No universal re-identification key may be made available to ClaimGuard or participating schemes.
 
 ---
 
-## 6. Immutable Multi-Tenant Audit Trail (The Ledger)
+## 5. Claims-risk and investigation lifecycle
 
-If a provider sues for loss of income, the platform must prove *which* scheme verified the fraud and *when*.
+ClaimGuard uses the following target lifecycle.
 
-Instead of heavy infrastructure like Hyperledger, this POC utilizes a **hash chain** — a tamper-evident log, not a full Merkle tree (a Merkle tree branches to allow efficient proof of membership within a set; this is simpler: a linked chain where each row incorporates the previous row's hash, closer in spirit to how a blockchain links blocks) — within the existing MySQL setup.
+| State | Purpose and control |
+|---|---|
+| `SIGNAL_GENERATED` | A rule, model, or network signal is recorded with reasons and provenance. It has no payment effect. |
+| `TRIAGE_PENDING` | A scheme analyst checks data quality, jurisdiction, duplicate cases, and conflicts. |
+| `DISMISSED` | The signal is closed without investigation, with a recorded reason. |
+| `MONITORING` | The scheme elects to monitor additional activity without opening an investigation. |
+| `INVESTIGATION_OPEN` | An authorised scheme user opens a case and preserves the relevant data/model snapshot. |
+| `NOTICE_RECORDED` | Where required, notice, affected claims, allegations, and proof of delivery are recorded. |
+| `RESPONSE_PENDING` | The case remains open while representations or supporting records are awaited. |
+| `EVIDENCE_REVIEW` | Investigators assess claims, patient verification, coding/clinical input, documents, and representations. |
+| `INVESTIGATION_REPORT_COMPLETED` | The investigator records findings and supporting evidence. The report cannot itself activate a network notice. |
+| `OUTCOME_REVIEW_PENDING` | An authorised decision-maker independently reviews the report, process completion, identity match, evidence, and sharing authority. |
+| `OUTCOME_APPROVED` | A human decision-maker records the authorised outcome, reasons, scope, dates, and review rights. |
+| `NETWORK_NOTICE_ACTIVE` | An eligible, substantiated outcome is shared as a bounded investigative lead. It does not direct another scheme's decision. |
+| `CLOSED_UNSUBSTANTIATED` | No substantiated concern remains; current risk status is removed and corrections are propagated. |
+| `CORRECTED_OR_WITHDRAWN` | The current notice is corrected or withdrawn while the historical audit event is retained. |
+| `APPEAL_OR_REVIEW` | The active outcome is marked with its review status and handled under the applicable process. |
+| `EXPIRED_OR_SUPERSEDED` | The notice is no longer active because its approved duration ended or a later outcome replaced it. |
 
-```typescript
-export const cryptographicLedger = mysqlTable("cryptographic_ledger", {
-  id: serial("id").primaryKey(),
-  tokenizedPcns: varchar("tokenized_pcns", { length: 256 }).notNull(),
-  previousRowHash: varchar("prev_hash", { length: 256 }).notNull(),
-  newState: fraudStatusEnum.notNull(), // YELLOW, VERIFIED, RED
-  schemeOfficerSignature: text("officer_sig").notNull(),
-  timestamp: timestamp("timestamp").defaultNow(),
-  currentRowHash: varchar("current_hash", { length: 256 }).notNull(),
-});
+Terms such as `guilty`, `blacklist`, `instant rejection`, `permanent tag`, and `automatic payment pause` are not part of the product's normal domain language.
+
+---
+
+## 6. Network intelligence notice
+
+A network notice communicates a bounded prior outcome, not a universal fraud determination. At minimum it records:
+
+- originating scheme or authorised participant;
+- tokenised entity reference and match confidence;
+- outcome category and bounded factual description;
+- affected claims, service period, or evidence digest where disclosure is authorised;
+- investigation procedure and decision version;
+- authorised decision-maker role and decision date;
+- sharing purpose and authority;
+- appeal, review, correction, or withdrawal status;
+- active-from, review-by, and expiry dates;
+- correction propagation status.
+
+A receiving scheme must independently decide whether the notice and its own information justify triage or investigation. ClaimGuard does not convert a network notice into a payment, recovery, sanction, or contracting instruction.
+
+---
+
+## 7. Investigation and decision controls
+
+The investigation workspace supports:
+
+- evidence and correspondence registers;
+- claim-level and entity-level context;
+- patient-verification records;
+- clinical and coding advice;
+- investigator notes and reports;
+- provider or member representations;
+- conflict and recusal records;
+- independent outcome review;
+- written reasons;
+- review, appeal, correction, withdrawal, and expiry workflows;
+- correction propagation to every authorised recipient.
+
+Role separation prevents the detection engine from approving an outcome and prevents an investigator report from activating a network notice without the required decision and sharing approvals.
+
+---
+
+## 8. Audit architecture
+
+ClaimGuard maintains a tamper-evident, append-only event history. Each event records:
+
+- tenant and environment;
+- case, signal, outcome, or network-notice identifier;
+- previous event hash and current event hash;
+- action and state transition;
+- actor, role, and authorisation context;
+- process, application, schema, and model versions;
+- timestamp and correlation identifier;
+- evidence or report digest;
+- reason for correction, withdrawal, expiry, or supersession where applicable.
+
+The hash chain is evidence of tampering resistance, not proof that the underlying finding was correct. Accuracy, procedural fairness, correction, access control, retention, and independent review remain separate controls.
+
+---
+
+## 9. Environment and production-data boundary
+
+### Development
+
+- Local resources and generated claims only.
+- No real patient, provider, dependant, or scheme production data.
+- Disposable databases and credentials.
+
+### Staging
+
+- The current Azure environment is treated as non-production until formal production qualification and clean-environment cutover are complete.
+- Ubuntu and other synthetic schemes remain staging tenants.
+- Synthetic claims, model testing, migration rehearsal, and release qualification occur here.
+
+### Production
+
+- Separate databases, queues, identities, secrets, storage, telemetry, credentials, backups, and deployment endpoints.
+- Real medical schemes only.
+- Production starts from empty operational stores plus approved schema, configuration, models, and reference data.
+- Production is never initialised from a staging database dump.
+
+### Production canary
+
+- A dedicated internal synthetic-only tenant.
+- Isolated operational database, queue, storage route, identity, and credentials.
+- Reports, exports, billing, and external sharing disabled.
+- Used only for non-destructive verification of the production infrastructure.
+
+Application code, schema migrations, approved model definitions, and approved reference/configuration records move toward production. Synthetic claim rows, members, providers, outbox jobs, reports, audit events, and credentials do not.
+
+The authoritative production boundary and safe go-live process are documented in `docs/production-data-boundary.md`.
+
+---
+
+## 10. Tenant routing
+
+The control plane maintains environment-aware routing records equivalent to:
+
+```text
+tenant_id
+environment
+operational_database_route
+queue_route
+storage_route
+active_strategy_id
+status
 ```
 
-Any attempt to alter historical records breaks the `previousRowHash` chain, providing mathematical proof of tampering and shifting liability away from ClaimGuard.
+Every authenticated identity resolves to exactly one tenant and one environment-specific route. The API, workers, and administrative operations fail closed when the authenticated tenant or environment disagrees with the resolved database, queue, storage, or strategy route.
+
+Ubuntu is a synthetic staging tenant and is not embedded in deployment or migration logic. New schemes are onboarded through audited control-plane operations without application code changes.
+
+The architecture supports:
+
+- a dedicated operational database per scheme; and
+- an approved shared production data plane for smaller schemes where rigorous tenant isolation is independently evidenced.
+
+Database-per-scheme remains the preferred option for highly sensitive or higher-risk deployments.
 
 ---
 
-## 7. Graph Engine & Entity Resolution
+## 11. Privacy and security governance
 
-While MySQL handles the legal lifecycle, the graph database (Azure Cosmos DB — Gremlin API) handles the behavioral detection.
+Before real medical-scheme data is processed, the responsible organisations must approve:
 
-**Entity Resolution (PPRL):**
-Where identifiers have been deliberately altered post-tokenization (evasion), the system falls back to fuzzy matching on non-identifying behavioral features (e.g., billing code cosine similarity, claim timing correlations, specialty matches). These components are weighted to form a confidence score.
+- the responsible-party, joint-responsible-party, operator, and sub-operator allocation for each processing activity;
+- operator and data-sharing agreements;
+- a privacy impact assessment and data-flow inventory;
+- the lawful basis and special-personal-information justification;
+- prior-authorisation analysis where unique-identifier linkage or unlawful-conduct information is processed;
+- retention, deletion, access, correction, and incident-response procedures;
+- cross-border transfer and data-location decisions;
+- provider/member procedural-fairness policy;
+- model governance, fairness, explainability, validation, drift, override, and retirement controls.
 
-**Graph Traversal:**
-- Vertices: `scheme`, `member`, `provider`, `claim`, `resolved_entity`
-- Edges: `submitted`, `billed_by`, `paid_by`, `shares_banking`, `referred_by`
-
----
-
-## 8. Actuarial Detection Engine
-
-The engine fuses standard actuarial methodology with graph machine learning.
-
-**Statistical Anomaly Scoring (GLM):**
-Expected claims costs and frequencies are modeled via a frequency-severity GLM. Compute-heavy model execution runs in Azure-native worker runtimes so it remains isolated from the API request path.
-
-**Graph ML:**
-- **Community Detection:** Louvain modularity optimization identifies dense clusters.
-- **Centrality:** Betweenness centrality uncovers "hub" entities connecting multiple flagged actors.
-- **Risk Propagation:** A flag on an entity in one scheme propagates a risk multiplier to linked identities across the network.
+Real patient data is prohibited in development, CI, screenshots, support tickets, browser-testing platforms, and non-production model datasets. Logs and telemetry must redact names, identity numbers, membership numbers, authorisation headers, diagnosis details not required for operations, and other sensitive payload fields.
 
 ---
 
-## 9. Observability & CI/CD Pipeline
+## 12. Production qualification
 
-To emulate a high-performing engineering team, local development and deployments are heavily automated.
+ClaimGuard remains production-shaped rather than production-ready until the documented qualification gates are completed. Required evidence includes:
 
-- **Continuous Integration:** GitHub Actions runs on every pull request.
-- **Quality Gates:** Codecov blocks PRs if test coverage drops below 70%. AstraSecurity scans dependencies for CVEs and statically analyzes code.
-- **Application Performance (New Relic):** Tracks p99 latency for tRPC endpoints and business metrics (e.g., "Entity Resolution Accuracy").
-- **Error Tracking (Sentry):** Captures exceptions with source-mapped stack traces.
-- **Authoritative Inputs:** Claims and their scheme, member, and provider references arrive through the authenticated ingestion contract. Production report generation reloads a tenant-scoped database snapshot rather than accepting ad hoc files.
+- legal and privacy approval;
+- independent security and cryptographic review;
+- penetration testing and remediation;
+- backup restoration and disaster-recovery exercises;
+- access and RBAC review;
+- model validation, fairness analysis, and reproducibility evidence;
+- incident-response exercise;
+- retention/deletion testing;
+- silent-mode historical and prospective pilot results;
+- scheme board or delegated-governance approval;
+- appropriate CMS and Information Regulator engagement.
+
+The preferred first live evaluation is a single-scheme, silent-mode pilot. ClaimGuard may score and open simulated cases, but cannot withhold, reject, recover, notify, or alter payment during that pilot. Cross-scheme production sharing is deferred until the privacy, linkage, legal, and governance gates are approved.
 
 ---
 
-## 10. Build Roadmap (12 Weeks)
+## 13. Build roadmap
 
-| Phase | Scope | Core Tooling |
-|---|---|---|
-| 0 | Environment Setup: GitHub Actions, Codecov, Sentry, New Relic, Doppler, monorepo setup | Actions, Doppler, Sentry |
-| 1 | Claim Ingestion: external producer contract, validation, persistence, and outbox | Hono, Zod, MySQL |
-| 2 | Client SDK: Python Edge SDK for local tokenization | Python, PyPI structuring |
-| 3 | Backend Foundation: tRPC API + Hono + Drizzle ORM + Auth + Hash-Chained Ledger | tRPC, Drizzle, MySQL |
-| 4 | Detection Engine + Producer Runtime: Azure Container Apps Jobs + Blob Storage + Cosmos DB graph analytics | ACA Jobs, Blob Storage, Gremlin |
-| 5 | Investigator UI: React 19 + shadcn/ui + network graph visualization | React, Tailwind, Vite |
-| 6 | Observability & CI/CD: Sentry release tracking, AstraSecurity scanning, custom dashboards | AstraSecurity, New Relic |
-| 7 | Evaluation & Polish: Measure accuracy against seeded evasion cases, write documentation | Markdown |
+| Phase | Scope |
+|---|---|
+| 0 | Environment, CI, supply-chain, secrets, and repository controls |
+| 1 | Tenant-scoped authenticated ingestion and transactional outbox |
+| 2 | Edge pseudonymisation SDK and key-management boundaries |
+| 3 | Control plane, tenant routing, authentication, and audit events |
+| 4 | Detection engine, graph analysis, scoring provenance, and report production |
+| 5 | Human-supervised triage and investigation workspace |
+| 6 | Independent outcome review, reasons, appeal, correction, withdrawal, and expiry |
+| 7 | Privacy-preserving linkage proof and bounded network notices |
+| 8 | Environment isolation, production canary, migration, backup, and rollback validation |
+| 9 | Independent security, privacy, model, fairness, and regulatory qualification |
+| 10 | Silent single-scheme pilot, followed by a controlled two-scheme proof only after approval |
+
+---
+
+## 14. Summary
+
+ClaimGuard is a decision-support and investigation-orchestration platform. Its models identify risk; authorised schemes investigate; authorised humans decide; and any cross-scheme notice remains bounded, reviewable, correctable, and non-determinative. The immutable element is the historical audit trail, not a person's permanently active adverse status.
