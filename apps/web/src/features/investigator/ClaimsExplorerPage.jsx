@@ -112,6 +112,11 @@ export function ClaimsExplorerPage({
     const filtered = claims.filter((claim) => {
       const matchesQuery = [
         claim.claimId,
+        claim.member?.displayName,
+        claim.provider?.displayName,
+        claim.provider?.practiceNumber,
+        claim.provider?.specialty,
+        claim.provider?.region,
         claim.memberId,
         claim.providerId,
         claim.status,
@@ -244,7 +249,7 @@ export function ClaimsExplorerPage({
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 aria-label="Search claims"
-                placeholder="Claim, member or provider ID"
+                placeholder="Claim, member, provider or token"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 className="h-10 pl-9"
@@ -418,8 +423,17 @@ export function ClaimsExplorerPage({
                       </Link>
                       {claim.currentClaimVersion ? <p className="mt-1 text-[10px] text-muted-foreground">Version {claim.currentClaimVersion}</p> : null}
                     </td>
-                    <td>{claim.memberId || "Not recorded"}</td>
-                    <td>{claim.providerId || "Not recorded"}</td>
+                    <td>
+                      <p className="font-medium">{claim.member?.displayName || "Member unavailable"}</p>
+                    </td>
+                    <td>
+                      <p className="font-medium">{claim.provider?.displayName || "Provider unavailable"}</p>
+                      {[claim.provider?.specialty, claim.provider?.region].filter(Boolean).length > 0 ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {[claim.provider?.specialty, claim.provider?.region].filter(Boolean).join(" · ")}
+                        </p>
+                      ) : null}
+                    </td>
                     <td className="whitespace-nowrap">{formatMoney(claim.billedAmount)}</td>
                     <td className="min-w-[150px] text-xs text-muted-foreground">{formatDate(claim.submittedAt || claim.scoringUpdatedAt)}</td>
                     <td>
