@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/scripts/apply-desktop-claim-context.py
+      - .github/scripts/fix-desktop-context-tests.py
       - .github/workflows/apply-desktop-claim-context-once.yml
 
 permissions:
@@ -31,7 +32,9 @@ jobs:
           cache: pnpm
 
       - name: Apply focused implementation
-        run: python .github/scripts/apply-desktop-claim-context.py
+        run: |
+          python .github/scripts/apply-desktop-claim-context.py
+          python .github/scripts/fix-desktop-context-tests.py
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
