@@ -89,6 +89,12 @@ text = replace_once(
     '''    expect(screen.getByText("Showing 1 of 1 matching claims · 2 cached")).toBeInTheDocument();''',
     "claims count label",
 )
+text = replace_once(
+    text,
+    '''    expect(screen.getByText("member-token-1")).toBeInTheDocument();''',
+    '''    expect(screen.getByText("Member ID: member-token-1")).toBeInTheDocument();''',
+    "labelled member token",
+)
 desktop_app.write_text(text)
 
 context_test = ROOT / "apps/desktop/src/DesktopClaimContext.test.jsx"
@@ -112,6 +118,12 @@ text = replace_once(
 
 describe("desktop claim investigation context", () => {''',
     "desktop context cleanup hook",
+)
+text = replace_once(
+    text,
+    '''    expect(screen.getByText(/Member ID: MEMBER-1/)).toBeInTheDocument();''',
+    '''    expect(screen.getByText((content) => content === "Member ID: MEMBER-1")).toBeInTheDocument();''',
+    "exact member ID selector",
 )
 context_test.write_text(text)
 
