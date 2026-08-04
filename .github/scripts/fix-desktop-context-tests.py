@@ -81,4 +81,38 @@ text = replace_once(
 )
 repository.write_text(text)
 
+desktop_app = ROOT / "apps/desktop/src/DesktopApp.test.jsx"
+text = desktop_app.read_text()
+text = replace_once(
+    text,
+    '''    expect(screen.getByText("Showing 1 of 2 cached claims")).toBeInTheDocument();''',
+    '''    expect(screen.getByText("Showing 1 of 1 matching claims · 2 cached")).toBeInTheDocument();''',
+    "claims count label",
+)
+desktop_app.write_text(text)
+
+context_test = ROOT / "apps/desktop/src/DesktopClaimContext.test.jsx"
+text = context_test.read_text()
+text = replace_once(
+    text,
+    '''import { render, screen, within } from "@testing-library/react";''',
+    '''import { cleanup, render, screen, within } from "@testing-library/react";''',
+    "desktop context cleanup import",
+)
+text = replace_once(
+    text,
+    '''import { describe, expect, it, vi } from "vitest";''',
+    '''import { afterEach, describe, expect, it, vi } from "vitest";''',
+    "desktop context afterEach import",
+)
+text = replace_once(
+    text,
+    '''describe("desktop claim investigation context", () => {''',
+    '''afterEach(() => cleanup());
+
+describe("desktop claim investigation context", () => {''',
+    "desktop context cleanup hook",
+)
+context_test.write_text(text)
+
 Path(__file__).unlink(missing_ok=True)
