@@ -12,9 +12,15 @@ const claimRow = {
   provider_id: "provider-token-1",
   member_first_name: "Sbusiso",
   member_last_name: "Mdingi",
+  member_date_of_birth: "1995-05-20",
+  member_gender: "M",
+  member_home_region: "Free State",
+  member_join_date: "2021-01-10",
   provider_practice_name: "Dlamini Family Practice",
   provider_practice_number: 1001,
   provider_specialty: Buffer.from("General Practitioner"),
+  provider_kind: "PRACTICE",
+  provider_category: "GENERAL_PRACTITIONER",
   provider_region: "Bloemfontein",
   service_date: "2026-08-01",
   amount: "1250.00",
@@ -70,11 +76,19 @@ test("claim reads expose minimal member and provider presentation alongside toke
 
   assert.equal(claim.memberId, "member-token-1");
   assert.equal(claim.providerId, "provider-token-1");
-  assert.deepEqual(claim.member, { displayName: "S. Mdingi" });
+  assert.deepEqual(claim.member, {
+    displayName: "Sbusiso Mdingi",
+    dateOfBirth: "1995-05-20",
+    gender: "M",
+    homeRegion: "Free State",
+    joinDate: "2021-01-10",
+  });
   assert.deepEqual(claim.provider, {
     displayName: "Dlamini Family Practice",
     practiceNumber: "1001",
     specialty: "General Practitioner",
+    kind: "PRACTICE",
+    category: "GENERAL_PRACTITIONER",
     region: "Bloemfontein",
   });
 

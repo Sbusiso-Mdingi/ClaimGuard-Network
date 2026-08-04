@@ -679,7 +679,7 @@ async function upsertTenantOwnedRecord(
   }
 
   if (existingOwner) {
-    await connection.execute(
+    const [result] = await connection.execute(
       updateSql,
       [
         ...updateParams,
@@ -688,7 +688,10 @@ async function upsertTenantOwnedRecord(
       ],
     );
 
-    return "updated";
+    return {
+      disposition: "updated",
+      changed: Number(result?.changedRows ?? result?.affectedRows ?? 0) > 0,
+    };
   }
 
   try {
@@ -700,7 +703,7 @@ async function upsertTenantOwnedRecord(
       ],
     );
 
-    return "inserted";
+    return { disposition: "inserted", changed: true };
   } catch (error) {
     if (error?.code !== "ER_DUP_ENTRY") {
       throw error;
@@ -721,7 +724,7 @@ async function upsertTenantOwnedRecord(
       );
     }
 
-    await connection.execute(
+    const [result] = await connection.execute(
       updateSql,
       [
         ...updateParams,
@@ -730,15 +733,35 @@ async function upsertTenantOwnedRecord(
       ],
     );
 
-    return "updated";
+    return {
+      disposition: "updated",
+      changed: Number(result?.changedRows ?? result?.affectedRows ?? 0) > 0,
+    };
   }
 }
 
-function recordWrite(
-  summary,
-  result,
-) {
-  summary[result] += 1;
+async function touchClaimsForReference(connection, {
+  tenantId,
+  schemeId,
+  referenceType,
+  referenceId,
+}) {
+  const column = referenceType === "member" ? "member_id"
+    : referenceType === "provider" ? "provider_id"
+      : null;
+  if (!column) throw new TypeError("Unsupported claim reference type.");
+  await connection.execute(
+    `UPDATE claims
+     SET updated_at = UTC_TIMESTAMP(3)
+     WHERE tenant_id = ?
+       AND scheme_id = ?
+       AND ${column} = ?`,
+    [tenantId, schemeId, referenceId],
+  );
+}
+
+function recordWrite(summary, result) {
+  summary[result.disposition] += 1;
 }
 
 async function ingestReferenceData(
@@ -923,6 +946,15 @@ async function ingestReferenceData(
       result,
     );
 
+    if (result.changed) {
+      await touchClaimsForReference(connection, {
+        tenantId,
+        schemeId: member.scheme_id,
+        referenceType: "member",
+        referenceId: member.member_id,
+      });
+    }
+
     referenceCache.add(
       referenceCacheKey(
         "members",
@@ -1019,6 +1051,15 @@ async function ingestReferenceData(
       summary.providers,
       result,
     );
+
+    if (result.changed) {
+      await touchClaimsForReference(connection, {
+        tenantId,
+        schemeId: provider.scheme_id,
+        referenceType: "provider",
+        referenceId: provider.provider_id,
+      });
+    }
 
     referenceCache.add(
       referenceCacheKey(

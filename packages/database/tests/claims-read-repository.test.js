@@ -199,7 +199,7 @@ test("claims read repository returns current-version model detection and investi
   assert.equal(tenantParams.length >= 4, true);
 });
 
-test("desktop claim changes are bounded, stable, and exclude unnecessary personal identifiers", async () => {
+test("desktop claim changes are bounded, stable, and retain operational reference identifiers", async () => {
   const pool = createPoolStub();
   const repository = createClaimsReadRepository(pool, {
     dataPlaneContext: context(),
@@ -217,8 +217,8 @@ test("desktop claim changes are bounded, stable, and exclude unnecessary persona
   assert.equal(result.changes[0].resource, "claim");
   assert.equal(result.changes[0].operation, "upsert");
   assert.equal(result.changes[0].record.claimId, "C-3");
-  assert.equal(Object.hasOwn(result.changes[0].record, "memberId"), false);
-  assert.equal(Object.hasOwn(result.changes[0].record, "providerId"), false);
+  assert.equal(result.changes[0].record.memberId, "member-3");
+  assert.equal(result.changes[0].record.providerId, "provider-3");
   const changeQuery = pool.calls.find(({ sql }) => /AS sync_updated_at/i.test(sql));
   assert.ok(changeQuery);
   assert.match(changeQuery.sql, /EXISTS\s*\(\s*SELECT 1 FROM investigations i_active/i);

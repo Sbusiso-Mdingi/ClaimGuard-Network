@@ -305,7 +305,7 @@ describe("ClaimGuard desktop cache behaviour", () => {
     await userEvent.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
     await userEvent.type(screen.getByLabelText("Search claims"), "PROC-HIGH");
     await userEvent.selectOptions(screen.getByLabelText("Risk band"), "high");
-    expect(screen.getByText("Showing 1 of 2 cached claims")).toBeInTheDocument();
+    expect(screen.getByText("Showing 1 of 1 matching claims · 2 cached")).toBeInTheDocument();
     expect(screen.queryByText("CLAIM-LOW-1")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
@@ -313,7 +313,7 @@ describe("ClaimGuard desktop cache behaviour", () => {
     expect(screen.getByText("Authoritative claim detail")).toBeInTheDocument();
     expect(screen.getByText("Billing frequency exceeds the peer baseline.")).toBeInTheDocument();
     expect(screen.getByText("Frequency Spike")).toBeInTheDocument();
-    expect(screen.getByText("member-token-1")).toBeInTheDocument();
+    expect(screen.getByText("Member ID: member-token-1")).toBeInTheDocument();
     expect(calls).toContainEqual(["desktop_claim_details", { claimId: "CLAIM-HIGH-1" }]);
 
     await userEvent.click(screen.getByRole("button", { name: "Open case" }));
