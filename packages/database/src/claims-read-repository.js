@@ -38,16 +38,17 @@ function displayText(value) {
 }
 
 function memberDisplayName(firstName, lastName) {
-  const canonicalFirstName = displayText(firstName);
-  const canonicalLastName = displayText(lastName);
-  const initial = canonicalFirstName?.charAt(0).toUpperCase() || null;
-  if (initial && canonicalLastName) return `${initial}. ${canonicalLastName}`;
-  return canonicalLastName || initial;
+  const names = [displayText(firstName), displayText(lastName)].filter(Boolean);
+  return names.length > 0 ? names.join(" ") : null;
 }
 
 function memberPresentation(row) {
   return {
     displayName: memberDisplayName(row.member_first_name, row.member_last_name),
+    dateOfBirth: row.member_date_of_birth || null,
+    gender: displayText(row.member_gender),
+    homeRegion: displayText(row.member_home_region),
+    joinDate: row.member_join_date || null,
   };
 }
 
@@ -56,8 +57,18 @@ function providerPresentation(row) {
     displayName: displayText(row.provider_practice_name),
     practiceNumber: displayText(row.provider_practice_number),
     specialty: displayText(row.provider_specialty),
+    kind: displayText(row.provider_kind),
+    category: displayText(row.provider_category),
     region: displayText(row.provider_region),
   };
+}
+
+function calendarDayDifference(start, end) {
+  if (!start || !end) return null;
+  const startDate = new Date(`${String(start).slice(0, 10)}T00:00:00.000Z`);
+  const endDate = new Date(`${String(end).slice(0, 10)}T00:00:00.000Z`);
+  if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) return null;
+  return Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000);
 }
 
 function parseJsonObject(value) {
@@ -504,8 +515,21 @@ function mapClaimRow(row) {
     member: memberPresentation(row),
     provider: providerPresentation(row),
     serviceDate: row.service_date,
+    receivedDate: row.received_date || null,
+    submissionLagDays: calendarDayDifference(row.service_date, row.received_date),
     billedAmount: Number(row.amount),
+    quantity: Number(row.quantity),
     billingCode: row.billing_code,
+    benefitOption: displayText(row.benefit_option),
+    networkType: displayText(row.network_type),
+    lineType: displayText(row.line_type),
+    tariffDiscipline: displayText(row.tariff_discipline),
+    diagnosisCode: displayText(row.diagnosis_code),
+    billingProviderKind: displayText(row.provider_kind),
+    billingProviderCategory: displayText(row.provider_category),
+    renderingPractitionerId: displayText(row.rendering_practitioner_id),
+    renderingPractitionerCategory: displayText(row.rendering_practitioner_category),
+    renderingKnownToBillingProvider: booleanValue(row.rendering_known_to_billing_provider),
     submittedAt: row.created_at,
     updatedAt: row.updated_at,
     status: claimStatus(row.investigation_status, processing, detection),
@@ -526,11 +550,26 @@ function mapDesktopClaimRow(row) {
   return {
     claimId: claim.claimId,
     currentClaimVersion: claim.currentClaimVersion,
+    memberId: claim.memberId,
+    providerId: claim.providerId,
     member: claim.member,
     provider: claim.provider,
     serviceDate: claim.serviceDate,
+    receivedDate: claim.receivedDate,
+    submissionLagDays: claim.submissionLagDays,
     billedAmount: claim.billedAmount,
+    quantity: claim.quantity,
     billingCode: claim.billingCode,
+    benefitOption: claim.benefitOption,
+    networkType: claim.networkType,
+    lineType: claim.lineType,
+    tariffDiscipline: claim.tariffDiscipline,
+    diagnosisCode: claim.diagnosisCode,
+    billingProviderKind: claim.billingProviderKind,
+    billingProviderCategory: claim.billingProviderCategory,
+    renderingPractitionerId: claim.renderingPractitionerId,
+    renderingPractitionerCategory: claim.renderingPractitionerCategory,
+    renderingKnownToBillingProvider: claim.renderingKnownToBillingProvider,
     submittedAt: claim.submittedAt,
     updatedAt: claim.updatedAt,
     status: claim.status,
@@ -704,9 +743,15 @@ export function createClaimsReadRepository(pool, {
             c.provider_id,
             m.first_name AS member_first_name,
             m.last_name AS member_last_name,
+            m.date_of_birth AS member_date_of_birth,
+            m.gender AS member_gender,
+            m.home_region AS member_home_region,
+            m.join_date AS member_join_date,
             p.practice_name AS provider_practice_name,
             p.practice_number AS provider_practice_number,
             p.specialty AS provider_specialty,
+            p.provider_kind AS provider_kind,
+            p.provider_category AS provider_category,
             p.practice_region AS provider_region,
             c.amount,
             c.created_at,
@@ -849,13 +894,29 @@ export function createClaimsReadRepository(pool, {
             c.provider_id,
             m.first_name AS member_first_name,
             m.last_name AS member_last_name,
+            m.date_of_birth AS member_date_of_birth,
+            m.gender AS member_gender,
+            m.home_region AS member_home_region,
+            m.join_date AS member_join_date,
             p.practice_name AS provider_practice_name,
             p.practice_number AS provider_practice_number,
             p.specialty AS provider_specialty,
+            p.provider_kind AS provider_kind,
+            p.provider_category AS provider_category,
             p.practice_region AS provider_region,
             c.service_date,
+            c.received_date,
             c.amount,
+            c.quantity,
             c.billing_code,
+            c.benefit_option,
+            c.network_type,
+            c.line_type,
+            c.tariff_discipline,
+            c.diagnosis_code,
+            c.rendering_practitioner_id,
+            c.rendering_practitioner_category,
+            c.rendering_known_to_billing_provider,
             c.created_at,
             c.updated_at
           FROM claims c
@@ -934,13 +995,29 @@ export function createClaimsReadRepository(pool, {
             c.provider_id,
             m.first_name AS member_first_name,
             m.last_name AS member_last_name,
+            m.date_of_birth AS member_date_of_birth,
+            m.gender AS member_gender,
+            m.home_region AS member_home_region,
+            m.join_date AS member_join_date,
             p.practice_name AS provider_practice_name,
             p.practice_number AS provider_practice_number,
             p.specialty AS provider_specialty,
+            p.provider_kind AS provider_kind,
+            p.provider_category AS provider_category,
             p.practice_region AS provider_region,
             c.service_date,
+            c.received_date,
             c.amount,
+            c.quantity,
             c.billing_code,
+            c.benefit_option,
+            c.network_type,
+            c.line_type,
+            c.tariff_discipline,
+            c.diagnosis_code,
+            c.rendering_practitioner_id,
+            c.rendering_practitioner_category,
+            c.rendering_known_to_billing_provider,
             c.created_at,
             c.updated_at,
             ${syncUpdatedAt} AS sync_updated_at
@@ -1004,13 +1081,29 @@ export function createClaimsReadRepository(pool, {
             c.provider_id,
             m.first_name AS member_first_name,
             m.last_name AS member_last_name,
+            m.date_of_birth AS member_date_of_birth,
+            m.gender AS member_gender,
+            m.home_region AS member_home_region,
+            m.join_date AS member_join_date,
             p.practice_name AS provider_practice_name,
             p.practice_number AS provider_practice_number,
             p.specialty AS provider_specialty,
+            p.provider_kind AS provider_kind,
+            p.provider_category AS provider_category,
             p.practice_region AS provider_region,
             c.service_date,
+            c.received_date,
             c.amount,
+            c.quantity,
             c.billing_code,
+            c.benefit_option,
+            c.network_type,
+            c.line_type,
+            c.tariff_discipline,
+            c.diagnosis_code,
+            c.rendering_practitioner_id,
+            c.rendering_practitioner_category,
+            c.rendering_known_to_billing_provider,
             c.created_at,
             c.updated_at
           FROM claims c

@@ -913,6 +913,19 @@ function createMemoryPool({
           }
 
           /*
+           * Reference updates advance the existing
+           * claim synchronization cursor without
+           * changing claim content or model scores.
+           */
+          if (
+            statement.startsWith(
+              "UPDATE claims SET updated_at = UTC_TIMESTAMP(3)",
+            )
+          ) {
+            return [{ affectedRows: 0, changedRows: 0 }];
+          }
+
+          /*
            * Current-claim pointer and
            * canonical projection update.
            */
