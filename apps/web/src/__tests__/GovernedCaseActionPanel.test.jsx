@@ -41,7 +41,7 @@ describe("GovernedCaseActionPanel", () => {
     apiRequest.mockReturnValue(response(200, detail()));
     render(<GovernedCaseActionPanel legacyInvestigationId="INV-1" historicalStatus="CONFIRMED_FRAUD" />);
 
-    expect(await screen.findByText("Triage Pending")).toBeInTheDocument();
+    expect(await screen.findByText("TRIAGE_PENDING")).toBeInTheDocument();
     expect(screen.getByText("Confirmed Fraud")).toBeInTheDocument();
     expect(screen.getByText("Read-only compatibility data")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Begin Monitoring" })).toBeInTheDocument();
