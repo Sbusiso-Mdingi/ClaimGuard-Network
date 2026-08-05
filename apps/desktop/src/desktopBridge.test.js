@@ -47,21 +47,28 @@ describe("desktop polling and offline mutation policy", () => {
     ]);
   });
 
-  it("fails closed before Tauri when a legacy status mutation is attempted", async () => {
+  it("fails closed before Tauri when a legacy status mutation is attempted", () => {
     const calls = [];
     setDesktopInvokeForTests(async (command, args) => {
       calls.push([command, args]);
       return { available: true };
     });
 
-    expect(() => desktopBridge.updateInvestigation(
-      "investigation-1",
-      7,
-      { status: "CONFIRMED_FRAUD" },
-    )).toThrowError(expect.objectContaining({
+    let thrown = null;
+    try {
+      desktopBridge.updateInvestigation(
+        "investigation-1",
+        7,
+        { status: "CONFIRMED_FRAUD" },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
       code: "LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED",
       status: 409,
-    }));
+    });
     expect(calls).toEqual([]);
   });
 
