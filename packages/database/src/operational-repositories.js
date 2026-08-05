@@ -6,12 +6,20 @@ import { requireOperationalDataPlaneContext } from "./data-plane-context.js";
 import { createFraudWorkflowRepository } from "./fraud-workflow-repository.js";
 import { createInvestigationQueueRepository } from "./investigation-queue-repository.js";
 import { createInvestigationRepository } from "./investigation-repository.js";
+import { createCaseWorkflowRepository } from "./case-workflow-repository.js";
 import { createLedgerRepository } from "./ledger-repository.js";
 import { createSharedFraudRegistryRepository } from "./shared-fraud-registry-repository.js";
 import { createScopedReadRepositories } from "./scoped-read-repositories.js";
 import { createTenantRepository } from "./tenant-repository.js";
 import { createDetectionStrategyRepository } from "./detection-strategy-repository.js";
 import { createDesktopSyncRepository } from "./desktop-sync-repository.js";
+
+function configuredOutcomeCodes() {
+  return String(process.env.SEQURIN_CASE_OUTCOME_CODES || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
 export function createOperationalRepositories(dataPlaneContext, pool) {
   const context = requireOperationalDataPlaneContext(dataPlaneContext);
@@ -33,6 +41,10 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     providers: scopedReads.providers,
     claimProcessingOutbox: createClaimProcessingOutboxRepository(pool, options),
     investigations,
+    cases: createCaseWorkflowRepository(pool, {
+      ...options,
+      allowedOutcomeCodes: configuredOutcomeCodes(),
+    }),
     ledger: createLedgerRepository(db, pool, options),
     registry: createSharedFraudRegistryRepository(pool, options),
     fraudWorkflow: createFraudWorkflowRepository(pool, options),
