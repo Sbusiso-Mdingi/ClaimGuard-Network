@@ -3,7 +3,6 @@ import { createClaimsReadRepository } from "./prospective-claims-read-repository
 import { createClaimProcessingOutboxRepository } from "./claim-processing-outbox-repository.js";
 import { createDatabaseFromPool } from "./client.js";
 import { requireOperationalDataPlaneContext } from "./data-plane-context.js";
-import { createFraudWorkflowRepository } from "./fraud-workflow-repository.js";
 import { createInvestigationQueueRepository } from "./investigation-queue-repository.js";
 import { createInvestigationRepository } from "./investigation-repository.js";
 import { createCaseWorkflowRepository } from "./case-workflow-repository.js";
@@ -20,6 +19,31 @@ function configuredOutcomeCodes() {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function disabledOperation({ name, code, message }) {
+  return async function disabledLegacyOperation() {
+    const error = new Error(message);
+    error.name = name;
+    error.code = code;
+    error.status = 409;
+    throw error;
+  };
+}
+
+function createDisabledLegacyFraudWorkflowAdapter() {
+  return Object.freeze({
+    confirmFraud: disabledOperation({
+      name: "LegacyFraudConfirmationDisabledError",
+      code: "LEGACY_FRAUD_CONFIRMATION_DISABLED",
+      message: "Direct legacy fraud confirmation is disabled. Complete the investigation and use the governed case outcome-review workflow.",
+    }),
+    reverseFraud: disabledOperation({
+      name: "LegacyFraudReversalDisabledError",
+      code: "LEGACY_FRAUD_REVERSAL_DISABLED",
+      message: "Direct legacy fraud reversal is disabled. Use the governed case review and appeal workflow.",
+    }),
+  });
 }
 
 function legacyStatusWriteDisabled() {
@@ -69,7 +93,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     cases,
     ledger: createLedgerRepository(db, pool, options),
     registry: createSharedFraudRegistryRepository(pool, options),
-    fraudWorkflow: createFraudWorkflowRepository(pool, options),
+    fraudWorkflow: createDisabledLegacyFraudWorkflowAdapter(),
     reportSnapshots: scopedReads.reportSnapshots,
     tenants: createTenantRepository(pool, { dataPlaneContext: context, allowLegacyDefault: false }),
     detectionStrategy: createDetectionStrategyRepository(db, pool, options),
