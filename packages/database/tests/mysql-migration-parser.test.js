@@ -34,7 +34,7 @@ test("schema 16 delimiter blocks become complete executable trigger statements",
     triggerName: "trg_detection_results_reject_adverse_actions",
     event: "BEFORE INSERT",
     tableName: "claim_detection_results",
-    message: "DETECTION_ADVERSE_ACTION_PROHIBITED",
+    message: "DOMAIN_SAFETY_PROHIBITED_DETECTION_COMMAND",
   });
   assert.match(statements[1], /BEGIN[\s\S]*END$/);
 
@@ -59,7 +59,7 @@ test("schema 16 delimiter blocks become complete executable trigger statements",
     triggerName: "trg_shared_registry_block_direct_active_publication",
     event: "BEFORE INSERT",
     tableName: "shared_fraud_registry_entries",
-    message: "DIRECT_ACTIVE_REGISTRY_PUBLICATION_PROHIBITED",
+    message: "NETWORK_NOTICE_GOVERNANCE_REQUIRED",
   });
   assert.match(statements[5], /BEGIN[\s\S]*END$/);
 
