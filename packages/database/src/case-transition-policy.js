@@ -22,9 +22,8 @@ export const DEFERRED_CASE_STATE = Object.freeze({
   EXPIRED_OR_SUPERSEDED: "EXPIRED_OR_SUPERSEDED",
 });
 
-// These values intentionally match the repository's authoritative role identifiers.
-// Existing applications_committee_member identities act as the independent outcome
-// decision-maker for this PR; a separately governed catalogue/role redesign may follow.
+// Compatibility identifiers remain available for audit metadata and signal creation.
+// Human transition authority is expressed only through CASE_PERMISSION.
 export const CASE_ROLE = Object.freeze({
   DETECTION_SERVICE: "detection_service",
   SCHEME_ANALYST: "fraud_analyst",
@@ -32,6 +31,23 @@ export const CASE_ROLE = Object.freeze({
   INDEPENDENT_DECISION_MAKER: "applications_committee_member",
   PLATFORM_ADMINISTRATOR: "platform_administrator",
   REPORT_PRODUCER: "report_producer",
+});
+
+export const CASE_PERMISSION = Object.freeze({
+  TRIAGE: "case.triage",
+  DISMISS: "case.dismiss",
+  MONITOR: "case.monitor",
+  OPEN_INVESTIGATION: "case.open_investigation",
+  RECORD_NOTICE: "case.record_notice",
+  RECORD_RESPONSE: "case.record_response",
+  REVIEW_EVIDENCE: "case.review_evidence",
+  COMPLETE_REPORT: "case.complete_report",
+  SUBMIT_OUTCOME_REVIEW: "case.submit_outcome_review",
+  REVIEW_OUTCOME: "case.review_outcome",
+  APPROVE_OUTCOME: "case.approve_outcome",
+  CLOSE_UNSUBSTANTIATED: "case.close_unsubstantiated",
+  OPEN_APPEAL_OR_REVIEW: "case.open_appeal_or_review",
+  RETURN_FOR_FURTHER_EVIDENCE: "case.return_for_further_evidence",
 });
 
 export const CASE_ERROR_CODE = Object.freeze({
@@ -82,28 +98,28 @@ const allowedTargets = Object.freeze({
   ]),
 });
 
-const transitionRoles = Object.freeze({
-  [`${CASE_STATE.SIGNAL_GENERATED}->${CASE_STATE.TRIAGE_PENDING}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.DISMISSED}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.MONITORING}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.INVESTIGATION_OPEN}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.MONITORING}->${CASE_STATE.TRIAGE_PENDING}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.MONITORING}->${CASE_STATE.INVESTIGATION_OPEN}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.INVESTIGATION_OPEN}->${CASE_STATE.NOTICE_RECORDED}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.NOTICE_RECORDED}->${CASE_STATE.RESPONSE_PENDING}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.NOTICE_RECORDED}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.RESPONSE_PENDING}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.EVIDENCE_REVIEW}->${CASE_STATE.INVESTIGATION_REPORT_COMPLETED}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.INVESTIGATION_REPORT_COMPLETED}->${CASE_STATE.OUTCOME_REVIEW_PENDING}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.OUTCOME_APPROVED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.CLOSED_UNSUBSTANTIATED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.OUTCOME_APPROVED}->${CASE_STATE.APPEAL_OR_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.CLOSED_UNSUBSTANTIATED}->${CASE_STATE.APPEAL_OR_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.OUTCOME_REVIEW_PENDING}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.CLOSED_UNSUBSTANTIATED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.OUTCOME_APPROVED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
+const transitionPermissions = Object.freeze({
+  [`${CASE_STATE.SIGNAL_GENERATED}->${CASE_STATE.TRIAGE_PENDING}`]: CASE_PERMISSION.TRIAGE,
+  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.DISMISSED}`]: CASE_PERMISSION.DISMISS,
+  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.MONITORING}`]: CASE_PERMISSION.MONITOR,
+  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.INVESTIGATION_OPEN}`]: CASE_PERMISSION.OPEN_INVESTIGATION,
+  [`${CASE_STATE.MONITORING}->${CASE_STATE.TRIAGE_PENDING}`]: CASE_PERMISSION.TRIAGE,
+  [`${CASE_STATE.MONITORING}->${CASE_STATE.INVESTIGATION_OPEN}`]: CASE_PERMISSION.OPEN_INVESTIGATION,
+  [`${CASE_STATE.INVESTIGATION_OPEN}->${CASE_STATE.NOTICE_RECORDED}`]: CASE_PERMISSION.RECORD_NOTICE,
+  [`${CASE_STATE.NOTICE_RECORDED}->${CASE_STATE.RESPONSE_PENDING}`]: CASE_PERMISSION.RECORD_RESPONSE,
+  [`${CASE_STATE.NOTICE_RECORDED}->${CASE_STATE.EVIDENCE_REVIEW}`]: CASE_PERMISSION.REVIEW_EVIDENCE,
+  [`${CASE_STATE.RESPONSE_PENDING}->${CASE_STATE.EVIDENCE_REVIEW}`]: CASE_PERMISSION.REVIEW_EVIDENCE,
+  [`${CASE_STATE.EVIDENCE_REVIEW}->${CASE_STATE.INVESTIGATION_REPORT_COMPLETED}`]: CASE_PERMISSION.COMPLETE_REPORT,
+  [`${CASE_STATE.INVESTIGATION_REPORT_COMPLETED}->${CASE_STATE.OUTCOME_REVIEW_PENDING}`]: CASE_PERMISSION.SUBMIT_OUTCOME_REVIEW,
+  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.OUTCOME_APPROVED}`]: CASE_PERMISSION.APPROVE_OUTCOME,
+  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.EVIDENCE_REVIEW}`]: CASE_PERMISSION.RETURN_FOR_FURTHER_EVIDENCE,
+  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.CLOSED_UNSUBSTANTIATED}`]: CASE_PERMISSION.CLOSE_UNSUBSTANTIATED,
+  [`${CASE_STATE.OUTCOME_APPROVED}->${CASE_STATE.APPEAL_OR_REVIEW}`]: CASE_PERMISSION.OPEN_APPEAL_OR_REVIEW,
+  [`${CASE_STATE.CLOSED_UNSUBSTANTIATED}->${CASE_STATE.APPEAL_OR_REVIEW}`]: CASE_PERMISSION.OPEN_APPEAL_OR_REVIEW,
+  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.EVIDENCE_REVIEW}`]: CASE_PERMISSION.RETURN_FOR_FURTHER_EVIDENCE,
+  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.OUTCOME_REVIEW_PENDING}`]: CASE_PERMISSION.REVIEW_OUTCOME,
+  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.CLOSED_UNSUBSTANTIATED}`]: CASE_PERMISSION.CLOSE_UNSUBSTANTIATED,
+  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.OUTCOME_APPROVED}`]: CASE_PERMISSION.APPROVE_OUTCOME,
 });
 
 const STATUS_BY_CODE = Object.freeze({
@@ -140,10 +156,20 @@ export function canTransitionCaseState(fromState, toState) {
   return allowedTargets[fromState]?.includes(toState) ?? false;
 }
 
+export function requiredCasePermission(fromState, toState) {
+  return transitionPermissions[`${fromState}->${toState}`] || null;
+}
+
+function normalizePermissions(value) {
+  if (value instanceof Set) return value;
+  if (Array.isArray(value)) return new Set(value);
+  return new Set();
+}
+
 export function assertCaseTransition({
   fromState,
   toState,
-  actorRole,
+  actorPermissions,
   actorId,
   reportCompletingInvestigatorId = null,
 }) {
@@ -159,12 +185,6 @@ export function assertCaseTransition({
       CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED,
     );
   }
-  if (!Object.values(CASE_ROLE).includes(actorRole)) {
-    throw new CasePolicyError(
-      "The authoritative actor role is not recognised.",
-      CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
-    );
-  }
   if (!canTransitionCaseState(fromState, toState)) {
     throw new CasePolicyError(
       "The requested case transition is not permitted.",
@@ -172,10 +192,11 @@ export function assertCaseTransition({
     );
   }
 
-  const authorisedRoles = transitionRoles[`${fromState}->${toState}`] || [];
-  if (!authorisedRoles.includes(actorRole)) {
+  const requiredPermission = requiredCasePermission(fromState, toState);
+  const effectivePermissions = normalizePermissions(actorPermissions);
+  if (!requiredPermission || !effectivePermissions.has(requiredPermission)) {
     throw new CasePolicyError(
-      "The authoritative actor role cannot perform this transition.",
+      "The authenticated actor lacks the required case permission.",
       CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
     );
   }
