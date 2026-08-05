@@ -1,4 +1,5 @@
 export const CASE_WORKFLOW_VERSION = 1;
+export const CASE_PERMISSION_POLICY_VERSION = 1;
 
 export const CASE_STATE = Object.freeze({
   SIGNAL_GENERATED: "SIGNAL_GENERATED",
@@ -22,9 +23,7 @@ export const DEFERRED_CASE_STATE = Object.freeze({
   EXPIRED_OR_SUPERSEDED: "EXPIRED_OR_SUPERSEDED",
 });
 
-// These values intentionally match the repository's authoritative role identifiers.
-// Existing applications_committee_member identities act as the independent outcome
-// decision-maker for this PR; a separately governed catalogue/role redesign may follow.
+// Retained only for service identity and historical audit compatibility.
 export const CASE_ROLE = Object.freeze({
   DETECTION_SERVICE: "detection_service",
   SCHEME_ANALYST: "fraud_analyst",
@@ -32,6 +31,39 @@ export const CASE_ROLE = Object.freeze({
   INDEPENDENT_DECISION_MAKER: "applications_committee_member",
   PLATFORM_ADMINISTRATOR: "platform_administrator",
   REPORT_PRODUCER: "report_producer",
+});
+
+export const CASE_PERMISSION = Object.freeze({
+  TRIAGE: "case.triage",
+  DISMISS: "case.dismiss",
+  MONITOR: "case.monitor",
+  OPEN_INVESTIGATION: "case.open_investigation",
+  RECORD_NOTICE: "case.record_notice",
+  RECORD_RESPONSE: "case.record_response",
+  REVIEW_EVIDENCE: "case.review_evidence",
+  COMPLETE_REPORT: "case.complete_report",
+  SUBMIT_OUTCOME_REVIEW: "case.submit_outcome_review",
+  REVIEW_OUTCOME: "case.review_outcome",
+  APPROVE_OUTCOME: "case.approve_outcome",
+  CLOSE_UNSUBSTANTIATED: "case.close_unsubstantiated",
+  OPEN_APPEAL_OR_REVIEW: "case.open_appeal_or_review",
+  RETURN_FOR_FURTHER_EVIDENCE: "case.return_for_further_evidence",
+});
+
+export const CASE_ACTION_POLICY = Object.freeze({
+  "begin-triage": Object.freeze({ toState: CASE_STATE.TRIAGE_PENDING, permission: CASE_PERMISSION.TRIAGE }),
+  dismiss: Object.freeze({ toState: CASE_STATE.DISMISSED, permission: CASE_PERMISSION.DISMISS }),
+  "begin-monitoring": Object.freeze({ toState: CASE_STATE.MONITORING, permission: CASE_PERMISSION.MONITOR }),
+  "open-investigation": Object.freeze({ toState: CASE_STATE.INVESTIGATION_OPEN, permission: CASE_PERMISSION.OPEN_INVESTIGATION }),
+  "record-notice": Object.freeze({ toState: CASE_STATE.NOTICE_RECORDED, permission: CASE_PERMISSION.RECORD_NOTICE }),
+  "record-response-pending": Object.freeze({ toState: CASE_STATE.RESPONSE_PENDING, permission: CASE_PERMISSION.RECORD_RESPONSE }),
+  "begin-evidence-review": Object.freeze({ toState: CASE_STATE.EVIDENCE_REVIEW, permission: CASE_PERMISSION.REVIEW_EVIDENCE }),
+  "complete-investigation-report": Object.freeze({ toState: CASE_STATE.INVESTIGATION_REPORT_COMPLETED, permission: CASE_PERMISSION.COMPLETE_REPORT }),
+  "submit-outcome-review": Object.freeze({ toState: CASE_STATE.OUTCOME_REVIEW_PENDING, permission: CASE_PERMISSION.SUBMIT_OUTCOME_REVIEW }),
+  "approve-outcome": Object.freeze({ toState: CASE_STATE.OUTCOME_APPROVED, permission: CASE_PERMISSION.APPROVE_OUTCOME }),
+  "close-unsubstantiated": Object.freeze({ toState: CASE_STATE.CLOSED_UNSUBSTANTIATED, permission: CASE_PERMISSION.CLOSE_UNSUBSTANTIATED }),
+  "open-appeal-or-review": Object.freeze({ toState: CASE_STATE.APPEAL_OR_REVIEW, permission: CASE_PERMISSION.OPEN_APPEAL_OR_REVIEW }),
+  "return-for-further-evidence": Object.freeze({ toState: CASE_STATE.EVIDENCE_REVIEW, permission: CASE_PERMISSION.RETURN_FOR_FURTHER_EVIDENCE }),
 });
 
 export const CASE_ERROR_CODE = Object.freeze({
@@ -49,71 +81,28 @@ export const CASE_ERROR_CODE = Object.freeze({
 
 const allowedTargets = Object.freeze({
   [CASE_STATE.SIGNAL_GENERATED]: Object.freeze([CASE_STATE.TRIAGE_PENDING]),
-  [CASE_STATE.TRIAGE_PENDING]: Object.freeze([
-    CASE_STATE.DISMISSED,
-    CASE_STATE.MONITORING,
-    CASE_STATE.INVESTIGATION_OPEN,
-  ]),
+  [CASE_STATE.TRIAGE_PENDING]: Object.freeze([CASE_STATE.DISMISSED, CASE_STATE.MONITORING, CASE_STATE.INVESTIGATION_OPEN]),
   [CASE_STATE.DISMISSED]: Object.freeze([]),
-  [CASE_STATE.MONITORING]: Object.freeze([
-    CASE_STATE.TRIAGE_PENDING,
-    CASE_STATE.INVESTIGATION_OPEN,
-  ]),
+  [CASE_STATE.MONITORING]: Object.freeze([CASE_STATE.TRIAGE_PENDING, CASE_STATE.INVESTIGATION_OPEN]),
   [CASE_STATE.INVESTIGATION_OPEN]: Object.freeze([CASE_STATE.NOTICE_RECORDED]),
-  [CASE_STATE.NOTICE_RECORDED]: Object.freeze([
-    CASE_STATE.RESPONSE_PENDING,
-    CASE_STATE.EVIDENCE_REVIEW,
-  ]),
+  [CASE_STATE.NOTICE_RECORDED]: Object.freeze([CASE_STATE.RESPONSE_PENDING, CASE_STATE.EVIDENCE_REVIEW]),
   [CASE_STATE.RESPONSE_PENDING]: Object.freeze([CASE_STATE.EVIDENCE_REVIEW]),
   [CASE_STATE.EVIDENCE_REVIEW]: Object.freeze([CASE_STATE.INVESTIGATION_REPORT_COMPLETED]),
   [CASE_STATE.INVESTIGATION_REPORT_COMPLETED]: Object.freeze([CASE_STATE.OUTCOME_REVIEW_PENDING]),
-  [CASE_STATE.OUTCOME_REVIEW_PENDING]: Object.freeze([
-    CASE_STATE.OUTCOME_APPROVED,
-    CASE_STATE.EVIDENCE_REVIEW,
-    CASE_STATE.CLOSED_UNSUBSTANTIATED,
-  ]),
+  [CASE_STATE.OUTCOME_REVIEW_PENDING]: Object.freeze([CASE_STATE.OUTCOME_APPROVED, CASE_STATE.EVIDENCE_REVIEW, CASE_STATE.CLOSED_UNSUBSTANTIATED]),
   [CASE_STATE.OUTCOME_APPROVED]: Object.freeze([CASE_STATE.APPEAL_OR_REVIEW]),
   [CASE_STATE.CLOSED_UNSUBSTANTIATED]: Object.freeze([CASE_STATE.APPEAL_OR_REVIEW]),
-  [CASE_STATE.APPEAL_OR_REVIEW]: Object.freeze([
-    CASE_STATE.EVIDENCE_REVIEW,
-    CASE_STATE.OUTCOME_REVIEW_PENDING,
-    CASE_STATE.CLOSED_UNSUBSTANTIATED,
-    CASE_STATE.OUTCOME_APPROVED,
-  ]),
-});
-
-const transitionRoles = Object.freeze({
-  [`${CASE_STATE.SIGNAL_GENERATED}->${CASE_STATE.TRIAGE_PENDING}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.DISMISSED}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.MONITORING}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.TRIAGE_PENDING}->${CASE_STATE.INVESTIGATION_OPEN}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.MONITORING}->${CASE_STATE.TRIAGE_PENDING}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.MONITORING}->${CASE_STATE.INVESTIGATION_OPEN}`]: Object.freeze([CASE_ROLE.SCHEME_ANALYST]),
-  [`${CASE_STATE.INVESTIGATION_OPEN}->${CASE_STATE.NOTICE_RECORDED}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.NOTICE_RECORDED}->${CASE_STATE.RESPONSE_PENDING}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.NOTICE_RECORDED}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.RESPONSE_PENDING}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.EVIDENCE_REVIEW}->${CASE_STATE.INVESTIGATION_REPORT_COMPLETED}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.INVESTIGATION_REPORT_COMPLETED}->${CASE_STATE.OUTCOME_REVIEW_PENDING}`]: Object.freeze([CASE_ROLE.INVESTIGATOR]),
-  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.OUTCOME_APPROVED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.OUTCOME_REVIEW_PENDING}->${CASE_STATE.CLOSED_UNSUBSTANTIATED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.OUTCOME_APPROVED}->${CASE_STATE.APPEAL_OR_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.CLOSED_UNSUBSTANTIATED}->${CASE_STATE.APPEAL_OR_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.EVIDENCE_REVIEW}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.OUTCOME_REVIEW_PENDING}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.CLOSED_UNSUBSTANTIATED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
-  [`${CASE_STATE.APPEAL_OR_REVIEW}->${CASE_STATE.OUTCOME_APPROVED}`]: Object.freeze([CASE_ROLE.INDEPENDENT_DECISION_MAKER]),
+  [CASE_STATE.APPEAL_OR_REVIEW]: Object.freeze([CASE_STATE.EVIDENCE_REVIEW, CASE_STATE.OUTCOME_REVIEW_PENDING, CASE_STATE.CLOSED_UNSUBSTANTIATED, CASE_STATE.OUTCOME_APPROVED]),
 });
 
 const STATUS_BY_CODE = Object.freeze({
   [CASE_ERROR_CODE.VALIDATION_FAILED]: 400,
-  [CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE]: 409,
+  [CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE]: 422,
   [CASE_ERROR_CODE.STATE_VERSION_CONFLICT]: 409,
   [CASE_ERROR_CODE.IDEMPOTENCY_MISMATCH]: 409,
   [CASE_ERROR_CODE.REVIEWER_INDEPENDENCE_REQUIRED]: 409,
   [CASE_ERROR_CODE.NETWORK_NOTICE_GOVERNANCE_REQUIRED]: 409,
-  [CASE_ERROR_CODE.TENANT_MISMATCH]: 403,
+  [CASE_ERROR_CODE.TENANT_MISMATCH]: 404,
   [CASE_ERROR_CODE.ROLE_NOT_AUTHORISED]: 403,
   [CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED]: 409,
   [CASE_ERROR_CODE.NOT_FOUND]: 404,
@@ -126,6 +115,18 @@ export class CasePolicyError extends Error {
     this.code = code;
     this.status = status;
   }
+}
+
+export function canonicalCasePermissions(values) {
+  return Object.freeze([...new Set(
+    (values instanceof Set ? [...values] : Array.isArray(values) ? values : [])
+      .filter((value) => typeof value === "string" && value.trim())
+      .map((value) => value.trim()),
+  )].sort());
+}
+
+export function resolveCaseActionPolicy(action) {
+  return CASE_ACTION_POLICY[action] || null;
 }
 
 export function isDeferredCaseState(state) {
@@ -141,10 +142,11 @@ export function canTransitionCaseState(fromState, toState) {
 }
 
 export function assertCaseTransition({
+  action,
   fromState,
   toState,
-  actorRole,
-  actorId,
+  actorContext,
+  actorId = actorContext?.actorId,
   reportCompletingInvestigatorId = null,
 }) {
   if (isDeferredCaseState(toState)) {
@@ -153,45 +155,29 @@ export function assertCaseTransition({
       CASE_ERROR_CODE.NETWORK_NOTICE_GOVERNANCE_REQUIRED,
     );
   }
-  if (!isCaseState(fromState) || !isCaseState(toState)) {
-    throw new CasePolicyError(
-      "The requested case state is not recognised.",
-      CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED,
-    );
+  const actionPolicy = resolveCaseActionPolicy(action);
+  if (!actionPolicy || actionPolicy.toState !== toState) {
+    throw new CasePolicyError("The requested case action is not permitted.", CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED);
   }
-  if (!Object.values(CASE_ROLE).includes(actorRole)) {
+  if (!isCaseState(fromState) || !isCaseState(toState) || !canTransitionCaseState(fromState, toState)) {
+    throw new CasePolicyError("The requested case transition is not permitted.", CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED);
+  }
+  const permissions = canonicalCasePermissions(actorContext?.permissions);
+  if (!permissions.includes(actionPolicy.permission)) {
     throw new CasePolicyError(
-      "The authoritative actor role is not recognised.",
+      "The authenticated actor lacks the required case permission.",
       CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
     );
   }
-  if (!canTransitionCaseState(fromState, toState)) {
-    throw new CasePolicyError(
-      "The requested case transition is not permitted.",
-      CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED,
-    );
-  }
-
-  const authorisedRoles = transitionRoles[`${fromState}->${toState}`] || [];
-  if (!authorisedRoles.includes(actorRole)) {
-    throw new CasePolicyError(
-      "The authoritative actor role cannot perform this transition.",
-      CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
-    );
-  }
-
-  if (
-    toState === CASE_STATE.OUTCOME_APPROVED
-    && reportCompletingInvestigatorId
-    && actorId === reportCompletingInvestigatorId
-  ) {
+  if (toState === CASE_STATE.OUTCOME_APPROVED
+      && reportCompletingInvestigatorId
+      && actorId === reportCompletingInvestigatorId) {
     throw new CasePolicyError(
       "The outcome reviewer must be independent from the report-completing investigator.",
       CASE_ERROR_CODE.REVIEWER_INDEPENDENCE_REQUIRED,
     );
   }
-
-  return true;
+  return actionPolicy;
 }
 
 function hasText(value) {
@@ -225,108 +211,56 @@ export function assertCaseProcessRequirements({
 }) {
   if (toState === CASE_STATE.INVESTIGATION_REPORT_COMPLETED) {
     if (!hasText(assignedInvestigatorId) || actorId !== assignedInvestigatorId) {
-      throw new CasePolicyError(
-        "The assigned investigator must complete the investigation report.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("The assigned investigator must complete the investigation report.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
     if (!hasArrayValues(evidenceReferences) && !hasText(noEvidenceReason)) {
-      throw new CasePolicyError(
-        "Persisted evidence or an explicit no-evidence reason is required before report completion.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("Persisted evidence or an explicit no-evidence reason is required before report completion.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
     if (!hasText(reportReference) && !hasText(reportDigest)) {
-      throw new CasePolicyError(
-        "A report reference or immutable report digest is required before report completion.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("A report reference or immutable report digest is required before report completion.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
     if (!hasText(completionReason)) {
-      throw new CasePolicyError(
-        "A report-completion reason is required.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("A report-completion reason is required.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
   }
-
-  if (toState === CASE_STATE.OUTCOME_REVIEW_PENDING) {
-    if (
-      !hasText(reportCompletingInvestigatorId)
-      || !hasText(reportCompletionEventId)
-      || !hasArrayValues(processCheckReferences)
-    ) {
-      throw new CasePolicyError(
-        "A completed investigator report and recorded process checks are required before outcome review.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
-    }
+  if (toState === CASE_STATE.OUTCOME_REVIEW_PENDING
+      && (!hasText(reportCompletingInvestigatorId)
+        || !hasText(reportCompletionEventId)
+        || !hasArrayValues(processCheckReferences))) {
+    throw new CasePolicyError("A completed investigator report and recorded process checks are required before outcome review.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
   }
-
   if (toState === CASE_STATE.OUTCOME_APPROVED) {
     if (!hasText(reportCompletingInvestigatorId)) {
-      throw new CasePolicyError(
-        "The report-completing investigator must be known before approval.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("The report-completing investigator must be known before approval.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
     if (actorId === reportCompletingInvestigatorId) {
-      throw new CasePolicyError(
-        "The outcome reviewer must be independent from the report-completing investigator.",
-        CASE_ERROR_CODE.REVIEWER_INDEPENDENCE_REQUIRED,
-      );
+      throw new CasePolicyError("The outcome reviewer must be independent from the report-completing investigator.", CASE_ERROR_CODE.REVIEWER_INDEPENDENCE_REQUIRED);
     }
-    const configuredCodes = new Set(
-      (allowedOutcomeCodes || []).filter(hasText).map((code) => code.trim()),
-    );
+    const configuredCodes = new Set((allowedOutcomeCodes || []).filter(hasText).map((code) => code.trim()));
     if (!hasText(outcomeCode) || !configuredCodes.has(outcomeCode.trim())) {
-      throw new CasePolicyError(
-        "The outcome code is not in the configured bounded outcome catalogue.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("The outcome code is not in the configured bounded outcome catalogue.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
-    const hasReasons = hasText(recordedReasons) || hasArrayValues(recordedReasons);
-    if (!hasReasons) {
-      throw new CasePolicyError(
-        "Recorded outcome reasons are required.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+    if (!(hasText(recordedReasons) || hasArrayValues(recordedReasons))) {
+      throw new CasePolicyError("Recorded outcome reasons are required.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
     if (!identityMatchReviewResult || typeof identityMatchReviewResult !== "object") {
-      throw new CasePolicyError(
-        "An identity-match review result is required.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("An identity-match review result is required.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
     if (!hasText(supportingReportReference) && !hasText(evidenceSetReference)) {
-      throw new CasePolicyError(
-        "A supporting report or evidence-set reference is required.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("A supporting report or evidence-set reference is required.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
     if (!processCheckComplete) {
-      throw new CasePolicyError(
-        "Required process checks must be complete before approval.",
-        CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-      );
+      throw new CasePolicyError("Required process checks must be complete before approval.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
     }
   }
-
-  if (
-    (fromState === CASE_STATE.MONITORING && [CASE_STATE.TRIAGE_PENDING, CASE_STATE.INVESTIGATION_OPEN].includes(toState))
-    && !hasText(completionReason)
-  ) {
-    throw new CasePolicyError(
-      "Reopening a monitored case requires an explicit reason.",
-      CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE,
-    );
+  if (fromState === CASE_STATE.MONITORING
+      && [CASE_STATE.TRIAGE_PENDING, CASE_STATE.INVESTIGATION_OPEN].includes(toState)
+      && !hasText(completionReason)) {
+    throw new CasePolicyError("Reopening a monitored case requires an explicit reason.", CASE_ERROR_CODE.PROCESS_REQUIREMENTS_INCOMPLETE);
   }
-
   return true;
 }
 
 export function listPermittedCaseTransitions() {
-  return Object.fromEntries(
-    Object.entries(allowedTargets).map(([state, targets]) => [state, [...targets]]),
-  );
+  return Object.fromEntries(Object.entries(allowedTargets).map(([state, targets]) => [state, [...targets]]));
 }
