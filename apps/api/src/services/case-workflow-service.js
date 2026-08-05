@@ -111,6 +111,10 @@ function detailResult(caseRecord, actorContext) {
   };
 }
 
+function hasMethods(repository, methods) {
+  return Boolean(repository && methods.every((method) => typeof repository[method] === "function"));
+}
+
 export function resolveCaseAction(action) {
   return resolveCaseActionPolicy(action);
 }
@@ -118,15 +122,30 @@ export function resolveCaseAction(action) {
 export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}) {
   return {
     isConfigured() {
-      return Boolean(
-        caseWorkflowRepository
-        && typeof caseWorkflowRepository.getCase === "function"
-        && typeof caseWorkflowRepository.performAction === "function"
-      );
+      return hasMethods(caseWorkflowRepository, ["getCase", "performAction"]);
+    },
+
+    canReadDirectCase() {
+      return hasMethods(caseWorkflowRepository, ["getCase"]);
+    },
+
+    canReadLegacyCase() {
+      return hasMethods(caseWorkflowRepository, ["getCaseByLegacyInvestigationId"]);
+    },
+
+    canResolveLegacyFirstAccess() {
+      return hasMethods(caseWorkflowRepository, [
+        "getCaseByLegacyInvestigationId",
+        "resolveLegacyInvestigationCase",
+      ]);
+    },
+
+    canPerformAction() {
+      return hasMethods(caseWorkflowRepository, ["performAction"]);
     },
 
     async getCase({ caseId, authContext, tenantContext }) {
-      if (!this.isConfigured()) throw new Error("Case workflow repository is not configured.");
+      if (!this.canReadDirectCase()) throw new Error("Case read repository is not configured.");
       const actorContext = trustedActor({ authContext, tenantContext });
       const caseRecord = await caseWorkflowRepository.getCase(requiredString(caseId, "caseId", 64));
       return detailResult(caseRecord, actorContext);
@@ -138,8 +157,7 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       tenantContext,
       correlationId,
     }) {
-      if (!this.isConfigured()
-          || typeof caseWorkflowRepository.getCaseByLegacyInvestigationId !== "function") {
+      if (!this.canReadLegacyCase()) {
         throw new Error("Legacy case read repository is not configured.");
       }
       const actorContext = trustedActor({ authContext, tenantContext });
@@ -151,9 +169,10 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       let caseRecord = await caseWorkflowRepository.getCaseByLegacyInvestigationId(
         normalizedInvestigationId,
       );
-      if (!caseRecord
-          && actorContext.permissions.includes(CASE_PERMISSION.TRIAGE)
-          && typeof caseWorkflowRepository.resolveLegacyInvestigationCase === "function") {
+      if (!caseRecord && actorContext.permissions.includes(CASE_PERMISSION.TRIAGE)) {
+        if (!this.canResolveLegacyFirstAccess()) {
+          throw new Error("Legacy first-access repository is not configured.");
+        }
         const migration = await caseWorkflowRepository.resolveLegacyInvestigationCase({
           legacyInvestigationId: normalizedInvestigationId,
           actorContext,
@@ -173,7 +192,7 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       idempotencyKey,
       payload = {},
     }) {
-      if (!this.isConfigured()) throw new Error("Case workflow repository is not configured.");
+      if (!this.canPerformAction()) throw new Error("Case action repository is not configured.");
       const policy = resolveCaseAction(action);
       if (!policy) {
         throw new CasePolicyError(
