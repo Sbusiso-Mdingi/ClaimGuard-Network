@@ -81,6 +81,49 @@ describe("desktop polling and offline mutation policy", () => {
     expect(JSON.stringify(calls[0][1])).not.toMatch(/targetState|toState|tenant|actor|role|permission/i);
   });
 
+  it("uses the platform UUID source when available", () => {
+    const key = createCaseActionIdempotencyKey({
+      crypto: { randomUUID: () => "550e8400-e29b-41d4-a716-446655440000" },
+    });
+    expect(key).toBe("550e8400-e29b-41d4-a716-446655440000");
+  });
+
+  it("uses bounded deterministic fallback entropy without an undeclared performance global", () => {
+    const dependencies = {
+      crypto: null,
+      now: () => 1_785_542_400_000,
+      performanceNow: () => 12.345,
+      random: (() => {
+        const values = [0.1, 0.2, 0.3, 0.4];
+        return () => values.shift();
+      })(),
+      sequence: 7,
+    };
+    const first = createCaseActionIdempotencyKey(dependencies);
+    const second = createCaseActionIdempotencyKey({
+      ...dependencies,
+      random: (() => {
+        const values = [0.1, 0.2, 0.3, 0.4];
+        return () => values.shift();
+      })(),
+    });
+    expect(first).toBe(second);
+    expect(first).toMatch(/^case-action-[A-Za-z0-9.-]+$/);
+    expect(first.length).toBeLessThanOrEqual(128);
+    expect(first).not.toMatch(/[\r\n\u0000-\u001f\u007f]/);
+  });
+
+  it("changes the fallback key for a distinct action intent sequence", () => {
+    const common = {
+      crypto: null,
+      now: () => 1_785_542_400_000,
+      performanceNow: () => 12.345,
+      random: () => 0.25,
+    };
+    expect(createCaseActionIdempotencyKey({ ...common, sequence: 1 }))
+      .not.toBe(createCaseActionIdempotencyKey({ ...common, sequence: 2 }));
+  });
+
   it("rejects client authority fields before native invocation", () => {
     const calls = [];
     setDesktopInvokeForTests(async (...args) => {
@@ -102,9 +145,9 @@ describe("desktop polling and offline mutation policy", () => {
     expect(calls).toEqual([]);
   });
 
-  it("preserves stable native server codes for stale handling", async () => {
+  it("preserves stable native server codes for stale handling without message matching", async () => {
     setDesktopInvokeForTests(async () => {
-      throw "CASE_STATE_VERSION_CONFLICT:The case changed on the server.";
+      throw "CASE_STATE_VERSION_CONFLICT:Completely different wording.";
     });
     await expect(desktopBridge.performGovernedCaseAction("case-1", "begin-triage", "key-1", {
       expectedStateVersion: 2,
@@ -112,7 +155,7 @@ describe("desktop polling and offline mutation policy", () => {
       reasonSummary: "Reviewed.",
     })).rejects.toMatchObject({
       code: "CASE_STATE_VERSION_CONFLICT",
-      message: "The case changed on the server.",
+      message: "Completely different wording.",
     });
   });
 
