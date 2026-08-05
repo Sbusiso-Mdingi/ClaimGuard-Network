@@ -18,12 +18,49 @@ test("migration adds tenant-scoped cases, operations, events, checks and outcome
   assert.match(migration, /UNIQUE KEY uq_case_transition_idempotency \(tenant_id, idempotency_key\)/);
 });
 
-test("migration excludes deferred states and legacy verdict codes", () => {
-  assert.doesNotMatch(migration, /current_state[\s\S]*'NETWORK_NOTICE_ACTIVE'/);
-  assert.match(migration, /outcome_code NOT IN \('CONFIRMED_FRAUD','RED','VERIFIED','NETWORK_NOTICE_ACTIVE'\)/);
-  assert.doesNotMatch(migration, /INSERT INTO shared_fraud_registry_entries/);
-  assert.doesNotMatch(migration, /UPDATE claims\s+SET/i);
-});
+test(
+  "migration excludes deferred states and legacy verdict codes",
+  () => {
+    const stateConstraint = migration.match(
+      /CONSTRAINT chk_investigation_cases_state CHECK \(current_state IN \(([\s\S]*?)\)\)/,
+    );
+
+    assert.ok(
+      stateConstraint,
+      "case-state constraint must exist",
+    );
+
+    assert.doesNotMatch(
+      stateConstraint[1],
+      /'NETWORK_NOTICE_ACTIVE'/,
+    );
+
+    assert.doesNotMatch(
+      stateConstraint[1],
+      /'CORRECTED_OR_WITHDRAWN'/,
+    );
+
+    assert.doesNotMatch(
+      stateConstraint[1],
+      /'EXPIRED_OR_SUPERSEDED'/,
+    );
+
+    assert.match(
+      migration,
+      /outcome_code NOT IN \('CONFIRMED_FRAUD','RED','VERIFIED','NETWORK_NOTICE_ACTIVE'\)/,
+    );
+
+    assert.doesNotMatch(
+      migration,
+      /INSERT INTO shared_fraud_registry_entries/,
+    );
+
+    assert.doesNotMatch(
+      migration,
+      /UPDATE claims\s+SET/i,
+    );
+  },
+);
 
 test("events, process checks and outcomes are append-only", () => {
   for (const code of [
