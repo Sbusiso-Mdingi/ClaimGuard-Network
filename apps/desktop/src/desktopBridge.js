@@ -18,27 +18,99 @@ function legacyInvestigationStatusWriteDisabled() {
   return error;
 }
 
+function normalizedDesktopError(value) {
+  if (value instanceof Error && value.code) return value;
+  const message = typeof value === "string" ? value : value?.message || "The native desktop request failed.";
+  const match = /^([A-Z][A-Z0-9_]{2,127}):(.*)$/s.exec(message);
+  const error = value instanceof Error ? value : new Error(match?.[2]?.trim() || message);
+  if (match) {
+    error.code = match[1];
+    error.message = match[2].trim() || match[1];
+  }
+  return error;
+}
+
+async function invokeDesktop(command, args) {
+  try {
+    return await invokeImplementation(command, args);
+  } catch (error) {
+    throw normalizedDesktopError(error);
+  }
+}
+
+const GOVERNED_PAYLOAD_FIELDS = new Set([
+  "expectedStateVersion",
+  "reasonCode",
+  "reasonSummary",
+  "evidenceReferences",
+  "processCheckReferences",
+  "assignedInvestigatorId",
+  "reportReference",
+  "reportDigest",
+  "noEvidenceReason",
+  "completionReason",
+  "outcomeCode",
+  "recordedReasons",
+  "identityMatchReviewResult",
+  "supportingReportReference",
+  "evidenceSetReference",
+  "processCheckComplete",
+]);
+
+function governedPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new TypeError("A governed case-action payload is required.");
+  }
+  const unknown = Object.keys(payload).find((field) => !GOVERNED_PAYLOAD_FIELDS.has(field));
+  if (unknown) {
+    const error = new Error(`Unsupported governed case-action field: ${unknown}`);
+    error.code = "PROHIBITED_CASE_CONTEXT_FIELD";
+    throw error;
+  }
+  return { ...payload };
+}
+
+export function createCaseActionIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0"));
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+  }
+  const seed = `${Date.now()}-${performance?.now?.() || 0}-${Math.random()}-${Math.random()}`;
+  return `case-action-${seed.replace(/[^A-Za-z0-9.-]/g, "-")}`.slice(0, 128);
+}
+
 export const desktopBridge = Object.freeze({
-  status: () => invokeImplementation("desktop_status"),
-  activate: (activationKey) => invokeImplementation("activate_desktop", { activationKey }),
-  login: (username, password) => invokeImplementation("desktop_login", { username, password }),
-  logout: () => invokeImplementation("desktop_logout"),
-  lock: () => invokeImplementation("lock_desktop"),
-  sync: () => invokeImplementation("synchronize_desktop"),
-  claimDetails: (claimId) => invokeImplementation("desktop_claim_details", { claimId }),
-  investigators: () => invokeImplementation("desktop_investigators"),
-  createInvestigation: (claimId, expectedClaimVersion, assignedInvestigator, priority) => invokeImplementation("desktop_create_investigation", {
+  status: () => invokeDesktop("desktop_status"),
+  activate: (activationKey) => invokeDesktop("activate_desktop", { activationKey }),
+  login: (username, password) => invokeDesktop("desktop_login", { username, password }),
+  logout: () => invokeDesktop("desktop_logout"),
+  lock: () => invokeDesktop("lock_desktop"),
+  sync: () => invokeDesktop("synchronize_desktop"),
+  claimDetails: (claimId) => invokeDesktop("desktop_claim_details", { claimId }),
+  investigators: () => invokeDesktop("desktop_investigators"),
+  createInvestigation: (claimId, expectedClaimVersion, assignedInvestigator, priority) => invokeDesktop("desktop_create_investigation", {
     claimId,
     expectedClaimVersion,
     assignedInvestigator: assignedInvestigator || null,
     priority,
   }),
-  investigationDetails: (investigationId) => invokeImplementation("desktop_investigation_details", { investigationId }),
+  investigationDetails: (investigationId) => invokeDesktop("desktop_investigation_details", { investigationId }),
+  governedCaseDetails: (investigationId) => invokeDesktop("desktop_governed_case_details", { investigationId }),
+  performGovernedCaseAction: (caseId, action, idempotencyKey, payload) => invokeDesktop("desktop_perform_case_action", {
+    caseId,
+    action,
+    idempotencyKey,
+    payload: governedPayload(payload),
+  }),
   updateInvestigation: (investigationId, expectedRecordVersion, changes) => {
     if (changes && Object.hasOwn(changes, "status") && changes.status !== undefined && changes.status !== null) {
       throw legacyInvestigationStatusWriteDisabled();
     }
-    return invokeImplementation("desktop_update_investigation", {
+    return invokeDesktop("desktop_update_investigation", {
       investigationId,
       expectedRecordVersion,
       status: null,
@@ -46,13 +118,13 @@ export const desktopBridge = Object.freeze({
       ...(changes && Object.hasOwn(changes, "assignedInvestigator") ? { assignedInvestigator: changes.assignedInvestigator } : {}),
     });
   },
-  addInvestigationNote: (investigationId, expectedRecordVersion, text, noteType) => invokeImplementation("desktop_add_investigation_note", {
+  addInvestigationNote: (investigationId, expectedRecordVersion, text, noteType) => invokeDesktop("desktop_add_investigation_note", {
     investigationId,
     expectedRecordVersion,
     text,
     noteType,
   }),
-  uploadInvestigationEvidence: (investigationId, expectedRecordVersion, evidence) => invokeImplementation("desktop_upload_investigation_evidence", {
+  uploadInvestigationEvidence: (investigationId, expectedRecordVersion, evidence) => invokeDesktop("desktop_upload_investigation_evidence", {
     investigationId,
     expectedRecordVersion,
     filename: evidence.filename,
@@ -61,7 +133,7 @@ export const desktopBridge = Object.freeze({
     contentType: evidence.contentType,
     contentBase64: evidence.contentBase64,
   }),
-  reset: (confirmation) => invokeImplementation("reset_desktop", { confirmation }),
+  reset: (confirmation) => invokeDesktop("reset_desktop", { confirmation }),
 });
 
 export function pollingDelay(baseMs, random = Math.random) {
