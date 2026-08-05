@@ -25,12 +25,19 @@ function trustedContext(role, permissions, overrides = {}) {
   };
 }
 
-function configuredService() {
+function configuredService(caseOverrides = {}) {
   const calls = [];
   const service = createCaseWorkflowService({
     caseWorkflowRepository: {
       async getCase(caseId) {
-        return { caseId, tenantId: "tenant-a", stateVersion: 2 };
+        return {
+          caseId,
+          tenantId: "tenant-a",
+          currentState: CASE_STATE.TRIAGE_PENDING,
+          stateVersion: 2,
+          reportCompletingInvestigatorId: null,
+          ...caseOverrides,
+        };
       },
       async performAction(input) {
         calls.push(input);
@@ -71,6 +78,39 @@ test("fixed actions resolve to governed targets and permissions", () => {
   });
   assert.equal(resolveCaseAction(CASE_ACTION.APPROVE_OUTCOME).permission, CASE_PERMISSION.APPROVE_OUTCOME);
   assert.equal(resolveCaseAction("NETWORK_NOTICE_ACTIVE"), null);
+});
+
+test("case detail exposes only server-authorized actions for the current state", async () => {
+  const { service } = configuredService();
+  const result = await service.getCase({
+    caseId: "case-1",
+    ...trustedContext("fraud_analyst", [
+      CASE_PERMISSION.DISMISS,
+      CASE_PERMISSION.MONITOR,
+      CASE_PERMISSION.OPEN_INVESTIGATION,
+      CASE_PERMISSION.APPROVE_OUTCOME,
+    ]),
+  });
+  assert.equal(result.case.currentState, CASE_STATE.TRIAGE_PENDING);
+  assert.deepEqual(result.allowedActions, [
+    CASE_ACTION.BEGIN_MONITORING,
+    CASE_ACTION.DISMISS,
+    CASE_ACTION.OPEN_INVESTIGATION,
+  ]);
+  assert.equal(result.allowedActions.includes(CASE_ACTION.APPROVE_OUTCOME), false);
+  assert.equal(result.allowedActions.some((action) => action.includes("registry") || action.includes("network")), false);
+});
+
+test("case detail withholds self-approval even when nominal permission exists", async () => {
+  const { service } = configuredService({
+    currentState: CASE_STATE.OUTCOME_REVIEW_PENDING,
+    reportCompletingInvestigatorId: "actor-1",
+  });
+  const result = await service.getCase({
+    caseId: "case-1",
+    ...trustedContext("applications_committee_member", [CASE_PERMISSION.APPROVE_OUTCOME]),
+  });
+  assert.deepEqual(result.allowedActions, []);
 });
 
 test("service forwards a frozen trusted actor context, never client authority", async () => {
