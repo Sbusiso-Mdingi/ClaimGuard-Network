@@ -4,6 +4,7 @@ import {
   canTransitionCaseState,
   CASE_ACTION_POLICY,
   CASE_ERROR_CODE,
+  CASE_PERMISSION,
   CASE_PERMISSION_POLICY_VERSION,
   CasePolicyError,
   canonicalCasePermissions,
@@ -131,15 +132,35 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       return detailResult(caseRecord, actorContext);
     },
 
-    async getCaseByLegacyInvestigation({ legacyInvestigationId, authContext, tenantContext }) {
+    async getCaseByLegacyInvestigation({
+      legacyInvestigationId,
+      authContext,
+      tenantContext,
+      correlationId,
+    }) {
       if (!this.isConfigured()
           || typeof caseWorkflowRepository.getCaseByLegacyInvestigationId !== "function") {
         throw new Error("Legacy case read repository is not configured.");
       }
       const actorContext = trustedActor({ authContext, tenantContext });
-      const caseRecord = await caseWorkflowRepository.getCaseByLegacyInvestigationId(
-        requiredString(legacyInvestigationId, "legacyInvestigationId", 64),
+      const normalizedInvestigationId = requiredString(
+        legacyInvestigationId,
+        "legacyInvestigationId",
+        64,
       );
+      let caseRecord = await caseWorkflowRepository.getCaseByLegacyInvestigationId(
+        normalizedInvestigationId,
+      );
+      if (!caseRecord
+          && actorContext.permissions.includes(CASE_PERMISSION.TRIAGE)
+          && typeof caseWorkflowRepository.resolveLegacyInvestigationCase === "function") {
+        const migration = await caseWorkflowRepository.resolveLegacyInvestigationCase({
+          legacyInvestigationId: normalizedInvestigationId,
+          actorContext,
+          correlationId: requiredString(correlationId, "correlationId", 128),
+        });
+        caseRecord = migration.case;
+      }
       return detailResult(caseRecord, actorContext);
     },
 
