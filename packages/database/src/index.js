@@ -131,8 +131,12 @@ export {
 export {
   assertCaseProcessRequirements,
   assertCaseTransition,
+  canonicalCasePermissions,
   canTransitionCaseState,
+  CASE_ACTION_POLICY,
   CASE_ERROR_CODE,
+  CASE_PERMISSION,
+  CASE_PERMISSION_POLICY_VERSION,
   CASE_ROLE,
   CASE_STATE,
   CASE_WORKFLOW_VERSION,
@@ -141,6 +145,7 @@ export {
   isCaseState,
   isDeferredCaseState,
   listPermittedCaseTransitions,
+  resolveCaseActionPolicy,
 } from "./case-transition-policy.js";
 
 export {
