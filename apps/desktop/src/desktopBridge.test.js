@@ -1,19 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import { desktopBridge, nextBackoff, operationalWriteAllowed, pollingDelay, setDesktopInvokeForTests } from "./desktopBridge";
+import {
+  createCaseActionIdempotencyKey,
+  desktopBridge,
+  nextBackoff,
+  operationalWriteAllowed,
+  pollingDelay,
+  setDesktopInvokeForTests,
+} from "./desktopBridge";
 
 describe("desktop polling and offline mutation policy", () => {
-  it("exposes no platform-governance or device-fleet administration commands", () => {
+  it("exposes governed case operations but no platform-governance or device-fleet administration commands", () => {
     expect(Object.keys(desktopBridge).sort()).toEqual([
       "activate",
       "addInvestigationNote",
       "claimDetails",
       "createInvestigation",
+      "governedCaseDetails",
       "investigationDetails",
       "investigators",
       "lock",
       "login",
       "logout",
+      "performGovernedCaseAction",
       "reset",
       "status",
       "sync",
@@ -22,7 +31,7 @@ describe("desktop polling and offline mutation policy", () => {
     ]);
   });
 
-  it("maps investigation reads and supported versioned updates to narrow Tauri commands", async () => {
+  it("maps investigation and governed case reads to dedicated Tauri commands", async () => {
     const calls = [];
     setDesktopInvokeForTests(async (command, args) => {
       calls.push([command, args]);
@@ -30,14 +39,12 @@ describe("desktop polling and offline mutation policy", () => {
     });
 
     await desktopBridge.investigationDetails("investigation-1");
-    await desktopBridge.updateInvestigation(
-      "investigation-1",
-      7,
-      { priority: "HIGH" },
-    );
+    await desktopBridge.governedCaseDetails("investigation-1");
+    await desktopBridge.updateInvestigation("investigation-1", 7, { priority: "HIGH" });
 
     expect(calls).toEqual([
       ["desktop_investigation_details", { investigationId: "investigation-1" }],
+      ["desktop_governed_case_details", { investigationId: "investigation-1" }],
       ["desktop_update_investigation", {
         investigationId: "investigation-1",
         expectedRecordVersion: 7,
@@ -45,6 +52,62 @@ describe("desktop polling and offline mutation policy", () => {
         priority: "HIGH",
       }],
     ]);
+  });
+
+  it("passes only the governed action intent, idempotency token, and expected version", async () => {
+    const calls = [];
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      return { state: "TRIAGE_ACTIVE", stateVersion: 3 };
+    });
+    const key = createCaseActionIdempotencyKey();
+    await desktopBridge.performGovernedCaseAction("case-1", "begin-triage", key, {
+      expectedStateVersion: 2,
+      reasonCode: "REVIEWED_ACTION",
+      reasonSummary: "Reviewed in the desktop application.",
+    });
+
+    expect(key).toMatch(/^[A-Za-z0-9.-]{16,128}$/);
+    expect(calls).toEqual([["desktop_perform_case_action", {
+      caseId: "case-1",
+      action: "begin-triage",
+      idempotencyKey: key,
+      payload: {
+        expectedStateVersion: 2,
+        reasonCode: "REVIEWED_ACTION",
+        reasonSummary: "Reviewed in the desktop application.",
+      },
+    }]]);
+    expect(JSON.stringify(calls[0][1])).not.toMatch(/targetState|toState|tenant|actor|role|permission/i);
+  });
+
+  it("rejects client authority fields before native invocation", async () => {
+    const calls = [];
+    setDesktopInvokeForTests(async (...args) => {
+      calls.push(args);
+      return { available: true };
+    });
+    await expect(desktopBridge.performGovernedCaseAction("case-1", "begin-triage", "key-1", {
+      expectedStateVersion: 2,
+      reasonCode: "REVIEWED_ACTION",
+      reasonSummary: "Reviewed.",
+      targetState: "OUTCOME_APPROVED",
+    })).rejects.toMatchObject({ code: "PROHIBITED_CASE_CONTEXT_FIELD" });
+    expect(calls).toEqual([]);
+  });
+
+  it("preserves stable native server codes for stale handling", async () => {
+    setDesktopInvokeForTests(async () => {
+      throw "CASE_STATE_VERSION_CONFLICT:The case changed on the server.";
+    });
+    await expect(desktopBridge.performGovernedCaseAction("case-1", "begin-triage", "key-1", {
+      expectedStateVersion: 2,
+      reasonCode: "REVIEWED_ACTION",
+      reasonSummary: "Reviewed.",
+    })).rejects.toMatchObject({
+      code: "CASE_STATE_VERSION_CONFLICT",
+      message: "The case changed on the server.",
+    });
   });
 
   it("fails closed before Tauri when a legacy status mutation is attempted", () => {
@@ -56,11 +119,7 @@ describe("desktop polling and offline mutation policy", () => {
 
     let thrown = null;
     try {
-      desktopBridge.updateInvestigation(
-        "investigation-1",
-        7,
-        { status: "CONFIRMED_FRAUD" },
-      );
+      desktopBridge.updateInvestigation("investigation-1", 7, { status: "CONFIRMED_FRAUD" });
     } catch (error) {
       thrown = error;
     }
