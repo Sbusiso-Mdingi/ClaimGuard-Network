@@ -124,7 +124,10 @@ export function createDesktopDeviceProofMiddleware({ verifier } = {}) {
   if (!verifier?.verify) throw new TypeError("A desktop device proof verifier is required.");
   return async (c, next) => {
     const path = c.req.path;
-    if (!path.startsWith("/desktop/") || path === "/desktop/activate") return next();
+    if (path === "/desktop/activate") return next();
+    const protectedDesktopRoute = path.startsWith("/desktop/");
+    const carriesDeviceProof = Boolean(c.req.header("dpop"));
+    if (!protectedDesktopRoute && !carriesDeviceProof) return next();
     try {
       const device = await verifier.verify(c.req.raw);
       c.set("desktopDevice", device);
