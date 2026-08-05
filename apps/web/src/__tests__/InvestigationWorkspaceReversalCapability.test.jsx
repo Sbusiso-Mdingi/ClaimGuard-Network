@@ -47,7 +47,7 @@ function renderWorkspace() {
   );
 }
 
-describe("fraud reversal capability guard", () => {
+describe("disabled fraud reversal capability guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiRequest.mockReturnValue(response({ available: true, investigation: confirmedInvestigation }));
@@ -55,21 +55,21 @@ describe("fraud reversal capability guard", () => {
 
   afterEach(() => cleanup());
 
-  test("confirmation authority alone does not expose fraud reversal", async () => {
-    roleState.identity.capabilities = ["investigations.view", "investigations.confirm_fraud"];
+  test.each([
+    ["confirmation authority", ["investigations.view", "investigations.confirm_fraud"]],
+    ["reversal authority", ["investigations.view", "investigations.reverse_fraud"]],
+  ])("%s does not expose legacy confirmation or reversal controls", async (_label, capabilities) => {
+    roleState.identity.capabilities = capabilities;
 
     renderWorkspace();
 
     expect(await screen.findByText("Case details")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reverse fraud finding" })).not.toBeInTheDocument();
-  });
-
-  test("reversal authority exposes the reversal control", async () => {
-    roleState.identity.capabilities = ["investigations.view", "investigations.reverse_fraud"];
-
-    renderWorkspace();
-
-    expect(await screen.findByRole("button", { name: "Reverse fraud finding" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm fraud" })).not.toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+    expect(apiRequest).not.toHaveBeenCalledWith(
+      "/investigations/reverse-fraud",
+      expect.anything(),
+    );
   });
 });
