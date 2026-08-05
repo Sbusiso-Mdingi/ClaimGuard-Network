@@ -22,15 +22,32 @@ function configuredOutcomeCodes() {
     .filter(Boolean);
 }
 
+function legacyStatusWriteDisabled() {
+  const error = new Error(
+    "Investigation lifecycle changes must use the governed Sequrin case-action API.",
+  );
+  error.name = "LegacyInvestigationStatusWriteDisabledError";
+  error.code = "LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED";
+  error.status = 409;
+  return error;
+}
+
 export function createOperationalRepositories(dataPlaneContext, pool) {
   const context = requireOperationalDataPlaneContext(dataPlaneContext);
   if (!pool || typeof pool.execute !== "function") throw new TypeError("A verified operational pool is required.");
   const db = createDatabaseFromPool(pool);
   const options = { dataPlaneContext: context, allowLegacyTenantContext: false };
   const scopedReads = createScopedReadRepositories(context, pool);
+  const legacyInvestigations = createInvestigationRepository(pool, options);
   const investigations = Object.freeze({
-    ...createInvestigationRepository(pool, options),
+    ...legacyInvestigations,
     ...createInvestigationQueueRepository(pool, options),
+    async updateInvestigation(input) {
+      if (input && Object.hasOwn(input, "status") && input.status !== undefined) {
+        throw legacyStatusWriteDisabled();
+      }
+      return legacyInvestigations.updateInvestigation(input);
+    },
   });
   const claimsRead = createClaimsReadRepository(pool, options);
   const cases = Object.freeze({
