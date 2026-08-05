@@ -7,6 +7,7 @@ import { createFraudWorkflowRepository } from "./fraud-workflow-repository.js";
 import { createInvestigationQueueRepository } from "./investigation-queue-repository.js";
 import { createInvestigationRepository } from "./investigation-repository.js";
 import { createCaseWorkflowRepository } from "./case-workflow-repository.js";
+import { createLegacyCaseAdapter } from "./legacy-case-adapter.js";
 import { createLedgerRepository } from "./ledger-repository.js";
 import { createSharedFraudRegistryRepository } from "./shared-fraud-registry-repository.js";
 import { createScopedReadRepositories } from "./scoped-read-repositories.js";
@@ -32,6 +33,13 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     ...createInvestigationQueueRepository(pool, options),
   });
   const claimsRead = createClaimsReadRepository(pool, options);
+  const cases = Object.freeze({
+    ...createCaseWorkflowRepository(pool, {
+      ...options,
+      allowedOutcomeCodes: configuredOutcomeCodes(),
+    }),
+    ...createLegacyCaseAdapter(pool, options),
+  });
   return Object.freeze({
     dataPlaneContext: context,
     claims: createClaimIngestionRepository(pool, options),
@@ -41,10 +49,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     providers: scopedReads.providers,
     claimProcessingOutbox: createClaimProcessingOutboxRepository(pool, options),
     investigations,
-    cases: createCaseWorkflowRepository(pool, {
-      ...options,
-      allowedOutcomeCodes: configuredOutcomeCodes(),
-    }),
+    cases,
     ledger: createLedgerRepository(db, pool, options),
     registry: createSharedFraudRegistryRepository(pool, options),
     fraudWorkflow: createFraudWorkflowRepository(pool, options),
