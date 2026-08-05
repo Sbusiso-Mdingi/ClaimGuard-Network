@@ -21,8 +21,15 @@ function configuredOutcomeCodes() {
     .filter(Boolean);
 }
 
-function disabledOperation({ name, code, message }) {
-  return async function disabledLegacyOperation() {
+function disabledOperation({ name, code, message, tenantId }) {
+  return async function disabledLegacyOperation(input = {}) {
+    if (input.tenantId !== undefined && input.tenantId !== tenantId) {
+      const error = new Error("The supplied tenant does not match the verified DataPlaneContext.");
+      error.name = "DataPlaneTenantMismatchError";
+      error.code = "data_plane_tenant_mismatch";
+      error.status = 403;
+      throw error;
+    }
     const error = new Error(message);
     error.name = name;
     error.code = code;
@@ -31,17 +38,19 @@ function disabledOperation({ name, code, message }) {
   };
 }
 
-function createDisabledLegacyFraudWorkflowAdapter() {
+function createDisabledLegacyFraudWorkflowAdapter(tenantId) {
   return Object.freeze({
     confirmFraud: disabledOperation({
       name: "LegacyFraudConfirmationDisabledError",
       code: "LEGACY_FRAUD_CONFIRMATION_DISABLED",
       message: "Direct legacy fraud confirmation is disabled. Complete the investigation and use the governed case outcome-review workflow.",
+      tenantId,
     }),
     reverseFraud: disabledOperation({
       name: "LegacyFraudReversalDisabledError",
       code: "LEGACY_FRAUD_REVERSAL_DISABLED",
       message: "Direct legacy fraud reversal is disabled. Use the governed case review and appeal workflow.",
+      tenantId,
     }),
   });
 }
@@ -93,7 +102,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     cases,
     ledger: createLedgerRepository(db, pool, options),
     registry: createSharedFraudRegistryRepository(pool, options),
-    fraudWorkflow: createDisabledLegacyFraudWorkflowAdapter(),
+    fraudWorkflow: createDisabledLegacyFraudWorkflowAdapter(context.operationalTenantId),
     reportSnapshots: scopedReads.reportSnapshots,
     tenants: createTenantRepository(pool, { dataPlaneContext: context, allowLegacyDefault: false }),
     detectionStrategy: createDetectionStrategyRepository(db, pool, options),
