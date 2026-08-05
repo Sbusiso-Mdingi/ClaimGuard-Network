@@ -246,46 +246,38 @@ test("tenant access denies cross-tenant resources and gives platform administrat
   assert.equal(platformBypass.bypass, false);
 });
 
-test("only investigators can confirm fraud for their tenant", async () => {
+test("supported legacy confirmation is blocked for every authenticated role", async () => {
   const fraudWorkflowRepository = createFraudWorkflowRepositoryStub();
   const investigationRepository = createConfirmedInvestigationRepositoryStub();
   const tenantRepository = createTenantRepositoryStub();
   const dependencies = { fraudWorkflowRepository, investigationRepository, tenantRepository };
 
-  async function confirmAs(role) {
-    const app = createAppForActor({ actor: { role }, ...dependencies });
-    return app.request(
+  async function confirmAs(role, actor = {}) {
+    const app = createAppForActor({ actor: { role, ...actor }, ...dependencies });
+    const response = await app.request(
       "http://localhost/investigations/confirm-fraud",
       jsonRequest(confirmationPayload()),
     );
+    return { response, body: await response.json() };
   }
 
-  const investigatorResponse = await confirmAs(CLAIMGUARD_ROLES.INVESTIGATOR);
-  const analystResponse = await confirmAs(CLAIMGUARD_ROLES.FRAUD_ANALYST);
-  const schemeUserResponse = await confirmAs(CLAIMGUARD_ROLES.SCHEME_USER);
-  const platformAdminResponse = await createAppForActor({
-    actor: {
-      userId: "platform-admin",
-      role: CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR,
-      tenantId: null,
-      organisation: platformOrganisation,
-    },
-    ...dependencies,
-  }).request(
-    "http://localhost/investigations/confirm-fraud",
-    jsonRequest(confirmationPayload()),
-  );
+  const investigator = await confirmAs(CLAIMGUARD_ROLES.INVESTIGATOR);
+  const analyst = await confirmAs(CLAIMGUARD_ROLES.FRAUD_ANALYST);
+  const schemeUser = await confirmAs(CLAIMGUARD_ROLES.SCHEME_USER);
+  const platformAdmin = await confirmAs(CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR, {
+    userId: "platform-admin",
+    tenantId: null,
+    organisation: platformOrganisation,
+  });
 
-  assert.equal(investigatorResponse.status, 201);
-  assert.equal(analystResponse.status, 403);
-  assert.equal(schemeUserResponse.status, 403);
-  assert.equal(platformAdminResponse.status, 403);
-  assert.equal(fraudWorkflowRepository.confirmations.length, 1);
-  assert.equal(fraudWorkflowRepository.confirmations[0].actorId, "user-alpha");
-  assert.equal(fraudWorkflowRepository.confirmations[0].actorRole, "investigator");
+  for (const result of [investigator, analyst, schemeUser, platformAdmin]) {
+    assert.equal(result.response.status, 409);
+    assert.equal(result.body.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  }
+  assert.equal(fraudWorkflowRepository.confirmations.length, 0);
 });
 
-test("confirmation ignores untrusted scheme metadata while claim ingestion rejects a foreign scheme", async () => {
+test("legacy confirmation rejects after trusted authentication while foreign claim ingestion remains tenant-blocked", async () => {
   const fraudWorkflowRepository = createFraudWorkflowRepositoryStub();
   const investigationRepository = createConfirmedInvestigationRepositoryStub();
   const tenantRepository = createTenantRepositoryStub();
@@ -321,6 +313,7 @@ test("confirmation ignores untrusted scheme metadata while claim ingestion rejec
     "http://localhost/investigations/confirm-fraud",
     jsonRequest(confirmationPayload({ schemeId: betaTenant.scheme_id })),
   );
+  const confirmationBody = await confirmationResponse.json();
   const ingestionResponse = await ingestionApp.request(
     "http://localhost/claims/ingest",
     jsonRequest({
@@ -339,13 +332,15 @@ test("confirmation ignores untrusted scheme metadata while claim ingestion rejec
     }),
   );
 
-  assert.equal(confirmationResponse.status, 201);
+  assert.equal(confirmationResponse.status, 409);
+  assert.equal(confirmationBody.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
   assert.equal(ingestionResponse.status, 403);
-  assert.equal(fraudWorkflowRepository.confirmations.length, 1);
+  assert.equal(fraudWorkflowRepository.confirmations.length, 0);
   assert.deepEqual(ingestedClaims, []);
 });
 
-test("an explicit authentication provider authorizes requests without identity headers", async () => {
+test("an explicit authentication provider reaches the stable legacy governance boundary", async () => {
+  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub();
   const app = createBackendApp({
     authenticationProvider: createStaticAuthenticationProvider({
       userId: "future-entra-user",
@@ -353,7 +348,7 @@ test("an explicit authentication provider authorizes requests without identity h
       permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD],
       tenantId: "tenant_default",
     }),
-    fraudWorkflowRepository: createFraudWorkflowRepositoryStub(),
+    fraudWorkflowRepository,
     investigationRepository: createConfirmedInvestigationRepositoryStub({ tenantId: "tenant_default" }),
   });
 
@@ -361,9 +356,13 @@ test("an explicit authentication provider authorizes requests without identity h
     "http://localhost/investigations/confirm-fraud",
     jsonRequest(confirmationPayload()),
   );
+  const body = await response.json();
 
-  assert.equal(response.status, 201);
-  assert.equal((await response.json()).entry.payload.claimId, "claim-100");
+  assert.equal(response.status, 409);
+  assert.equal(body.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  assert.notEqual(response.status, 401);
+  assert.notEqual(response.status, 403);
+  assert.equal(fraudWorkflowRepository.confirmations.length, 0);
 });
 
 test("detection routes require authentication and report permission", async () => {
