@@ -100,6 +100,16 @@ function allowedActionsFor(caseRecord, actorContext) {
     .sort());
 }
 
+function detailResult(caseRecord, actorContext) {
+  if (!caseRecord) {
+    throw new CasePolicyError("The case was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
+  }
+  return {
+    case: caseRecord,
+    allowedActions: allowedActionsFor(caseRecord, actorContext),
+  };
+}
+
 export function resolveCaseAction(action) {
   return resolveCaseActionPolicy(action);
 }
@@ -118,13 +128,19 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       if (!this.isConfigured()) throw new Error("Case workflow repository is not configured.");
       const actorContext = trustedActor({ authContext, tenantContext });
       const caseRecord = await caseWorkflowRepository.getCase(requiredString(caseId, "caseId", 64));
-      if (!caseRecord) {
-        throw new CasePolicyError("The case was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
+      return detailResult(caseRecord, actorContext);
+    },
+
+    async getCaseByLegacyInvestigation({ legacyInvestigationId, authContext, tenantContext }) {
+      if (!this.isConfigured()
+          || typeof caseWorkflowRepository.getCaseByLegacyInvestigationId !== "function") {
+        throw new Error("Legacy case read repository is not configured.");
       }
-      return {
-        case: caseRecord,
-        allowedActions: allowedActionsFor(caseRecord, actorContext),
-      };
+      const actorContext = trustedActor({ authContext, tenantContext });
+      const caseRecord = await caseWorkflowRepository.getCaseByLegacyInvestigationId(
+        requiredString(legacyInvestigationId, "legacyInvestigationId", 64),
+      );
+      return detailResult(caseRecord, actorContext);
     },
 
     async performAction({
