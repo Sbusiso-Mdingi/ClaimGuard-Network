@@ -2,8 +2,10 @@ import crypto from "node:crypto";
 
 import { repositoryTenantId } from "./repository-context.js";
 import {
+  canonicalCasePermissions,
   CASE_ERROR_CODE,
-  CASE_ROLE,
+  CASE_PERMISSION,
+  CASE_PERMISSION_POLICY_VERSION,
   CASE_STATE,
   CASE_WORKFLOW_VERSION,
   CasePolicyError,
@@ -23,6 +25,32 @@ function requiredString(value, fieldName, maxLength = 255) {
     throw new CasePolicyError(`${fieldName} is too long.`, CASE_ERROR_CODE.VALIDATION_FAILED);
   }
   return normalized;
+}
+
+function normalizeActorContext(value, tenantId) {
+  const actorId = requiredString(value?.actorId, "actorContext.actorId");
+  const actorTenantId = requiredString(value?.tenantId, "actorContext.tenantId", 64);
+  if (actorTenantId !== tenantId) {
+    throw new CasePolicyError("The legacy investigation was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
+  }
+  const permissions = canonicalCasePermissions(value?.permissions);
+  if (!permissions.includes(CASE_PERMISSION.TRIAGE)
+      || Number(value?.permissionPolicyVersion) !== CASE_PERMISSION_POLICY_VERSION) {
+    throw new CasePolicyError(
+      "The authenticated actor lacks permission to initiate reviewed legacy case migration.",
+      CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
+    );
+  }
+  const roles = Object.freeze([...new Set(
+    (Array.isArray(value?.roles) ? value.roles : [])
+      .filter((role) => typeof role === "string" && role.trim() && role.trim().length <= 64)
+      .map((role) => role.trim()),
+  )].sort());
+  return Object.freeze({ actorId, tenantId, permissions, roles, permissionPolicyVersion: CASE_PERMISSION_POLICY_VERSION });
+}
+
+function auditRole(actorContext) {
+  return actorContext.roles[0] || "permission_authorised_actor";
 }
 
 function mapCase(row) {
@@ -89,22 +117,17 @@ export function createLegacyCaseAdapter(
   return {
     async resolveLegacyInvestigationCase({
       legacyInvestigationId,
-      actorId,
-      actorRole,
+      actorContext: suppliedActorContext,
       correlationId,
       migrationReason = "LEGACY_FIRST_ACCESS_REQUIRES_HUMAN_REVIEW",
     }) {
       const tenantId = canonicalTenantId();
       const investigationId = requiredString(legacyInvestigationId, "legacyInvestigationId", 64);
-      const reviewerId = requiredString(actorId, "actorId");
+      const actorContext = normalizeActorContext(suppliedActorContext, tenantId);
+      const reviewerId = actorContext.actorId;
+      const reviewerRole = auditRole(actorContext);
       const requestId = requiredString(correlationId, "correlationId", 128);
       const reasonCode = requiredString(migrationReason, "migrationReason", 128);
-      if (actorRole !== CASE_ROLE.SCHEME_ANALYST) {
-        throw new CasePolicyError(
-          "An authorised scheme analyst must initiate reviewed legacy case migration.",
-          CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
-        );
-      }
 
       try {
         return await withTransaction(pool, async (executor) => {
@@ -123,10 +146,7 @@ export function createLegacyCaseAdapter(
           );
           const legacy = legacyRows?.[0];
           if (!legacy) {
-            throw new CasePolicyError(
-              "The legacy investigation was not found in the active tenant.",
-              CASE_ERROR_CODE.NOT_FOUND,
-            );
+            throw new CasePolicyError("The legacy investigation was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
           }
 
           const [signalRows] = await executor.execute(
@@ -144,7 +164,6 @@ export function createLegacyCaseAdapter(
             );
           }
           const signal = signalRows[0];
-
           const [linkedRows] = await executor.execute(
             `SELECT case_id, legacy_investigation_id, current_state, state_version
                FROM investigation_cases
@@ -153,8 +172,7 @@ export function createLegacyCaseAdapter(
             [tenantId, signal.signal_id],
           );
           const linked = linkedRows?.[0] || null;
-          let caseId = linked?.case_id || crypto.randomUUID();
-
+          const caseId = linked?.case_id || crypto.randomUUID();
           if (linked?.legacy_investigation_id && linked.legacy_investigation_id !== investigationId) {
             throw new CasePolicyError(
               "The authoritative signal is already linked to another reviewed legacy investigation.",
@@ -183,18 +201,14 @@ export function createLegacyCaseAdapter(
                       originating_reason = COALESCE(originating_reason, ?),
                       correlation_id = ?
                 WHERE tenant_id = ? AND case_id = ?`,
-              [investigationId, legacy.legacy_status, reviewerId, reasonCode,
-                requestId, tenantId, caseId],
+              [investigationId, legacy.legacy_status, reviewerId, reasonCode, requestId, tenantId, caseId],
             );
           }
 
           const currentState = linked?.current_state || CASE_STATE.SIGNAL_GENERATED;
           const currentVersion = Number(linked?.state_version || 1);
           if (currentState !== CASE_STATE.SIGNAL_GENERATED) {
-            return {
-              case: await loadCaseByLegacy(executor, tenantId, investigationId),
-              replayed: true,
-            };
+            return { case: await loadCaseByLegacy(executor, tenantId, investigationId), replayed: true };
           }
 
           const idempotencyKey = `legacy-first-access:${investigationId}`;
@@ -205,11 +219,15 @@ export function createLegacyCaseAdapter(
             investigationId,
             legacyStatus: legacy.legacy_status,
             signalId: signal.signal_id,
+            action: "legacy-first-access-review",
+            actorId: reviewerId,
+            roles: actorContext.roles,
+            permissions: actorContext.permissions,
+            permissionPolicyVersion: actorContext.permissionPolicyVersion,
             targetState: CASE_STATE.TRIAGE_PENDING,
           }));
           const eventId = crypto.randomUUID();
           const nextVersion = currentVersion + 1;
-
           await executor.execute(
             `INSERT INTO case_transition_operations (
                operation_id, tenant_id, case_id, idempotency_key, intent_hash, result_payload
@@ -224,9 +242,23 @@ export function createLegacyCaseAdapter(
                process_check_references, correlation_id, operation_id, workflow_version
              ) VALUES (?, ?, ?, 'SIGNAL_GENERATED', 'TRIAGE_PENDING', ?, ?, ?, ?, ?, ?, JSON_ARRAY(), JSON_ARRAY(), ?, ?, ?)`,
             [eventId, tenantId, caseId, currentVersion, nextVersion, reviewerId,
-              actorRole, reasonCode,
+              reviewerRole, reasonCode,
               "Historical investigation linked for neutral human lifecycle review.",
               requestId, operationId, CASE_WORKFLOW_VERSION],
+          );
+          await executor.execute(
+            `INSERT INTO case_process_checks (
+               process_check_id, tenant_id, case_id, check_code, check_result,
+               recorded_by, recorded_by_role, correlation_id, transition_event_id
+             ) VALUES (?, ?, ?, 'LEGACY_MIGRATION_AUTHORIZATION', ?, ?, ?, ?, ?)`,
+            [crypto.randomUUID(), tenantId, caseId, JSON.stringify({
+              action: "legacy-first-access-review",
+              legacyStatus: legacy.legacy_status,
+              roles: actorContext.roles,
+              permissions: actorContext.permissions,
+              permissionPolicyVersion: actorContext.permissionPolicyVersion,
+              ignoredAsOutcomeAuthority: true,
+            }), reviewerId, reviewerRole, requestId, eventId],
           );
           const [updated] = await executor.execute(
             `UPDATE investigation_cases
@@ -237,12 +269,8 @@ export function createLegacyCaseAdapter(
             [eventId, requestId, tenantId, caseId, currentVersion],
           );
           if (updated.affectedRows !== 1) {
-            throw new CasePolicyError(
-              "The reviewed legacy migration changed concurrently.",
-              CASE_ERROR_CODE.STATE_VERSION_CONFLICT,
-            );
+            throw new CasePolicyError("The reviewed legacy migration changed concurrently.", CASE_ERROR_CODE.STATE_VERSION_CONFLICT);
           }
-
           const result = {
             case: await loadCaseByLegacy(executor, tenantId, investigationId),
             transitionEventId: eventId,
