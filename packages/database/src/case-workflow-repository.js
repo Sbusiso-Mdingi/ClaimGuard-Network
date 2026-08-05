@@ -4,11 +4,14 @@ import { repositoryTenantId } from "./repository-context.js";
 import {
   assertCaseProcessRequirements,
   assertCaseTransition,
+  canonicalCasePermissions,
   CASE_ERROR_CODE,
+  CASE_PERMISSION_POLICY_VERSION,
   CASE_ROLE,
   CASE_STATE,
   CASE_WORKFLOW_VERSION,
   CasePolicyError,
+  resolveCaseActionPolicy,
 } from "./case-transition-policy.js";
 import { stableStringify } from "./ledger-entry.js";
 
@@ -56,6 +59,29 @@ function normalizedReferences(value) {
   return value.map((reference) => requiredString(reference, "reference", 255));
 }
 
+function normalizeActorContext(value, tenantId) {
+  const actorId = requiredString(value?.actorId, "actorContext.actorId");
+  const actorTenantId = requiredString(value?.tenantId, "actorContext.tenantId", 64);
+  if (actorTenantId !== tenantId) {
+    throw new CasePolicyError("The case is not available in the active tenant.", CASE_ERROR_CODE.TENANT_MISMATCH);
+  }
+  const roles = Object.freeze([...new Set(
+    (Array.isArray(value?.roles) ? value.roles : [])
+      .filter((role) => typeof role === "string" && role.trim() && role.trim().length <= 64)
+      .map((role) => role.trim()),
+  )].sort());
+  const permissions = canonicalCasePermissions(value?.permissions);
+  const permissionPolicyVersion = Number(value?.permissionPolicyVersion);
+  if (permissionPolicyVersion !== CASE_PERMISSION_POLICY_VERSION) {
+    throw new CasePolicyError("The case permission policy version is not supported.", CASE_ERROR_CODE.ROLE_NOT_AUTHORISED);
+  }
+  return Object.freeze({ actorId, tenantId, roles, permissions, permissionPolicyVersion });
+}
+
+function auditRole(actorContext) {
+  return actorContext.roles[0] || "permission_authorised_actor";
+}
+
 function mapCase(row) {
   if (!row) return null;
   return {
@@ -93,10 +119,7 @@ async function transaction(pool, operation) {
   } catch (error) {
     await connection.rollback();
     if (error?.code === "ER_DUP_ENTRY" || error?.errno === 1062) {
-      throw new CasePolicyError(
-        "The case workflow changed concurrently.",
-        CASE_ERROR_CODE.STATE_VERSION_CONFLICT,
-      );
+      throw new CasePolicyError("The case workflow changed concurrently.", CASE_ERROR_CODE.STATE_VERSION_CONFLICT);
     }
     throw error;
   } finally {
@@ -134,20 +157,13 @@ async function resolveReplay(executor, { tenantId, caseId, idempotencyKey, inten
     return { ...parseJson(row.result_payload, {}), replayed: true };
   }
   throw new CasePolicyError(
-    "The idempotency key has already been used for a different case transition intent.",
+    "The idempotency key has already been used for a different case action intent.",
     CASE_ERROR_CODE.IDEMPOTENCY_MISMATCH,
   );
 }
 
 async function recordProcessCheck(executor, {
-  tenantId,
-  caseId,
-  checkCode,
-  checkResult,
-  actorId,
-  actorRole,
-  correlationId,
-  transitionEventId,
+  tenantId, caseId, checkCode, checkResult, actorId, actorRole, correlationId, transitionEventId,
 }) {
   const processCheckId = crypto.randomUUID();
   await executor.execute(
@@ -161,70 +177,53 @@ async function recordProcessCheck(executor, {
   return processCheckId;
 }
 
-async function persistTransitionProcessChecks(executor, {
-  tenantId,
-  caseId,
-  toState,
-  actorId,
-  actorRole,
-  correlationId,
-  transitionEventId,
-  processCheckReferences,
-  evidenceReferences,
-  noEvidenceReason,
-  reportReference,
-  reportDigest,
-  completionReason,
-  identityMatchReviewResult,
-  processCheckComplete,
-}) {
+async function persistTransitionProcessChecks(executor, input) {
   const persisted = [];
-  for (const reference of processCheckReferences) {
+  persisted.push(await recordProcessCheck(executor, {
+    ...input,
+    checkCode: "AUTHORIZATION_CONTEXT",
+    checkResult: {
+      action: input.action,
+      roles: input.actorContext.roles,
+      permissions: input.actorContext.permissions,
+      permissionPolicyVersion: input.actorContext.permissionPolicyVersion,
+      workflowVersion: CASE_WORKFLOW_VERSION,
+    },
+    actorId: input.actorContext.actorId,
+    actorRole: auditRole(input.actorContext),
+  }));
+  for (const reference of input.processCheckReferences) {
     persisted.push(await recordProcessCheck(executor, {
-      tenantId,
-      caseId,
+      ...input,
       checkCode: "PROCESS_REFERENCE",
       checkResult: { reference },
-      actorId,
-      actorRole,
-      correlationId,
-      transitionEventId,
+      actorId: input.actorContext.actorId,
+      actorRole: auditRole(input.actorContext),
     }));
   }
-
-  if (toState === CASE_STATE.INVESTIGATION_REPORT_COMPLETED) {
+  if (input.toState === CASE_STATE.INVESTIGATION_REPORT_COMPLETED) {
     persisted.push(await recordProcessCheck(executor, {
-      tenantId,
-      caseId,
+      ...input,
       checkCode: "REPORT_COMPLETION_REQUIREMENTS",
       checkResult: {
         complete: true,
-        evidenceReferences,
-        noEvidenceReason: noEvidenceReason || null,
-        reportReference: reportReference || null,
-        reportDigest: reportDigest || null,
-        completionReason,
+        evidenceReferences: input.evidenceReferences,
+        noEvidenceReason: input.noEvidenceReason || null,
+        reportReference: input.reportReference || null,
+        reportDigest: input.reportDigest || null,
+        completionReason: input.completionReason,
       },
-      actorId,
-      actorRole,
-      correlationId,
-      transitionEventId,
+      actorId: input.actorContext.actorId,
+      actorRole: auditRole(input.actorContext),
     }));
   }
-
-  if (toState === CASE_STATE.OUTCOME_APPROVED) {
+  if (input.toState === CASE_STATE.OUTCOME_APPROVED) {
     persisted.push(await recordProcessCheck(executor, {
-      tenantId,
-      caseId,
+      ...input,
       checkCode: "OUTCOME_REVIEW_REQUIREMENTS",
-      checkResult: {
-        complete: processCheckComplete === true,
-        identityMatchReviewResult,
-      },
-      actorId,
-      actorRole,
-      correlationId,
-      transitionEventId,
+      checkResult: { complete: input.processCheckComplete === true, identityMatchReviewResult: input.identityMatchReviewResult },
+      actorId: input.actorContext.actorId,
+      actorRole: auditRole(input.actorContext),
     }));
   }
   return persisted;
@@ -233,18 +232,10 @@ async function persistTransitionProcessChecks(executor, {
 function assertOutcomeCatalogue({ toState, outcomeCode, configuredOutcomeCodes }) {
   if (toState !== CASE_STATE.OUTCOME_APPROVED) return;
   if (configuredOutcomeCodes.length === 0) {
-    throw new CasePolicyError(
-      "No governed case outcome catalogue is configured.",
-      "CASE_OUTCOME_CODE_NOT_CONFIGURED",
-      503,
-    );
+    throw new CasePolicyError("No governed case outcome catalogue is configured.", "CASE_OUTCOME_CODE_NOT_CONFIGURED", 503);
   }
   if (!configuredOutcomeCodes.includes(outcomeCode)) {
-    throw new CasePolicyError(
-      "The requested outcome code is not allowed by the configured governed catalogue.",
-      "CASE_OUTCOME_CODE_NOT_ALLOWED",
-      422,
-    );
+    throw new CasePolicyError("The requested outcome code is not allowed by the configured governed catalogue.", "CASE_OUTCOME_CODE_NOT_ALLOWED", 422);
   }
 }
 
@@ -258,8 +249,7 @@ export function createCaseWorkflowRepository(
   if (!dataPlaneContext && !allowLegacyTenantContext) repositoryTenantId(null);
   const canonicalTenantId = () => repositoryTenantId(dataPlaneContext, { allowLegacyTenantContext });
   const configuredOutcomeCodes = [...new Set(
-    (allowedOutcomeCodes || []).filter((value) => typeof value === "string" && value.trim())
-      .map((value) => value.trim()),
+    (allowedOutcomeCodes || []).filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()),
   )];
 
   return {
@@ -273,39 +263,22 @@ export function createCaseWorkflowRepository(
       requiredString(actorId, "actorId");
       const normalizedCorrelationId = requiredString(correlationId, "correlationId", 128);
       if (actorRole !== CASE_ROLE.DETECTION_SERVICE) {
-        throw new CasePolicyError(
-          "Only the authorised detection workflow may create the initial signal case.",
-          CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
-        );
+        throw new CasePolicyError("Only the authorised detection workflow may create the initial signal case.", CASE_ERROR_CODE.ROLE_NOT_AUTHORISED);
       }
-
       try {
         return await transaction(pool, async (executor) => {
           const [existing] = await executor.execute(
             "SELECT case_id FROM investigation_cases WHERE tenant_id = ? AND signal_id = ? LIMIT 1 FOR UPDATE",
             [tenantId, normalizedSignalId],
           );
-          if (existing?.[0]) {
-            return {
-              case: await loadCase(executor, tenantId, existing[0].case_id),
-              replayed: true,
-            };
-          }
-
+          if (existing?.[0]) return { case: await loadCase(executor, tenantId, existing[0].case_id), replayed: true };
           const [signals] = await executor.execute(
             `SELECT signal_id, claim_id, claim_version, correlation_id, reason_codes
-               FROM detection_signals
-              WHERE tenant_id = ? AND signal_id = ?
-              LIMIT 1 FOR UPDATE`,
+               FROM detection_signals WHERE tenant_id = ? AND signal_id = ? LIMIT 1 FOR UPDATE`,
             [tenantId, normalizedSignalId],
           );
           const signal = signals?.[0];
-          if (!signal) {
-            throw new CasePolicyError(
-              "The signal was not found in the active tenant.",
-              CASE_ERROR_CODE.NOT_FOUND,
-            );
-          }
+          if (!signal) throw new CasePolicyError("The signal was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
           const caseId = crypto.randomUUID();
           await executor.execute(
             `INSERT INTO investigation_cases (
@@ -323,20 +296,24 @@ export function createCaseWorkflowRepository(
             "SELECT case_id FROM investigation_cases WHERE tenant_id = ? AND signal_id = ? LIMIT 1",
             [tenantId, normalizedSignalId],
           );
-          if (rows?.[0]) {
-            return { case: await loadCase(pool, tenantId, rows[0].case_id), replayed: true };
-          }
+          if (rows?.[0]) return { case: await loadCase(pool, tenantId, rows[0].case_id), replayed: true };
         }
         throw error;
       }
     },
 
-    async transitionCase(input) {
+    async performAction(input) {
       const tenantId = canonicalTenantId();
       const caseId = requiredString(input?.caseId, "caseId", 64);
-      const actorId = requiredString(input?.actorId, "actorId");
-      const actorRole = requiredString(input?.actorRole, "actorRole", 64);
-      const toState = requiredString(input?.toState, "toState", 64);
+      const action = requiredString(input?.action, "action", 64);
+      const actionPolicy = resolveCaseActionPolicy(action);
+      if (!actionPolicy) {
+        throw new CasePolicyError("The requested case action is not recognised.", CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED);
+      }
+      const actorContext = normalizeActorContext(input?.actorContext, tenantId);
+      const actorId = actorContext.actorId;
+      const actorRole = auditRole(actorContext);
+      const toState = actionPolicy.toState;
       const expectedStateVersion = requiredVersion(input?.expectedStateVersion);
       const reasonCode = requiredString(input?.reasonCode, "reasonCode", 128);
       const reasonSummary = requiredString(input?.reasonSummary, "reasonSummary", 1024);
@@ -358,65 +335,33 @@ export function createCaseWorkflowRepository(
         processCheckComplete: input?.processCheckComplete === true,
       };
       const intent = {
-        tenantId,
-        caseId,
-        toState,
-        expectedStateVersion,
-        reasonCode,
-        reasonSummary,
-        actorId,
-        actorRole,
-        evidenceReferences,
-        processCheckReferences,
-        ...normalized,
+        tenantId, caseId, action, expectedStateVersion, reasonCode, reasonSummary,
+        actorId, roles: actorContext.roles, permissions: actorContext.permissions,
+        permissionPolicyVersion: actorContext.permissionPolicyVersion,
+        evidenceReferences, processCheckReferences, ...normalized,
       };
       const intentHash = sha256(stableStringify(intent));
       const operationId = sha256(stableStringify({ tenantId, caseId, idempotencyKey }));
 
       return transaction(pool, async (executor) => {
-        const replay = await resolveReplay(executor, {
-          tenantId,
-          caseId,
-          idempotencyKey,
-          intentHash,
-        });
+        const replay = await resolveReplay(executor, { tenantId, caseId, idempotencyKey, intentHash });
         if (replay) return replay;
-
         const current = await loadCase(executor, tenantId, caseId, true);
-        if (!current) {
-          throw new CasePolicyError(
-            "The case was not found in the active tenant.",
-            CASE_ERROR_CODE.NOT_FOUND,
-          );
-        }
+        if (!current) throw new CasePolicyError("The case was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
         if (current.stateVersion !== expectedStateVersion) {
-          throw new CasePolicyError(
-            "The case changed after it was loaded. Refresh and retry.",
-            CASE_ERROR_CODE.STATE_VERSION_CONFLICT,
-          );
+          throw new CasePolicyError("The case changed after it was loaded. Refresh and retry.", CASE_ERROR_CODE.STATE_VERSION_CONFLICT);
         }
-
-        assertOutcomeCatalogue({
-          toState,
-          outcomeCode: normalized.outcomeCode,
-          configuredOutcomeCodes,
-        });
+        assertOutcomeCatalogue({ toState, outcomeCode: normalized.outcomeCode, configuredOutcomeCodes });
         assertCaseTransition({
-          fromState: current.currentState,
-          toState,
-          actorRole,
-          actorId,
+          action, fromState: current.currentState, toState, actorContext, actorId,
           reportCompletingInvestigatorId: current.reportCompletingInvestigatorId,
         });
         assertCaseProcessRequirements({
-          fromState: current.currentState,
-          toState,
-          actorId,
+          fromState: current.currentState, toState, actorId,
           assignedInvestigatorId: normalized.assignedInvestigatorId || current.assignedInvestigatorId,
           reportCompletingInvestigatorId: current.reportCompletingInvestigatorId,
           reportCompletionEventId: current.reportCompletionEventId,
-          evidenceReferences,
-          processCheckReferences,
+          evidenceReferences, processCheckReferences,
           noEvidenceReason: normalized.noEvidenceReason,
           reportReference: normalized.reportReference,
           reportDigest: normalized.reportDigest,
@@ -433,7 +378,6 @@ export function createCaseWorkflowRepository(
         const eventId = crypto.randomUUID();
         const outcomeId = toState === CASE_STATE.OUTCOME_APPROVED ? crypto.randomUUID() : null;
         const nextVersion = current.stateVersion + 1;
-
         await executor.execute(
           `INSERT INTO case_transition_operations (
              operation_id, tenant_id, case_id, idempotency_key, intent_hash, result_payload
@@ -452,17 +396,9 @@ export function createCaseWorkflowRepository(
             JSON.stringify(evidenceReferences), JSON.stringify(processCheckReferences),
             correlationId, operationId, CASE_WORKFLOW_VERSION],
         );
-
         const persistedProcessCheckIds = await persistTransitionProcessChecks(executor, {
-          tenantId,
-          caseId,
-          toState,
-          actorId,
-          actorRole,
-          correlationId,
-          transitionEventId: eventId,
-          processCheckReferences,
-          evidenceReferences,
+          tenantId, caseId, action, toState, actorContext, correlationId,
+          transitionEventId: eventId, processCheckReferences, evidenceReferences,
           noEvidenceReason: normalized.noEvidenceReason,
           reportReference: normalized.reportReference,
           reportDigest: normalized.reportDigest,
@@ -470,7 +406,6 @@ export function createCaseWorkflowRepository(
           identityMatchReviewResult: normalized.identityMatchReviewResult,
           processCheckComplete: normalized.processCheckComplete,
         });
-
         if (outcomeId) {
           await executor.execute(
             `INSERT INTO case_outcomes (
@@ -488,7 +423,6 @@ export function createCaseWorkflowRepository(
               correlationId, CASE_WORKFLOW_VERSION],
           );
         }
-
         const assignments = [];
         const values = [toState, eventId];
         if (input?.assignedInvestigatorId !== undefined) {
@@ -508,7 +442,6 @@ export function createCaseWorkflowRepository(
           );
           values.push(actorId, normalized.reportReference, normalized.reportDigest, eventId);
         }
-
         const [update] = await executor.execute(
           `UPDATE investigation_cases
               SET current_state = ?, state_version = state_version + 1,
@@ -519,12 +452,8 @@ export function createCaseWorkflowRepository(
           [...values, correlationId, tenantId, caseId, current.currentState, current.stateVersion],
         );
         if (update.affectedRows !== 1) {
-          throw new CasePolicyError(
-            "The case changed concurrently.",
-            CASE_ERROR_CODE.STATE_VERSION_CONFLICT,
-          );
+          throw new CasePolicyError("The case changed concurrently.", CASE_ERROR_CODE.STATE_VERSION_CONFLICT);
         }
-
         const result = {
           case: await loadCase(executor, tenantId, caseId),
           transitionEventId: eventId,
