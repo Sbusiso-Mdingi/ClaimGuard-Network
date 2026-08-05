@@ -15,6 +15,13 @@ import {
 } from "./case-transition-policy.js";
 import { stableStringify } from "./ledger-entry.js";
 
+const CASE_TRANSACTION_MAX_ATTEMPTS = 3;
+const RETRYABLE_CASE_DATABASE_CODES = new Set([
+  "ER_LOCK_DEADLOCK",
+  "ER_LOCK_WAIT_TIMEOUT",
+]);
+const RETRYABLE_CASE_DATABASE_ERRNOS = new Set([1205, 1213]);
+
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -109,6 +116,12 @@ function mapCase(row) {
   };
 }
 
+export function isRetryableCaseTransactionError(error) {
+  return RETRYABLE_CASE_DATABASE_CODES.has(error?.code)
+    || RETRYABLE_CASE_DATABASE_ERRNOS.has(Number(error?.errno))
+    || error?.sqlState === "40001";
+}
+
 async function transaction(pool, operation) {
   const connection = await pool.getConnection();
   try {
@@ -125,6 +138,26 @@ async function transaction(pool, operation) {
   } finally {
     connection.release();
   }
+}
+
+async function governedCaseTransaction(pool, operation) {
+  for (let attempt = 1; attempt <= CASE_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await transaction(pool, operation);
+    } catch (error) {
+      if (!isRetryableCaseTransactionError(error)) throw error;
+      if (attempt === CASE_TRANSACTION_MAX_ATTEMPTS) {
+        throw new CasePolicyError(
+          "The case workflow changed concurrently. Refresh and retry.",
+          CASE_ERROR_CODE.STATE_VERSION_CONFLICT,
+        );
+      }
+    }
+  }
+  throw new CasePolicyError(
+    "The case workflow changed concurrently. Refresh and retry.",
+    CASE_ERROR_CODE.STATE_VERSION_CONFLICT,
+  );
 }
 
 async function loadCase(executor, tenantId, caseId, forUpdate = false) {
@@ -343,7 +376,7 @@ export function createCaseWorkflowRepository(
       const intentHash = sha256(stableStringify(intent));
       const operationId = sha256(stableStringify({ tenantId, caseId, idempotencyKey }));
 
-      return transaction(pool, async (executor) => {
+      return governedCaseTransaction(pool, async (executor) => {
         const replay = await resolveReplay(executor, { tenantId, caseId, idempotencyKey, intentHash });
         if (replay) return replay;
         const current = await loadCase(executor, tenantId, caseId, true);
