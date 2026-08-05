@@ -20,10 +20,12 @@ import { registerPlatformAdminRoutes } from "./routes/platform-admin-routes.js";
 import { registerSchemeAdminRoutes } from "./routes/scheme-admin-routes.js";
 import { registerClaimsRoutes } from "./routes/claims-routes.js";
 import { registerDetectionRoutes } from "./routes/detection-routes.js";
+import { registerCaseRoutes } from "./routes/case-routes.js";
 import { registerInvestigationsRoutes } from "./routes/investigations-routes.js";
 import { registerLedgerRoutes } from "./routes/ledger-routes.js";
 import { registerRegistryRoutes } from "./routes/registry-routes.js";
 import { registerDesktopAdminRoutes, registerDesktopRoutes } from "./routes/desktop-routes.js";
+import { createCaseWorkflowService } from "./services/case-workflow-service.js";
 import { createClaimIngestionService } from "./services/claim-ingestion-service.js";
 import { createFraudConfirmationService } from "./services/fraud-confirmation-service.js";
 import { createFraudReversalService } from "./services/fraud-reversal-service.js";
@@ -37,6 +39,7 @@ function createDomainServices({
   reportStorage,
   ledgerRepository,
   investigationRepository,
+  caseWorkflowRepository,
   sharedFraudRegistryRepository,
   fraudWorkflowRepository,
   claimIngestionRepository,
@@ -60,6 +63,10 @@ function createDomainServices({
     evidenceStorage,
   });
 
+  const caseWorkflowService = createCaseWorkflowService({
+    caseWorkflowRepository,
+  });
+
   const fraudConfirmationService = createFraudConfirmationService({
     fraudWorkflowRepository,
     logger: logEvent,
@@ -79,6 +86,7 @@ function createDomainServices({
     claimIngestionService,
     claimReadRepository,
     investigationService,
+    caseWorkflowService,
     fraudConfirmationService,
     fraudReversalService,
     registryService,
@@ -88,6 +96,7 @@ function createDomainServices({
 export function createBackendApp({
   ledgerRepository = null,
   investigationRepository = null,
+  caseWorkflowRepository = null,
   sharedFraudRegistryRepository = null,
   fraudWorkflowRepository = null,
   claimIngestionService = null,
@@ -128,6 +137,7 @@ export function createBackendApp({
     reportStorage: resolvedReportStorage,
     ledgerRepository,
     investigationRepository,
+    caseWorkflowRepository,
     sharedFraudRegistryRepository,
     fraudWorkflowRepository,
     claimIngestionRepository: claimIngestionService,
@@ -141,6 +151,7 @@ export function createBackendApp({
     claimIngestionService: createOperationalDependencyProxy("claimIngestionService", services.claimIngestionService),
     claimsReadRepository: createOperationalDependencyProxy("claimsReadRepository", services.claimReadRepository),
     investigationService: createOperationalDependencyProxy("investigationService", services.investigationService),
+    caseWorkflowService: createOperationalDependencyProxy("caseWorkflowService", services.caseWorkflowService),
     fraudConfirmationService: createOperationalDependencyProxy("fraudConfirmationService", services.fraudConfirmationService),
     fraudReversalService: createOperationalDependencyProxy("fraudReversalService", services.fraudReversalService),
     registryService: createOperationalDependencyProxy("registryService", services.registryService),
@@ -212,6 +223,7 @@ export function createBackendApp({
           reportStorage: resolvedReportStorage,
           ledgerRepository: repositories.ledger,
           investigationRepository: repositories.investigations,
+          caseWorkflowRepository: repositories.cases,
           sharedFraudRegistryRepository: repositories.registry,
           fraudWorkflowRepository: repositories.fraudWorkflow,
           claimIngestionRepository: repositories.claims,
@@ -256,7 +268,6 @@ export function createBackendApp({
       controlPlaneService,
     });
   }
-
 
   registerDesktopRoutes(app, {
     desktopEnrollmentService,
@@ -313,6 +324,11 @@ export function createBackendApp({
     claimIngestionService: dependencies.claimIngestionService,
     claimsReadRepository: dependencies.claimsReadRepository,
     tenantRepository: dependencies.tenantRepository,
+    logger: logEvent,
+  });
+
+  registerCaseRoutes(app, {
+    caseWorkflowService: dependencies.caseWorkflowService,
     logger: logEvent,
   });
 
