@@ -66,6 +66,15 @@ function legacyStatusWriteDisabled() {
   return error;
 }
 
+function createReadOnlyRegistryRepository(pool, options) {
+  const registry = createSharedFraudRegistryRepository(pool, options);
+  return Object.freeze({
+    searchRegistry: registry.searchRegistry.bind(registry),
+    getRegistryHistory: registry.getRegistryHistory.bind(registry),
+    getRegistryRecordById: registry.getRegistryRecordById.bind(registry),
+  });
+}
+
 export function createOperationalRepositories(dataPlaneContext, pool) {
   const context = requireOperationalDataPlaneContext(dataPlaneContext);
   if (!pool || typeof pool.execute !== "function") throw new TypeError("A verified operational pool is required.");
@@ -89,8 +98,8 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
       ...options,
       allowedOutcomeCodes: configuredOutcomeCodes(),
     }),
-    ...createLegacyCaseReadRepository(pool, options),
     ...createLegacyCaseAdapter(pool, options),
+    ...createLegacyCaseReadRepository(pool, options),
   });
   return Object.freeze({
     dataPlaneContext: context,
@@ -103,7 +112,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
     investigations,
     cases,
     ledger: createLedgerRepository(db, pool, options),
-    registry: createSharedFraudRegistryRepository(pool, options),
+    registry: createReadOnlyRegistryRepository(pool, options),
     fraudWorkflow: createDisabledLegacyFraudWorkflowAdapter(context.operationalTenantId),
     reportSnapshots: scopedReads.reportSnapshots,
     tenants: createTenantRepository(pool, { dataPlaneContext: context, allowLegacyDefault: false }),
