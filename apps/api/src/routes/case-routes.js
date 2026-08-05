@@ -41,6 +41,14 @@ function safeError(c, { code, message, status }) {
   }, status);
 }
 
+function workflowUnavailable(c) {
+  return safeError(c, {
+    code: "CASE_WORKFLOW_UNAVAILABLE",
+    message: "The governed case workflow is temporarily unavailable.",
+    status: 503,
+  });
+}
+
 function validateIdempotencyKey(c) {
   const key = c.req.header("idempotency-key");
   if (typeof key !== "string" || !key.trim()) {
@@ -122,13 +130,7 @@ export function registerCaseRoutes(app, { caseWorkflowService, logger = null } =
     "/api/v1/cases/by-legacy-investigation/:investigationId",
     requireCaseAction,
     async (c) => {
-      if (!caseWorkflowService?.isConfigured?.()) {
-        return safeError(c, {
-          code: "CASE_WORKFLOW_UNAVAILABLE",
-          message: "The governed case workflow is temporarily unavailable.",
-          status: 503,
-        });
-      }
+      if (!caseWorkflowService?.canReadLegacyCase?.()) return workflowUnavailable(c);
       try {
         const result = await caseWorkflowService.getCaseByLegacyInvestigation({
           legacyInvestigationId: c.req.param("investigationId"),
@@ -153,13 +155,7 @@ export function registerCaseRoutes(app, { caseWorkflowService, logger = null } =
     "/api/v1/cases/:caseId",
     requireCaseAction,
     async (c) => {
-      if (!caseWorkflowService?.isConfigured?.()) {
-        return safeError(c, {
-          code: "CASE_WORKFLOW_UNAVAILABLE",
-          message: "The governed case workflow is temporarily unavailable.",
-          status: 503,
-        });
-      }
+      if (!caseWorkflowService?.canReadDirectCase?.()) return workflowUnavailable(c);
       try {
         const result = await caseWorkflowService.getCase({
           caseId: c.req.param("caseId"),
@@ -225,13 +221,7 @@ export function registerCaseRoutes(app, { caseWorkflowService, logger = null } =
       const idempotency = validateIdempotencyKey(c);
       if (!idempotency.ok) return idempotency.response;
 
-      if (!caseWorkflowService?.isConfigured?.()) {
-        return safeError(c, {
-          code: "CASE_WORKFLOW_UNAVAILABLE",
-          message: "The governed case workflow is temporarily unavailable.",
-          status: 503,
-        });
-      }
+      if (!caseWorkflowService?.canPerformAction?.()) return workflowUnavailable(c);
 
       try {
         const result = await caseWorkflowService.performAction({
