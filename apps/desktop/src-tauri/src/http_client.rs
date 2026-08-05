@@ -18,6 +18,7 @@ struct EnrolledSecurity<'a> {
     signing_key: &'a SigningKey,
     session_cookie: Option<&'a str>,
     expected_version: Option<&'a str>,
+    idempotency_key: Option<&'a str>,
 }
 
 pub(crate) struct VersionedEnrollment<'a> {
@@ -25,6 +26,23 @@ pub(crate) struct VersionedEnrollment<'a> {
     pub signing_key: &'a SigningKey,
     pub session_cookie: Option<&'a str>,
     pub expected_version: &'a str,
+}
+
+pub(crate) struct GovernedActionEnrollment<'a> {
+    pub enrollment: &'a EnrollmentDocument,
+    pub signing_key: &'a SigningKey,
+    pub session_cookie: Option<&'a str>,
+    pub idempotency_key: &'a str,
+}
+
+fn validated_idempotency_key(value: &str) -> DesktopResult<header::HeaderValue> {
+    if value.is_empty()
+        || value.len() > 128
+        || value.chars().any(|character| character.is_control())
+    {
+        return Err(DesktopError::InvalidResponse);
+    }
+    header::HeaderValue::from_str(value).map_err(|_| DesktopError::InvalidResponse)
 }
 
 #[derive(Clone)]
@@ -67,6 +85,7 @@ impl DesktopHttpClient {
                 signing_key,
                 session_cookie,
                 expected_version: None,
+                idempotency_key: None,
             }),
         )
         .await
@@ -88,6 +107,30 @@ impl DesktopHttpClient {
                 signing_key: versioned.signing_key,
                 session_cookie: versioned.session_cookie,
                 expected_version: Some(versioned.expected_version),
+                idempotency_key: None,
+            }),
+        )
+        .await
+    }
+
+    pub async fn enrolled_governed_action(
+        &self,
+        method: Method,
+        path_and_query: &str,
+        body: Vec<u8>,
+        governed: GovernedActionEnrollment<'_>,
+    ) -> DesktopResult<HttpResponse> {
+        validated_idempotency_key(governed.idempotency_key)?;
+        self.send(
+            method,
+            path_and_query,
+            body,
+            Some(EnrolledSecurity {
+                enrollment: governed.enrollment,
+                signing_key: governed.signing_key,
+                session_cookie: governed.session_cookie,
+                expected_version: None,
+                idempotency_key: Some(governed.idempotency_key),
             }),
         )
         .await
@@ -132,6 +175,9 @@ impl DesktopHttpClient {
         if let Some(version) = security.as_ref().and_then(|value| value.expected_version) {
             request = request.header(header::IF_MATCH, version);
         }
+        if let Some(key) = security.as_ref().and_then(|value| value.idempotency_key) {
+            request = request.header("Idempotency-Key", validated_idempotency_key(key)?);
+        }
         if !body.is_empty() {
             request = request.body(body);
         }
@@ -171,5 +217,24 @@ impl DesktopHttpClient {
             body,
             session_cookie,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn governed_idempotency_keys_are_narrow_and_header_safe() {
+        assert_eq!(
+            validated_idempotency_key("550e8400-e29b-41d4-a716-446655440000")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert!(validated_idempotency_key("").is_err());
+        assert!(validated_idempotency_key(&"a".repeat(129)).is_err());
+        assert!(validated_idempotency_key("key\r\nX-Unsafe: value").is_err());
     }
 }
