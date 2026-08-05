@@ -25,7 +25,7 @@ export function registerLegacyCaseWriteGuards(app) {
 
   app.post("/investigations/confirm-fraud", (c) => governanceResponse(
     c,
-    "NETWORK_NOTICE_GOVERNANCE_REQUIRED",
-    "The legacy fraud-confirmation command is disabled. Complete an investigation report and use independent outcome review through the governed case workflow.",
+    "LEGACY_FRAUD_CONFIRMATION_DISABLED",
+    "The legacy fraud-confirmation command is disabled. Complete the investigation and use independent outcome review through the governed case workflow.",
   ));
 }
