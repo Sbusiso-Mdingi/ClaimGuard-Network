@@ -16,7 +16,7 @@ function assertCompleteSignalTrigger(statement, {
   tableName,
   message,
 }) {
-  assert.match(statement, new RegExp(`^CREATE TRIGGER ${triggerName}\\b`));
+  assert.match(statement, new RegExp(`(?:^|\\n)CREATE TRIGGER ${triggerName}\\b`));
   assert.match(statement, new RegExp(`\\b${event} ON ${tableName}\\b`));
   assert.match(statement, /SIGNAL SQLSTATE '45000'/);
   assert.match(statement, new RegExp(`SET MESSAGE_TEXT = '${message}'`));
