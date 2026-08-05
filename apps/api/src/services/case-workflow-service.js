@@ -1,8 +1,11 @@
+import crypto from "node:crypto";
+
 import {
   CASE_ERROR_CODE,
   CASE_ROLE,
   CASE_STATE,
   CasePolicyError,
+  stableStringify,
 } from "@claimguard/database";
 
 export const CASE_ACTION = Object.freeze({
@@ -76,6 +79,10 @@ const ACTION_POLICY = Object.freeze({
   }),
 });
 
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
 function requiredString(value, fieldName, maxLength = 255) {
   if (typeof value !== "string" || !value.trim()) {
     throw new CasePolicyError(
@@ -95,9 +102,9 @@ function requiredString(value, fieldName, maxLength = 255) {
 
 function expectedVersion(value) {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 2_147_483_647) {
     throw new CasePolicyError(
-      "A current case state version is required.",
+      "A positive bounded case state version is required.",
       CASE_ERROR_CODE.VALIDATION_FAILED,
     );
   }
@@ -178,20 +185,28 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
         );
       }
 
+      const normalizedCaseId = requiredString(caseId, "caseId", 64);
+      const normalizedCorrelationId = requiredString(correlationId, "correlationId", 128);
+      const normalizedIdempotencyKey = requiredString(idempotencyKey, "idempotencyKey", 128);
       const actor = trustedActor({
         authContext,
         tenantContext,
         requiredRole: policy.role,
       });
+      const operationId = sha256(stableStringify({
+        tenantId: actor.tenantId,
+        caseId: normalizedCaseId,
+        idempotencyKey: normalizedIdempotencyKey,
+      }));
 
-      return caseWorkflowRepository.transitionCase({
-        caseId: requiredString(caseId, "caseId", 64),
+      const result = await caseWorkflowRepository.transitionCase({
+        caseId: normalizedCaseId,
         toState: policy.toState,
         expectedStateVersion: expectedVersion(payload?.expectedStateVersion),
         reasonCode: requiredString(payload?.reasonCode, "reasonCode", 128),
         reasonSummary: requiredString(payload?.reasonSummary, "reasonSummary", 1024),
-        correlationId: requiredString(correlationId, "correlationId", 128),
-        idempotencyKey: requiredString(idempotencyKey, "idempotencyKey", 128),
+        correlationId: normalizedCorrelationId,
+        idempotencyKey: normalizedIdempotencyKey,
         actorId: actor.actorId,
         actorRole: actor.actorRole,
         assignedInvestigatorId: payload?.assignedInvestigatorId,
@@ -208,6 +223,12 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
         evidenceSetReference: payload?.evidenceSetReference,
         processCheckComplete: payload?.processCheckComplete,
       });
+
+      return {
+        ...result,
+        operationId,
+        correlationId: normalizedCorrelationId,
+      };
     },
   };
 }
