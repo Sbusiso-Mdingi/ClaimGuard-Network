@@ -9,6 +9,7 @@ import {
   createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
 import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import { registerLegacyCaseWriteGuards } from "./legacy-case-write-guards.js";
 
 const DEFERRED_ACTIONS = new Set([
   "activate-network-notice",
@@ -102,6 +103,8 @@ function domainError(c, error) {
 }
 
 export function registerCaseRoutes(app, { caseWorkflowService, logger = null } = {}) {
+  registerLegacyCaseWriteGuards(app);
+
   const requireCaseAction = createRequirePermissionMiddleware({
     permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
   });
