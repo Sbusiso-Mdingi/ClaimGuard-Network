@@ -27,11 +27,16 @@ function requiredString(value, fieldName, maxLength = 255) {
   return normalized;
 }
 
+function optionalString(value, fieldName, maxLength = 255) {
+  if (value === null || value === undefined || value === "") return null;
+  return requiredString(value, fieldName, maxLength);
+}
+
 function requiredVersion(value) {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 2_147_483_647) {
     throw new CasePolicyError(
-      "A current case state version is required.",
+      "A positive bounded case state version is required.",
       CASE_ERROR_CODE.VALIDATION_FAILED,
     );
   }
@@ -44,6 +49,11 @@ function parseJson(value, fallback = null) {
     try { return JSON.parse(value); } catch { return fallback; }
   }
   return value;
+}
+
+function normalizedReferences(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((reference) => requiredString(reference, "reference", 255));
 }
 
 function mapCase(row) {
@@ -129,6 +139,115 @@ async function resolveReplay(executor, { tenantId, caseId, idempotencyKey, inten
   );
 }
 
+async function recordProcessCheck(executor, {
+  tenantId,
+  caseId,
+  checkCode,
+  checkResult,
+  actorId,
+  actorRole,
+  correlationId,
+  transitionEventId,
+}) {
+  const processCheckId = crypto.randomUUID();
+  await executor.execute(
+    `INSERT INTO case_process_checks (
+       process_check_id, tenant_id, case_id, check_code, check_result,
+       recorded_by, recorded_by_role, correlation_id, transition_event_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [processCheckId, tenantId, caseId, checkCode, JSON.stringify(checkResult),
+      actorId, actorRole, correlationId, transitionEventId],
+  );
+  return processCheckId;
+}
+
+async function persistTransitionProcessChecks(executor, {
+  tenantId,
+  caseId,
+  toState,
+  actorId,
+  actorRole,
+  correlationId,
+  transitionEventId,
+  processCheckReferences,
+  evidenceReferences,
+  noEvidenceReason,
+  reportReference,
+  reportDigest,
+  completionReason,
+  identityMatchReviewResult,
+  processCheckComplete,
+}) {
+  const persisted = [];
+  for (const reference of processCheckReferences) {
+    persisted.push(await recordProcessCheck(executor, {
+      tenantId,
+      caseId,
+      checkCode: "PROCESS_REFERENCE",
+      checkResult: { reference },
+      actorId,
+      actorRole,
+      correlationId,
+      transitionEventId,
+    }));
+  }
+
+  if (toState === CASE_STATE.INVESTIGATION_REPORT_COMPLETED) {
+    persisted.push(await recordProcessCheck(executor, {
+      tenantId,
+      caseId,
+      checkCode: "REPORT_COMPLETION_REQUIREMENTS",
+      checkResult: {
+        complete: true,
+        evidenceReferences,
+        noEvidenceReason: noEvidenceReason || null,
+        reportReference: reportReference || null,
+        reportDigest: reportDigest || null,
+        completionReason,
+      },
+      actorId,
+      actorRole,
+      correlationId,
+      transitionEventId,
+    }));
+  }
+
+  if (toState === CASE_STATE.OUTCOME_APPROVED) {
+    persisted.push(await recordProcessCheck(executor, {
+      tenantId,
+      caseId,
+      checkCode: "OUTCOME_REVIEW_REQUIREMENTS",
+      checkResult: {
+        complete: processCheckComplete === true,
+        identityMatchReviewResult,
+      },
+      actorId,
+      actorRole,
+      correlationId,
+      transitionEventId,
+    }));
+  }
+  return persisted;
+}
+
+function assertOutcomeCatalogue({ toState, outcomeCode, configuredOutcomeCodes }) {
+  if (toState !== CASE_STATE.OUTCOME_APPROVED) return;
+  if (configuredOutcomeCodes.length === 0) {
+    throw new CasePolicyError(
+      "No governed case outcome catalogue is configured.",
+      "CASE_OUTCOME_CODE_NOT_CONFIGURED",
+      503,
+    );
+  }
+  if (!configuredOutcomeCodes.includes(outcomeCode)) {
+    throw new CasePolicyError(
+      "The requested outcome code is not allowed by the configured governed catalogue.",
+      "CASE_OUTCOME_CODE_NOT_ALLOWED",
+      422,
+    );
+  }
+}
+
 export function createCaseWorkflowRepository(
   pool,
   { dataPlaneContext = null, allowLegacyTenantContext = false, allowedOutcomeCodes = [] } = {},
@@ -138,7 +257,10 @@ export function createCaseWorkflowRepository(
   }
   if (!dataPlaneContext && !allowLegacyTenantContext) repositoryTenantId(null);
   const canonicalTenantId = () => repositoryTenantId(dataPlaneContext, { allowLegacyTenantContext });
-  const configuredOutcomeCodes = [...new Set((allowedOutcomeCodes || []).filter(Boolean))];
+  const configuredOutcomeCodes = [...new Set(
+    (allowedOutcomeCodes || []).filter((value) => typeof value === "string" && value.trim())
+      .map((value) => value.trim()),
+  )];
 
   return {
     async getCase(caseId) {
@@ -148,7 +270,7 @@ export function createCaseWorkflowRepository(
     async createOrResolveCaseFromSignal({ signalId, actorId, actorRole, correlationId }) {
       const tenantId = canonicalTenantId();
       const normalizedSignalId = requiredString(signalId, "signalId", 64);
-      const normalizedActorId = requiredString(actorId, "actorId");
+      requiredString(actorId, "actorId");
       const normalizedCorrelationId = requiredString(correlationId, "correlationId", 128);
       if (actorRole !== CASE_ROLE.DETECTION_SERVICE) {
         throw new CasePolicyError(
@@ -157,35 +279,56 @@ export function createCaseWorkflowRepository(
         );
       }
 
-      return transaction(pool, async (executor) => {
-        const [existing] = await executor.execute(
-          `SELECT case_id FROM investigation_cases WHERE tenant_id = ? AND signal_id = ? LIMIT 1 FOR UPDATE`,
-          [tenantId, normalizedSignalId],
-        );
-        if (existing?.[0]) return { case: await loadCase(executor, tenantId, existing[0].case_id), replayed: true };
+      try {
+        return await transaction(pool, async (executor) => {
+          const [existing] = await executor.execute(
+            "SELECT case_id FROM investigation_cases WHERE tenant_id = ? AND signal_id = ? LIMIT 1 FOR UPDATE",
+            [tenantId, normalizedSignalId],
+          );
+          if (existing?.[0]) {
+            return {
+              case: await loadCase(executor, tenantId, existing[0].case_id),
+              replayed: true,
+            };
+          }
 
-        const [signals] = await executor.execute(
-          `SELECT signal_id, claim_id, claim_version, correlation_id, reason_codes
-             FROM detection_signals
-            WHERE tenant_id = ? AND signal_id = ?
-            LIMIT 1 FOR UPDATE`,
-          [tenantId, normalizedSignalId],
-        );
-        const signal = signals?.[0];
-        if (!signal) {
-          throw new CasePolicyError("The signal was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
+          const [signals] = await executor.execute(
+            `SELECT signal_id, claim_id, claim_version, correlation_id, reason_codes
+               FROM detection_signals
+              WHERE tenant_id = ? AND signal_id = ?
+              LIMIT 1 FOR UPDATE`,
+            [tenantId, normalizedSignalId],
+          );
+          const signal = signals?.[0];
+          if (!signal) {
+            throw new CasePolicyError(
+              "The signal was not found in the active tenant.",
+              CASE_ERROR_CODE.NOT_FOUND,
+            );
+          }
+          const caseId = crypto.randomUUID();
+          await executor.execute(
+            `INSERT INTO investigation_cases (
+               case_id, tenant_id, signal_id, claim_id, claim_version, current_state,
+               state_version, originating_reason, correlation_id, migration_review_status
+             ) VALUES (?, ?, ?, ?, ?, 'SIGNAL_GENERATED', 1, ?, ?, 'NOT_APPLICABLE')`,
+            [caseId, tenantId, normalizedSignalId, signal.claim_id, signal.claim_version,
+              JSON.stringify(parseJson(signal.reason_codes, [])), normalizedCorrelationId],
+          );
+          return { case: await loadCase(executor, tenantId, caseId), replayed: false };
+        });
+      } catch (error) {
+        if (error?.code === CASE_ERROR_CODE.STATE_VERSION_CONFLICT) {
+          const [rows] = await pool.execute(
+            "SELECT case_id FROM investigation_cases WHERE tenant_id = ? AND signal_id = ? LIMIT 1",
+            [tenantId, normalizedSignalId],
+          );
+          if (rows?.[0]) {
+            return { case: await loadCase(pool, tenantId, rows[0].case_id), replayed: true };
+          }
         }
-        const caseId = crypto.randomUUID();
-        await executor.execute(
-          `INSERT INTO investigation_cases (
-             case_id, tenant_id, signal_id, claim_id, claim_version, current_state,
-             state_version, originating_reason, correlation_id, migration_review_status
-           ) VALUES (?, ?, ?, ?, ?, 'SIGNAL_GENERATED', 1, ?, ?, 'NOT_APPLICABLE')`,
-          [caseId, tenantId, normalizedSignalId, signal.claim_id, signal.claim_version,
-            JSON.stringify(parseJson(signal.reason_codes, [])), normalizedCorrelationId],
-        );
-        return { case: await loadCase(executor, tenantId, caseId), replayed: false };
-      });
+        throw error;
+      }
     },
 
     async transitionCase(input) {
@@ -199,24 +342,53 @@ export function createCaseWorkflowRepository(
       const reasonSummary = requiredString(input?.reasonSummary, "reasonSummary", 1024);
       const correlationId = requiredString(input?.correlationId, "correlationId", 128);
       const idempotencyKey = requiredString(input?.idempotencyKey, "idempotencyKey", 128);
-      const evidenceReferences = Array.isArray(input?.evidenceReferences) ? input.evidenceReferences : [];
-      const processCheckReferences = Array.isArray(input?.processCheckReferences) ? input.processCheckReferences : [];
+      const evidenceReferences = normalizedReferences(input?.evidenceReferences);
+      const processCheckReferences = normalizedReferences(input?.processCheckReferences);
+      const normalized = {
+        assignedInvestigatorId: optionalString(input?.assignedInvestigatorId, "assignedInvestigatorId"),
+        noEvidenceReason: optionalString(input?.noEvidenceReason, "noEvidenceReason", 1024),
+        reportReference: optionalString(input?.reportReference, "reportReference"),
+        reportDigest: optionalString(input?.reportDigest, "reportDigest"),
+        completionReason: optionalString(input?.completionReason, "completionReason", 128),
+        outcomeCode: optionalString(input?.outcomeCode, "outcomeCode", 64),
+        recordedReasons: input?.recordedReasons ?? null,
+        identityMatchReviewResult: input?.identityMatchReviewResult ?? null,
+        supportingReportReference: optionalString(input?.supportingReportReference, "supportingReportReference"),
+        evidenceSetReference: optionalString(input?.evidenceSetReference, "evidenceSetReference"),
+        processCheckComplete: input?.processCheckComplete === true,
+      };
       const intent = {
-        tenantId, caseId, toState, expectedStateVersion, reasonCode, reasonSummary,
-        actorId, actorRole, evidenceReferences, processCheckReferences,
-        reportReference: input?.reportReference || null,
-        reportDigest: input?.reportDigest || null,
-        outcomeCode: input?.outcomeCode || null,
+        tenantId,
+        caseId,
+        toState,
+        expectedStateVersion,
+        reasonCode,
+        reasonSummary,
+        actorId,
+        actorRole,
+        evidenceReferences,
+        processCheckReferences,
+        ...normalized,
       };
       const intentHash = sha256(stableStringify(intent));
       const operationId = sha256(stableStringify({ tenantId, caseId, idempotencyKey }));
 
       return transaction(pool, async (executor) => {
-        const replay = await resolveReplay(executor, { tenantId, caseId, idempotencyKey, intentHash });
+        const replay = await resolveReplay(executor, {
+          tenantId,
+          caseId,
+          idempotencyKey,
+          intentHash,
+        });
         if (replay) return replay;
 
         const current = await loadCase(executor, tenantId, caseId, true);
-        if (!current) throw new CasePolicyError("The case was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
+        if (!current) {
+          throw new CasePolicyError(
+            "The case was not found in the active tenant.",
+            CASE_ERROR_CODE.NOT_FOUND,
+          );
+        }
         if (current.stateVersion !== expectedStateVersion) {
           throw new CasePolicyError(
             "The case changed after it was loaded. Refresh and retry.",
@@ -224,6 +396,11 @@ export function createCaseWorkflowRepository(
           );
         }
 
+        assertOutcomeCatalogue({
+          toState,
+          outcomeCode: normalized.outcomeCode,
+          configuredOutcomeCodes,
+        });
         assertCaseTransition({
           fromState: current.currentState,
           toState,
@@ -235,22 +412,22 @@ export function createCaseWorkflowRepository(
           fromState: current.currentState,
           toState,
           actorId,
-          assignedInvestigatorId: input?.assignedInvestigatorId || current.assignedInvestigatorId,
+          assignedInvestigatorId: normalized.assignedInvestigatorId || current.assignedInvestigatorId,
           reportCompletingInvestigatorId: current.reportCompletingInvestigatorId,
           reportCompletionEventId: current.reportCompletionEventId,
           evidenceReferences,
           processCheckReferences,
-          noEvidenceReason: input?.noEvidenceReason,
-          reportReference: input?.reportReference,
-          reportDigest: input?.reportDigest,
-          completionReason: input?.completionReason || reasonSummary,
-          outcomeCode: input?.outcomeCode,
+          noEvidenceReason: normalized.noEvidenceReason,
+          reportReference: normalized.reportReference,
+          reportDigest: normalized.reportDigest,
+          completionReason: normalized.completionReason || reasonSummary,
+          outcomeCode: normalized.outcomeCode,
           allowedOutcomeCodes: configuredOutcomeCodes,
-          recordedReasons: input?.recordedReasons,
-          identityMatchReviewResult: input?.identityMatchReviewResult,
-          supportingReportReference: input?.supportingReportReference || current.reportReference,
-          evidenceSetReference: input?.evidenceSetReference,
-          processCheckComplete: input?.processCheckComplete === true,
+          recordedReasons: normalized.recordedReasons,
+          identityMatchReviewResult: normalized.identityMatchReviewResult,
+          supportingReportReference: normalized.supportingReportReference || current.reportReference,
+          evidenceSetReference: normalized.evidenceSetReference,
+          processCheckComplete: normalized.processCheckComplete,
         });
 
         const eventId = crypto.randomUUID();
@@ -263,7 +440,6 @@ export function createCaseWorkflowRepository(
            ) VALUES (?, ?, ?, ?, ?, JSON_OBJECT())`,
           [operationId, tenantId, caseId, idempotencyKey, intentHash],
         );
-
         await executor.execute(
           `INSERT INTO case_transition_events (
              event_id, tenant_id, case_id, previous_state, new_state,
@@ -277,6 +453,24 @@ export function createCaseWorkflowRepository(
             correlationId, operationId, CASE_WORKFLOW_VERSION],
         );
 
+        const persistedProcessCheckIds = await persistTransitionProcessChecks(executor, {
+          tenantId,
+          caseId,
+          toState,
+          actorId,
+          actorRole,
+          correlationId,
+          transitionEventId: eventId,
+          processCheckReferences,
+          evidenceReferences,
+          noEvidenceReason: normalized.noEvidenceReason,
+          reportReference: normalized.reportReference,
+          reportDigest: normalized.reportDigest,
+          completionReason: normalized.completionReason || reasonSummary,
+          identityMatchReviewResult: normalized.identityMatchReviewResult,
+          processCheckComplete: normalized.processCheckComplete,
+        });
+
         if (outcomeId) {
           await executor.execute(
             `INSERT INTO case_outcomes (
@@ -285,12 +479,12 @@ export function createCaseWorkflowRepository(
                identity_match_review_result, decision_maker_id, decision_maker_role,
                correlation_id, workflow_version
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [outcomeId, tenantId, caseId, input.outcomeCode,
-              JSON.stringify(input.recordedReasons),
-              input.supportingReportReference || current.reportReference,
-              input.evidenceSetReference || JSON.stringify(evidenceReferences),
-              JSON.stringify({ complete: true, references: processCheckReferences }),
-              JSON.stringify(input.identityMatchReviewResult), actorId, actorRole,
+            [outcomeId, tenantId, caseId, normalized.outcomeCode,
+              JSON.stringify(normalized.recordedReasons),
+              normalized.supportingReportReference || current.reportReference,
+              normalized.evidenceSetReference,
+              JSON.stringify({ complete: true, processCheckIds: persistedProcessCheckIds }),
+              JSON.stringify(normalized.identityMatchReviewResult), actorId, actorRole,
               correlationId, CASE_WORKFLOW_VERSION],
           );
         }
@@ -299,15 +493,20 @@ export function createCaseWorkflowRepository(
         const values = [toState, eventId];
         if (input?.assignedInvestigatorId !== undefined) {
           assignments.push("assigned_investigator_id = ?");
-          values.push(input.assignedInvestigatorId || null);
+          values.push(normalized.assignedInvestigatorId);
         }
         if (toState === CASE_STATE.TRIAGE_PENDING && !current.triageOwnerId) {
           assignments.push("triage_owner_id = ?");
           values.push(actorId);
         }
         if (toState === CASE_STATE.INVESTIGATION_REPORT_COMPLETED) {
-          assignments.push("report_completing_investigator_id = ?", "report_reference = ?", "report_digest = ?", "report_completion_event_id = ?");
-          values.push(actorId, input.reportReference || null, input.reportDigest || null, eventId);
+          assignments.push(
+            "report_completing_investigator_id = ?",
+            "report_reference = ?",
+            "report_digest = ?",
+            "report_completion_event_id = ?",
+          );
+          values.push(actorId, normalized.reportReference, normalized.reportDigest, eventId);
         }
 
         const [update] = await executor.execute(
@@ -329,11 +528,14 @@ export function createCaseWorkflowRepository(
         const result = {
           case: await loadCase(executor, tenantId, caseId),
           transitionEventId: eventId,
+          operationId,
           outcomeId,
+          processCheckIds: persistedProcessCheckIds,
+          correlationId,
           replayed: false,
         };
         await executor.execute(
-          `UPDATE case_transition_operations SET result_payload = ? WHERE operation_id = ?`,
+          "UPDATE case_transition_operations SET result_payload = ? WHERE operation_id = ?",
           [JSON.stringify(result), operationId],
         );
         return result;
