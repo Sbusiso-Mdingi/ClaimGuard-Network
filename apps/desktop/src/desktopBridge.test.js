@@ -81,18 +81,24 @@ describe("desktop polling and offline mutation policy", () => {
     expect(JSON.stringify(calls[0][1])).not.toMatch(/targetState|toState|tenant|actor|role|permission/i);
   });
 
-  it("rejects client authority fields before native invocation", async () => {
+  it("rejects client authority fields before native invocation", () => {
     const calls = [];
     setDesktopInvokeForTests(async (...args) => {
       calls.push(args);
       return { available: true };
     });
-    await expect(desktopBridge.performGovernedCaseAction("case-1", "begin-triage", "key-1", {
-      expectedStateVersion: 2,
-      reasonCode: "REVIEWED_ACTION",
-      reasonSummary: "Reviewed.",
-      targetState: "OUTCOME_APPROVED",
-    })).rejects.toMatchObject({ code: "PROHIBITED_CASE_CONTEXT_FIELD" });
+    let thrown = null;
+    try {
+      desktopBridge.performGovernedCaseAction("case-1", "begin-triage", "key-1", {
+        expectedStateVersion: 2,
+        reasonCode: "REVIEWED_ACTION",
+        reasonSummary: "Reviewed.",
+        targetState: "OUTCOME_APPROVED",
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: "PROHIBITED_CASE_CONTEXT_FIELD" });
     expect(calls).toEqual([]);
   });
 
