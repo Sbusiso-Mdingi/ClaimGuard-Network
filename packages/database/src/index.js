@@ -129,6 +129,7 @@ export {
 } from "./fraud-workflow-repository.js";
 
 export {
+  assertCaseProcessRequirements,
   assertCaseTransition,
   canTransitionCaseState,
   CASE_ERROR_CODE,
@@ -137,9 +138,14 @@ export {
   CASE_WORKFLOW_VERSION,
   CasePolicyError,
   DEFERRED_CASE_STATE,
+  isCaseState,
   isDeferredCaseState,
   listPermittedCaseTransitions,
 } from "./case-transition-policy.js";
+
+export {
+  createCaseWorkflowRepository,
+} from "./case-workflow-repository.js";
 
 export {
   createSharedFraudRegistryRepository,
