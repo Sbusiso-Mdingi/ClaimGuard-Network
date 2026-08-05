@@ -1,6 +1,7 @@
 mod cache;
 mod enrollment;
 mod error;
+mod governed_case;
 mod http_client;
 mod secure_store;
 
@@ -1178,6 +1179,8 @@ pub fn run() {
             desktop_update_investigation,
             desktop_add_investigation_note,
             desktop_upload_investigation_evidence,
+            governed_case::desktop_governed_case_details,
+            governed_case::desktop_perform_case_action,
             reset_desktop,
         ])
         .run(tauri::generate_context!())
