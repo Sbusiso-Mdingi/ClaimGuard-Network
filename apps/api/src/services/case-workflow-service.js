@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 import {
   CASE_ERROR_CODE,
-  CASE_PERMISSION,
+  CASE_ROLE,
   CASE_STATE,
   CasePolicyError,
   stableStringify,
@@ -27,55 +27,55 @@ export const CASE_ACTION = Object.freeze({
 const ACTION_POLICY = Object.freeze({
   [CASE_ACTION.BEGIN_TRIAGE]: Object.freeze({
     toState: CASE_STATE.TRIAGE_PENDING,
-    permission: CASE_PERMISSION.TRIAGE,
+    role: CASE_ROLE.SCHEME_ANALYST,
   }),
   [CASE_ACTION.DISMISS]: Object.freeze({
     toState: CASE_STATE.DISMISSED,
-    permission: CASE_PERMISSION.DISMISS,
+    role: CASE_ROLE.SCHEME_ANALYST,
   }),
   [CASE_ACTION.BEGIN_MONITORING]: Object.freeze({
     toState: CASE_STATE.MONITORING,
-    permission: CASE_PERMISSION.MONITOR,
+    role: CASE_ROLE.SCHEME_ANALYST,
   }),
   [CASE_ACTION.OPEN_INVESTIGATION]: Object.freeze({
     toState: CASE_STATE.INVESTIGATION_OPEN,
-    permission: CASE_PERMISSION.OPEN_INVESTIGATION,
+    role: CASE_ROLE.SCHEME_ANALYST,
   }),
   [CASE_ACTION.RECORD_NOTICE]: Object.freeze({
     toState: CASE_STATE.NOTICE_RECORDED,
-    permission: CASE_PERMISSION.RECORD_NOTICE,
+    role: CASE_ROLE.INVESTIGATOR,
   }),
   [CASE_ACTION.RECORD_RESPONSE_PENDING]: Object.freeze({
     toState: CASE_STATE.RESPONSE_PENDING,
-    permission: CASE_PERMISSION.RECORD_RESPONSE,
+    role: CASE_ROLE.INVESTIGATOR,
   }),
   [CASE_ACTION.BEGIN_EVIDENCE_REVIEW]: Object.freeze({
     toState: CASE_STATE.EVIDENCE_REVIEW,
-    permission: CASE_PERMISSION.REVIEW_EVIDENCE,
+    role: CASE_ROLE.INVESTIGATOR,
   }),
   [CASE_ACTION.COMPLETE_INVESTIGATION_REPORT]: Object.freeze({
     toState: CASE_STATE.INVESTIGATION_REPORT_COMPLETED,
-    permission: CASE_PERMISSION.COMPLETE_REPORT,
+    role: CASE_ROLE.INVESTIGATOR,
   }),
   [CASE_ACTION.SUBMIT_OUTCOME_REVIEW]: Object.freeze({
     toState: CASE_STATE.OUTCOME_REVIEW_PENDING,
-    permission: CASE_PERMISSION.SUBMIT_OUTCOME_REVIEW,
+    role: CASE_ROLE.INVESTIGATOR,
   }),
   [CASE_ACTION.APPROVE_OUTCOME]: Object.freeze({
     toState: CASE_STATE.OUTCOME_APPROVED,
-    permission: CASE_PERMISSION.APPROVE_OUTCOME,
+    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
   }),
   [CASE_ACTION.CLOSE_UNSUBSTANTIATED]: Object.freeze({
     toState: CASE_STATE.CLOSED_UNSUBSTANTIATED,
-    permission: CASE_PERMISSION.CLOSE_UNSUBSTANTIATED,
+    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
   }),
   [CASE_ACTION.OPEN_APPEAL_OR_REVIEW]: Object.freeze({
     toState: CASE_STATE.APPEAL_OR_REVIEW,
-    permission: CASE_PERMISSION.OPEN_APPEAL_OR_REVIEW,
+    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
   }),
   [CASE_ACTION.RETURN_FOR_FURTHER_EVIDENCE]: Object.freeze({
     toState: CASE_STATE.EVIDENCE_REVIEW,
-    permission: CASE_PERMISSION.RETURN_FOR_FURTHER_EVIDENCE,
+    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
   }),
 });
 
@@ -111,7 +111,7 @@ function expectedVersion(value) {
   return parsed;
 }
 
-function trustedActor({ authContext, tenantContext, requiredPermission }) {
+function trustedActor({ authContext, tenantContext, requiredRole }) {
   const actorId = requiredString(authContext?.user_id, "authenticated actor ID");
   const authTenantId = requiredString(authContext?.tenant_id, "authenticated tenant ID", 64);
   const routedTenantId = requiredString(tenantContext?.tenant_id, "routed tenant ID", 64);
@@ -123,19 +123,17 @@ function trustedActor({ authContext, tenantContext, requiredPermission }) {
     );
   }
 
-  const authoritativePermissions = authContext?.permissions instanceof Set
-    ? authContext.permissions
-    : new Set(Array.isArray(authContext?.permissions) ? authContext.permissions : []);
-  if (requiredPermission && !authoritativePermissions.has(requiredPermission)) {
+  const authoritativeRoles = Array.isArray(authContext?.roles) ? authContext.roles : [];
+  if (!authoritativeRoles.includes(requiredRole)) {
     throw new CasePolicyError(
-      "The authenticated actor lacks the required case permission.",
+      "The authenticated actor role cannot perform this case action.",
       CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
     );
   }
 
   return {
     actorId,
-    actorPermission: requiredPermission || null,
+    actorRole: requiredRole,
     tenantId: routedTenantId,
   };
 }
@@ -158,7 +156,11 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       if (!this.isConfigured()) {
         throw new Error("Case workflow repository is not configured.");
       }
-      trustedActor({ authContext, tenantContext, requiredPermission: null });
+      trustedActor({
+        authContext,
+        tenantContext,
+        requiredRole: (authContext?.roles || []).find((role) => Object.values(CASE_ROLE).includes(role)),
+      });
       return caseWorkflowRepository.getCase(requiredString(caseId, "caseId", 64));
     },
 
@@ -189,7 +191,7 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       const actor = trustedActor({
         authContext,
         tenantContext,
-        requiredPermission: policy.permission,
+        requiredRole: policy.role,
       });
       const operationId = sha256(stableStringify({
         tenantId: actor.tenantId,
@@ -206,9 +208,7 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
         correlationId: normalizedCorrelationId,
         idempotencyKey: normalizedIdempotencyKey,
         actorId: actor.actorId,
-        // Stored in the existing audit column; it now records the authoritative
-        // permission used for this transition rather than a client-selected role.
-        actorRole: actor.actorPermission,
+        actorRole: actor.actorRole,
         assignedInvestigatorId: payload?.assignedInvestigatorId,
         evidenceReferences: payload?.evidenceReferences,
         processCheckReferences: payload?.processCheckReferences,

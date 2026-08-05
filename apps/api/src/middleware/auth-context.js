@@ -25,28 +25,8 @@ export function createAnonymousAuthContext({ source = "anonymous" } = {}) {
 }
 
 const ROLE_OPERATIONAL_PERMISSION_OVERLAYS = Object.freeze({
-  fraud_analyst: Object.freeze([
-    "claims.view_own",
-    "case.triage",
-    "case.dismiss",
-    "case.monitor",
-    "case.open_investigation",
-  ]),
-  investigator: Object.freeze([
-    "claims.view_own",
-    "case.record_notice",
-    "case.record_response",
-    "case.review_evidence",
-    "case.complete_report",
-    "case.submit_outcome_review",
-  ]),
-  applications_committee_member: Object.freeze([
-    "case.review_outcome",
-    "case.approve_outcome",
-    "case.close_unsubstantiated",
-    "case.open_appeal_or_review",
-    "case.return_for_further_evidence",
-  ]),
+  fraud_analyst: Object.freeze(["claims.view_own"]),
+  investigator: Object.freeze(["claims.view_own"]),
   scheme_administrator: Object.freeze([
     "claims.view_own",
     "reports.view_own",
@@ -72,16 +52,12 @@ export function createAuthenticatedAuthContext({
   displayName = null, organisation = null, source = "session",
 } = {}) {
   const normalizedRoles = Object.freeze([...(roles || [])]);
-  const effectivePermissions = new Set([
-    ...(permissions || getPermissionsForRoles(normalizedRoles)),
-    ...roleOperationalPermissions(normalizedRoles),
-  ]);
   return Object.freeze({
     is_authenticated: true,
     user_id: userId,
     display_name: displayName,
     roles: normalizedRoles,
-    permissions: effectivePermissions,
+    permissions: permissions ? new Set(permissions) : getPermissionsForRoles(normalizedRoles),
     tenant_id: tenantId || null,
     organisation_id: organisationId,
     membership_id: membershipId,
