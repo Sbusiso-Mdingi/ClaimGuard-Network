@@ -52,13 +52,25 @@ function canonicalPaths(value) {
   return (Array.isArray(value) ? value : [value]).map((entry) => path.resolve(entry));
 }
 
+function migrationId(filePath) {
+  return path.basename(filePath, path.extname(filePath));
+}
+
 function partitionPaths(value) {
   const core = [];
   const extension = [];
   for (const filePath of canonicalPaths(value)) {
-    (extensionIds.has(path.basename(filePath, path.extname(filePath))) ? extension : core).push(filePath);
+    (extensionIds.has(migrationId(filePath)) ? extension : core).push(filePath);
   }
   return { core, extension };
+}
+
+function filterStatus(status, permittedIds) {
+  return {
+    applied: (status.applied || []).filter((item) => permittedIds.has(item.id)),
+    pending: (status.pending || []).filter((item) => permittedIds.has(item.id)),
+    inProgress: (status.inProgress || []).filter((item) => permittedIds.has(item.id)),
+  };
 }
 
 async function withConnection(pool, operation) {
@@ -78,7 +90,7 @@ async function loadExtensionMigrations(paths) {
     const source = await readFile(filePath, "utf8");
     const statements = splitOperationalMigrationStatements(source);
     return {
-      id: path.basename(filePath, path.extname(filePath)),
+      id: migrationId(filePath),
       filePath,
       checksum: checksum(source),
       statements,
@@ -220,7 +232,11 @@ async function applyExtensionMigrations(pool, paths, { applicationVersion = null
 
 export async function getOperationalMigrationStatus(pool, { migrationPath = defaultMigrationPaths } = {}) {
   const { core, extension } = partitionPaths(migrationPath);
-  const coreStatus = await getCoreOperationalMigrationStatus(pool, { migrationPath: core });
+  const coreIds = new Set(core.map(migrationId));
+  const coreStatus = filterStatus(
+    await getCoreOperationalMigrationStatus(pool, { migrationPath: core }),
+    coreIds,
+  );
   if (extension.length === 0) return coreStatus;
   const migrations = await loadExtensionMigrations(extension);
   return withConnection(pool, async (connection) => {
@@ -246,7 +262,10 @@ export async function getOperationalMigrationStatus(pool, { migrationPath = defa
       }
     }
     return {
-      applied: [...coreStatus.applied, ...migrations.filter((item) => history.migrations.has(item.id)).map((item) => ({ id: item.id, checksum: item.checksum }))],
+      applied: [
+        ...coreStatus.applied,
+        ...migrations.filter((item) => history.migrations.has(item.id)).map((item) => ({ id: item.id, checksum: item.checksum })),
+      ],
       pending: [...coreStatus.pending, ...pending],
       inProgress: [...coreStatus.inProgress, ...pending.filter((item) => item.completedStatementCount > 0)],
     };
