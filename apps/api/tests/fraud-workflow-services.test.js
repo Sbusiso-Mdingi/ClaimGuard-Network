@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   createFraudConfirmationService,
-  DIRECT_REGISTRY_PUBLICATION_ERROR,
+  LEGACY_FRAUD_CONFIRMATION_ERROR,
 } from "../src/services/fraud-confirmation-service.js";
 import {
   createFraudReversalService,
@@ -38,13 +38,13 @@ test("supported confirmation service blocks before invoking the legacy repositor
   assert.equal(service.isConfigured(), true);
   await assert.rejects(
     service.confirmFraud(input),
-    (error) => error.code === DIRECT_REGISTRY_PUBLICATION_ERROR.code
-      && error.status === DIRECT_REGISTRY_PUBLICATION_ERROR.status
-      && error.message === DIRECT_REGISTRY_PUBLICATION_ERROR.message,
+    (error) => error.code === LEGACY_FRAUD_CONFIRMATION_ERROR.code
+      && error.status === LEGACY_FRAUD_CONFIRMATION_ERROR.status
+      && error.message === LEGACY_FRAUD_CONFIRMATION_ERROR.message,
   );
   assert.deepEqual(calls, []);
   assert.equal(logs[0].event, "legacy_fraud_confirmation_blocked");
-  assert.equal(logs[0].details.errorCode, "NETWORK_NOTICE_GOVERNANCE_REQUIRED");
+  assert.equal(logs[0].details.errorCode, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
   assert.equal(JSON.stringify(logs[0]).includes("patient"), false);
 });
 
