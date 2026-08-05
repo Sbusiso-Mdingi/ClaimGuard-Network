@@ -44,6 +44,58 @@ const adoptionCodes = new Set([
   "ER_TRG_ALREADY_EXISTS",
 ]);
 
+export class OperationalMigrationQueryResultError extends Error {
+  constructor(queryName) {
+    super(`Operational migration ${queryName} query returned an invalid result shape.`);
+    this.name = "OperationalMigrationQueryResultError";
+    this.code = "OPERATIONAL_MIGRATION_QUERY_RESULT_INVALID";
+    this.queryName = queryName;
+  }
+}
+
+function isRowRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isMysqlFieldDefinition(value) {
+  return isRowRecord(value) && (
+    Object.hasOwn(value, "name")
+    || Object.hasOwn(value, "columnType")
+    || Object.hasOwn(value, "type")
+    || Object.hasOwn(value, "table")
+    || Object.hasOwn(value, "orgName")
+  );
+}
+
+/**
+ * Normalise SELECT results at the migration boundary.
+ *
+ * Production mysql2 returns [rows, fields]. Focused repository adapters may
+ * intentionally return rows directly. Other shapes are rejected so a result
+ * header or field-definition array can never be mistaken for migration data.
+ */
+export function extractOperationalMigrationRows(result, queryName = "history") {
+  if (!Array.isArray(result)) {
+    throw new OperationalMigrationQueryResultError(queryName);
+  }
+
+  if (result.length === 0) return [];
+  if (result.every(isRowRecord)) return result;
+
+  if (result.length === 2 && Array.isArray(result[0]) && Array.isArray(result[1])) {
+    const [rows, fields] = result;
+    if (!rows.every(isRowRecord)) {
+      throw new OperationalMigrationQueryResultError(queryName);
+    }
+    if (fields.length > 0 && !fields.every(isMysqlFieldDefinition)) {
+      throw new OperationalMigrationQueryResultError(queryName);
+    }
+    return rows;
+  }
+
+  throw new OperationalMigrationQueryResultError(queryName);
+}
+
 function checksum(value) {
   return crypto.createHash("sha256").update(String(value).replace(/\r\n/g, "\n")).digest("hex");
 }
@@ -100,16 +152,22 @@ async function loadExtensionMigrations(paths) {
 }
 
 async function extensionHistory(connection) {
-  const [migrationRows] = await connection.query(
-    "SELECT migration_id, checksum FROM operational_migration_history",
+  const migrationRows = extractOperationalMigrationRows(
+    await connection.query(
+      "SELECT migration_id, checksum FROM operational_migration_history",
+    ),
+    "migration history",
   );
-  const [statementRows] = await connection.query(
-    `SELECT migration_id, statement_index, statement_checksum, adopted
-       FROM operational_migration_statement_history`,
+  const statementRows = extractOperationalMigrationRows(
+    await connection.query(
+      `SELECT migration_id, statement_index, statement_checksum, adopted
+         FROM operational_migration_statement_history`,
+    ),
+    "statement history",
   );
   return {
-    migrations: new Map((migrationRows || []).map((row) => [row.migration_id, row])),
-    statements: new Map((statementRows || []).map((row) => [
+    migrations: new Map(migrationRows.map((row) => [row.migration_id, row])),
+    statements: new Map(statementRows.map((row) => [
       `${row.migration_id}:${Number(row.statement_index)}`,
       row,
     ])),
@@ -136,13 +194,16 @@ function validateRecordedStatement(migration, index, recorded) {
 }
 
 async function verifyCanonicalMetadata(connection) {
-  const [rows] = await connection.query(
-    `SELECT schema_version, migration_version
-       FROM data_plane_metadata
-      WHERE metadata_key = 'primary'
-      LIMIT 2`,
+  const rows = extractOperationalMigrationRows(
+    await connection.query(
+      `SELECT schema_version, migration_version
+         FROM data_plane_metadata
+        WHERE metadata_key = 'primary'
+        LIMIT 2`,
+    ),
+    "schema metadata",
   );
-  if ((rows || []).length !== 1
+  if (rows.length !== 1
       || String(rows[0].schema_version) !== CANONICAL_OPERATIONAL_SCHEMA_VERSION
       || Number(rows[0].migration_version) < CANONICAL_OPERATIONAL_MIGRATION_VERSION) {
     const error = new Error("Operational metadata was not advanced monotonically to schema 17.");
