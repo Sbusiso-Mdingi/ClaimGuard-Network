@@ -405,7 +405,7 @@ export function createLegacyCaseAdapter(
               forUpdate: true,
             }));
             if (replay) return replay;
-            throw error;
+            throw incompleteReplayError();
           }
           if (!isRetryableTransactionError(error)) throw error;
           if (attempt === LEGACY_FIRST_ACCESS_MAX_ATTEMPTS) {
