@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFraudConfirmationService } from "../src/services/fraud-confirmation-service.js";
+import {
+  createFraudConfirmationService,
+  DIRECT_REGISTRY_PUBLICATION_ERROR,
+} from "../src/services/fraud-confirmation-service.js";
 import { createFraudReversalService } from "../src/services/fraud-reversal-service.js";
 
 const repositoryResult = {
@@ -10,7 +13,7 @@ const repositoryResult = {
   replayed: false,
 };
 
-test("confirmation service delegates the complete canonical workflow input once", async () => {
+test("confirmation service fails closed and never delegates direct registry publication", async () => {
   const calls = [];
   const logs = [];
   const service = createFraudConfirmationService({
@@ -27,7 +30,7 @@ test("confirmation service delegates the complete canonical workflow input once"
   const input = {
     tenantId: "tenant-alpha",
     investigationId: "inv-1",
-    reason: "Confirmed",
+    reason: "Report completed",
     actorId: "authenticated-user",
     actorRole: "investigator",
     correlationId: "request-1",
@@ -35,10 +38,19 @@ test("confirmation service delegates the complete canonical workflow input once"
   };
 
   assert.equal(service.isConfigured(), true);
-  assert.equal(await service.confirmFraud(input), repositoryResult);
-  assert.deepEqual(calls, [input]);
-  assert.equal(logs[0].event, "fraud_confirmed");
-  assert.equal(logs[0].details.actorId, "authenticated-user");
+  await assert.rejects(
+    service.confirmFraud(input),
+    (error) => {
+      assert.equal(error.code, DIRECT_REGISTRY_PUBLICATION_ERROR.code);
+      assert.equal(error.status, DIRECT_REGISTRY_PUBLICATION_ERROR.status);
+      assert.equal(error.message, DIRECT_REGISTRY_PUBLICATION_ERROR.message);
+      return true;
+    },
+  );
+  assert.deepEqual(calls, []);
+  assert.equal(logs[0].event, "direct_registry_publication_blocked");
+  assert.equal(logs[0].details.errorCode, "NETWORK_NOTICE_GOVERNANCE_REQUIRED");
+  assert.equal(JSON.stringify(logs[0]).includes("patient"), false);
 });
 
 test("reversal service preserves replay state and delegates only to the atomic repository", async () => {
