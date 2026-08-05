@@ -332,7 +332,7 @@ describe("ClaimGuard desktop cache behaviour", () => {
 });
 
 describe("ClaimGuard desktop investigation workspace", () => {
-  it("loads case evidence and submits status and priority with the loaded version", async () => {
+  it("submits a priority-only update with the loaded version and no status", async () => {
     const calls = [];
     const currentStatus = baseStatus({
       authenticated: true,
@@ -357,7 +357,6 @@ describe("ClaimGuard desktop investigation workspace", () => {
       session: {
         clientCapabilities: [
           "investigations.view",
-          "investigations.update_status",
           "investigations.change_priority",
         ],
       },
@@ -378,7 +377,6 @@ describe("ClaimGuard desktop investigation workspace", () => {
       if (command === "desktop_update_investigation") {
         const investigation = {
           ...currentStatus.cache.investigations[0],
-          status: args.status,
           priority: args.priority,
           recordVersion: args.expectedRecordVersion + 1,
           updatedAt: "2026-08-01T10:05:00.000Z",
@@ -400,20 +398,25 @@ describe("ClaimGuard desktop investigation workspace", () => {
     expect(await screen.findByText("Provider invoice does not match the member interview.")).toBeInTheDocument();
     expect(screen.getByText("invoice.pdf")).toBeInTheDocument();
 
-    await userEvent.selectOptions(screen.getByLabelText("Investigation status"), "UNDER_REVIEW");
+    // Status is read-only — no select element for status modification
+    expect(screen.getByLabelText("Investigation status")).toHaveTextContent(/open/i);
+
     await userEvent.selectOptions(screen.getByLabelText("Investigation priority"), "HIGH");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(calls.some(([command]) => command === "desktop_update_investigation")).toBe(true));
-    expect(calls.find(([command]) => command === "desktop_update_investigation")).toEqual([
+    const updateCall = calls.find(([command]) => command === "desktop_update_investigation");
+    expect(updateCall).toEqual([
       "desktop_update_investigation",
       {
         investigationId: "INV-1",
         expectedRecordVersion: 7,
-        status: "UNDER_REVIEW",
+        status: null,
         priority: "HIGH",
       },
     ]);
+    // Verify no status was included in the payload (bridge sends null explicitly)
+    expect(updateCall[1].status).toBeNull();
   });
 
   it("keeps the investigation queue unavailable without the view capability", async () => {
@@ -432,7 +435,7 @@ describe("ClaimGuard desktop investigation workspace", () => {
     expect(screen.queryByRole("button", { name: /Investigations/i })).not.toBeInTheDocument();
   });
 
-  it("refreshes authoritative case detail after a stale write is rejected", async () => {
+  it("refreshes authoritative case detail after a stale priority update is rejected", async () => {
     const detailVersions = [];
     const compact = {
       investigationId: "INV-STALE",
@@ -445,14 +448,14 @@ describe("ClaimGuard desktop investigation workspace", () => {
     const currentStatus = baseStatus({
       authenticated: true,
       cache: { freshness: "Fresh", claims: [], investigations: [compact], dashboard: null, suspiciousNetwork: null },
-      session: { clientCapabilities: ["investigations.view", "investigations.update_status"] },
+      session: { clientCapabilities: ["investigations.view", "investigations.change_priority"] },
     });
     setDesktopInvokeForTests(async (command) => {
       if (command === "desktop_status" || command === "synchronize_desktop") return currentStatus;
       if (command === "desktop_investigation_details") {
         const refreshed = detailVersions.length > 0;
         const investigation = refreshed
-          ? { ...compact, status: "AWAITING_EVIDENCE", recordVersion: 4, updatedAt: "2026-08-01T10:05:00.000Z" }
+          ? { ...compact, priority: "HIGH", recordVersion: 4, updatedAt: "2026-08-01T10:05:00.000Z" }
           : compact;
         detailVersions.push(investigation.updatedAt);
         return { available: true, investigation };
@@ -468,7 +471,7 @@ describe("ClaimGuard desktop investigation workspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open case" }));
     const dialog = await screen.findByRole("dialog", { name: "Investigation INV-STALE" });
     expect(within(dialog).getByText("Investigation workspace")).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText("Investigation status"), "UNDER_REVIEW");
+    await userEvent.selectOptions(screen.getByLabelText("Investigation priority"), "HIGH");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(/changed on the server/i);
@@ -476,6 +479,28 @@ describe("ClaimGuard desktop investigation workspace", () => {
       "2026-08-01T10:00:00.000Z",
       "2026-08-01T10:05:00.000Z",
     ]));
-    expect(screen.getByLabelText("Investigation status")).toHaveValue("AWAITING_EVIDENCE");
+    expect(screen.getByLabelText("Investigation priority")).toHaveValue("HIGH");
+  });
+
+  it("rejects a direct bridge call containing status and produces zero native invocations", async () => {
+    const calls = [];
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      return { available: true };
+    });
+
+    const { desktopBridge } = await import("./desktopBridge");
+    let thrown = null;
+    try {
+      desktopBridge.updateInvestigation("INV-1", 7, { status: "CONFIRMED_FRAUD", priority: "HIGH" });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      code: "LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED",
+      status: 409,
+    });
+    expect(calls).toEqual([]);
   });
 });
