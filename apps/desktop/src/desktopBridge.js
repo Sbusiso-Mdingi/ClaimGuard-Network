@@ -5,6 +5,7 @@ function invokeThroughTauri(command, args) {
 }
 
 let invokeImplementation = invokeThroughTauri;
+let fallbackIdempotencySequence = 0;
 
 export function setDesktopInvokeForTests(implementation) {
   invokeImplementation = implementation;
@@ -70,17 +71,35 @@ function governedPayload(payload) {
   return { ...payload };
 }
 
-export function createCaseActionIdempotencyKey() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  if (globalThis.crypto?.getRandomValues) {
-    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+function boundedEntropyWord(random) {
+  const sample = Number(random());
+  const bounded = Number.isFinite(sample) ? Math.min(Math.max(sample, 0), 0.9999999999999999) : 0;
+  return Math.floor(bounded * 0x1_0000_0000).toString(36).padStart(7, "0");
+}
+
+export function createCaseActionIdempotencyKey({
+  crypto = globalThis.crypto,
+  now = Date.now,
+  performanceNow = () => globalThis.performance?.now?.() ?? 0,
+  random = Math.random,
+  sequence = null,
+} = {}) {
+  if (typeof crypto?.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto?.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0"));
     return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
   }
-  const seed = `${Date.now()}-${performance?.now?.() || 0}-${Math.random()}-${Math.random()}`;
-  return `case-action-${seed.replace(/[^A-Za-z0-9.-]/g, "-")}`.slice(0, 128);
+
+  const resolvedSequence = sequence ?? ++fallbackIdempotencySequence;
+  const wallClock = Math.max(0, Math.trunc(Number(now()) || 0)).toString(36);
+  const monotonicClock = Math.max(0, Math.trunc((Number(performanceNow()) || 0) * 1000)).toString(36);
+  const entropy = Array.from({ length: 4 }, () => boundedEntropyWord(random)).join("-");
+  return `case-action-${wallClock}-${monotonicClock}-${Math.max(0, Math.trunc(Number(resolvedSequence) || 0)).toString(36)}-${entropy}`
+    .replace(/[^A-Za-z0-9.-]/g, "-")
+    .slice(0, 128);
 }
 
 export const desktopBridge = Object.freeze({
