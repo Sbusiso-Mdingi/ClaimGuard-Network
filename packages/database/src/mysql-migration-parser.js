@@ -4,8 +4,14 @@ function isDashCommentStart(source, index) {
     && (index + 2 >= source.length || /\s/.test(source[index + 2]));
 }
 
+function containsOnlyComments(value) {
+  const withoutBlocks = String(value || "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const withoutLines = withoutBlocks.replace(/^\s*(?:--(?=\s|$)|#).*$/gm, "");
+  return !withoutLines.trim();
+}
+
 function directiveDelimiter(line, current, quote, blockComment) {
-  if (quote || blockComment || current.trim()) return null;
+  if (quote || blockComment || !containsOnlyComments(current)) return null;
   const match = line.match(/^\s*DELIMITER\s+(\S+)\s*$/i);
   return match?.[1] || null;
 }
@@ -16,6 +22,8 @@ function directiveDelimiter(line, current, quote, blockComment) {
  * DELIMITER is a mysql-client directive, not server SQL. This parser consumes
  * the directive and preserves semicolons inside compound trigger bodies so the
  * complete CREATE TRIGGER statement is sent through mysql2 in one query.
+ * Leading comments are retained with the following executable statement and do
+ * not prevent a delimiter directive from taking effect.
  */
 export function splitOperationalMigrationStatements(sql) {
   const source = String(sql || "").replace(/\r\n?/g, "\n");
@@ -93,7 +101,7 @@ export function splitOperationalMigrationStatements(sql) {
       }
       if (delimiter && lineSource.startsWith(delimiter, index)) {
         const statement = current.trim();
-        if (statement) statements.push(statement);
+        if (statement && !containsOnlyComments(statement)) statements.push(statement);
         current = "";
         index += delimiter.length - 1;
         continue;
@@ -106,6 +114,6 @@ export function splitOperationalMigrationStatements(sql) {
   if (blockComment) throw new TypeError("Migration SQL contains an unterminated block comment.");
 
   const finalStatement = current.trim();
-  if (finalStatement) statements.push(finalStatement);
+  if (finalStatement && !containsOnlyComments(finalStatement)) statements.push(finalStatement);
   return statements;
 }
