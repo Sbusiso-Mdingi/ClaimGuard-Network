@@ -19,9 +19,10 @@ vi.mock("../lib/apiClient", () => ({ apiRequest: vi.fn() }));
 import { apiRequest } from "../lib/apiClient";
 import { InvestigationWorkspacePage } from "../features/investigator/InvestigationWorkspacePage";
 
-function response(body, { ok = true } = {}) {
+function response(body, { ok = true, status = ok ? 200 : 500 } = {}) {
   return Promise.resolve({
     ok,
+    status,
     json: async () => body,
   });
 }
@@ -35,12 +36,40 @@ function investigation(overrides = {}) {
     assignedBy: "analyst-alpha",
     status: "UNDER_REVIEW",
     priority: "HIGH",
+    recordVersion: 2,
     fraudConfirmedAt: null,
     reversedAt: null,
     notes: [],
     evidence: [],
     ...overrides,
   };
+}
+
+function governedDetail(legacyStatus = "UNDER_REVIEW") {
+  return {
+    available: true,
+    case: {
+      caseId: "CASE-1",
+      currentState: "TRIAGE_PENDING",
+      stateVersion: 2,
+      legacyStatus,
+      migrationReviewStatus: "REVIEW_REQUIRED",
+    },
+    allowedActions: [],
+    correlationId: "request-1",
+  };
+}
+
+function mockWorkspaceRequests(investigationRecord) {
+  apiRequest.mockImplementation((path) => {
+    if (path === "/investigations/INV-1") {
+      return response({ available: true, investigation: investigationRecord });
+    }
+    if (path === "/api/v1/cases/by-legacy-investigation/INV-1") {
+      return response(governedDetail(investigationRecord.status));
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
 }
 
 function renderWorkspace() {
@@ -71,20 +100,16 @@ describe("InvestigationWorkspacePage", () => {
       "investigations.view",
       "investigations.confirm_fraud",
     ];
-    apiRequest.mockResolvedValue(
-      await response({
-        available: true,
-        investigation: investigation({ status: "CONFIRMED_FRAUD" }),
-      }),
-    );
+    mockWorkspaceRequests(investigation({ status: "CONFIRMED_FRAUD" }));
 
     renderWorkspace();
 
-    expect(await screen.findByText("Case details")).toBeInTheDocument();
+    expect(await screen.findByText("Legacy compatibility details")).toBeInTheDocument();
+    expect(await screen.findByText("Governed case")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open claim" })).toHaveAttribute("href", "/claims/CLAIM-1");
     expect(screen.queryByRole("button", { name: "Confirm fraud" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Reason for fraud decision/i)).not.toBeInTheDocument();
-    expect(apiRequest).toHaveBeenCalledTimes(1);
+    expect(apiRequest).toHaveBeenCalledTimes(2);
     expect(apiRequest).not.toHaveBeenCalledWith(
       "/investigations/confirm-fraud",
       expect.anything(),
@@ -98,9 +123,7 @@ describe("InvestigationWorkspacePage", () => {
       "investigations.add_note",
       "investigations.update_status",
     ];
-    apiRequest.mockResolvedValue(
-      await response({ available: true, investigation: investigation() }),
-    );
+    mockWorkspaceRequests(investigation());
 
     renderWorkspace();
 
