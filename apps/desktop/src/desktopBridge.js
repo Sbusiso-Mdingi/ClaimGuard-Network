@@ -10,6 +10,14 @@ export function setDesktopInvokeForTests(implementation) {
   invokeImplementation = implementation;
 }
 
+function legacyInvestigationStatusWriteDisabled() {
+  const error = new Error("Investigation lifecycle changes must use the governed Sequrin case-action API.");
+  error.name = "LegacyInvestigationStatusWriteDisabledError";
+  error.code = "LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED";
+  error.status = 409;
+  return error;
+}
+
 export const desktopBridge = Object.freeze({
   status: () => invokeImplementation("desktop_status"),
   activate: (activationKey) => invokeImplementation("activate_desktop", { activationKey }),
@@ -26,13 +34,18 @@ export const desktopBridge = Object.freeze({
     priority,
   }),
   investigationDetails: (investigationId) => invokeImplementation("desktop_investigation_details", { investigationId }),
-  updateInvestigation: (investigationId, expectedRecordVersion, changes) => invokeImplementation("desktop_update_investigation", {
-    investigationId,
-    expectedRecordVersion,
-    status: changes.status || null,
-    priority: changes.priority || null,
-    ...(Object.hasOwn(changes, "assignedInvestigator") ? { assignedInvestigator: changes.assignedInvestigator } : {}),
-  }),
+  updateInvestigation: (investigationId, expectedRecordVersion, changes) => {
+    if (changes && Object.hasOwn(changes, "status") && changes.status !== undefined && changes.status !== null) {
+      throw legacyInvestigationStatusWriteDisabled();
+    }
+    return invokeImplementation("desktop_update_investigation", {
+      investigationId,
+      expectedRecordVersion,
+      status: null,
+      priority: changes?.priority || null,
+      ...(changes && Object.hasOwn(changes, "assignedInvestigator") ? { assignedInvestigator: changes.assignedInvestigator } : {}),
+    });
+  },
   addInvestigationNote: (investigationId, expectedRecordVersion, text, noteType) => invokeImplementation("desktop_add_investigation_note", {
     investigationId,
     expectedRecordVersion,
