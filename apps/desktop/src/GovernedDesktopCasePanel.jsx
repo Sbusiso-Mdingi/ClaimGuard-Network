@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../web/src/components/ui/button";
 import { Input } from "../../web/src/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../web/src/components/ui/card";
 import { createCaseActionIdempotencyKey, desktopBridge } from "./desktopBridge";
+import { enumLabel } from "./presentation";
 
 const DEFERRED_ACTIONS = new Set([
   "activate-network-notice",
@@ -12,12 +13,6 @@ const DEFERRED_ACTIONS = new Set([
   "correct-or-withdraw",
   "expire-or-supersede",
 ]);
-
-function label(value) {
-  return String(value || "")
-    .replace(/[-_]+/g, " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-}
 
 function references(value) {
   return String(value || "")
@@ -80,31 +75,48 @@ function actionPayload(action, form, stateVersion) {
   return payload;
 }
 
+function emptyDetail() {
+  return { loading: true, case: null, allowedActions: [], error: "" };
+}
+
 export function GovernedDesktopCasePanel({ investigationId, historicalStatus, writesAllowed }) {
-  const [detail, setDetail] = useState({ loading: true, case: null, allowedActions: [], error: "" });
+  const [detail, setDetail] = useState(emptyDetail);
   const [selectedAction, setSelectedAction] = useState("");
   const [form, setForm] = useState(initialForm);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
+  const loadRequest = useRef(0);
 
   const load = useCallback(async ({ preserveNotice = false } = {}) => {
+    const request = ++loadRequest.current;
     if (!preserveNotice) setNotice(null);
     setDetail((previous) => ({ ...previous, loading: true, error: "" }));
     try {
       const result = await desktopBridge.governedCaseDetails(investigationId);
+      if (loadRequest.current !== request) return false;
       if (!result?.available || !result.case) throw new Error("Governed case detail is unavailable.");
       const allowedActions = Array.isArray(result.allowedActions)
         ? result.allowedActions.filter((action) => typeof action === "string" && !DEFERRED_ACTIONS.has(action))
         : [];
       setDetail({ loading: false, case: result.case, allowedActions, error: "" });
       setSelectedAction((current) => allowedActions.includes(current) ? current : (allowedActions[0] || ""));
+      return true;
     } catch (error) {
+      if (loadRequest.current !== request) return false;
       setDetail({ loading: false, case: null, allowedActions: [], error: error?.message || "Governed case detail is unavailable." });
+      return false;
     }
   }, [investigationId]);
 
   useEffect(() => {
+    loadRequest.current += 1;
+    setDetail(emptyDetail());
+    setSelectedAction("");
+    setForm(initialForm());
+    setSubmitting(false);
+    setNotice(null);
     if (investigationId) load();
+    return () => { loadRequest.current += 1; };
   }, [investigationId, load]);
 
   const valid = useMemo(() => {
@@ -128,6 +140,7 @@ export function GovernedDesktopCasePanel({ investigationId, historicalStatus, wr
 
   async function submit() {
     if (!valid || submitting) return;
+    const submittedInvestigationId = investigationId;
     setSubmitting(true);
     setNotice(null);
     try {
@@ -138,10 +151,12 @@ export function GovernedDesktopCasePanel({ investigationId, historicalStatus, wr
         idempotencyKey,
         actionPayload(selectedAction, form, detail.case.stateVersion),
       );
+      if (submittedInvestigationId !== investigationId) return;
       setNotice({ tone: "success", text: result?.replayed ? "The original governed action result was returned." : "The governed action was recorded." });
       setForm(initialForm());
       await load({ preserveNotice: true });
     } catch (error) {
+      if (submittedInvestigationId !== investigationId) return;
       if (error?.code === "CASE_STATE_VERSION_CONFLICT") {
         setNotice({ tone: "warning", text: "The case changed on the server. Authoritative detail was refreshed; review it before deciding again." });
         await load({ preserveNotice: true });
@@ -149,7 +164,7 @@ export function GovernedDesktopCasePanel({ investigationId, historicalStatus, wr
         setNotice({ tone: "danger", text: error?.message || "The governed action was rejected." });
       }
     } finally {
-      setSubmitting(false);
+      if (submittedInvestigationId === investigationId) setSubmitting(false);
     }
   }
 
@@ -167,11 +182,11 @@ export function GovernedDesktopCasePanel({ investigationId, historicalStatus, wr
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted-foreground">Governed state</p><p className="mt-1 font-semibold">{detail.case.currentState}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted-foreground">State version</p><p className="mt-1 font-data font-semibold">{detail.case.stateVersion}</p></div>
-            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted-foreground">Historical status</p><p className="mt-1 font-semibold">{label(historicalStatus || detail.case.legacyStatus || "Not recorded")}</p><p className="mt-1 text-[10px] text-muted-foreground">Read-only compatibility data</p></div>
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted-foreground">Historical status</p><p className="mt-1 font-semibold">{enumLabel(historicalStatus || detail.case.legacyStatus || "Not recorded")}</p><p className="mt-1 text-[10px] text-muted-foreground">Read-only compatibility data</p></div>
           </div>
-          {detail.case.migrationReviewStatus ? <p className="text-sm text-muted-foreground">Migration review: <strong>{label(detail.case.migrationReviewStatus)}</strong></p> : null}
+          {detail.case.migrationReviewStatus ? <p className="text-sm text-muted-foreground">Migration review: <strong>{enumLabel(detail.case.migrationReviewStatus)}</strong></p> : null}
           {detail.allowedActions.length ? <div className="space-y-3 rounded-xl border border-border p-4">
-            <label className="grid gap-2 text-sm font-medium">Server-authorised action<select aria-label="Governed case action" value={selectedAction} onChange={(event) => setSelectedAction(event.target.value)} disabled={submitting || !writesAllowed} className="h-10 rounded-md border border-input bg-background px-3">{detail.allowedActions.map((action) => <option key={action} value={action}>{label(action)}</option>)}</select></label>
+            <label className="grid gap-2 text-sm font-medium">Server-authorised action<select aria-label="Governed case action" value={selectedAction} onChange={(event) => setSelectedAction(event.target.value)} disabled={submitting || !writesAllowed} className="h-10 rounded-md border border-input bg-background px-3">{detail.allowedActions.map((action) => <option key={action} value={action}>{enumLabel(action)}</option>)}</select></label>
             <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-2 text-sm font-medium">Reason code<Input aria-label="Governed reason code" value={form.reasonCode} onChange={(event) => setForm((value) => ({ ...value, reasonCode: event.target.value }))} /></label><label className="grid gap-2 text-sm font-medium">Reason summary<Input aria-label="Governed reason summary" value={form.reasonSummary} onChange={(event) => setForm((value) => ({ ...value, reasonSummary: event.target.value }))} /></label></div>
             {["complete-investigation-report", "submit-outcome-review", "approve-outcome"].includes(selectedAction) ? <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-2 text-sm font-medium">Evidence references<Input aria-label="Governed evidence references" value={form.evidenceReferences} onChange={(event) => setForm((value) => ({ ...value, evidenceReferences: event.target.value }))} /></label><label className="grid gap-2 text-sm font-medium">Process-check references<Input aria-label="Governed process references" value={form.processCheckReferences} onChange={(event) => setForm((value) => ({ ...value, processCheckReferences: event.target.value }))} /></label></div> : null}
             {selectedAction === "open-investigation" ? <label className="grid gap-2 text-sm font-medium">Assigned investigator ID<Input aria-label="Governed assigned investigator" value={form.assignedInvestigatorId} onChange={(event) => setForm((value) => ({ ...value, assignedInvestigatorId: event.target.value }))} /></label> : null}
