@@ -1,4 +1,8 @@
 -- Sequrin PR 2: additive human-governed case lifecycle.
+-- Legacy investigations, fraud statuses and registry rows remain historical only.
+
+ALTER TABLE detection_signals
+  ADD UNIQUE KEY uq_detection_signals_tenant_signal (tenant_id, signal_id);
 
 CREATE TABLE investigation_cases (
   case_id CHAR(36) NOT NULL,
@@ -13,14 +17,21 @@ CREATE TABLE investigation_cases (
   originating_reason VARCHAR(1024) NULL,
   correlation_id VARCHAR(128) NOT NULL,
   last_transition_event_id CHAR(36) NULL,
+  report_completing_investigator_id VARCHAR(255) NULL,
+  report_reference VARCHAR(255) NULL,
+  report_digest CHAR(64) NULL,
+  report_completion_event_id CHAR(36) NULL,
   legacy_investigation_id VARCHAR(64) NULL,
   legacy_status VARCHAR(64) NULL,
   migration_review_status VARCHAR(64) NULL,
   created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (case_id),
+  UNIQUE KEY uq_investigation_cases_tenant_case (tenant_id, case_id),
   UNIQUE KEY uq_investigation_cases_signal (tenant_id, signal_id),
+  UNIQUE KEY uq_investigation_cases_legacy (tenant_id, legacy_investigation_id),
   INDEX idx_investigation_cases_queue (tenant_id, current_state, assigned_investigator_id, updated_at),
+  INDEX idx_investigation_cases_review_queue (tenant_id, current_state, report_completing_investigator_id, updated_at),
   INDEX idx_investigation_cases_correlation (tenant_id, correlation_id),
   CONSTRAINT chk_investigation_cases_state_version CHECK (state_version > 0),
   CONSTRAINT chk_investigation_cases_state CHECK (current_state IN (
@@ -28,8 +39,9 @@ CREATE TABLE investigation_cases (
     'NOTICE_RECORDED','RESPONSE_PENDING','EVIDENCE_REVIEW','INVESTIGATION_REPORT_COMPLETED',
     'OUTCOME_REVIEW_PENDING','OUTCOME_APPROVED','CLOSED_UNSUBSTANTIATED','APPEAL_OR_REVIEW'
   )),
-  CONSTRAINT fk_investigation_cases_signal FOREIGN KEY (signal_id)
-    REFERENCES detection_signals(signal_id) ON DELETE RESTRICT
+  CONSTRAINT chk_investigation_cases_claim_version CHECK (claim_version > 0),
+  CONSTRAINT fk_investigation_cases_signal FOREIGN KEY (tenant_id, signal_id)
+    REFERENCES detection_signals(tenant_id, signal_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE case_transition_operations (
@@ -42,8 +54,9 @@ CREATE TABLE case_transition_operations (
   created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (operation_id),
   UNIQUE KEY uq_case_transition_idempotency (tenant_id, idempotency_key),
-  CONSTRAINT fk_case_transition_operation_case FOREIGN KEY (case_id)
-    REFERENCES investigation_cases(case_id) ON DELETE RESTRICT
+  INDEX idx_case_transition_operations_case (tenant_id, case_id, created_at),
+  CONSTRAINT fk_case_transition_operation_case FOREIGN KEY (tenant_id, case_id)
+    REFERENCES investigation_cases(tenant_id, case_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE case_transition_events (
@@ -65,14 +78,36 @@ CREATE TABLE case_transition_events (
   transitioned_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   workflow_version INT UNSIGNED NOT NULL,
   PRIMARY KEY (event_id),
+  UNIQUE KEY uq_case_transition_event_tenant_event (tenant_id, event_id),
   UNIQUE KEY uq_case_transition_event_operation (tenant_id, operation_id),
   INDEX idx_case_transition_events_case (tenant_id, case_id, transitioned_at),
   INDEX idx_case_transition_events_correlation (tenant_id, correlation_id),
   CONSTRAINT chk_case_transition_event_versions CHECK (state_version_after = state_version_before + 1),
-  CONSTRAINT fk_case_transition_event_case FOREIGN KEY (case_id)
-    REFERENCES investigation_cases(case_id) ON DELETE RESTRICT,
+  CONSTRAINT fk_case_transition_event_case FOREIGN KEY (tenant_id, case_id)
+    REFERENCES investigation_cases(tenant_id, case_id) ON DELETE RESTRICT,
   CONSTRAINT fk_case_transition_event_operation FOREIGN KEY (operation_id)
     REFERENCES case_transition_operations(operation_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE case_process_checks (
+  process_check_id CHAR(36) NOT NULL,
+  tenant_id VARCHAR(64) NOT NULL,
+  case_id CHAR(36) NOT NULL,
+  check_code VARCHAR(128) NOT NULL,
+  check_result JSON NOT NULL,
+  recorded_by VARCHAR(255) NOT NULL,
+  recorded_by_role VARCHAR(64) NOT NULL,
+  correlation_id VARCHAR(128) NOT NULL,
+  transition_event_id CHAR(36) NULL,
+  recorded_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (process_check_id),
+  UNIQUE KEY uq_case_process_check_tenant_check (tenant_id, process_check_id),
+  INDEX idx_case_process_checks_case (tenant_id, case_id, recorded_at),
+  INDEX idx_case_process_checks_correlation (tenant_id, correlation_id),
+  CONSTRAINT fk_case_process_check_case FOREIGN KEY (tenant_id, case_id)
+    REFERENCES investigation_cases(tenant_id, case_id) ON DELETE RESTRICT,
+  CONSTRAINT fk_case_process_check_event FOREIGN KEY (tenant_id, transition_event_id)
+    REFERENCES case_transition_events(tenant_id, event_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE case_outcomes (
@@ -92,12 +127,17 @@ CREATE TABLE case_outcomes (
   workflow_version INT UNSIGNED NOT NULL,
   supersedes_outcome_id CHAR(36) NULL,
   PRIMARY KEY (outcome_id),
+  UNIQUE KEY uq_case_outcomes_tenant_outcome (tenant_id, outcome_id),
   INDEX idx_case_outcomes_case (tenant_id, case_id, decision_timestamp),
-  CONSTRAINT chk_case_outcomes_neutral_code CHECK (outcome_code <> 'CONFIRMED_FRAUD'),
-  CONSTRAINT fk_case_outcomes_case FOREIGN KEY (case_id)
-    REFERENCES investigation_cases(case_id) ON DELETE RESTRICT,
-  CONSTRAINT fk_case_outcomes_supersedes FOREIGN KEY (supersedes_outcome_id)
-    REFERENCES case_outcomes(outcome_id) ON DELETE RESTRICT
+  INDEX idx_case_outcomes_reviewer (tenant_id, decision_maker_id, decision_timestamp),
+  INDEX idx_case_outcomes_correlation (tenant_id, correlation_id),
+  CONSTRAINT chk_case_outcomes_neutral_code CHECK (
+    outcome_code NOT IN ('CONFIRMED_FRAUD','RED','VERIFIED','NETWORK_NOTICE_ACTIVE')
+  ),
+  CONSTRAINT fk_case_outcomes_case FOREIGN KEY (tenant_id, case_id)
+    REFERENCES investigation_cases(tenant_id, case_id) ON DELETE RESTRICT,
+  CONSTRAINT fk_case_outcomes_supersedes FOREIGN KEY (tenant_id, supersedes_outcome_id)
+    REFERENCES case_outcomes(tenant_id, outcome_id) ON DELETE RESTRICT
 );
 
 DELIMITER $$
@@ -105,6 +145,10 @@ CREATE TRIGGER trg_case_transition_events_no_update BEFORE UPDATE ON case_transi
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CASE_TRANSITION_EVENT_IMMUTABLE'$$
 CREATE TRIGGER trg_case_transition_events_no_delete BEFORE DELETE ON case_transition_events
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CASE_TRANSITION_EVENT_IMMUTABLE'$$
+CREATE TRIGGER trg_case_process_checks_no_update BEFORE UPDATE ON case_process_checks
+FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CASE_PROCESS_CHECK_IMMUTABLE'$$
+CREATE TRIGGER trg_case_process_checks_no_delete BEFORE DELETE ON case_process_checks
+FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CASE_PROCESS_CHECK_IMMUTABLE'$$
 CREATE TRIGGER trg_case_outcomes_no_update BEFORE UPDATE ON case_outcomes
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CASE_OUTCOME_IMMUTABLE'$$
 CREATE TRIGGER trg_case_outcomes_no_delete BEFORE DELETE ON case_outcomes
