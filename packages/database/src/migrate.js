@@ -78,10 +78,8 @@ export function extractOperationalMigrationRows(result, queryName = "history") {
   if (!Array.isArray(result)) {
     throw new OperationalMigrationQueryResultError(queryName);
   }
-
   if (result.length === 0) return [];
   if (result.every(isRowRecord)) return result;
-
   if (result.length === 2 && Array.isArray(result[0]) && Array.isArray(result[1])) {
     const [rows, fields] = result;
     if (!rows.every(isRowRecord)) {
@@ -92,7 +90,6 @@ export function extractOperationalMigrationRows(result, queryName = "history") {
     }
     return rows;
   }
-
   throw new OperationalMigrationQueryResultError(queryName);
 }
 
@@ -154,13 +151,16 @@ async function loadExtensionMigrations(paths) {
 async function extensionHistory(connection) {
   const migrationRows = extractOperationalMigrationRows(
     await connection.query(
-      "SELECT migration_id, checksum FROM operational_migration_history",
+      `SELECT migration_id, checksum, applied_at, execution_duration_ms,
+              application_version
+         FROM operational_migration_history`,
     ),
     "migration history",
   );
   const statementRows = extractOperationalMigrationRows(
     await connection.query(
-      `SELECT migration_id, statement_index, statement_checksum, adopted
+      `SELECT migration_id, statement_index, statement_checksum, adopted,
+              applied_at
          FROM operational_migration_statement_history`,
     ),
     "statement history",
