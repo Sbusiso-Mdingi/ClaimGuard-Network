@@ -4,7 +4,8 @@
   "type": "module",
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./product-identity": "./src/product-identity.js"
   },
   "dependencies": {
     "zod": "^3.24.0"
