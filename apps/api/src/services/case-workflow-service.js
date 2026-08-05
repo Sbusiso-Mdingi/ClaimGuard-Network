@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 
 import {
+  canTransitionCaseState,
+  CASE_ACTION_POLICY,
   CASE_ERROR_CODE,
   CASE_PERMISSION_POLICY_VERSION,
   CasePolicyError,
@@ -86,6 +88,18 @@ function trustedActor({ authContext, tenantContext, requiredPermission = null })
   });
 }
 
+function allowedActionsFor(caseRecord, actorContext) {
+  if (!caseRecord) return Object.freeze([]);
+  return Object.freeze(Object.entries(CASE_ACTION_POLICY)
+    .filter(([, policy]) => actorContext.permissions.includes(policy.permission))
+    .filter(([, policy]) => canTransitionCaseState(caseRecord.currentState, policy.toState))
+    .filter(([action]) => action !== CASE_ACTION.APPROVE_OUTCOME
+      || !caseRecord.reportCompletingInvestigatorId
+      || caseRecord.reportCompletingInvestigatorId !== actorContext.actorId)
+    .map(([action]) => action)
+    .sort());
+}
+
 export function resolveCaseAction(action) {
   return resolveCaseActionPolicy(action);
 }
@@ -102,8 +116,15 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
 
     async getCase({ caseId, authContext, tenantContext }) {
       if (!this.isConfigured()) throw new Error("Case workflow repository is not configured.");
-      trustedActor({ authContext, tenantContext });
-      return caseWorkflowRepository.getCase(requiredString(caseId, "caseId", 64));
+      const actorContext = trustedActor({ authContext, tenantContext });
+      const caseRecord = await caseWorkflowRepository.getCase(requiredString(caseId, "caseId", 64));
+      if (!caseRecord) {
+        throw new CasePolicyError("The case was not found in the active tenant.", CASE_ERROR_CODE.NOT_FOUND);
+      }
+      return {
+        case: caseRecord,
+        allowedActions: allowedActionsFor(caseRecord, actorContext),
+      };
     },
 
     async performAction({
