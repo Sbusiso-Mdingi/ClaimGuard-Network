@@ -35,6 +35,10 @@ function matchingStage(sql) {
 }
 
 export function createLegacyFirstAccessFaultPool(pool, faultStage) {
+  if (!pool || typeof pool.getConnection !== "function"
+      || typeof pool.execute !== "function" || typeof pool.query !== "function") {
+    throw new TypeError("A mysql2 transaction-capable operational pool is required.");
+  }
   if (!Object.values(LEGACY_FIRST_ACCESS_FAULT_STAGE).includes(faultStage)) {
     throw new TypeError(`Unknown legacy first-access fault stage: ${faultStage}`);
   }
@@ -43,8 +47,8 @@ export function createLegacyFirstAccessFaultPool(pool, faultStage) {
     async getConnection() {
       const connection = await pool.getConnection();
       return {
-        beginTransaction: () => connection.beginTransaction(),
-        async execute(sql, values) {
+        beginTransaction: (...args) => connection.beginTransaction(...args),
+        async execute(sql, values = []) {
           const result = await connection.execute(sql, values);
           const stage = matchingStage(sql);
           if (!injected && stage === faultStage) {
@@ -53,16 +57,19 @@ export function createLegacyFirstAccessFaultPool(pool, faultStage) {
           }
           return result;
         },
-        async commit() {
+        async commit(...args) {
           if (!injected && faultStage === LEGACY_FIRST_ACCESS_FAULT_STAGE.BEFORE_COMMIT) {
             injected = true;
             throw testFault(faultStage);
           }
-          return connection.commit();
+          return connection.commit(...args);
         },
-        rollback: () => connection.rollback(),
-        release: () => connection.release(),
+        rollback: (...args) => connection.rollback(...args),
+        release: (...args) => connection.release(...args),
+        query: (...args) => connection.query(...args),
       };
     },
+    execute: (...args) => pool.execute(...args),
+    query: (...args) => pool.query(...args),
   };
 }
