@@ -13,14 +13,16 @@ const repositoryResult = {
   replayed: false,
 };
 
-test("confirmation service fails closed and never delegates direct registry publication", async () => {
+test("confirmation service normalizes the database publication guard to a stable governance error", async () => {
   const calls = [];
   const logs = [];
   const service = createFraudConfirmationService({
     fraudWorkflowRepository: {
       async confirmFraud(input) {
         calls.push(input);
-        return repositoryResult;
+        const error = new Error("NETWORK_NOTICE_GOVERNANCE_REQUIRED");
+        error.code = "ER_SIGNAL_EXCEPTION";
+        throw error;
       },
     },
     logger(level, event, details) {
@@ -47,10 +49,26 @@ test("confirmation service fails closed and never delegates direct registry publ
       return true;
     },
   );
-  assert.deepEqual(calls, []);
+  assert.deepEqual(calls, [input]);
   assert.equal(logs[0].event, "direct_registry_publication_blocked");
   assert.equal(logs[0].details.errorCode, "NETWORK_NOTICE_GOVERNANCE_REQUIRED");
   assert.equal(JSON.stringify(logs[0]).includes("patient"), false);
+});
+
+test("confirmation service preserves compatibility for repositories that complete without publication", async () => {
+  const calls = [];
+  const service = createFraudConfirmationService({
+    fraudWorkflowRepository: {
+      async confirmFraud(input) {
+        calls.push(input);
+        return repositoryResult;
+      },
+    },
+  });
+
+  const result = await service.confirmFraud({ investigationId: "inv-legacy" });
+  assert.deepEqual(result, repositoryResult);
+  assert.deepEqual(calls, [{ investigationId: "inv-legacy" }]);
 });
 
 test("reversal service preserves replay state and delegates only to the atomic repository", async () => {
