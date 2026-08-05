@@ -13,27 +13,47 @@ export class DirectRegistryPublicationDisabledError extends Error {
   }
 }
 
+function isGovernanceRejection(error) {
+  return error?.code === DIRECT_REGISTRY_PUBLICATION_ERROR.code
+    || String(error?.message || "").includes(DIRECT_REGISTRY_PUBLICATION_ERROR.code);
+}
+
 export function createFraudConfirmationService({ fraudWorkflowRepository = null, logger } = {}) {
   return {
     isConfigured() {
       return Boolean(fraudWorkflowRepository && typeof fraudWorkflowRepository.confirmFraud === "function");
     },
 
-    // Retained as an API compatibility alias for availability checks.
     isLedgerConfigured() {
       return this.isConfigured();
     },
 
-    async confirmFraud(input) {
-      logger?.("warn", "direct_registry_publication_blocked", {
-        requestId: input?.correlationId,
-        investigationId: input?.investigationId,
-        actorId: input?.actorId,
-        actorRole: input?.actorRole,
-        errorCode: DIRECT_REGISTRY_PUBLICATION_ERROR.code,
-      });
+    isRegistryConfigured() {
+      return this.isConfigured();
+    },
 
-      throw new DirectRegistryPublicationDisabledError();
+    async confirmFraud(input) {
+      if (!this.isConfigured()) {
+        throw new Error("Fraud workflow repository is not configured.");
+      }
+
+      try {
+        // Compatibility adapter only. Migration 0016 independently prevents
+        // this legacy repository from committing an ACTIVE registry row, so
+        // the transaction fails closed and rolls back all coupled writes.
+        return await fraudWorkflowRepository.confirmFraud(input);
+      } catch (error) {
+        if (!isGovernanceRejection(error)) throw error;
+
+        logger?.("warn", "direct_registry_publication_blocked", {
+          requestId: input?.correlationId,
+          investigationId: input?.investigationId,
+          actorId: input?.actorId,
+          actorRole: input?.actorRole,
+          errorCode: DIRECT_REGISTRY_PUBLICATION_ERROR.code,
+        });
+        throw new DirectRegistryPublicationDisabledError();
+      }
     },
   };
 }
