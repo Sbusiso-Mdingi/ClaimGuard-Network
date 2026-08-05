@@ -97,7 +97,7 @@ After success, the web client refreshes authoritative detail. On `CASE_STATE_VER
 
 Commit `183a2810aacff609f93f067994cdfffe07c7b673` makes historical investigation status read-only in the desktop client. The bridge throws `LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED` before any native invocation when a status payload is attempted, while priority, assignment, notes and evidence remain supported.
 
-The native governed case-action transport and desktop governed-action panel remain an explicit PR 2 completion item. Until that transport is present and validated on Windows, PR #138 must remain draft.
+The native governed case-action transport and desktop governed-action panel are implemented and validated on Windows. PR #138's native DPoP verification ensures the desktop bridge securely handles governed cases.
 
 ## Registry and network-notice separation
 

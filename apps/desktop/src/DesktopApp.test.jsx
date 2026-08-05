@@ -117,7 +117,7 @@ describe("ClaimGuard desktop cache behaviour", () => {
     render(<DesktopApp />);
     expect(await screen.findByText("Offline data is read-only")).toBeInTheDocument();
     expect(screen.getByText("Offline", { selector: "span" })).toBeInTheDocument();
-    expect(screen.getByText(/Investigation creation, notes, evidence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Investigation creation.*notes, evidence.*governed actions/i)).toBeInTheDocument();
 
     await userEvent.click((await screen.findAllByRole("button", { name: "Claims" }))[0]);
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
@@ -459,6 +459,9 @@ describe("ClaimGuard desktop investigation workspace", () => {
           : compact;
         detailVersions.push(investigation.updatedAt);
         return { available: true, investigation };
+      }
+      if (command === "desktop_governed_case_details") {
+        return { available: true, case: { caseId: "case-stale", currentState: "TRIAGE_PENDING", stateVersion: 1, migrationReviewStatus: "REVIEW_REQUIRED" }, allowedActions: [], correlationId: "stale-request" };
       }
       if (command === "desktop_update_investigation") {
         throw new Error("STALE_RECORD_VERSION:The investigation changed after it was loaded.");

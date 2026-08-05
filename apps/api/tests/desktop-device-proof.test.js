@@ -83,7 +83,7 @@ function fixture({
     deviceKey,
     verifier: createDesktopDeviceProofVerifier({
       desktopEnrollmentRepository: repository,
-      now: () => new Date("2026-08-05T00:00:00.000Z"),
+      now: () => new Date(NOW_SECONDS * 1000),
     }),
   };
 }
@@ -257,7 +257,7 @@ test("unknown revoked and expired enrollments fail closed without governed invoc
   for (const options of [
     { known: false },
     { status: "revoked" },
-    { expiresAt: "2026-08-04T00:00:00.000Z" },
+    { expiresAt: "2026-07-31T00:00:00.000Z" },
   ]) {
     const value = fixture(options);
     const boundary = boundaryApp({ verifier: value.verifier });

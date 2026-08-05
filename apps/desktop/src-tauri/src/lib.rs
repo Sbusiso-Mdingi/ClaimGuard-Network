@@ -10,8 +10,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use cache::{EncryptedCache, SyncPage};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use cache::{EncryptedCache, SyncPage};
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use enrollment::{
@@ -1014,6 +1014,7 @@ struct InvestigationEvidenceRequest<'a> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn desktop_upload_investigation_evidence(
     investigation_id: String,
     expected_record_version: u32,

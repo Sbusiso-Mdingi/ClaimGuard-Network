@@ -66,7 +66,8 @@ fn validate_stable_code(value: &str, maximum: usize) -> DesktopResult<()> {
 }
 
 fn validate_text(value: &str, maximum: usize) -> DesktopResult<()> {
-    if value.trim().is_empty() || value.len() > maximum || value.chars().any(|value| value == '\0') {
+    if value.trim().is_empty() || value.len() > maximum || value.chars().any(|value| value == '\0')
+    {
         return Err(DesktopError::InvalidResponse);
     }
     Ok(())
@@ -245,13 +246,17 @@ pub(crate) async fn desktop_governed_case_details(
             {
                 Ok(response) => response,
                 Err(DesktopError::NetworkUnavailable) => {
-                    state.offline.store(true, std::sync::atomic::Ordering::SeqCst);
+                    state
+                        .offline
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
                     return Err(DesktopError::NetworkUnavailable);
                 }
                 Err(error) => return Err(error),
             };
             validate_case_detail_response(&response.body)?;
-            state.offline.store(false, std::sync::atomic::Ordering::SeqCst);
+            state
+                .offline
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             Ok(response.body)
         }
         .await,
@@ -273,7 +278,9 @@ pub(crate) async fn desktop_perform_case_action(
             let action = validate_action(&action)?;
             if idempotency_key.is_empty()
                 || idempotency_key.len() > 128
-                || idempotency_key.chars().any(|character| character.is_control())
+                || idempotency_key
+                    .chars()
+                    .any(|character| character.is_control())
             {
                 return Err(DesktopError::InvalidResponse);
             }
@@ -306,13 +313,17 @@ pub(crate) async fn desktop_perform_case_action(
             {
                 Ok(response) => response,
                 Err(DesktopError::NetworkUnavailable) => {
-                    state.offline.store(true, std::sync::atomic::Ordering::SeqCst);
+                    state
+                        .offline
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
                     return Err(DesktopError::NetworkUnavailable);
                 }
                 Err(error) => return Err(error),
             };
             validate_action_response(&response.body)?;
-            state.offline.store(false, std::sync::atomic::Ordering::SeqCst);
+            state
+                .offline
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             Ok(response.body)
         }
         .await,
@@ -335,7 +346,10 @@ mod tests {
 
     #[test]
     fn path_segments_reject_traversal_separators_and_controls() {
-        assert_eq!(validate_path_segment("investigation-1", 64).unwrap(), "investigation-1");
+        assert_eq!(
+            validate_path_segment("investigation-1", 64).unwrap(),
+            "investigation-1"
+        );
         for value in ["", "../case", "case/id", "case\\id", "case\nvalue", " case"] {
             assert!(validate_path_segment(value, 64).is_err(), "{value:?}");
         }
@@ -351,14 +365,24 @@ mod tests {
 
     #[test]
     fn typed_payload_rejects_authority_and_target_fields() {
-        for field in ["targetState", "tenantId", "actorId", "role", "permissions", "status"] {
+        for field in [
+            "targetState",
+            "tenantId",
+            "actorId",
+            "role",
+            "permissions",
+            "status",
+        ] {
             let mut value = json!({
                 "expectedStateVersion": 2,
                 "reasonCode": "REVIEWED_ACTION",
                 "reasonSummary": "Reviewed."
             });
             value[field] = json!("unsafe");
-            assert!(serde_json::from_value::<GovernedCaseActionRequest>(value).is_err(), "{field}");
+            assert!(
+                serde_json::from_value::<GovernedCaseActionRequest>(value).is_err(),
+                "{field}"
+            );
         }
     }
 
@@ -383,12 +407,14 @@ mod tests {
             "case": { "caseId": "case-1", "currentState": "TRIAGE_PENDING", "stateVersion": 2 },
             "allowedActions": ["begin-triage"],
             "correlationId": "request-1"
-        })).is_ok());
+        }))
+        .is_ok());
         assert!(validate_case_detail_response(&json!({
             "available": true,
             "case": { "caseId": "case-1" },
             "allowedActions": ["publish-registry"],
             "correlationId": "request-1"
-        })).is_err());
+        }))
+        .is_err());
     }
 }

@@ -8,6 +8,7 @@ use crate::{
     error::{DesktopError, DesktopResult},
 };
 
+#[derive(Debug)]
 pub struct HttpResponse {
     pub body: Value,
     pub session_cookie: Option<String>,
@@ -227,8 +228,8 @@ impl DesktopHttpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use crate::enrollment::Confirmation;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use serde_json::json;
     use sha2::{Digest, Sha256};
     use std::{
@@ -254,7 +255,9 @@ mod tests {
             offline_grace_expires_at: "2099-01-01T00:00:00Z".into(),
             signing_key_id: "key-1".into(),
             document_version: 1,
-            cnf: Confirmation { jkt: "thumbprint".into() },
+            cnf: Confirmation {
+                jkt: "thumbprint".into(),
+            },
         }
     }
 
@@ -264,18 +267,28 @@ mod tests {
         let mut expected = None;
         loop {
             let read = stream.read(&mut chunk).unwrap();
-            if read == 0 { break; }
+            if read == 0 {
+                break;
+            }
             bytes.extend_from_slice(&chunk[..read]);
             if expected.is_none() {
                 if let Some(index) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
                     let headers = String::from_utf8_lossy(&bytes[..index + 4]);
-                    let length = headers.lines()
-                        .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(str::trim).and_then(|value| value.parse::<usize>().ok()))
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(str::trim)
+                                .and_then(|value| value.parse::<usize>().ok())
+                        })
                         .unwrap_or(0);
                     expected = Some(index + 4 + length);
                 }
             }
-            if expected.is_some_and(|length| bytes.len() >= length) { break; }
+            if expected.is_some_and(|length| bytes.len() >= length) {
+                break;
+            }
         }
         String::from_utf8(bytes).unwrap()
     }
@@ -300,10 +313,15 @@ mod tests {
     }
 
     fn header_values<'a>(request: &'a str, name: &str) -> Vec<&'a str> {
-        request.lines().filter_map(|line| {
-            let (header_name, value) = line.split_once(':')?;
-            header_name.eq_ignore_ascii_case(name).then_some(value.trim())
-        }).collect()
+        request
+            .lines()
+            .filter_map(|line| {
+                let (header_name, value) = line.split_once(':')?;
+                header_name
+                    .eq_ignore_ascii_case(name)
+                    .then_some(value.trim())
+            })
+            .collect()
     }
 
     fn proof_payload(request: &str) -> Value {
@@ -321,7 +339,13 @@ mod tests {
                 .unwrap(),
             "550e8400-e29b-41d4-a716-446655440000"
         );
-        for value in ["", "key\rvalue", "key\nvalue", "key\u{0000}value", "key\u{007f}value"] {
+        for value in [
+            "",
+            "key\rvalue",
+            "key\nvalue",
+            "key\u{0000}value",
+            "key\u{007f}value",
+        ] {
             assert!(validated_idempotency_key(value).is_err(), "{value:?}");
         }
         assert!(validated_idempotency_key(&"a".repeat(129)).is_err());
@@ -341,19 +365,30 @@ mod tests {
             &enrollment,
             &key,
             Some("cg_session_local=session-value"),
-        )).unwrap();
+        ))
+        .unwrap();
         assert_eq!(result.body["case"]["caseId"], "case-1");
         let request = captured.recv().unwrap();
-        assert!(request.starts_with("GET /api/v1/cases/by-legacy-investigation/investigation-1 HTTP/1.1\r\n"));
-        assert_eq!(header_values(&request, "cookie"), ["cg_session_local=session-value"]);
+        assert!(request
+            .starts_with("GET /api/v1/cases/by-legacy-investigation/investigation-1 HTTP/1.1\r\n"));
+        assert_eq!(
+            header_values(&request, "cookie"),
+            ["cg_session_local=session-value"]
+        );
         assert_eq!(header_values(&request, "dpop").len(), 1);
         assert!(header_values(&request, "idempotency-key").is_empty());
         assert!(header_values(&request, "if-match").is_empty());
         assert_eq!(request.split("\r\n\r\n").nth(1).unwrap_or(""), "");
         let proof = proof_payload(&request);
         assert_eq!(proof["htm"], "GET");
-        assert_eq!(proof["htu"], format!("{origin}/api/v1/cases/by-legacy-investigation/investigation-1"));
-        assert_eq!(proof["body_sha256"], URL_SAFE_NO_PAD.encode(Sha256::digest([])));
+        assert_eq!(
+            proof["htu"],
+            format!("{origin}/api/v1/cases/by-legacy-investigation/investigation-1")
+        );
+        assert_eq!(
+            proof["body_sha256"],
+            URL_SAFE_NO_PAD.encode(Sha256::digest([]))
+        );
         assert!(header_values(&request, "x-renderer-header").is_empty());
     }
 
@@ -364,7 +399,9 @@ mod tests {
         let client = DesktopHttpClient::new(origin.clone()).unwrap();
         let enrollment = enrollment(&origin);
         let key = SigningKey::from_bytes(&[8_u8; 32]);
-        let body = br#"{"expectedStateVersion":2,"reasonCode":"REVIEWED","reasonSummary":"Reviewed."}"#.to_vec();
+        let body =
+            br#"{"expectedStateVersion":2,"reasonCode":"REVIEWED","reasonSummary":"Reviewed."}"#
+                .to_vec();
         tauri::async_runtime::block_on(client.enrolled_governed_action(
             Method::POST,
             "/api/v1/cases/case-1/actions/begin-triage",
@@ -375,37 +412,72 @@ mod tests {
                 session_cookie: Some("cg_session_local=session-value"),
                 idempotency_key: "550e8400-e29b-41d4-a716-446655440000",
             },
-        )).unwrap();
+        ))
+        .unwrap();
         let request = captured.recv().unwrap();
         assert!(request.starts_with("POST /api/v1/cases/case-1/actions/begin-triage HTTP/1.1\r\n"));
-        assert_eq!(header_values(&request, "content-type"), ["application/json"]);
-        assert_eq!(header_values(&request, "cookie"), ["cg_session_local=session-value"]);
-        assert_eq!(header_values(&request, "idempotency-key"), ["550e8400-e29b-41d4-a716-446655440000"]);
+        assert_eq!(
+            header_values(&request, "content-type"),
+            ["application/json"]
+        );
+        assert_eq!(
+            header_values(&request, "cookie"),
+            ["cg_session_local=session-value"]
+        );
+        assert_eq!(
+            header_values(&request, "idempotency-key"),
+            ["550e8400-e29b-41d4-a716-446655440000"]
+        );
         assert_eq!(header_values(&request, "dpop").len(), 1);
         assert!(header_values(&request, "if-match").is_empty());
         assert_eq!(request.split("\r\n\r\n").nth(1).unwrap().as_bytes(), body);
         let proof = proof_payload(&request);
         assert_eq!(proof["htm"], "POST");
-        assert_eq!(proof["htu"], format!("{origin}/api/v1/cases/case-1/actions/begin-triage"));
-        assert_eq!(proof["body_sha256"], URL_SAFE_NO_PAD.encode(Sha256::digest(&body)));
+        assert_eq!(
+            proof["htu"],
+            format!("{origin}/api/v1/cases/case-1/actions/begin-triage")
+        );
+        assert_eq!(
+            proof["body_sha256"],
+            URL_SAFE_NO_PAD.encode(Sha256::digest(&body))
+        );
         let body_value: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body_value["expectedStateVersion"], 2);
-        for prohibited in ["targetState", "toState", "tenantId", "actorId", "role", "permissions", "status"] {
+        for prohibited in [
+            "targetState",
+            "toState",
+            "tenantId",
+            "actorId",
+            "role",
+            "permissions",
+            "status",
+        ] {
             assert!(body_value.get(prohibited).is_none(), "{prohibited}");
         }
     }
 
     #[test]
     fn stable_server_codes_survive_without_sensitive_response_echo() {
-        for code in ["CASE_STATE_VERSION_CONFLICT", "CASE_NOT_FOUND", "CASE_ROLE_NOT_AUTHORISED", "NETWORK_NOTICE_GOVERNANCE_REQUIRED"] {
+        for code in [
+            "CASE_STATE_VERSION_CONFLICT",
+            "CASE_NOT_FOUND",
+            "CASE_ROLE_NOT_AUTHORISED",
+            "NETWORK_NOTICE_GOVERNANCE_REQUIRED",
+        ] {
             let response = json!({"code":code,"message":"Safe rejection."}).to_string();
-            let (origin, _) = mock_server("409 Conflict", &response);
+            let (origin, _captured) = mock_server("409 Conflict", &response);
             let client = DesktopHttpClient::new(origin.clone()).unwrap();
             let enrollment = enrollment(&origin);
             let key = SigningKey::from_bytes(&[9_u8; 32]);
             let error = tauri::async_runtime::block_on(client.enrolled(
-                Method::GET, "/api/v1/cases/case-1", Vec::new(), &enrollment, &key, Some("secret-cookie"),
-            )).unwrap_err();
+                Method::GET,
+                "/api/v1/cases/case-1",
+                Vec::new(),
+                &enrollment,
+                &key,
+                Some("secret-cookie"),
+            ))
+            .unwrap_err();
             match error {
                 DesktopError::ServerRejected(value) => {
                     assert_eq!(value, format!("{code}:Safe rejection."));
@@ -420,7 +492,7 @@ mod tests {
     #[test]
     fn malformed_empty_network_and_timeout_fail_safely() {
         for body in ["not-json", ""] {
-            let (origin, _) = mock_server("200 OK", body);
+            let (origin, _captured) = mock_server("200 OK", body);
             let client = DesktopHttpClient::new(origin).unwrap();
             let error = tauri::async_runtime::block_on(client.activate(Vec::new())).unwrap_err();
             assert!(matches!(error, DesktopError::InvalidResponse));
