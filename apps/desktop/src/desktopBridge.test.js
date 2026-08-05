@@ -22,7 +22,7 @@ describe("desktop polling and offline mutation policy", () => {
     ]);
   });
 
-  it("maps investigation reads and versioned updates to the narrow Tauri commands", async () => {
+  it("maps investigation reads and supported versioned updates to narrow Tauri commands", async () => {
     const calls = [];
     setDesktopInvokeForTests(async (command, args) => {
       calls.push([command, args]);
@@ -33,7 +33,7 @@ describe("desktop polling and offline mutation policy", () => {
     await desktopBridge.updateInvestigation(
       "investigation-1",
       7,
-      { status: "UNDER_REVIEW", priority: "HIGH" },
+      { priority: "HIGH" },
     );
 
     expect(calls).toEqual([
@@ -41,10 +41,28 @@ describe("desktop polling and offline mutation policy", () => {
       ["desktop_update_investigation", {
         investigationId: "investigation-1",
         expectedRecordVersion: 7,
-        status: "UNDER_REVIEW",
+        status: null,
         priority: "HIGH",
       }],
     ]);
+  });
+
+  it("fails closed before Tauri when a legacy status mutation is attempted", async () => {
+    const calls = [];
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      return { available: true };
+    });
+
+    expect(() => desktopBridge.updateInvestigation(
+      "investigation-1",
+      7,
+      { status: "CONFIRMED_FRAUD" },
+    )).toThrowError(expect.objectContaining({
+      code: "LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED",
+      status: 409,
+    }));
+    expect(calls).toEqual([]);
   });
 
   it("maps connected investigation creation, assignment, notes, and evidence to versioned commands", async () => {
