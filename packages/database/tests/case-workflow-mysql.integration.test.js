@@ -4,6 +4,8 @@ import test from "node:test";
 
 import {
   applyMigrations,
+  CASE_PERMISSION,
+  CASE_PERMISSION_POLICY_VERSION,
   CASE_ROLE,
   CASE_STATE,
   createDataPlaneContext,
@@ -28,6 +30,16 @@ function context(tenantId, tenantSlug = tenantId) {
     schemaVersion: "17",
     deploymentClass: "test",
     region: "test",
+  });
+}
+
+function actorContext(actorId, permissions, roles, tenantId = "tenant_default") {
+  return Object.freeze({
+    actorId,
+    tenantId,
+    permissions: Object.freeze([...permissions].sort()),
+    roles: Object.freeze([...(roles || [])].sort()),
+    permissionPolicyVersion: CASE_PERMISSION_POLICY_VERSION,
   });
 }
 
@@ -102,7 +114,6 @@ async function createSignal(pool, repositories, suffix) {
     correlationId: `ingest-${suffix}`,
   });
   assert.ok(ingestion.processing.jobId);
-
   const [strategies] = await pool.execute(
     "SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = 'tenant_default' AND is_active = 1 LIMIT 1",
   );
@@ -117,13 +128,8 @@ async function createSignal(pool, repositories, suffix) {
      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'PROSPECTIVE_CLAIM_SCREENING',
        NULL, NULL, NULL, UTC_TIMESTAMP(3), ?, ?)`,
     [
-      "tenant_default",
-      fixture.claimId,
-      strategies[0].id,
-      strategies[0].strategy_type,
-      strategies[0].model_deployment_id,
-      ingestion.processing.jobId,
-      requestId,
+      "tenant_default", fixture.claimId, strategies[0].id, strategies[0].strategy_type,
+      strategies[0].model_deployment_id, ingestion.processing.jobId, requestId,
       JSON.stringify({
         schemaVersion: "1.0",
         reasonCodes: ["INTEGRATION_SIGNAL"],
@@ -140,9 +146,11 @@ async function createSignal(pool, repositories, suffix) {
   return { ...fixture, signalId: signals[0].signal_id };
 }
 
-async function transition(cases, caseId, input) {
-  return cases.transitionCase({
+async function action(cases, caseId, actionName, actor, input) {
+  return cases.performAction({
     caseId,
+    action: actionName,
+    actorContext: actor,
     evidenceReferences: [],
     processCheckReferences: [],
     ...input,
@@ -157,6 +165,26 @@ test(
     process.env.SEQURIN_CASE_OUTCOME_CODES = "CONFIGURED_NEUTRAL_OUTCOME";
     const pool = createMysqlConnection(databaseUrl);
     const suffix = crypto.randomBytes(5).toString("hex").slice(0, 10);
+    const analyst = actorContext("analyst-1", [
+      CASE_PERMISSION.TRIAGE,
+      CASE_PERMISSION.DISMISS,
+      CASE_PERMISSION.MONITOR,
+      CASE_PERMISSION.OPEN_INVESTIGATION,
+    ], ["fraud_analyst"]);
+    const investigator = actorContext("investigator-1", [
+      CASE_PERMISSION.RECORD_NOTICE,
+      CASE_PERMISSION.RECORD_RESPONSE,
+      CASE_PERMISSION.REVIEW_EVIDENCE,
+      CASE_PERMISSION.COMPLETE_REPORT,
+      CASE_PERMISSION.SUBMIT_OUTCOME_REVIEW,
+    ], ["investigator"]);
+    const reviewer = (id) => actorContext(id, [
+      CASE_PERMISSION.REVIEW_OUTCOME,
+      CASE_PERMISSION.APPROVE_OUTCOME,
+      CASE_PERMISSION.CLOSE_UNSUBSTANTIATED,
+      CASE_PERMISSION.OPEN_APPEAL_OR_REVIEW,
+      CASE_PERMISSION.RETURN_FOR_FURTHER_EVIDENCE,
+    ], ["applications_committee_member"]);
 
     try {
       await applyMigrations(pool, undefined, { applicationVersion: "case-workflow-mysql-test" });
@@ -178,25 +206,22 @@ test(
       assert.equal(resolved.case.caseId, created.case.caseId);
       assert.equal(resolved.replayed, true);
 
-      const competing = ["one", "two"].map((label) => transition(
+      const competing = ["one", "two"].map((label) => action(
         repositories.cases,
         created.case.caseId,
+        "begin-triage",
+        analyst,
         {
-          toState: CASE_STATE.TRIAGE_PENDING,
           expectedStateVersion: 1,
           reasonCode: "TRIAGE_STARTED",
           reasonSummary: `Competing triage ${label}`,
-          actorId: "analyst-1",
-          actorRole: CASE_ROLE.SCHEME_ANALYST,
           correlationId: `triage-${label}-${suffix}`,
           idempotencyKey: `triage-${label}-${suffix}`,
         },
       ));
       const settled = await Promise.allSettled(competing);
       assert.equal(settled.filter((result) => result.status === "fulfilled").length, 1);
-      const rejected = settled.find((result) => result.status === "rejected");
-      assert.equal(rejected.reason.code, "CASE_STATE_VERSION_CONFLICT");
-
+      assert.equal(settled.find((result) => result.status === "rejected").reason.code, "CASE_STATE_VERSION_CONFLICT");
       const [concurrencyRows] = await pool.execute(
         "SELECT current_state, state_version FROM investigation_cases WHERE tenant_id = 'tenant_default' AND case_id = ?",
         [created.case.caseId],
@@ -211,26 +236,20 @@ test(
 
       const winningIndex = settled.findIndex((result) => result.status === "fulfilled");
       const winningLabel = winningIndex === 0 ? "one" : "two";
-      const replay = await transition(repositories.cases, created.case.caseId, {
-        toState: CASE_STATE.TRIAGE_PENDING,
+      const replay = await action(repositories.cases, created.case.caseId, "begin-triage", analyst, {
         expectedStateVersion: 1,
         reasonCode: "TRIAGE_STARTED",
         reasonSummary: `Competing triage ${winningLabel}`,
-        actorId: "analyst-1",
-        actorRole: CASE_ROLE.SCHEME_ANALYST,
         correlationId: `triage-replay-${suffix}`,
         idempotencyKey: `triage-${winningLabel}-${suffix}`,
       });
       assert.equal(replay.replayed, true);
       assert.equal(replay.case.stateVersion, 2);
       await assert.rejects(
-        () => transition(repositories.cases, created.case.caseId, {
-          toState: CASE_STATE.TRIAGE_PENDING,
+        () => action(repositories.cases, created.case.caseId, "begin-triage", analyst, {
           expectedStateVersion: 1,
           reasonCode: "DIFFERENT_INTENT",
           reasonSummary: "Different intent under the same key",
-          actorId: "analyst-1",
-          actorRole: CASE_ROLE.SCHEME_ANALYST,
           correlationId: `triage-mismatch-${suffix}`,
           idempotencyKey: `triage-${winningLabel}-${suffix}`,
         }),
@@ -245,45 +264,41 @@ test(
         correlationId: `approval-create-${suffix}`,
       })).case;
       let version = approvalCase.stateVersion;
-      const advance = async (toState, actorId, actorRole, extra = {}) => {
-        const result = await transition(repositories.cases, approvalCase.caseId, {
-          toState,
+      const advance = async (actionName, actor, extra = {}) => {
+        const result = await action(repositories.cases, approvalCase.caseId, actionName, actor, {
           expectedStateVersion: version,
-          reasonCode: `MOVE_${toState}`,
-          reasonSummary: `Move case to ${toState}`,
-          actorId,
-          actorRole,
-          correlationId: `${toState}-${suffix}`,
-          idempotencyKey: `${toState}-${suffix}`,
+          reasonCode: `ACTION_${actionName.toUpperCase().replaceAll("-", "_")}`,
+          reasonSummary: `Perform governed action ${actionName}`,
+          correlationId: `${actionName}-${suffix}`,
+          idempotencyKey: `${actionName}-${suffix}`,
           ...extra,
         });
         version = result.case.stateVersion;
         return result;
       };
 
-      await advance(CASE_STATE.TRIAGE_PENDING, "analyst-2", CASE_ROLE.SCHEME_ANALYST);
-      await advance(CASE_STATE.INVESTIGATION_OPEN, "analyst-2", CASE_ROLE.SCHEME_ANALYST, {
-        assignedInvestigatorId: "investigator-1",
-      });
-      await advance(CASE_STATE.NOTICE_RECORDED, "investigator-1", CASE_ROLE.INVESTIGATOR);
-      await advance(CASE_STATE.EVIDENCE_REVIEW, "investigator-1", CASE_ROLE.INVESTIGATOR);
-      await advance(CASE_STATE.INVESTIGATION_REPORT_COMPLETED, "investigator-1", CASE_ROLE.INVESTIGATOR, {
+      await advance("begin-triage", analyst);
+      await advance("open-investigation", analyst, { assignedInvestigatorId: "investigator-1" });
+      await advance("record-notice", investigator);
+      await advance("begin-evidence-review", investigator);
+      await advance("complete-investigation-report", investigator, {
         evidenceReferences: ["evidence-report-1"],
         reportReference: "report-1",
         completionReason: "REPORT_COMPLETE",
       });
-      await advance(CASE_STATE.OUTCOME_REVIEW_PENDING, "investigator-1", CASE_ROLE.INVESTIGATOR, {
+      await advance("submit-outcome-review", investigator, {
         processCheckReferences: ["process-check-1"],
       });
 
       await assert.rejects(
-        () => transition(repositories.cases, approvalCase.caseId, {
-          toState: CASE_STATE.OUTCOME_APPROVED,
+        () => action(repositories.cases, approvalCase.caseId, "approve-outcome", actorContext(
+          "investigator-1",
+          [CASE_PERMISSION.APPROVE_OUTCOME],
+          ["applications_committee_member"],
+        ), {
           expectedStateVersion: version,
           reasonCode: "OUTCOME_REVIEWED",
           reasonSummary: "Attempted self review",
-          actorId: "investigator-1",
-          actorRole: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
           correlationId: `self-review-${suffix}`,
           idempotencyKey: `self-review-${suffix}`,
           outcomeCode: "CONFIGURED_NEUTRAL_OUTCOME",
@@ -302,15 +317,12 @@ test(
         [approvalSignal.claimId],
       );
       const [registryBefore] = await pool.execute("SELECT COUNT(*) AS total FROM shared_fraud_registry_entries");
-      const approvalInput = (reviewer) => transition(repositories.cases, approvalCase.caseId, {
-        toState: CASE_STATE.OUTCOME_APPROVED,
+      const approvalInput = (id) => action(repositories.cases, approvalCase.caseId, "approve-outcome", reviewer(id), {
         expectedStateVersion: version,
         reasonCode: "OUTCOME_REVIEWED",
         reasonSummary: "Independent outcome review completed",
-        actorId: reviewer,
-        actorRole: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
-        correlationId: `approval-${reviewer}-${suffix}`,
-        idempotencyKey: `approval-${reviewer}-${suffix}`,
+        correlationId: `approval-${id}-${suffix}`,
+        idempotencyKey: `approval-${id}-${suffix}`,
         outcomeCode: "CONFIGURED_NEUTRAL_OUTCOME",
         recordedReasons: ["Bounded neutral outcome approved."],
         identityMatchReviewResult: { reviewed: true, resultCode: "REVIEWED" },
@@ -319,12 +331,8 @@ test(
         processCheckReferences: ["process-check-1"],
         processCheckComplete: true,
       });
-      const approvals = await Promise.allSettled([
-        approvalInput("reviewer-1"),
-        approvalInput("reviewer-2"),
-      ]);
+      const approvals = await Promise.allSettled([approvalInput("reviewer-1"), approvalInput("reviewer-2")]);
       assert.equal(approvals.filter((result) => result.status === "fulfilled").length, 1);
-      assert.equal(approvals.filter((result) => result.status === "rejected").length, 1);
       assert.equal(approvals.find((result) => result.status === "rejected").reason.code, "CASE_STATE_VERSION_CONFLICT");
 
       const [outcomes] = await pool.execute(
@@ -332,6 +340,11 @@ test(
         [approvalCase.caseId],
       );
       assert.equal(Number(outcomes[0].total), 1);
+      const [authorizationChecks] = await pool.execute(
+        "SELECT COUNT(*) AS total FROM case_process_checks WHERE tenant_id = 'tenant_default' AND case_id = ? AND check_code = 'AUTHORIZATION_CONTEXT'",
+        [approvalCase.caseId],
+      );
+      assert.ok(Number(authorizationChecks[0].total) >= 1);
       const [approvalEvents] = await pool.execute(
         "SELECT COUNT(*) AS total FROM case_transition_events WHERE tenant_id = 'tenant_default' AND case_id = ? AND new_state = 'OUTCOME_APPROVED'",
         [approvalCase.caseId],
@@ -387,13 +400,15 @@ test(
       const tenantB = createOperationalRepositories(context(otherTenantId), pool);
       assert.equal(await tenantB.cases.getCase(migrated.case.caseId), null);
       await assert.rejects(
-        () => transition(tenantB.cases, migrated.case.caseId, {
-          toState: CASE_STATE.DISMISSED,
+        () => action(tenantB.cases, migrated.case.caseId, "dismiss", actorContext(
+          "tenant-b-analyst",
+          [CASE_PERMISSION.DISMISS],
+          ["fraud_analyst"],
+          otherTenantId,
+        ), {
           expectedStateVersion: migrated.case.stateVersion,
           reasonCode: "CROSS_TENANT",
           reasonSummary: "Cross-tenant mutation must fail",
-          actorId: "tenant-b-analyst",
-          actorRole: CASE_ROLE.SCHEME_ANALYST,
           correlationId: `cross-tenant-${suffix}`,
           idempotencyKey: `cross-tenant-${suffix}`,
         }),
