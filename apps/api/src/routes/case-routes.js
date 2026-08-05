@@ -109,6 +109,41 @@ export function registerCaseRoutes(app, { caseWorkflowService, logger = null } =
     permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
   });
 
+  app.get(
+    "/api/v1/cases/:caseId",
+    requireCaseAction,
+    async (c) => {
+      if (!caseWorkflowService?.isConfigured?.()) {
+        return safeError(c, {
+          code: "CASE_WORKFLOW_UNAVAILABLE",
+          message: "The governed case workflow is temporarily unavailable.",
+          status: 503,
+        });
+      }
+      try {
+        const result = await caseWorkflowService.getCase({
+          caseId: c.req.param("caseId"),
+          authContext: c.get("authContext") || null,
+          tenantContext: c.get("tenantContext") || null,
+        });
+        return c.json({
+          available: true,
+          case: result.case,
+          allowedActions: result.allowedActions,
+          correlationId: c.get("requestId") || "unavailable",
+        }, 200);
+      } catch (error) {
+        logger?.("warn", "case_detail_rejected", {
+          caseId: c.req.param("caseId"),
+          actorId: c.get("authContext")?.user_id || null,
+          correlationId: c.get("requestId") || null,
+          errorCode: error?.code || "CASE_DETAIL_FAILED",
+        });
+        return domainError(c, error);
+      }
+    },
+  );
+
   app.post(
     "/api/v1/cases/:caseId/actions/:action",
     requireCaseAction,
