@@ -2,9 +2,10 @@ import crypto from "node:crypto";
 
 import {
   CASE_ERROR_CODE,
-  CASE_ROLE,
-  CASE_STATE,
+  CASE_PERMISSION_POLICY_VERSION,
   CasePolicyError,
+  canonicalCasePermissions,
+  resolveCaseActionPolicy,
   stableStringify,
 } from "@claimguard/database";
 
@@ -24,78 +25,17 @@ export const CASE_ACTION = Object.freeze({
   RETURN_FOR_FURTHER_EVIDENCE: "return-for-further-evidence",
 });
 
-const ACTION_POLICY = Object.freeze({
-  [CASE_ACTION.BEGIN_TRIAGE]: Object.freeze({
-    toState: CASE_STATE.TRIAGE_PENDING,
-    role: CASE_ROLE.SCHEME_ANALYST,
-  }),
-  [CASE_ACTION.DISMISS]: Object.freeze({
-    toState: CASE_STATE.DISMISSED,
-    role: CASE_ROLE.SCHEME_ANALYST,
-  }),
-  [CASE_ACTION.BEGIN_MONITORING]: Object.freeze({
-    toState: CASE_STATE.MONITORING,
-    role: CASE_ROLE.SCHEME_ANALYST,
-  }),
-  [CASE_ACTION.OPEN_INVESTIGATION]: Object.freeze({
-    toState: CASE_STATE.INVESTIGATION_OPEN,
-    role: CASE_ROLE.SCHEME_ANALYST,
-  }),
-  [CASE_ACTION.RECORD_NOTICE]: Object.freeze({
-    toState: CASE_STATE.NOTICE_RECORDED,
-    role: CASE_ROLE.INVESTIGATOR,
-  }),
-  [CASE_ACTION.RECORD_RESPONSE_PENDING]: Object.freeze({
-    toState: CASE_STATE.RESPONSE_PENDING,
-    role: CASE_ROLE.INVESTIGATOR,
-  }),
-  [CASE_ACTION.BEGIN_EVIDENCE_REVIEW]: Object.freeze({
-    toState: CASE_STATE.EVIDENCE_REVIEW,
-    role: CASE_ROLE.INVESTIGATOR,
-  }),
-  [CASE_ACTION.COMPLETE_INVESTIGATION_REPORT]: Object.freeze({
-    toState: CASE_STATE.INVESTIGATION_REPORT_COMPLETED,
-    role: CASE_ROLE.INVESTIGATOR,
-  }),
-  [CASE_ACTION.SUBMIT_OUTCOME_REVIEW]: Object.freeze({
-    toState: CASE_STATE.OUTCOME_REVIEW_PENDING,
-    role: CASE_ROLE.INVESTIGATOR,
-  }),
-  [CASE_ACTION.APPROVE_OUTCOME]: Object.freeze({
-    toState: CASE_STATE.OUTCOME_APPROVED,
-    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
-  }),
-  [CASE_ACTION.CLOSE_UNSUBSTANTIATED]: Object.freeze({
-    toState: CASE_STATE.CLOSED_UNSUBSTANTIATED,
-    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
-  }),
-  [CASE_ACTION.OPEN_APPEAL_OR_REVIEW]: Object.freeze({
-    toState: CASE_STATE.APPEAL_OR_REVIEW,
-    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
-  }),
-  [CASE_ACTION.RETURN_FOR_FURTHER_EVIDENCE]: Object.freeze({
-    toState: CASE_STATE.EVIDENCE_REVIEW,
-    role: CASE_ROLE.INDEPENDENT_DECISION_MAKER,
-  }),
-});
-
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 function requiredString(value, fieldName, maxLength = 255) {
   if (typeof value !== "string" || !value.trim()) {
-    throw new CasePolicyError(
-      `${fieldName} is required.`,
-      CASE_ERROR_CODE.VALIDATION_FAILED,
-    );
+    throw new CasePolicyError(`${fieldName} is required.`, CASE_ERROR_CODE.VALIDATION_FAILED);
   }
   const normalized = value.trim();
   if (normalized.length > maxLength) {
-    throw new CasePolicyError(
-      `${fieldName} is too long.`,
-      CASE_ERROR_CODE.VALIDATION_FAILED,
-    );
+    throw new CasePolicyError(`${fieldName} is too long.`, CASE_ERROR_CODE.VALIDATION_FAILED);
   }
   return normalized;
 }
@@ -111,35 +51,43 @@ function expectedVersion(value) {
   return parsed;
 }
 
-function trustedActor({ authContext, tenantContext, requiredRole }) {
+function boundedRoles(values) {
+  return Object.freeze([...new Set(
+    (Array.isArray(values) ? values : [])
+      .filter((value) => typeof value === "string" && value.trim())
+      .map((value) => value.trim())
+      .filter((value) => value.length <= 64),
+  )].sort());
+}
+
+function trustedActor({ authContext, tenantContext, requiredPermission = null }) {
   const actorId = requiredString(authContext?.user_id, "authenticated actor ID");
   const authTenantId = requiredString(authContext?.tenant_id, "authenticated tenant ID", 64);
   const routedTenantId = requiredString(tenantContext?.tenant_id, "routed tenant ID", 64);
-
   if (authTenantId !== routedTenantId) {
     throw new CasePolicyError(
       "Authenticated and routed tenant context do not match.",
       CASE_ERROR_CODE.TENANT_MISMATCH,
     );
   }
-
-  const authoritativeRoles = Array.isArray(authContext?.roles) ? authContext.roles : [];
-  if (!authoritativeRoles.includes(requiredRole)) {
+  const permissions = canonicalCasePermissions(authContext?.permissions);
+  if (requiredPermission && !permissions.includes(requiredPermission)) {
     throw new CasePolicyError(
-      "The authenticated actor role cannot perform this case action.",
+      "The authenticated actor lacks the required case permission.",
       CASE_ERROR_CODE.ROLE_NOT_AUTHORISED,
     );
   }
-
-  return {
+  return Object.freeze({
     actorId,
-    actorRole: requiredRole,
     tenantId: routedTenantId,
-  };
+    roles: boundedRoles(authContext?.roles),
+    permissions,
+    permissionPolicyVersion: CASE_PERMISSION_POLICY_VERSION,
+  });
 }
 
 export function resolveCaseAction(action) {
-  return ACTION_POLICY[action] || null;
+  return resolveCaseActionPolicy(action);
 }
 
 export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}) {
@@ -148,19 +96,13 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       return Boolean(
         caseWorkflowRepository
         && typeof caseWorkflowRepository.getCase === "function"
-        && typeof caseWorkflowRepository.transitionCase === "function"
+        && typeof caseWorkflowRepository.performAction === "function"
       );
     },
 
     async getCase({ caseId, authContext, tenantContext }) {
-      if (!this.isConfigured()) {
-        throw new Error("Case workflow repository is not configured.");
-      }
-      trustedActor({
-        authContext,
-        tenantContext,
-        requiredRole: (authContext?.roles || []).find((role) => Object.values(CASE_ROLE).includes(role)),
-      });
+      if (!this.isConfigured()) throw new Error("Case workflow repository is not configured.");
+      trustedActor({ authContext, tenantContext });
       return caseWorkflowRepository.getCase(requiredString(caseId, "caseId", 64));
     },
 
@@ -173,10 +115,7 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
       idempotencyKey,
       payload = {},
     }) {
-      if (!this.isConfigured()) {
-        throw new Error("Case workflow repository is not configured.");
-      }
-
+      if (!this.isConfigured()) throw new Error("Case workflow repository is not configured.");
       const policy = resolveCaseAction(action);
       if (!policy) {
         throw new CasePolicyError(
@@ -184,31 +123,28 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
           CASE_ERROR_CODE.TRANSITION_NOT_PERMITTED,
         );
       }
-
       const normalizedCaseId = requiredString(caseId, "caseId", 64);
       const normalizedCorrelationId = requiredString(correlationId, "correlationId", 128);
       const normalizedIdempotencyKey = requiredString(idempotencyKey, "idempotencyKey", 128);
-      const actor = trustedActor({
+      const actorContext = trustedActor({
         authContext,
         tenantContext,
-        requiredRole: policy.role,
+        requiredPermission: policy.permission,
       });
       const operationId = sha256(stableStringify({
-        tenantId: actor.tenantId,
+        tenantId: actorContext.tenantId,
         caseId: normalizedCaseId,
         idempotencyKey: normalizedIdempotencyKey,
       }));
-
-      const result = await caseWorkflowRepository.transitionCase({
+      const result = await caseWorkflowRepository.performAction({
         caseId: normalizedCaseId,
-        toState: policy.toState,
+        action,
+        actorContext,
         expectedStateVersion: expectedVersion(payload?.expectedStateVersion),
         reasonCode: requiredString(payload?.reasonCode, "reasonCode", 128),
         reasonSummary: requiredString(payload?.reasonSummary, "reasonSummary", 1024),
         correlationId: normalizedCorrelationId,
         idempotencyKey: normalizedIdempotencyKey,
-        actorId: actor.actorId,
-        actorRole: actor.actorRole,
         assignedInvestigatorId: payload?.assignedInvestigatorId,
         evidenceReferences: payload?.evidenceReferences,
         processCheckReferences: payload?.processCheckReferences,
@@ -223,12 +159,7 @@ export function createCaseWorkflowService({ caseWorkflowRepository = null } = {}
         evidenceSetReference: payload?.evidenceSetReference,
         processCheckComplete: payload?.processCheckComplete,
       });
-
-      return {
-        ...result,
-        operationId,
-        correlationId: normalizedCorrelationId,
-      };
+      return { ...result, operationId, correlationId: normalizedCorrelationId };
     },
   };
 }
