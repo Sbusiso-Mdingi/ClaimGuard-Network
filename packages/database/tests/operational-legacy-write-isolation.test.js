@@ -19,5 +19,8 @@ test("supported operational construction excludes the writable legacy fraud repo
   assert.match(source, /createDisabledLegacyFraudWorkflowAdapter/);
   assert.match(source, /LEGACY_FRAUD_CONFIRMATION_DISABLED/);
   assert.match(source, /LEGACY_FRAUD_REVERSAL_DISABLED/);
-  assert.match(source, /fraudWorkflow:\s*createDisabledLegacyFraudWorkflowAdapter\(\)/);
+  assert.match(
+    source,
+    /fraudWorkflow:\s*createDisabledLegacyFraudWorkflowAdapter\(context\.operationalTenantId\)/,
+  );
 });
