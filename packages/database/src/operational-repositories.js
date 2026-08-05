@@ -7,6 +7,7 @@ import { createInvestigationQueueRepository } from "./investigation-queue-reposi
 import { createInvestigationRepository } from "./investigation-repository.js";
 import { createCaseWorkflowRepository } from "./case-workflow-repository.js";
 import { createLegacyCaseAdapter } from "./legacy-case-adapter.js";
+import { createLegacyCaseReadRepository } from "./legacy-case-read-repository.js";
 import { createLedgerRepository } from "./ledger-repository.js";
 import { createSharedFraudRegistryRepository } from "./shared-fraud-registry-repository.js";
 import { createScopedReadRepositories } from "./scoped-read-repositories.js";
@@ -88,6 +89,7 @@ export function createOperationalRepositories(dataPlaneContext, pool) {
       ...options,
       allowedOutcomeCodes: configuredOutcomeCodes(),
     }),
+    ...createLegacyCaseReadRepository(pool, options),
     ...createLegacyCaseAdapter(pool, options),
   });
   return Object.freeze({
