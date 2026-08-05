@@ -211,7 +211,7 @@ function createSharedFraudRegistryRepositoryStub() {
   };
 }
 
-test("confirm-fraud successfully publishes to the shared fraud registry", async () => {
+test("supported confirmation cannot create a ledger entry or active shared-registry record", async () => {
   activeTenantId = alphaTenant.tenant_id;
   const investigationRepository = createInvestigationRepositoryStub({
     investigations: [{
@@ -224,14 +224,7 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
   });
   const ledgerRepository = createLedgerRepositoryStub();
   const sharedFraudRegistryRepository = createSharedFraudRegistryRepositoryStub();
-  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub({
-    async confirm(input, helpers) {
-      const ledgerEntry = helpers.entry("INVESTIGATOR_CONFIRMED_FRAUD", input, 1);
-      const registryEntry = helpers.registry(input, ledgerEntry, "ACTIVE");
-      sharedFraudRegistryRepository.records.push(registryEntry);
-      return { entry: ledgerEntry, registryEntry, replayed: false };
-    },
-  });
+  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub();
 
   const app = createBackendApp({
     authenticationProvider: createActorProvider({
@@ -251,7 +244,7 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
       investigationId: "inv-reg-1",
       claimId: "claim-alpha",
       investigatorId: "investigator-alpha",
-      reason: "Confirmed",
+      reason: "Historical confirmation must remain disabled.",
       registryMetadata: {
         medicalScheme: "Alpha",
         fraudSubjectType: "PROVIDER",
@@ -262,17 +255,17 @@ test("confirm-fraud successfully publishes to the shared fraud registry", async 
       },
     }),
   );
-
-  assert.equal(response.status, 201);
   const data = await response.json();
-  assert.equal(data.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
-  assert.equal(data.registryEntry.status, "ACTIVE");
-  assert.notEqual(data.registryEntry.subjectToken, "prov-123");
-  assert.equal(data.registryEntry.investigatorReference, "investigator-alpha");
-  assert.equal(sharedFraudRegistryRepository.records.length, 1);
+
+  assert.equal(response.status, 409);
+  assert.equal(data.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  assert.equal(ledgerRepository.entries.length, 0);
+  assert.equal(sharedFraudRegistryRepository.records.length, 0);
+  assert.equal(fraudWorkflowRepository.confirmations.length, 0);
+  assert.equal(investigationRepository.records.get("inv-reg-1").fraudConfirmedAt, null);
 });
 
-test("reverse-fraud creates ledger event and REVERSED registry entry", async () => {
+test("supported reversal cannot create a reversal ledger or registry entry", async () => {
   activeTenantId = alphaTenant.tenant_id;
   const investigationRepository = createInvestigationRepositoryStub({
     investigations: [{
@@ -285,7 +278,6 @@ test("reverse-fraud creates ledger event and REVERSED registry entry", async () 
   });
   const ledgerRepository = createLedgerRepositoryStub();
   const sharedFraudRegistryRepository = createSharedFraudRegistryRepositoryStub();
-
   sharedFraudRegistryRepository.records.push({
     registryEntryId: "reg-active",
     ledgerHash: "hash",
@@ -301,15 +293,7 @@ test("reverse-fraud creates ledger event and REVERSED registry entry", async () 
     status: "ACTIVE",
     reversesRegistryEntryId: null,
   });
-  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub({
-    async reverse(input, helpers) {
-      const ledgerEntry = helpers.entry("INVESTIGATOR_REVERSED_FRAUD", input, 2);
-      const registryEntry = helpers.registry(input, ledgerEntry, "REVERSED", "reg-active");
-      registryEntry.subjectToken = "mem-456";
-      sharedFraudRegistryRepository.records.push(registryEntry);
-      return { entry: ledgerEntry, registryEntry, replayed: false };
-    },
-  });
+  const fraudWorkflowRepository = createFraudWorkflowRepositoryStub();
 
   const app = createBackendApp({
     authenticationProvider: createActorProvider({
@@ -332,14 +316,14 @@ test("reverse-fraud creates ledger event and REVERSED registry entry", async () 
       reason: "Appeal granted",
     }),
   );
-
-  assert.equal(response.status, 201);
   const data = await response.json();
-  assert.equal(data.entry.entryType, "INVESTIGATOR_REVERSED_FRAUD");
-  assert.equal(data.registryEntry.status, "REVERSED");
-  assert.equal(data.registryEntry.reversesRegistryEntryId, "reg-active");
-  assert.equal(data.registryEntry.subjectToken, "mem-456");
-  assert.equal(sharedFraudRegistryRepository.records.length, 2);
+
+  assert.equal(response.status, 409);
+  assert.equal(data.code, "LEGACY_FRAUD_REVERSAL_DISABLED");
+  assert.equal(ledgerRepository.entries.length, 0);
+  assert.equal(sharedFraudRegistryRepository.records.length, 1);
+  assert.equal(sharedFraudRegistryRepository.records[0].status, "ACTIVE");
+  assert.equal(fraudWorkflowRepository.reversals.length, 0);
 });
 
 test("registry endpoints allow global read access across tenants", async () => {
