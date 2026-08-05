@@ -134,6 +134,7 @@ export function registerCaseRoutes(app, { caseWorkflowService, logger = null } =
           legacyInvestigationId: c.req.param("investigationId"),
           authContext: c.get("authContext") || null,
           tenantContext: c.get("tenantContext") || null,
+          correlationId: c.get("requestId") || null,
         });
         return detailResponse(c, result);
       } catch (error) {
