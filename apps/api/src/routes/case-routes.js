@@ -6,9 +6,9 @@ import {
   parseCaseActionRequest,
 } from "@claimguard/shared-schema/case-workflow";
 import {
-  createRequireOperationalRouteAuthorizationMiddleware,
+  createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
-import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
+import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
 
 const DEFERRED_ACTIONS = new Set([
   "activate-network-notice",
@@ -102,8 +102,8 @@ function domainError(c, error) {
 }
 
 export function registerCaseRoutes(app, { caseWorkflowService, logger = null } = {}) {
-  const requireCaseAction = createRequireOperationalRouteAuthorizationMiddleware({
-    routeId: OPERATIONAL_ROUTE_IDS.CASE_ACTION,
+  const requireCaseAction = createRequirePermissionMiddleware({
+    permission: CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
   });
 
   app.post(
