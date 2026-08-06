@@ -11,10 +11,13 @@ import { createDataPlaneRoutesRepository } from "./routes-repository.js";
 import { createSecurityRepository } from "./security-repository.js";
 import { createDesktopEnrollmentRepository } from "./desktop-enrollment-repository.js";
 import { createAccessRepository } from "./access-repository.js";
+import { createAccessQueryRepository } from "./access-query-repository.js";
 import { withControlPlaneTransaction } from "./transaction.js";
 
 export function createControlPlaneRepositories(executor) {
-  const access = createAccessRepository(executor);
+  const accessCommands = createAccessRepository(executor);
+  const accessQueries = createAccessQueryRepository(executor, accessCommands);
+  const access = Object.freeze({ ...accessCommands, ...accessQueries });
   const authenticationBase = createRouteAwareAuthenticationRepository(executor);
   const authentication = Object.freeze({
     ...authenticationBase,
