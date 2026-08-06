@@ -192,6 +192,39 @@ async function verifyMembershipLinkage(executor, { organisationId, membershipId,
   return membership;
 }
 
+// --- Internal resolver helpers ---
+
+async function resolveSystemRolePermissions(db, membershipId) {
+  const [rows] = await db.execute(
+    `SELECT DISTINCT p.permission_key, r.role_key
+     FROM membership_roles mr
+     JOIN roles r ON r.role_id = mr.role_id
+     JOIN role_permissions rp ON rp.role_id = mr.role_id
+     JOIN permissions p ON p.permission_id = rp.permission_id
+     WHERE mr.membership_id = ? AND mr.revoked_at IS NULL`,
+    [membershipId],
+  );
+  return rows || [];
+}
+
+async function resolveCustomRolePermissions(db, organisationId, userId, asOfTimestamp) {
+  const [rows] = await db.execute(
+    `SELECT DISTINCT arp.permission_key, ard.role_key, ara.assignment_id
+     FROM access_role_assignments ara
+     JOIN access_role_definitions ard ON ard.role_id = ara.role_id AND ard.status = 'active'
+     JOIN access_role_permissions arp ON arp.role_id = ara.role_id
+     LEFT JOIN access_elevated_requests aer ON aer.request_id = arp.elevated_request_id
+     WHERE ara.organisation_id = ?
+       AND ara.subject_user_id = ?
+       AND ara.status = 'active'
+       AND ara.effective_from <= ?
+       AND (ara.expires_at IS NULL OR ara.expires_at > ?)
+       AND (arp.elevated_request_id IS NULL OR aer.decision = 'approved')`,
+    [organisationId, userId, asOfTimestamp, asOfTimestamp],
+  );
+  return rows || [];
+}
+
 // --- Repository factory ---
 
 export function createAccessRepository(defaultExecutor) {
@@ -853,17 +886,9 @@ export function createAccessRepository(defaultExecutor) {
 
       const permissionSources = new Map(); // key → { permission, sources: [] }
 
-      // 1. System-role permissions via membership_roles → role_permissions → permissions
-      const [systemRows] = await db.execute(
-        `SELECT DISTINCT p.permission_key, r.role_key
-         FROM membership_roles mr
-         JOIN roles r ON r.role_id = mr.role_id
-         JOIN role_permissions rp ON rp.role_id = mr.role_id
-         JOIN permissions p ON p.permission_id = rp.permission_id
-         WHERE mr.membership_id = ? AND mr.revoked_at IS NULL`,
-        [membershipId],
-      );
-      for (const row of systemRows || []) {
+      // 1. System-role permissions
+      const systemRows = await resolveSystemRolePermissions(db, membershipId);
+      for (const row of systemRows) {
         if (!isKnownPermission(row.permission_key)) continue;
         if (!permissionSources.has(row.permission_key)) {
           permissionSources.set(row.permission_key, { permission: row.permission_key, sources: [] });
@@ -875,21 +900,8 @@ export function createAccessRepository(defaultExecutor) {
       }
 
       // 2. Custom-role assignment permissions
-      const [assignmentRows] = await db.execute(
-        `SELECT DISTINCT arp.permission_key, ard.role_key, ara.assignment_id
-         FROM access_role_assignments ara
-         JOIN access_role_definitions ard ON ard.role_id = ara.role_id AND ard.status = 'active'
-         JOIN access_role_permissions arp ON arp.role_id = ara.role_id
-         LEFT JOIN access_elevated_requests aer ON aer.request_id = arp.elevated_request_id
-         WHERE ara.organisation_id = ?
-           AND ara.subject_user_id = ?
-           AND ara.status = 'active'
-           AND ara.effective_from <= ?
-           AND (ara.expires_at IS NULL OR ara.expires_at > ?)
-           AND (arp.elevated_request_id IS NULL OR aer.decision = 'approved')`,
-        [organisationId, userId, now, now],
-      );
-      for (const row of assignmentRows || []) {
+      const assignmentRows = await resolveCustomRolePermissions(db, organisationId, userId, now);
+      for (const row of assignmentRows) {
         if (!isKnownPermission(row.permission_key)) continue;
         if (!permissionSources.has(row.permission_key)) {
           permissionSources.set(row.permission_key, { permission: row.permission_key, sources: [] });
@@ -946,34 +958,14 @@ export function createAccessRepository(defaultExecutor) {
         const grantorPermissions = new Set();
 
         // Grantor system-role permissions
-        const [grantorSystemRows] = await db.execute(
-          `SELECT DISTINCT p.permission_key
-           FROM membership_roles mr
-           JOIN role_permissions rp ON rp.role_id = mr.role_id
-           JOIN permissions p ON p.permission_id = rp.permission_id
-           WHERE mr.membership_id = ? AND mr.revoked_at IS NULL`,
-          [grantorMembershipId],
-        );
-        for (const row of grantorSystemRows || []) {
+        const grantorSystemRows = await resolveSystemRolePermissions(db, grantorMembershipId);
+        for (const row of grantorSystemRows) {
           grantorPermissions.add(row.permission_key);
         }
 
         // Grantor custom-role permissions
-        const [grantorCustomRows] = await db.execute(
-          `SELECT DISTINCT arp.permission_key
-           FROM access_role_assignments ara
-           JOIN access_role_definitions ard ON ard.role_id = ara.role_id AND ard.status = 'active'
-           JOIN access_role_permissions arp ON arp.role_id = ara.role_id
-           LEFT JOIN access_elevated_requests aer ON aer.request_id = arp.elevated_request_id
-           WHERE ara.organisation_id = ?
-             AND ara.subject_user_id = ?
-             AND ara.status = 'active'
-             AND ara.effective_from <= ?
-             AND (ara.expires_at IS NULL OR ara.expires_at > ?)
-             AND (arp.elevated_request_id IS NULL OR aer.decision = 'approved')`,
-          [organisationId, grantorUserId, now, now],
-        );
-        for (const row of grantorCustomRows || []) {
+        const grantorCustomRows = await resolveCustomRolePermissions(db, organisationId, grantorUserId, now);
+        for (const row of grantorCustomRows) {
           grantorPermissions.add(row.permission_key);
         }
 
