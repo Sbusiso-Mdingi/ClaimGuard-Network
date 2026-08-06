@@ -104,6 +104,7 @@ test(
       };
       const old = await repositories.runInTransaction((tx) => tx.access.createElevatedRequest({
         ...requestInput,
+        reason: "Original governed request",
         correlationId: `old-${suffix}`,
         idempotencyKey: `old-${suffix}`,
       }));
@@ -216,6 +217,7 @@ test(
         () => repositories.runInTransaction(async (tx) => {
           await tx.access.createElevatedRequest({
             ...requestInput,
+            reason: "Rollback governed request",
             correlationId: rollbackCorrelation,
             idempotencyKey: rollbackKey,
           });
