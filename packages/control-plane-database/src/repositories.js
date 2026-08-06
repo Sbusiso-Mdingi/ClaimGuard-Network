@@ -14,8 +14,15 @@ import { createAccessRepository } from "./access-repository.js";
 import { withControlPlaneTransaction } from "./transaction.js";
 
 export function createControlPlaneRepositories(executor) {
+  const access = createAccessRepository(executor);
+  const authenticationBase = createRouteAwareAuthenticationRepository(executor);
+  const authentication = Object.freeze({
+    ...authenticationBase,
+    resolveEffectivePermissions: (input) => access.resolveEffectivePermissions(input),
+  });
+
   return Object.freeze({
-    authentication: createRouteAwareAuthenticationRepository(executor),
+    authentication,
     organisations: createOrganisationsRepository(executor),
     identity: createIdentityRepository(executor),
     integrationCredentials: createIntegrationCredentialsRepository(executor),
@@ -27,7 +34,7 @@ export function createControlPlaneRepositories(executor) {
     desktopEnrollment: createDesktopEnrollmentRepository(executor),
     security: createSecurityRepository(executor),
     configuration: createConfigurationRepository(executor),
-    access: createAccessRepository(executor),
+    access,
     runInTransaction: async (operation) => {
       if (typeof operation !== "function") {
         throw new TypeError("A transaction operation is required.");
