@@ -100,7 +100,7 @@ test(
       assert.equal(status.applied.some(({ id }) => id === "0101_trusted_authorization_runtime"), true);
 
       const [columns] = await pool.execute(
-        `SELECT table_name, column_name
+        `SELECT table_name AS tableName, column_name AS columnName
          FROM information_schema.columns
          WHERE table_schema = DATABASE()
            AND (table_name, column_name) IN (
@@ -111,7 +111,7 @@ test(
          ORDER BY table_name, column_name`,
       );
       assert.deepEqual(
-        columns.map((row) => [row.table_name, row.column_name]),
+        columns.map((row) => [row.tableName, row.columnName]),
         [
           ["login_sessions", "authentication_version"],
           ["login_sessions", "authorization_version"],
