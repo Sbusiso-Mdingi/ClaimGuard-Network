@@ -101,7 +101,6 @@ function createAccessStub() {
     async approveElevatedRequest(input) { calls.push(["approveElevatedRequest", input]); return { requestId: input.requestId, decision: "approved", version: 2 }; },
     async rejectElevatedRequest(input) { calls.push(["rejectElevatedRequest", input]); return { requestId: input.requestId, decision: "rejected", version: 2 }; },
     async listAudit(input) { calls.push(["listAudit", input]); return { events: [], nextCursor: null }; },
-    async getAuthorizationVersion() { return 4; },
     async getMembership({ organisationId, membershipId }) {
       if (organisationId !== "org-alpha" || membershipId !== "membership-user") return null;
       return { membershipId, userId: "user-target", organisationId, status: "active", authorizationVersion: 4 };
@@ -172,7 +171,6 @@ test("explicit canonical permission lists safe catalogue metadata", async () => 
 test("service and platform actors cannot use human scheme access routes", async () => {
   const service = app({ permissions: ["access.roles.read"], actorType: "service" });
   assert.equal((await service.api.request("/api/v1/access/roles")).status, 403);
-
   const platform = app({
     permissions: ["access.roles.read"],
     organisationValue: { organisationId: "org-platform", organisationType: "platform" },
@@ -204,7 +202,6 @@ test("unknown and elevated permission requests fail closed before mutation", asy
     idempotencyKey: "replace-unknown",
   }));
   assert.equal(unknown.status, 400);
-
   const second = app({ permissions: ["access.roles.manage"] });
   const elevated = await second.api.request("/api/v1/access/roles/role-alpha/permissions", json("POST", {
     expectedVersion: 2,
@@ -252,33 +249,35 @@ test("stale assignment and delegation revocation versions are rejected", async (
   assert.equal(calls.some(([name]) => name === "revokeDelegation"), false);
 });
 
-test("assignment and delegation commands use tenant-linked targets", async () => {
+test("assignment and delegation commands derive tenant-linked target users", async () => {
   const { api, calls } = app({ permissions: ["access.assignments.manage", "access.delegations.grant"] });
   const assignment = await api.request("/api/v1/access/assignments", json("POST", {
     roleId: "role-alpha",
     targetMembershipId: "membership-user",
-    targetUserId: "user-target",
     expectedMembershipVersion: 4,
     idempotencyKey: "assign-1",
   }));
   assert.equal(assignment.status, 201);
   const delegation = await api.request("/api/v1/access/delegations", json("POST", {
     targetMembershipId: "membership-user",
-    targetUserId: "user-target",
     permissionKeys: ["claims.view_own"],
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     reason: "Temporary cover",
     idempotencyKey: "delegate-1",
   }));
   assert.equal(delegation.status, 201);
-  assert.equal(calls.find(([name]) => name === "createRoleAssignment")[1].organisationId, "org-alpha");
-  assert.equal(calls.find(([name]) => name === "createDelegation")[1].grantorUserId, "user-admin");
+  const assignmentCall = calls.find(([name]) => name === "createRoleAssignment")[1];
+  const delegationCall = calls.find(([name]) => name === "createDelegation")[1];
+  assert.equal(assignmentCall.organisationId, "org-alpha");
+  assert.equal(assignmentCall.subjectUserId, "user-target");
+  assert.equal(delegationCall.grantorUserId, "user-admin");
+  assert.equal(delegationCall.granteeUserId, "user-target");
+  assert.equal("grantorEffectivePermissions" in delegationCall, false);
 });
 
 test("elevated decisions require explicit reviewer permission and current version", async () => {
   const denied = app({ permissions: [] });
   assert.equal((await denied.api.request("/api/v1/access/elevated-requests")).status, 403);
-
   const allowed = app({ permissions: ["access.elevated_permissions.review"] });
   const stale = await allowed.api.request("/api/v1/access/elevated-requests/request-alpha/approve", json("POST", {
     expectedVersion: 4,
