@@ -1,8 +1,23 @@
 -- Sequrin PR 3: tenant custom roles, assignments, bounded delegations and elevated approvals.
 -- Additive only. Existing system roles, permissions, memberships and sessions remain intact.
 
+-- Add authorization_version to organisation_memberships.
+-- The login_sessions table already carries authorization_version from migration 0001.
+-- This column enables per-membership version tracking so that authorization mutations
+-- (role changes, assignment changes, delegation changes) can atomically invalidate
+-- cached session permissions by advancing the membership version.
 ALTER TABLE organisation_memberships
-  ADD COLUMN IF NOT EXISTS authorization_version INT UNSIGNED NOT NULL DEFAULT 1;
+  ADD COLUMN authorization_version INT UNSIGNED NOT NULL DEFAULT 1;
+
+-- Extend the canonical permission catalogue with metadata that controls
+-- which permissions are tenant-assignable, elevated, delegable, or system-only.
+-- These columns remain platform-controlled; tenants cannot alter them.
+ALTER TABLE permissions
+  ADD COLUMN category VARCHAR(64) NOT NULL DEFAULT 'general',
+  ADD COLUMN tenant_assignable TINYINT(1) NOT NULL DEFAULT 1,
+  ADD COLUMN elevated TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN delegable TINYINT(1) NOT NULL DEFAULT 1,
+  ADD COLUMN system_only TINYINT(1) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS access_role_definitions (
   role_id CHAR(36) PRIMARY KEY,
@@ -50,7 +65,7 @@ CREATE TABLE IF NOT EXISTS access_elevated_requests (
   CONSTRAINT fk_access_elevated_target_user FOREIGN KEY (target_user_id) REFERENCES users (user_id) ON DELETE RESTRICT,
   CONSTRAINT fk_access_elevated_reviewed_by FOREIGN KEY (reviewed_by) REFERENCES users (user_id) ON DELETE RESTRICT,
   CONSTRAINT chk_access_elevated_target CHECK (target_type IN ('role_permission_set', 'assignment', 'delegation')),
-  CONSTRAINT chk_access_elevated_decision CHECK (decision IN ('pending', 'approved', 'rejected')),
+  CONSTRAINT chk_access_elevated_decision CHECK (decision IN ('pending', 'approved', 'rejected', 'superseded', 'stale')),
   CONSTRAINT chk_access_elevated_version CHECK (version > 0)
 );
 
@@ -87,6 +102,7 @@ CREATE TABLE IF NOT EXISTS access_role_assignments (
   intent_hash CHAR(64) NOT NULL,
   UNIQUE KEY uq_access_assignment_idempotency (organisation_id, idempotency_key),
   INDEX idx_access_assignment_subject (organisation_id, subject_user_id, status, effective_from, expires_at),
+  INDEX idx_access_assignment_membership (membership_id, status),
   CONSTRAINT fk_access_assignment_org FOREIGN KEY (organisation_id) REFERENCES organisations (organisation_id) ON DELETE RESTRICT,
   CONSTRAINT fk_access_assignment_membership FOREIGN KEY (membership_id) REFERENCES organisation_memberships (membership_id) ON DELETE RESTRICT,
   CONSTRAINT fk_access_assignment_subject FOREIGN KEY (subject_user_id) REFERENCES users (user_id) ON DELETE RESTRICT,
@@ -133,6 +149,18 @@ CREATE TABLE IF NOT EXISTS access_delegations (
   CONSTRAINT chk_access_delegation_version CHECK (version > 0)
 );
 
+-- Normalized delegation permission rows.
+-- The resolver uses this table as the authoritative positive permission source
+-- for delegations, not the permissions_json column. The JSON column remains
+-- as immutable request/audit evidence of the original delegation request.
+CREATE TABLE IF NOT EXISTS access_delegation_permissions (
+  delegation_id CHAR(36) NOT NULL,
+  permission_key VARCHAR(128) NOT NULL,
+  PRIMARY KEY (delegation_id, permission_key),
+  CONSTRAINT fk_access_deleg_perm_delegation FOREIGN KEY (delegation_id) REFERENCES access_delegations (delegation_id) ON DELETE RESTRICT,
+  CONSTRAINT fk_access_deleg_perm_catalogue FOREIGN KEY (permission_key) REFERENCES permissions (permission_key) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS access_authorization_operations (
   operation_id CHAR(36) PRIMARY KEY,
   organisation_id CHAR(36) NOT NULL,
@@ -169,17 +197,52 @@ CREATE TABLE IF NOT EXISTS access_audit_events (
   CONSTRAINT chk_access_audit_outcome CHECK (outcome IN ('success', 'failure', 'denied'))
 );
 
-INSERT INTO permissions (permission_id, permission_key, description, definition_version)
+-- Seed access management permissions into the canonical catalogue.
+INSERT INTO permissions (permission_id, permission_key, description, definition_version, category, tenant_assignable, elevated, delegable, system_only)
 VALUES
-  ('access.roles.read', 'access.roles.read', 'Read tenant role definitions and fixed catalogue metadata', 1),
-  ('access.roles.manage', 'access.roles.manage', 'Create and change tenant custom roles', 1),
-  ('access.assignments.read', 'access.assignments.read', 'Read tenant role assignments', 1),
-  ('access.assignments.manage', 'access.assignments.manage', 'Create and revoke tenant role assignments', 1),
-  ('access.delegations.read', 'access.delegations.read', 'Read tenant permission delegations', 1),
-  ('access.delegations.grant', 'access.delegations.grant', 'Grant bounded temporary permission delegations', 1),
-  ('access.delegations.revoke', 'access.delegations.revoke', 'Revoke another user permission delegation', 1),
-  ('access.elevated_permissions.review', 'access.elevated_permissions.review', 'Independently approve or reject elevated authority', 1),
-  ('access.audit.read', 'access.audit.read', 'Read tenant authorization audit evidence', 1)
+  ('access.roles.read', 'access.roles.read', 'Read tenant role definitions and fixed catalogue metadata', 1, 'access_management', 1, 0, 1, 0),
+  ('access.roles.manage', 'access.roles.manage', 'Create and change tenant custom roles', 1, 'access_management', 1, 0, 0, 0),
+  ('access.assignments.read', 'access.assignments.read', 'Read tenant role assignments', 1, 'access_management', 1, 0, 1, 0),
+  ('access.assignments.manage', 'access.assignments.manage', 'Create and revoke tenant role assignments', 1, 'access_management', 1, 1, 0, 0),
+  ('access.delegations.read', 'access.delegations.read', 'Read tenant permission delegations', 1, 'access_management', 1, 0, 1, 0),
+  ('access.delegations.grant', 'access.delegations.grant', 'Grant bounded temporary permission delegations', 1, 'access_management', 1, 0, 0, 0),
+  ('access.delegations.revoke', 'access.delegations.revoke', 'Revoke another user permission delegation', 1, 'access_management', 1, 0, 0, 0),
+  ('access.elevated_permissions.review', 'access.elevated_permissions.review', 'Independently approve or reject elevated authority', 1, 'access_management', 1, 1, 0, 0),
+  ('access.audit.read', 'access.audit.read', 'Read tenant authorization audit evidence', 1, 'access_management', 1, 0, 1, 0)
 ON DUPLICATE KEY UPDATE
   description = VALUES(description),
-  definition_version = GREATEST(definition_version, VALUES(definition_version));
+  definition_version = GREATEST(definition_version, VALUES(definition_version)),
+  category = VALUES(category),
+  tenant_assignable = VALUES(tenant_assignable),
+  elevated = VALUES(elevated),
+  delegable = VALUES(delegable),
+  system_only = VALUES(system_only);
+
+-- Backfill permission catalogue metadata for existing permissions.
+-- All existing operational and platform permissions receive appropriate metadata.
+UPDATE permissions SET category = 'claims', tenant_assignable = 1, elevated = 0, delegable = 1, system_only = 0
+  WHERE permission_key IN ('claims.view_own', 'claims.ingest_own', 'claims.view_flagged');
+
+UPDATE permissions SET category = 'reports', tenant_assignable = 1, elevated = 0, delegable = 1, system_only = 0
+  WHERE permission_key = 'reports.view_own';
+
+UPDATE permissions SET category = 'investigations', tenant_assignable = 1, elevated = 0, delegable = 1, system_only = 0
+  WHERE permission_key IN ('investigations.create', 'investigations.manage', 'investigations.view_own');
+
+-- Fraud confirmation and reversal are elevated and non-delegable.
+UPDATE permissions SET category = 'investigations', tenant_assignable = 1, elevated = 1, delegable = 0, system_only = 0
+  WHERE permission_key IN ('investigations.confirm', 'investigations.reverse');
+
+UPDATE permissions SET category = 'registry', tenant_assignable = 1, elevated = 0, delegable = 1, system_only = 0
+  WHERE permission_key IN ('registry.search', 'registry.review_history');
+
+UPDATE permissions SET category = 'scheme_administration', tenant_assignable = 1, elevated = 0, delegable = 0, system_only = 0
+  WHERE permission_key IN ('scheme_users.manage', 'scheme_roles.assign', 'scheme_health.view');
+
+-- Platform permissions are system-only and non-delegable.
+UPDATE permissions SET category = 'platform', tenant_assignable = 0, elevated = 0, delegable = 0, system_only = 1
+  WHERE permission_key IN ('organisation.manage', 'platform_health.view', 'provisioning.manage');
+
+-- Simulator permissions remain general.
+UPDATE permissions SET category = 'simulator', tenant_assignable = 1, elevated = 0, delegable = 0, system_only = 0
+  WHERE permission_key IN ('simulator.status', 'simulator.control_own', 'simulator.control_platform');
