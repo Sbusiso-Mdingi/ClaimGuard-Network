@@ -319,11 +319,13 @@ test(
       assert.deepEqual(rolledBackAudits, []);
       assert.equal(await repositories.access.getAuthorizationVersion(ids.granteeMembership), before.get(ids.granteeMembership));
 
+      const assignmentEffectiveFrom = new Date("2026-01-01T00:00:00.000Z");
       const assignment = await repositories.runInTransaction((tx) => tx.access.createRoleAssignment({
         organisationId: ids.organisation,
         membershipId: ids.granteeMembership,
         subjectUserId: ids.grantee,
         roleId: role.roleId,
+        effectiveFrom: assignmentEffectiveFrom,
         actorId: ids.grantor,
         correlationId: "runtime-assignment-create",
         idempotencyKey: "runtime-assignment-create",
@@ -356,6 +358,7 @@ test(
         membershipId: ids.granteeMembership,
         subjectUserId: ids.grantee,
         roleId: role.roleId,
+        effectiveFrom: assignmentEffectiveFrom,
         actorId: ids.grantor,
         correlationId: "runtime-assignment-replay",
         idempotencyKey: "runtime-assignment-create",
