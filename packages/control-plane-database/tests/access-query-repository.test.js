@@ -54,6 +54,7 @@ test("membership and explanation lookups hide foreign organisations", async () =
     if (sql.includes("FROM users u") && sql.includes("organisation_memberships om")) {
       return [[{ user_id: "user-1", user_status: "active", membership_id: "membership-1", membership_status: "active", organisation_id: "org-1" }], []];
     }
+    if (sql.includes("FROM membership_roles mr")) return [[], []];
     if (sql.includes("FROM access_system_role_assignments")) return [[], []];
     if (sql.includes("FROM access_role_assignments ara")) return [[], []];
     if (sql.includes("FROM access_delegations d")) return [[], []];
