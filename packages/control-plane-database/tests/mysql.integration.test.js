@@ -274,6 +274,7 @@ test(
         expectedVersion: 1,
         actorId: ids.grantor,
         correlationId: "runtime-role-permissions",
+        idempotencyKey: "test-role-permissions-replace-001",
       }));
 
       const [beforeRows] = await pool.execute(
@@ -365,9 +366,11 @@ test(
       await repositories.runInTransaction((tx) => tx.access.revokeRoleAssignment({
         organisationId: ids.organisation,
         assignmentId: assignment.assignmentId,
+        expectedVersion: 1,
         actorId: ids.grantor,
         reason: "runtime revocation",
         correlationId: "runtime-assignment-revoke",
+        idempotencyKey: "test-role-assignment-revoke-001",
       }));
       const revokedAuthority = await repositories.access.resolveEffectivePermissions({
         organisationId: ids.organisation,
