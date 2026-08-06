@@ -11,6 +11,15 @@ function createHarness({ targetType = "role_permission_set" } = {}) {
   const calls = [];
   let storedOperation = null;
   const executor = {
+    async getConnection() {
+      return {
+        execute: executor.execute.bind(executor),
+        async beginTransaction() {},
+        async commit() {},
+        async rollback() {},
+        release() {},
+      };
+    },
     async execute(rawSql, params = []) {
       const sql = normalized(rawSql);
       calls.push({ sql, params });
