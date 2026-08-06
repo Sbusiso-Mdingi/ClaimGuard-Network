@@ -159,11 +159,11 @@ export function createAccessQueryRepository(defaultExecutor, accessRepository) {
       const [rows] = await exec(executor).execute(
         `SELECT request_id, organisation_id, target_type, target_id,
                 requested_permissions, requested_by, target_user_id, reason,
-                decision, reviewed_by, decided_at, decision_reason, version,
-                created_at
+                decision, reviewed_by, requested_at, decided_at, decision_reason,
+                version
          FROM access_elevated_requests
          WHERE organisation_id = ?
-         ORDER BY created_at DESC, request_id DESC`,
+         ORDER BY requested_at DESC, request_id DESC`,
         [organisationId],
       );
       return (rows || []).map((row) => ({
@@ -177,10 +177,10 @@ export function createAccessQueryRepository(defaultExecutor, accessRepository) {
         reason: row.reason,
         decision: row.decision,
         reviewedBy: row.reviewed_by || null,
+        requestedAt: row.requested_at || null,
         decidedAt: row.decided_at || null,
         decisionReason: row.decision_reason || null,
         version: row.version,
-        createdAt: row.created_at || null,
       }));
     },
 
@@ -203,17 +203,17 @@ export function createAccessQueryRepository(defaultExecutor, accessRepository) {
       if (actorId) { clauses.push("actor_id = ?"); params.push(required(actorId, "actorId", 36)); }
       if (targetMembershipId) { clauses.push("subject_id = ?"); params.push(required(targetMembershipId, "targetMembershipId", 36)); }
       if (resourceType) { clauses.push("target_type = ?"); params.push(required(resourceType, "resourceType", 64)); }
-      if (from) { clauses.push("created_at >= ?"); params.push(new Date(from)); }
-      if (to) { clauses.push("created_at <= ?"); params.push(new Date(to)); }
+      if (from) { clauses.push("occurred_at >= ?"); params.push(new Date(from)); }
+      if (to) { clauses.push("occurred_at <= ?"); params.push(new Date(to)); }
       if (cursor) { clauses.push("audit_event_id < ?"); params.push(required(cursor, "cursor", 36)); }
       params.push(pageSize + 1);
       const [rows] = await exec(executor).execute(
         `SELECT audit_event_id, actor_type, actor_id, subject_id, action,
                 target_type, target_id, before_version, after_version,
-                reason, correlation_id, outcome, created_at
+                reason, correlation_id, outcome, occurred_at
          FROM access_audit_events
          WHERE ${clauses.join(" AND ")}
-         ORDER BY created_at DESC, audit_event_id DESC
+         ORDER BY occurred_at DESC, audit_event_id DESC
          LIMIT ?`,
         params,
       );
@@ -230,7 +230,7 @@ export function createAccessQueryRepository(defaultExecutor, accessRepository) {
         reason: row.reason || null,
         correlationId: row.correlation_id || null,
         outcome: row.outcome,
-        createdAt: row.created_at,
+        occurredAt: row.occurred_at,
       }));
       return {
         events: visible,
