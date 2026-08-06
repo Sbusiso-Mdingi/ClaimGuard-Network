@@ -100,7 +100,7 @@ export function getPermissionsByCategory(category) {
 }
 
 export function getCategories() {
-  return [...new Set(PERMISSION_CATALALOGUE.map((entry) => entry.category))];
+  return [...new Set(PERMISSION_CATALOGUE.map((entry) => entry.category))];
 }
 
 export const SYSTEM_ROLE_PERMISSION_COMPATIBILITY = Object.freeze({
