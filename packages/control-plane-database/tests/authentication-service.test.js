@@ -264,12 +264,19 @@ test("session resolution distinguishes authentication and authorization version 
 
   const authorizationChanged = fixture({ authenticationVersion: 3, authorizationVersion: 7 });
   const authzLogin = await authorizationChanged.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
+  const staleSession = [...authorizationChanged.sessions.values()][0];
   authorizationChanged.membership.authorizationVersion = 8;
   await assert.rejects(
     () => authorizationChanged.service.resolveSession(authzLogin.bearerSecret, metadata),
-    (error) => error.code === "ACCESS_AUTHORIZATION_VERSION_STALE" && error.status === 401,
+    (error) => error.code === "ACCESS_AUTHORIZATION_VERSION_STALE" && error.status === 409,
   );
-  assert.equal([...authorizationChanged.sessions.values()][0].revokedAt, null);
+  assert.equal(staleSession.authorizationVersion, 7);
+  assert.equal(staleSession.revokedAt, null);
+  assert.equal(authorizationChanged.resolutionCalls.length, 1);
+  assert.deepEqual(
+    authorizationChanged.events.slice(-1).map((event) => [event.eventType, event.failureCategory]),
+    [["authorization_version_mismatch", "authorization_version_mismatch"]],
+  );
 });
 
 test("matching session versions re-resolve current permissions and preserve CSRF", async () => {
