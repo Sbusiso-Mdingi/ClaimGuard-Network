@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { versionConflict } from "@claimguard/control-plane-database";
+
 import { createAuthenticatedAuthContext } from "../src/middleware/auth-context.js";
 import { createBackendApp } from "../src/backend.js";
 import { createRequestAuthenticationProvider } from "./helpers/authentication-provider.js";
@@ -91,15 +93,71 @@ function createAccessStub() {
     async listAssignments(input) { calls.push(["listAssignments", input]); return state.assignments; },
     async getAssignment(input) { calls.push(["getAssignment", input]); return state.assignments.find((a) => a.assignmentId === input.assignmentId) || null; },
     async createRoleAssignment(input) { calls.push(["createRoleAssignment", input]); return { assignmentId: "assignment-new", replayed: false }; },
-    async revokeRoleAssignment(input) { calls.push(["revokeRoleAssignment", input]); return { assignmentId: input.assignmentId, version: 2 }; },
+    async revokeRoleAssignment(input) {
+      const current = state.assignments.find(
+        (entry) => entry.assignmentId === input.assignmentId,
+      );
+      if (current?.version !== input.expectedVersion) {
+        throw versionConflict(
+          "assignment",
+          input.assignmentId,
+          input.expectedVersion,
+          current?.version ?? null,
+        );
+      }
+      calls.push(["revokeRoleAssignment", input]);
+      return { assignmentId: input.assignmentId, version: 2 };
+    },
     async listDelegations(input) { calls.push(["listDelegations", input]); return state.delegations; },
     async getDelegation(input) { calls.push(["getDelegation", input]); return state.delegations.find((d) => d.delegationId === input.delegationId) || null; },
     async createDelegation(input) { calls.push(["createDelegation", input]); return { delegationId: "delegation-new", replayed: false }; },
-    async revokeDelegation(input) { calls.push(["revokeDelegation", input]); return { delegationId: input.delegationId, version: 2 }; },
+    async revokeDelegation(input) {
+      const current = state.delegations.find(
+        (entry) => entry.delegationId === input.delegationId,
+      );
+      if (current?.version !== input.expectedVersion) {
+        throw versionConflict(
+          "delegation",
+          input.delegationId,
+          input.expectedVersion,
+          current?.version ?? null,
+        );
+      }
+      calls.push(["revokeDelegation", input]);
+      return { delegationId: input.delegationId, version: 2 };
+    },
     async listElevatedRequests(input) { calls.push(["listElevatedRequests", input]); return state.elevatedRequests; },
     async getElevatedRequest(input) { calls.push(["getElevatedRequest", input]); return state.elevatedRequests.find((r) => r.requestId === input.requestId) || null; },
-    async approveElevatedRequest(input) { calls.push(["approveElevatedRequest", input]); return { requestId: input.requestId, decision: "approved", version: 2 }; },
-    async rejectElevatedRequest(input) { calls.push(["rejectElevatedRequest", input]); return { requestId: input.requestId, decision: "rejected", version: 2 }; },
+    async approveElevatedRequest(input) {
+      const current = state.elevatedRequests.find(
+        (entry) => entry.requestId === input.requestId,
+      );
+      if (current?.version !== input.expectedVersion) {
+        throw versionConflict(
+          "elevated_request",
+          input.requestId,
+          input.expectedVersion,
+          current?.version ?? null,
+        );
+      }
+      calls.push(["approveElevatedRequest", input]);
+      return { requestId: input.requestId, decision: "approved", version: 2 };
+    },
+    async rejectElevatedRequest(input) {
+      const current = state.elevatedRequests.find(
+        (entry) => entry.requestId === input.requestId,
+      );
+      if (current?.version !== input.expectedVersion) {
+        throw versionConflict(
+          "elevated_request",
+          input.requestId,
+          input.expectedVersion,
+          current?.version ?? null,
+        );
+      }
+      calls.push(["rejectElevatedRequest", input]);
+      return { requestId: input.requestId, decision: "rejected", version: 2 };
+    },
     async listAudit(input) { calls.push(["listAudit", input]); return { events: [], nextCursor: null }; },
     async getMembership({ organisationId, membershipId }) {
       if (organisationId !== "org-alpha" || membershipId !== "membership-user") return null;
