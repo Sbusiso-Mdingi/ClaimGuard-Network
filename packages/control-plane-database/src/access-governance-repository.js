@@ -470,12 +470,6 @@ export function createAccessGovernanceRepository(defaultExecutor) {
       const op = await operation(db, { organisationId, type: "create_elevated_request", key: input.idempotencyKey, intent, result: resultData });
       if (op.replayed) return { ...op.result, replayed: true, operationId: op.operationId };
       await db.execute(
-        `UPDATE access_elevated_requests SET decision = 'superseded', superseded_by_request_id = ?,
-         decided_at = CURRENT_TIMESTAMP(3), decision_reason = 'Superseded by a newer request.', version = version + 1
-         WHERE organisation_id = ? AND target_type = ? AND target_id = ? AND decision = 'pending'`,
-        [requestId, organisationId, targetType, targetId],
-      );
-      await db.execute(
         `INSERT INTO access_elevated_requests
           (request_id, organisation_id, target_type, target_id, target_version, requested_permissions,
            requested_by, requester_membership_id, target_user_id, target_membership_id, reason,
@@ -484,6 +478,13 @@ export function createAccessGovernanceRepository(defaultExecutor) {
         [requestId, organisationId, targetType, targetId, targetVersion, JSON.stringify(requestedPermissions),
           input.requestedBy, requesterMembershipId, targetUserId, targetMembershipId, input.reason,
           hash(intent), input.idempotencyKey, effectiveFrom, expiresAt],
+      );
+      await db.execute(
+        `UPDATE access_elevated_requests SET decision = 'superseded', superseded_by_request_id = ?,
+         decided_at = CURRENT_TIMESTAMP(3), decision_reason = 'Superseded by a newer request.', version = version + 1
+         WHERE organisation_id = ? AND target_type = ? AND target_id = ? AND decision = 'pending'
+           AND request_id <> ?`,
+        [requestId, organisationId, targetType, targetId, requestId],
       );
       await audit(db, { organisationId, actorId: input.requestedBy, subjectId: targetUserId,
         action: "elevated_request.created", targetType: "access_elevated_request", targetId: requestId,
