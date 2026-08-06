@@ -4,1522 +4,349 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  CANONICAL_OPERATIONAL_MIGRATION_ID,
+  OperationalMigrationExecutionError,
+  applyMigrations as applyCoreMigrations,
+  defaultMigrationPath as coreDefaultMigrationPath,
+  defaultMigrationPaths as coreDefaultMigrationPaths,
+  getOperationalMigrationStatus as getCoreOperationalMigrationStatus,
+} from "./migrate-core.js";
+import {
   CANONICAL_OPERATIONAL_MIGRATION_VERSION,
   CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 } from "./operational-schema.js";
+import { splitOperationalMigrationStatements } from "./mysql-migration-parser.js";
 
-export {
-  CANONICAL_OPERATIONAL_MIGRATION_ID,
-  CANONICAL_OPERATIONAL_MIGRATION_VERSION,
-  CANONICAL_OPERATIONAL_SCHEMA_VERSION,
-  CANONICAL_OPERATIONAL_SCHEMA_VERSIONS,
-} from "./operational-schema.js";
+export * from "./migrate-core.js";
+export { splitOperationalMigrationStatements } from "./mysql-migration-parser.js";
 
-export const defaultMigrationPath = fileURLToPath(
-  new URL("../migrations/0001_initial.sql", import.meta.url),
-);
+export const defaultMigrationPath = coreDefaultMigrationPath;
 
-export const defaultMigrationPaths = Object.freeze([
-  defaultMigrationPath,
-  fileURLToPath(
-    new URL(
-      "../migrations/0002_investigations.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0003_shared_fraud_registry.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0004_claim_processing_outbox.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0005_atomic_fraud_workflows.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0006_tenant_snapshot_reports.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0007_simulation_runtime.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0008_data_plane_metadata.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0009_data_plane_metadata_singleton.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0010_production_ingestion.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0011_detection_strategies.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0012_custom_model.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0013_approved_model_contract.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0014_prospective_claim_detection.sql",
-      import.meta.url,
-    ),
-  ),
-  fileURLToPath(
-    new URL(
-      "../migrations/0015_investigation_workflow.sql",
-      import.meta.url,
-    ),
-  ),
+const extensionMigrationPaths = Object.freeze([
+  fileURLToPath(new URL("../migrations/0016_domain_safety_foundation.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0017_case_state_machine.sql", import.meta.url)),
 ]);
 
-const MIGRATION_LOCK_NAME =
-  "claimguard_operational_migrations";
+export const defaultMigrationPaths = Object.freeze([
+  ...coreDefaultMigrationPaths,
+  ...extensionMigrationPaths,
+]);
 
-const MIGRATION_ID_PATTERN =
-  /^\d{4}_[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const MIGRATION_LOCK_NAME = "claimguard_operational_migrations";
+const extensionIds = new Set(extensionMigrationPaths.map((value) => path.basename(value, ".sql")));
+const adoptionCodes = new Set([
+  "ER_CHECK_CONSTRAINT_DUP_NAME",
+  "ER_DUP_ENTRY",
+  "ER_DUP_FIELDNAME",
+  "ER_DUP_KEY",
+  "ER_DUP_KEYNAME",
+  "ER_FK_DUP_NAME",
+  "ER_TABLE_EXISTS_ERROR",
+  "ER_TRG_ALREADY_EXISTS",
+]);
 
-const migrationHistorySql = `
-  CREATE TABLE IF NOT EXISTS operational_migration_history (
-    migration_id VARCHAR(255) PRIMARY KEY,
-    checksum CHAR(64) NOT NULL,
-    applied_at TIMESTAMP(3)
-      NOT NULL
-      DEFAULT CURRENT_TIMESTAMP(3),
-    execution_duration_ms INT UNSIGNED NOT NULL,
-    application_version VARCHAR(128) NULL
-  )
-`;
-
-const migrationStatementHistorySql = `
-  CREATE TABLE IF NOT EXISTS operational_migration_statement_history (
-    migration_id VARCHAR(255) NOT NULL,
-    statement_index INT UNSIGNED NOT NULL,
-    statement_checksum CHAR(64) NOT NULL,
-    adopted BOOLEAN NOT NULL DEFAULT FALSE,
-    applied_at TIMESTAMP(3)
-      NOT NULL
-      DEFAULT CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (
-      migration_id,
-      statement_index
-    )
-  )
-`;
-
-export class OperationalMigrationChecksumMismatchError
-  extends Error {
-  constructor(migrationId) {
-    super(
-      `Applied operational migration ${migrationId} `
-      + "no longer matches its recorded checksum.",
-    );
-
-    this.name =
-      "OperationalMigrationChecksumMismatchError";
-
-    this.code =
-      "OPERATIONAL_MIGRATION_CHECKSUM_MISMATCH";
-
-    this.migrationId =
-      migrationId;
+export class OperationalMigrationQueryResultError extends Error {
+  constructor(queryName) {
+    super(`Operational migration ${queryName} query returned an invalid result shape.`);
+    this.name = "OperationalMigrationQueryResultError";
+    this.code = "OPERATIONAL_MIGRATION_QUERY_RESULT_INVALID";
+    this.queryName = queryName;
   }
 }
 
-export class OperationalMigrationExecutionError
-  extends Error {
-  constructor(
-    migrationId,
-    statementIndex,
-    cause,
-  ) {
-    super(
-      `Operational migration ${migrationId} failed `
-      + `at statement ${statementIndex}.`,
-    );
-
-    this.name =
-      "OperationalMigrationExecutionError";
-
-    this.code =
-      "OPERATIONAL_MIGRATION_FAILED";
-
-    this.migrationId =
-      migrationId;
-
-    this.statementIndex =
-      statementIndex;
-
-    this.cause =
-      cause;
-  }
+function isRowRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-class OperationalMigrationStatementChecksumMismatchError
-  extends Error {
-  constructor(
-    migrationId,
-    statementIndex,
-  ) {
-    super(
-      `Operational migration ${migrationId} statement `
-      + `${statementIndex} no longer matches its `
-      + "recorded checksum.",
-    );
-
-    this.name =
-      "OperationalMigrationStatementChecksumMismatchError";
-
-    this.code =
-      "OPERATIONAL_MIGRATION_STATEMENT_CHECKSUM_MISMATCH";
-
-    this.migrationId =
-      migrationId;
-
-    this.statementIndex =
-      statementIndex;
-  }
-}
-
-class OperationalMigrationMetadataError
-  extends Error {
-  constructor(message) {
-    super(message);
-
-    this.name =
-      "OperationalMigrationMetadataError";
-
-    this.code =
-      "OPERATIONAL_MIGRATION_METADATA_MISMATCH";
-  }
-}
-
-function isDashCommentStart(
-  sql,
-  index,
-) {
-  return (
-    sql[index] === "-"
-    && sql[index + 1] === "-"
-    && (
-      index + 2 >= sql.length
-      || /\s/.test(
-        sql[index + 2],
-      )
-    )
+function isMysqlFieldDefinition(value) {
+  return isRowRecord(value) && (
+    Object.hasOwn(value, "name")
+    || Object.hasOwn(value, "columnType")
+    || Object.hasOwn(value, "type")
+    || Object.hasOwn(value, "table")
+    || Object.hasOwn(value, "orgName")
   );
 }
 
-function splitSqlStatements(sql) {
-  const source =
-    String(sql || "")
-      .replace(/\r\n?/g, "\n");
-
-  const statements = [];
-
-  let current = "";
-  let quote = null;
-  let lineComment = false;
-  let blockComment = false;
-
-  for (
-    let index = 0;
-    index < source.length;
-    index += 1
-  ) {
-    const character =
-      source[index];
-
-    const next =
-      source[index + 1]
-      || "";
-
-    if (lineComment) {
-      current += character;
-
-      if (character === "\n") {
-        lineComment = false;
-      }
-
-      continue;
-    }
-
-    if (blockComment) {
-      current += character;
-
-      if (
-        character === "*"
-        && next === "/"
-      ) {
-        current += next;
-        index += 1;
-        blockComment = false;
-      }
-
-      continue;
-    }
-
-    if (quote) {
-      current += character;
-
-      if (
-        character === "\\"
-        && quote !== "`"
-        && index + 1
-          < source.length
-      ) {
-        current += next;
-        index += 1;
-        continue;
-      }
-
-      if (character === quote) {
-        if (next === quote) {
-          current += next;
-          index += 1;
-        } else {
-          quote = null;
-        }
-      }
-
-      continue;
-    }
-
-    if (
-      isDashCommentStart(
-        source,
-        index,
-      )
-      || character === "#"
-    ) {
-      lineComment = true;
-      current += character;
-
-      if (
-        character === "-"
-        && next === "-"
-      ) {
-        current += next;
-        index += 1;
-      }
-
-      continue;
-    }
-
-    if (
-      character === "/"
-      && next === "*"
-    ) {
-      blockComment = true;
-      current += character + next;
-      index += 1;
-      continue;
-    }
-
-    if (
-      [
-        "'",
-        "\"",
-        "`",
-      ].includes(
-        character,
-      )
-    ) {
-      quote = character;
-      current += character;
-      continue;
-    }
-
-    if (character === ";") {
-      const statement =
-        current.trim();
-
-      if (statement) {
-        statements.push(
-          statement,
-        );
-      }
-
-      current = "";
-      continue;
-    }
-
-    current += character;
+/**
+ * Normalise SELECT results at the migration boundary.
+ *
+ * Production mysql2 returns [rows, fields]. Focused repository adapters may
+ * intentionally return rows directly. Other shapes are rejected so a result
+ * header or field-definition array can never be mistaken for migration data.
+ */
+export function extractOperationalMigrationRows(result, queryName = "history") {
+  if (!Array.isArray(result)) {
+    throw new OperationalMigrationQueryResultError(queryName);
   }
-
-  if (quote) {
-    throw new TypeError(
-      "Migration SQL contains an "
-      + "unterminated quoted value.",
-    );
+  if (result.length === 0) return [];
+  if (result.every(isRowRecord)) return result;
+  if (result.length === 2 && Array.isArray(result[0]) && Array.isArray(result[1])) {
+    const [rows, fields] = result;
+    if (!rows.every(isRowRecord)) {
+      throw new OperationalMigrationQueryResultError(queryName);
+    }
+    if (fields.length > 0 && !fields.every(isMysqlFieldDefinition)) {
+      throw new OperationalMigrationQueryResultError(queryName);
+    }
+    return rows;
   }
-
-  if (blockComment) {
-    throw new TypeError(
-      "Migration SQL contains an "
-      + "unterminated block comment.",
-    );
-  }
-
-  const finalStatement =
-    current.trim();
-
-  if (finalStatement) {
-    statements.push(
-      finalStatement,
-    );
-  }
-
-  return statements;
+  throw new OperationalMigrationQueryResultError(queryName);
 }
 
-export function operationalMigrationChecksum(
-  sql,
-) {
-  return crypto
-    .createHash("sha256")
-    .update(
-      String(sql || "")
-        .replace(
-          /\r\n/g,
-          "\n",
-        ),
-    )
-    .digest("hex");
+function checksum(value) {
+  return crypto.createHash("sha256").update(String(value).replace(/\r\n/g, "\n")).digest("hex");
 }
 
-function canonicalMigrationPaths(
-  migrationPath,
-) {
-  const values =
-    Array.isArray(
-      migrationPath,
-    )
-      ? migrationPath
-      : [
-          migrationPath,
-        ];
-
-  const paths =
-    values
-      .map(
-        (value) =>
-          typeof value === "string"
-            ? value.trim()
-            : "",
-      )
-      .filter(Boolean)
-      .map(
-        (value) =>
-          path.resolve(
-            value,
-          ),
-      );
-
-  if (paths.length === 0) {
-    throw new TypeError(
-      "At least one operational migration "
-      + "path is required.",
-    );
-  }
-
-  if (
-    new Set(paths).size
-    !== paths.length
-  ) {
-    throw new TypeError(
-      "Operational migration paths "
-      + "must be unique.",
-    );
-  }
-
-  return paths;
+function canonicalPaths(value) {
+  return (Array.isArray(value) ? value : [value]).map((entry) => path.resolve(entry));
 }
 
-async function loadMigrations(
-  migrationPath =
-    defaultMigrationPaths,
-) {
-  const migrationPaths =
-    canonicalMigrationPaths(
-      migrationPath,
-    );
-
-  const migrations =
-    await Promise.all(
-      migrationPaths.map(
-        async (filePath) => {
-          const sql =
-            await readFile(
-              filePath,
-              "utf8",
-            );
-
-          const id =
-            path.basename(
-              filePath,
-              path.extname(
-                filePath,
-              ),
-            );
-
-          if (
-            !MIGRATION_ID_PATTERN.test(
-              id,
-            )
-          ) {
-            throw new TypeError(
-              `Operational migration ${id} `
-              + "has an invalid migration ID.",
-            );
-          }
-
-          const statements =
-            splitSqlStatements(
-              sql,
-            );
-
-          if (
-            statements.length === 0
-          ) {
-            throw new TypeError(
-              `Operational migration ${id} `
-              + "contains no SQL statements.",
-            );
-          }
-
-          return {
-            id,
-            filePath,
-
-            checksum:
-              operationalMigrationChecksum(
-                sql,
-              ),
-
-            statements,
-
-            statementChecksums:
-              statements.map(
-                operationalMigrationChecksum,
-              ),
-          };
-        },
-      ),
-    );
-
-  migrations.sort(
-    (left, right) =>
-      left.id.localeCompare(
-        right.id,
-      ),
-  );
-
-  const migrationIds =
-    migrations.map(
-      (migration) =>
-        migration.id,
-    );
-
-  if (
-    new Set(migrationIds).size
-    !== migrationIds.length
-  ) {
-    throw new TypeError(
-      "Operational migration IDs "
-      + "must be unique.",
-    );
-  }
-
-  return migrations;
+function migrationId(filePath) {
+  return path.basename(filePath, path.extname(filePath));
 }
 
-function requireConnection(
-  connection,
-) {
-  if (
-    !connection
-    || typeof connection.query
-      !== "function"
-  ) {
-    throw new TypeError(
-      "A MySQL-compatible migration "
-      + "connection is required.",
-    );
+function partitionPaths(value) {
+  const core = [];
+  const extension = [];
+  for (const filePath of canonicalPaths(value)) {
+    (extensionIds.has(migrationId(filePath)) ? extension : core).push(filePath);
   }
-
-  return connection;
+  return { core, extension };
 }
 
-async function withConnection(
-  pool,
-  operation,
-) {
-  if (
-    !pool
-    || (
-      typeof pool.getConnection
-        !== "function"
-      && typeof pool.query
-        !== "function"
-    )
-  ) {
-    throw new TypeError(
-      "A MySQL-compatible migration "
-      + "pool is required.",
-    );
+function filterStatus(status, permittedIds) {
+  return {
+    applied: (status.applied || []).filter((item) => permittedIds.has(item.id)),
+    pending: (status.pending || []).filter((item) => permittedIds.has(item.id)),
+    inProgress: (status.inProgress || []).filter((item) => permittedIds.has(item.id)),
+  };
+}
+
+async function withConnection(pool, operation) {
+  const connection = typeof pool?.getConnection === "function" ? await pool.getConnection() : pool;
+  if (!connection || typeof connection.query !== "function") {
+    throw new TypeError("A MySQL-compatible migration pool is required.");
   }
-
-  if (
-    typeof pool.getConnection
-    !== "function"
-  ) {
-    return operation(
-      requireConnection(
-        pool,
-      ),
-    );
-  }
-
-  const connection =
-    requireConnection(
-      await pool.getConnection(),
-    );
-
   try {
-    return await operation(
-      connection,
-    );
+    return await operation(connection);
   } finally {
-    connection.release();
+    if (connection !== pool) connection.release();
   }
 }
 
-function isAdoptionIdempotencyError(
-  error,
-) {
-  return new Set([
-    "ER_CHECK_CONSTRAINT_DUP_NAME",
-    "ER_DUP_ENTRY",
-    "ER_DUP_FIELDNAME",
-    "ER_DUP_KEY",
-    "ER_DUP_KEYNAME",
-    "ER_FK_DUP_NAME",
-    "ER_TABLE_EXISTS_ERROR",
-    "ER_TRG_ALREADY_EXISTS",
-  ]).has(
-    error?.code,
-  );
+async function loadExtensionMigrations(paths) {
+  return Promise.all(paths.map(async (filePath) => {
+    const source = await readFile(filePath, "utf8");
+    const statements = splitOperationalMigrationStatements(source);
+    return {
+      id: migrationId(filePath),
+      filePath,
+      checksum: checksum(source),
+      statements,
+      statementChecksums: statements.map(checksum),
+    };
+  }));
 }
 
-function normalizeApplicationVersion(
-  value,
-) {
-  if (
-    value === undefined
-    || value === null
-    || value === ""
-  ) {
-    return null;
-  }
-
-  const rendered =
-    String(value).trim();
-
-  if (!rendered) {
-    return null;
-  }
-
-  if (rendered.length > 128) {
-    throw new TypeError(
-      "applicationVersion must not "
-      + "exceed 128 characters.",
-    );
-  }
-
-  return rendered;
-}
-
-async function ensureMigrationHistory(
-  connection,
-) {
-  await connection.query(
-    migrationHistorySql,
-  );
-
-  await connection.query(
-    migrationStatementHistorySql,
-  );
-}
-
-async function readMigrationHistory(
-  connection,
-) {
-  const [
-    rows,
-  ] =
+async function extensionHistory(connection) {
+  const migrationRows = extractOperationalMigrationRows(
     await connection.query(
-      `
-        SELECT
-          migration_id,
-          checksum,
-          applied_at,
-          execution_duration_ms,
-          application_version
-        FROM operational_migration_history
-        ORDER BY migration_id
-      `,
-    );
-
-  return Array.isArray(rows)
-    ? rows
-    : [];
-}
-
-async function readStatementHistory(
-  connection,
-) {
-  const [
-    rows,
-  ] =
-    await connection.query(
-      `
-        SELECT
-          migration_id,
-          statement_index,
-          statement_checksum,
-          adopted,
-          applied_at
-        FROM operational_migration_statement_history
-        ORDER BY
-          migration_id,
-          statement_index
-      `,
-    );
-
-  return Array.isArray(rows)
-    ? rows
-    : [];
-}
-
-function statementHistoryByMigration(
-  rows,
-) {
-  const byMigration =
-    new Map();
-
-  for (const row of rows) {
-    const migrationId =
-      String(
-        row.migration_id
-        || "",
-      ).trim();
-
-    const statementIndex =
-      Number(
-        row.statement_index,
-      );
-
-    if (
-      !migrationId
-      || !Number.isSafeInteger(
-        statementIndex,
-      )
-      || statementIndex <= 0
-    ) {
-      continue;
-    }
-
-    if (
-      !byMigration.has(
-        migrationId,
-      )
-    ) {
-      byMigration.set(
-        migrationId,
-        new Map(),
-      );
-    }
-
-    byMigration
-      .get(
-        migrationId,
-      )
-      .set(
-        statementIndex,
-        row,
-      );
-  }
-
-  return byMigration;
-}
-
-function validateMigrationChecksums(
-  migrations,
-  appliedById,
-) {
-  for (const migration of migrations) {
-    const applied =
-      appliedById.get(
-        migration.id,
-      );
-
-    if (
-      applied
-      && applied.checksum
-        !== migration.checksum
-    ) {
-      throw new OperationalMigrationChecksumMismatchError(
-        migration.id,
-      );
-    }
-  }
-}
-
-function validateStatementChecksum(
-  migration,
-  statementIndex,
-  recorded,
-) {
-  const expected =
-    migration
-      .statementChecksums[
-        statementIndex - 1
-      ];
-
-  if (
-    recorded?.statement_checksum
-    !== expected
-  ) {
-    throw new OperationalMigrationStatementChecksumMismatchError(
-      migration.id,
-      statementIndex,
-    );
-  }
-}
-
-function requiresProspectiveMetadataVerification(
-  migrations,
-) {
-  return migrations.some(
-    (migration) =>
-      migration.id
-      === CANONICAL_OPERATIONAL_MIGRATION_ID,
+      `SELECT migration_id, checksum, applied_at, execution_duration_ms,
+              application_version
+         FROM operational_migration_history`,
+    ),
+    "migration history",
   );
+  const statementRows = extractOperationalMigrationRows(
+    await connection.query(
+      `SELECT migration_id, statement_index, statement_checksum, adopted,
+              applied_at
+         FROM operational_migration_statement_history`,
+    ),
+    "statement history",
+  );
+  return {
+    migrations: new Map(migrationRows.map((row) => [row.migration_id, row])),
+    statements: new Map(statementRows.map((row) => [
+      `${row.migration_id}:${Number(row.statement_index)}`,
+      row,
+    ])),
+  };
 }
 
-async function verifyProspectiveMetadata(
-  connection,
-) {
-  const [
-    rows,
-  ] =
+function validateRecordedMigration(migration, recorded) {
+  if (recorded && recorded.checksum !== migration.checksum) {
+    const error = new Error(`Applied operational migration ${migration.id} no longer matches its checksum.`);
+    error.code = "OPERATIONAL_MIGRATION_CHECKSUM_MISMATCH";
+    error.migrationId = migration.id;
+    throw error;
+  }
+}
+
+function validateRecordedStatement(migration, index, recorded) {
+  if (recorded && recorded.statement_checksum !== migration.statementChecksums[index - 1]) {
+    const error = new Error(`Operational migration ${migration.id} statement ${index} checksum changed.`);
+    error.code = "OPERATIONAL_MIGRATION_STATEMENT_CHECKSUM_MISMATCH";
+    error.migrationId = migration.id;
+    error.statementIndex = index;
+    throw error;
+  }
+}
+
+async function verifyCanonicalMetadata(connection) {
+  const rows = extractOperationalMigrationRows(
     await connection.query(
-      `
-        SELECT
-          schema_version,
-          migration_version
-        FROM data_plane_metadata
+      `SELECT schema_version, migration_version
+         FROM data_plane_metadata
         WHERE metadata_key = 'primary'
-        LIMIT 2
-      `,
-    );
-
-  if (
-    !Array.isArray(rows)
-    || rows.length !== 1
-  ) {
-    throw new OperationalMigrationMetadataError(
-      "Operational data-plane metadata "
-      + "must contain exactly one primary row.",
-    );
-  }
-
-  const row =
-    rows[0];
-
-  if (
-    String(
-      row.schema_version
-      ?? "",
-    ).trim()
-      !== CANONICAL_OPERATIONAL_SCHEMA_VERSION
-    || Number(
-      row.migration_version,
-    )
-      !== CANONICAL_OPERATIONAL_MIGRATION_VERSION
-  ) {
-    throw new OperationalMigrationMetadataError(
-      "Operational data-plane metadata "
-      + "was not advanced to schema version "
-      + `${CANONICAL_OPERATIONAL_SCHEMA_VERSION}.`,
-    );
-  }
-}
-
-export async function getOperationalMigrationStatus(
-  pool,
-  {
-    migrationPath =
-      defaultMigrationPaths,
-  } = {},
-) {
-  const migrations =
-    await loadMigrations(
-      migrationPath,
-    );
-
-  return withConnection(
-    pool,
-    async (connection) => {
-      await ensureMigrationHistory(
-        connection,
-      );
-
-      const historyRows =
-        await readMigrationHistory(
-          connection,
-        );
-
-      const statementRows =
-        await readStatementHistory(
-          connection,
-        );
-
-      const appliedById =
-        new Map(
-          historyRows.map(
-            (row) => [
-              row.migration_id,
-              row,
-            ],
-          ),
-        );
-
-      const statementsByMigration =
-        statementHistoryByMigration(
-          statementRows,
-        );
-
-      validateMigrationChecksums(
-        migrations,
-        appliedById,
-      );
-
-      const pending =
-        migrations
-          .filter(
-            (migration) =>
-              !appliedById.has(
-                migration.id,
-              ),
-          )
-          .map(
-            (migration) => {
-              const recorded =
-                statementsByMigration.get(
-                  migration.id,
-                )
-                || new Map();
-
-              for (
-                let index = 1;
-                index
-                  <= migration.statements.length;
-                index += 1
-              ) {
-                if (
-                  recorded.has(
-                    index,
-                  )
-                ) {
-                  validateStatementChecksum(
-                    migration,
-                    index,
-                    recorded.get(
-                      index,
-                    ),
-                  );
-                }
-              }
-
-              return {
-                id:
-                  migration.id,
-
-                checksum:
-                  migration.checksum,
-
-                statementCount:
-                  migration.statements.length,
-
-                completedStatementCount:
-                  recorded.size,
-
-                remainingStatementCount:
-                  Math.max(
-                    0,
-                    migration.statements.length
-                    - recorded.size,
-                  ),
-              };
-            },
-          );
-
-      return {
-        applied:
-          historyRows.map(
-            (row) => ({
-              id:
-                row.migration_id,
-
-              checksum:
-                row.checksum,
-
-              appliedAt:
-                row.applied_at,
-
-              executionDurationMs:
-                Number(
-                  row.execution_duration_ms,
-                ),
-
-              applicationVersion:
-                row.application_version
-                || null,
-            }),
-          ),
-
-        pending,
-
-        inProgress:
-          pending.filter(
-            (migration) =>
-              migration
-                .completedStatementCount
-              > 0,
-          ),
-      };
-    },
+        LIMIT 2`,
+    ),
+    "schema metadata",
   );
+  if (rows.length !== 1
+      || String(rows[0].schema_version) !== CANONICAL_OPERATIONAL_SCHEMA_VERSION
+      || Number(rows[0].migration_version) < CANONICAL_OPERATIONAL_MIGRATION_VERSION) {
+    const error = new Error("Operational metadata was not advanced monotonically to schema 17.");
+    error.code = "OPERATIONAL_MIGRATION_METADATA_MISMATCH";
+    throw error;
+  }
 }
 
-export async function applyMigrations(
-  pool,
-  migrationPath =
-    defaultMigrationPaths,
-  {
-    applicationVersion =
-      process.env
-        .CLAIMGUARD_APP_VERSION
-      || null,
-  } = {},
-) {
-  const migrations =
-    await loadMigrations(
-      migrationPath,
-    );
-
-  const canonicalApplicationVersion =
-    normalizeApplicationVersion(
-      applicationVersion,
-    );
-
-  return withConnection(
-    pool,
-    async (connection) => {
-      const [
-        lockRows,
-      ] =
-        await connection.query(
-          "SELECT GET_LOCK(?, 30) AS acquired",
-          [
-            MIGRATION_LOCK_NAME,
-          ],
-        );
-
-      if (
-        Number(
-          lockRows?.[0]?.acquired,
-        ) !== 1
-      ) {
-        throw new Error(
-          "Could not acquire the "
-          + "operational migration lock.",
-        );
-      }
-
-      try {
-        await ensureMigrationHistory(
-          connection,
-        );
-
-        const historyRows =
-          await readMigrationHistory(
-            connection,
-          );
-
-        const statementRows =
-          await readStatementHistory(
-            connection,
-          );
-
-        const appliedById =
-          new Map(
-            historyRows.map(
-              (row) => [
-                row.migration_id,
-                row,
-              ],
-            ),
-          );
-
-        const statementsByMigration =
-          statementHistoryByMigration(
-            statementRows,
-          );
-
-        validateMigrationChecksums(
-          migrations,
-          appliedById,
-        );
-
-        const applied = [];
-        const skipped = [];
-
+async function applyExtensionMigrations(pool, paths, { applicationVersion = null } = {}) {
+  if (paths.length === 0) return { applied: [], skipped: [], appliedStatements: 0, adoptedStatements: 0, resumedStatements: 0 };
+  const migrations = await loadExtensionMigrations(paths);
+  return withConnection(pool, async (connection) => {
+    const [lockRows] = await connection.query("SELECT GET_LOCK(?, 30) AS acquired", [MIGRATION_LOCK_NAME]);
+    if (Number(lockRows?.[0]?.acquired) !== 1) throw new Error("Could not acquire the operational migration lock.");
+    try {
+      const history = await extensionHistory(connection);
+      const result = { applied: [], skipped: [], appliedStatements: 0, adoptedStatements: 0, resumedStatements: 0 };
+      for (const migration of migrations) {
+        const recordedMigration = history.migrations.get(migration.id);
+        validateRecordedMigration(migration, recordedMigration);
+        if (recordedMigration) {
+          result.skipped.push(migration.id);
+          continue;
+        }
+        const startedAt = Date.now();
         let appliedStatements = 0;
         let adoptedStatements = 0;
         let resumedStatements = 0;
-
-        for (const migration of migrations) {
-          if (
-            appliedById.has(
-              migration.id,
-            )
-          ) {
-            skipped.push(
-              migration.id,
-            );
-
+        for (let index = 1; index <= migration.statements.length; index += 1) {
+          const recorded = history.statements.get(`${migration.id}:${index}`);
+          if (recorded) {
+            validateRecordedStatement(migration, index, recorded);
+            result.resumedStatements += 1;
+            resumedStatements += 1;
             continue;
           }
-
-          const recordedStatements =
-            statementsByMigration.get(
-              migration.id,
-            )
-            || new Map();
-
-          const startedAt =
-            Date.now();
-
-          let migrationAppliedStatements = 0;
-          let migrationAdoptedStatements = 0;
-          let migrationResumedStatements = 0;
-
-          for (
-            let index = 0;
-            index
-              < migration.statements.length;
-            index += 1
-          ) {
-            const statementIndex =
-              index + 1;
-
-            const existingStatement =
-              recordedStatements.get(
-                statementIndex,
-              );
-
-            if (existingStatement) {
-              validateStatementChecksum(
-                migration,
-                statementIndex,
-                existingStatement,
-              );
-
-              resumedStatements += 1;
-              migrationResumedStatements += 1;
-
-              continue;
+          let adopted = false;
+          try {
+            await connection.query(migration.statements[index - 1]);
+          } catch (cause) {
+            if (!adoptionCodes.has(cause?.code)) {
+              const error = new OperationalMigrationExecutionError(migration.id, index, cause);
+              error.executableStatement = migration.statements[index - 1];
+              error.mysqlCode = cause?.code || null;
+              error.sqlState = cause?.sqlState || null;
+              error.sqlMessage = cause?.sqlMessage || cause?.message || null;
+              throw error;
             }
-
-            let adopted = false;
-
-            try {
-              await connection.query(
-                migration.statements[
-                  index
-                ],
-              );
-            } catch (error) {
-              if (
-                !isAdoptionIdempotencyError(
-                  error,
-                )
-              ) {
-                throw new OperationalMigrationExecutionError(
-                  migration.id,
-                  statementIndex,
-                  error,
-                );
-              }
-
-              adopted = true;
-            }
-
-            await connection.query(
-              `
-                INSERT INTO operational_migration_statement_history (
-                  migration_id,
-                  statement_index,
-                  statement_checksum,
-                  adopted
-                )
-                VALUES (?, ?, ?, ?)
-              `,
-              [
-                migration.id,
-                statementIndex,
-                migration
-                  .statementChecksums[
-                    index
-                  ],
-                adopted ? 1 : 0,
-              ],
-            );
-
-            appliedStatements += 1;
-            migrationAppliedStatements += 1;
-
-            if (adopted) {
-              adoptedStatements += 1;
-              migrationAdoptedStatements += 1;
-            }
+            adopted = true;
           }
-
-          if (
-            migration.id
-            === CANONICAL_OPERATIONAL_MIGRATION_ID
-          ) {
-            await verifyProspectiveMetadata(
-              connection,
-            );
-          }
-
-          const executionDurationMs =
-            Math.max(
-              0,
-              Date.now()
-              - startedAt,
-            );
-
           await connection.query(
-            `
-              INSERT INTO operational_migration_history (
-                migration_id,
-                checksum,
-                execution_duration_ms,
-                application_version
-              )
-              VALUES (?, ?, ?, ?)
-            `,
-            [
-              migration.id,
-              migration.checksum,
-              executionDurationMs,
-              canonicalApplicationVersion,
-            ],
+            `INSERT INTO operational_migration_statement_history
+               (migration_id, statement_index, statement_checksum, adopted)
+             VALUES (?, ?, ?, ?)`,
+            [migration.id, index, migration.statementChecksums[index - 1], adopted ? 1 : 0],
           );
-
-          applied.push({
-            id:
-              migration.id,
-
-            checksum:
-              migration.checksum,
-
-            executionDurationMs,
-
-            statementCount:
-              migration.statements.length,
-
-            appliedStatements:
-              migrationAppliedStatements,
-
-            adoptedStatements:
-              migrationAdoptedStatements,
-
-            resumedStatements:
-              migrationResumedStatements,
-          });
+          result.appliedStatements += 1;
+          appliedStatements += 1;
+          if (adopted) {
+            result.adoptedStatements += 1;
+            adoptedStatements += 1;
+          }
         }
-
-        if (
-          requiresProspectiveMetadataVerification(
-            migrations,
-          )
-        ) {
-          await verifyProspectiveMetadata(
-            connection,
-          );
-        }
-
-        return {
-          applied,
-          skipped,
-          pending: [],
+        if (migration.id === "0017_case_state_machine") await verifyCanonicalMetadata(connection);
+        await connection.query(
+          `INSERT INTO operational_migration_history
+             (migration_id, checksum, execution_duration_ms, application_version)
+           VALUES (?, ?, ?, ?)`,
+          [migration.id, migration.checksum, Math.max(0, Date.now() - startedAt), applicationVersion],
+        );
+        result.applied.push({
+          id: migration.id,
+          checksum: migration.checksum,
+          statementCount: migration.statements.length,
           appliedStatements,
           adoptedStatements,
           resumedStatements,
-
-          migrationPath:
-            migrations.length === 1
-              ? migrations[0].filePath
-              : null,
-
-          migrationPaths:
-            migrations.map(
-              (migration) =>
-                migration.filePath,
-            ),
-
-          warning:
-            "MySQL DDL can implicitly commit. "
-            + "Statement-level checksums preserve "
-            + "exact resume state, and a migration "
-            + "is complete only after its history "
-            + "row is recorded.",
-        };
-      } finally {
-        await connection
-          .query(
-            "SELECT RELEASE_LOCK(?) AS released",
-            [
-              MIGRATION_LOCK_NAME,
-            ],
-          )
-          .catch(
-            () => undefined,
-          );
+        });
       }
-    },
-  );
-}
-
-function databaseNameFromUrl(
-  databaseUrl,
-) {
-  const parsed =
-    new URL(
-      databaseUrl,
-    );
-
-  const databaseName =
-    decodeURIComponent(
-      parsed.pathname
-        .replace(
-          /^\//,
-          "",
-        ),
-    );
-
-  if (
-    !databaseName
-    || !/^[A-Za-z0-9_-]+$/.test(
-      databaseName,
-    )
-  ) {
-    throw new TypeError(
-      "MYSQL_URL must include a safe "
-      + "operational database name.",
-    );
-  }
-
-  return databaseName;
-}
-
-async function ensureDatabaseExists(
-  databaseUrl,
-) {
-  const {
-    buildConnectionOptions,
-  } =
-    await import(
-      "./client.js"
-    );
-
-  const connectionOptions =
-    buildConnectionOptions(
-      databaseUrl,
-      {
-        includeDatabase: false,
-      },
-    );
-
-  const databaseName =
-    databaseNameFromUrl(
-      databaseUrl,
-    );
-
-  const adminPool =
-    await import(
-      "mysql2/promise"
-    ).then(
-      ({
-        default: mysql,
-      }) =>
-        mysql.createPool(
-          connectionOptions,
-        ),
-    );
-
-  try {
-    await adminPool.query(
-      `CREATE DATABASE IF NOT EXISTS \`${databaseName}\``,
-    );
-  } finally {
-    await adminPool.end();
-  }
-}
-
-const isDirectExecution =
-  process.argv[1]
-  === fileURLToPath(
-    import.meta.url,
-  );
-
-if (isDirectExecution) {
-  (async () => {
-    if (
-      process.env
-        .OPERATIONAL_ADMIN_MODE
-      !== "legacy_shared"
-    ) {
-      throw new Error(
-        "Operational migrations require "
-        + "OPERATIONAL_ADMIN_MODE=legacy_shared.",
-      );
-    }
-
-    const databaseUrl =
-      process.env.MYSQL_URL;
-
-    if (!databaseUrl) {
-      throw new Error(
-        "MYSQL_URL must be set "
-        + "to run migrations",
-      );
-    }
-
-    let pool;
-
-    try {
-      const {
-        createMysqlConnection,
-      } =
-        await import(
-          "./client.js"
-        );
-
-      pool =
-        createMysqlConnection(
-          databaseUrl,
-        );
-
-      console.log(
-        JSON.stringify(
-          await applyMigrations(
-            pool,
-          ),
-          null,
-          2,
-        ),
-      );
-    } catch (error) {
-      if (
-        error?.code
-        === "ER_BAD_DB_ERROR"
-      ) {
-        await ensureDatabaseExists(
-          databaseUrl,
-        );
-
-        if (pool) {
-          await pool.end();
-        }
-
-        const {
-          createMysqlConnection,
-        } =
-          await import(
-            "./client.js"
-          );
-
-        pool =
-          createMysqlConnection(
-            databaseUrl,
-          );
-
-        console.log(
-          JSON.stringify(
-            await applyMigrations(
-              pool,
-            ),
-            null,
-            2,
-          ),
-        );
-      } else {
-        throw error;
-      }
+      await verifyCanonicalMetadata(connection);
+      return result;
     } finally {
-      if (pool) {
-        await pool.end();
+      await connection.query("SELECT RELEASE_LOCK(?) AS released", [MIGRATION_LOCK_NAME]).catch(() => undefined);
+    }
+  });
+}
+
+export async function getOperationalMigrationStatus(pool, { migrationPath = defaultMigrationPaths } = {}) {
+  const { core, extension } = partitionPaths(migrationPath);
+  const coreIds = new Set(core.map(migrationId));
+  const coreStatus = filterStatus(
+    await getCoreOperationalMigrationStatus(pool, { migrationPath: core }),
+    coreIds,
+  );
+  if (extension.length === 0) return coreStatus;
+  const migrations = await loadExtensionMigrations(extension);
+  return withConnection(pool, async (connection) => {
+    const history = await extensionHistory(connection);
+    const pending = [];
+    for (const migration of migrations) {
+      const recordedMigration = history.migrations.get(migration.id);
+      validateRecordedMigration(migration, recordedMigration);
+      if (!recordedMigration) {
+        let completedStatementCount = 0;
+        for (let index = 1; index <= migration.statements.length; index += 1) {
+          const recorded = history.statements.get(`${migration.id}:${index}`);
+          validateRecordedStatement(migration, index, recorded);
+          if (recorded) completedStatementCount += 1;
+        }
+        pending.push({
+          id: migration.id,
+          checksum: migration.checksum,
+          statementCount: migration.statements.length,
+          completedStatementCount,
+          remainingStatementCount: migration.statements.length - completedStatementCount,
+        });
       }
     }
-  })().catch(
-    (error) => {
-      console.error(
-        error,
-      );
+    return {
+      applied: [
+        ...coreStatus.applied,
+        ...migrations.filter((item) => history.migrations.has(item.id)).map((item) => ({ id: item.id, checksum: item.checksum })),
+      ],
+      pending: [...coreStatus.pending, ...pending],
+      inProgress: [...coreStatus.inProgress, ...pending.filter((item) => item.completedStatementCount > 0)],
+    };
+  });
+}
 
-      process.exit(1);
-    },
-  );
+export async function applyMigrations(pool, migrationPath = defaultMigrationPaths, options = {}) {
+  const { core, extension } = partitionPaths(migrationPath);
+  const coreResult = core.length > 0
+    ? await applyCoreMigrations(pool, core, options)
+    : { applied: [], skipped: [], appliedStatements: 0, adoptedStatements: 0, resumedStatements: 0 };
+  const extensionResult = await applyExtensionMigrations(pool, extension, options);
+  return {
+    ...coreResult,
+    applied: [...coreResult.applied, ...extensionResult.applied],
+    skipped: [...coreResult.skipped, ...extensionResult.skipped],
+    appliedStatements: coreResult.appliedStatements + extensionResult.appliedStatements,
+    adoptedStatements: coreResult.adoptedStatements + extensionResult.adoptedStatements,
+    resumedStatements: coreResult.resumedStatements + extensionResult.resumedStatements,
+    migrationPath: null,
+    migrationPaths: canonicalPaths(migrationPath),
+  };
 }

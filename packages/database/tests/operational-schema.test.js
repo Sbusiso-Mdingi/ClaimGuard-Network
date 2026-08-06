@@ -27,6 +27,11 @@ test("canonical operational schema bindings and deployment inputs do not drift",
     Number(CANONICAL_OPERATIONAL_SCHEMA_VERSION),
   );
 
+  assert.deepEqual(
+    defaultMigrationPaths.slice(-2).map((migrationPath) => path.basename(migrationPath)),
+    ["0016_domain_safety_foundation.sql", "0017_case_state_machine.sql"],
+  );
+
   const canonicalMigrationPath = defaultMigrationPaths.at(-1);
   assert.equal(
     path.basename(canonicalMigrationPath),
@@ -38,9 +43,14 @@ test("canonical operational schema bindings and deployment inputs do not drift",
     migrationSql,
     new RegExp(
       `SET\\s+schema_version\\s*=\\s*'${CANONICAL_OPERATIONAL_SCHEMA_VERSION}'`
-      + `\\s*,\\s*migration_version\\s*=\\s*${CANONICAL_OPERATIONAL_MIGRATION_VERSION}`,
+      + `\\s*,\\s*migration_version\\s*=\\s*GREATEST\\(migration_version,\\s*${CANONICAL_OPERATIONAL_MIGRATION_VERSION}\\)`
+      + `[\\s\\S]*WHERE\\s+metadata_key\\s*=\\s*'primary'`,
       "i",
     ),
+  );
+  assert.doesNotMatch(
+    migrationSql,
+    new RegExp(`migration_version\\s*=\\s*${CANONICAL_OPERATIONAL_MIGRATION_VERSION}\\b`, "i"),
   );
 
   const pythonBinding = await repoFile(

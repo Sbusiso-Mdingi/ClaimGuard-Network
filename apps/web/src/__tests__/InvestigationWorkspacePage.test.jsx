@@ -1,6 +1,5 @@
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -20,9 +19,10 @@ vi.mock("../lib/apiClient", () => ({ apiRequest: vi.fn() }));
 import { apiRequest } from "../lib/apiClient";
 import { InvestigationWorkspacePage } from "../features/investigator/InvestigationWorkspacePage";
 
-function response(body, { ok = true } = {}) {
+function response(body, { ok = true, status = ok ? 200 : 500 } = {}) {
   return Promise.resolve({
     ok,
+    status,
     json: async () => body,
   });
 }
@@ -36,12 +36,40 @@ function investigation(overrides = {}) {
     assignedBy: "analyst-alpha",
     status: "UNDER_REVIEW",
     priority: "HIGH",
+    recordVersion: 2,
     fraudConfirmedAt: null,
     reversedAt: null,
     notes: [],
     evidence: [],
     ...overrides,
   };
+}
+
+function governedDetail(legacyStatus = "UNDER_REVIEW") {
+  return {
+    available: true,
+    case: {
+      caseId: "CASE-1",
+      currentState: "TRIAGE_PENDING",
+      stateVersion: 2,
+      legacyStatus,
+      migrationReviewStatus: "REVIEW_REQUIRED",
+    },
+    allowedActions: [],
+    correlationId: "request-1",
+  };
+}
+
+function mockWorkspaceRequests(investigationRecord) {
+  apiRequest.mockImplementation((path) => {
+    if (path === "/investigations/INV-1") {
+      return response({ available: true, investigation: investigationRecord });
+    }
+    if (path === "/api/v1/cases/by-legacy-investigation/INV-1") {
+      return response(governedDetail(investigationRecord.status));
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
 }
 
 function renderWorkspace() {
@@ -66,58 +94,36 @@ describe("InvestigationWorkspacePage", () => {
   });
   afterEach(() => cleanup());
 
-  test("requires a case-specific reason before publishing a fraud decision", async () => {
+  test("does not expose disabled legacy confirmation even when the old capability is present", async () => {
     roleState.identity.capabilities = [
       "claims.view_own",
       "investigations.view",
       "investigations.confirm_fraud",
     ];
-    const confirmedCase = investigation({ status: "CONFIRMED_FRAUD" });
-    apiRequest.mockImplementation((path, options = {}) => {
-      if (path === "/investigations/INV-1" && !options.method) {
-        return response({ available: true, investigation: confirmedCase });
-      }
-      if (path === "/investigations/confirm-fraud" && options.method === "POST") {
-        return response({ available: true });
-      }
-      return response({ available: false, message: "Unexpected request" }, { ok: false });
-    });
+    mockWorkspaceRequests(investigation({ status: "CONFIRMED_FRAUD" }));
 
     renderWorkspace();
-    const user = userEvent.setup();
-    const confirmButton = await screen.findByRole("button", { name: "Confirm fraud" });
 
-    expect(confirmButton).toBeDisabled();
+    expect(await screen.findByText("Legacy compatibility details")).toBeInTheDocument();
+    expect(await screen.findByText("Governed case")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open claim" })).toHaveAttribute("href", "/claims/CLAIM-1");
-
-    await user.type(
-      screen.getByLabelText(/Reason for fraud decision/i),
-      "Provider records and member confirmation support the finding.",
+    expect(screen.queryByRole("button", { name: "Confirm fraud" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Reason for fraud decision/i)).not.toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+    expect(apiRequest).not.toHaveBeenCalledWith(
+      "/investigations/confirm-fraud",
+      expect.anything(),
     );
-    await user.click(confirmButton);
-
-    await waitFor(() => {
-      expect(apiRequest).toHaveBeenCalledWith("/investigations/confirm-fraud", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          investigationId: "INV-1",
-          claimId: "CLAIM-1",
-          reason: "Provider records and member confirmation support the finding.",
-        }),
-      });
-    });
   });
 
-  test("shows fraud analysts only the actions granted by their capabilities", async () => {
+  test("shows fraud analysts only the actions granted by supported capabilities", async () => {
     roleState.identity.capabilities = [
       "investigations.view",
       "investigations.change_priority",
       "investigations.add_note",
+      "investigations.update_status",
     ];
-    apiRequest.mockResolvedValue(
-      await response({ available: true, investigation: investigation() }),
-    );
+    mockWorkspaceRequests(investigation());
 
     renderWorkspace();
 

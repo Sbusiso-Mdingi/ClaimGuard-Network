@@ -1,3 +1,9 @@
+const DISABLED_LEGACY_MUTATION_CAPABILITIES = Object.freeze(new Set([
+  "investigations.update_status",
+  "investigations.confirm_fraud",
+  "investigations.reverse_fraud",
+]));
+
 export function capabilitiesFor(identity) {
   return new Set(
     Array.isArray(identity?.capabilities)
@@ -9,18 +15,17 @@ export function capabilitiesFor(identity) {
 export function hasCapability(identity, capability) {
   return Boolean(
     capability
+    && !DISABLED_LEGACY_MUTATION_CAPABILITIES.has(capability)
     && capabilitiesFor(identity).has(capability),
   );
 }
 
 export function hasEveryCapability(identity, capabilities = []) {
-  const granted = capabilitiesFor(identity);
-  return capabilities.every((capability) => granted.has(capability));
+  return capabilities.every((capability) => hasCapability(identity, capability));
 }
 
 export function hasAnyCapability(identity, capabilities = []) {
-  const granted = capabilitiesFor(identity);
-  return capabilities.some((capability) => granted.has(capability));
+  return capabilities.some((capability) => hasCapability(identity, capability));
 }
 
 export function defaultRouteForIdentity(identity) {

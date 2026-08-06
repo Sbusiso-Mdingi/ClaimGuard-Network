@@ -257,7 +257,7 @@ function createLifecycleFraudWorkflowStub(investigationRepository) {
   });
 }
 
-test("investigation endpoints create, progress, annotate, and retrieve the lifecycle", async () => {
+test("legacy investigation reads, notes, evidence and neutral metadata remain available while status writes are blocked", async () => {
   const investigationRepository = createInvestigationRepositoryStub();
   const dependencies = {
     investigationRepository,
@@ -312,19 +312,20 @@ test("investigation endpoints create, progress, annotate, and retrieve the lifec
     `http://localhost/investigations/${investigationId}`,
     jsonRequest({ status: "UNDER_REVIEW" }, "PATCH", "W/\"investigation-1\""),
   );
-  assert.equal(statusResponse.status, 200);
-  assert.equal((await statusResponse.json()).investigation.status, "UNDER_REVIEW");
+  const statusBody = await statusResponse.json();
+  assert.equal(statusResponse.status, 409);
+  assert.equal(statusBody.code, "LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED");
 
   const priorityResponse = await analystApp.request(
     `http://localhost/investigations/${investigationId}`,
-    jsonRequest({ priority: "high" }, "PATCH", "W/\"investigation-2\""),
+    jsonRequest({ priority: "high" }, "PATCH", "W/\"investigation-1\""),
   );
   assert.equal(priorityResponse.status, 200);
   assert.equal((await priorityResponse.json()).investigation.priority, "HIGH");
 
   const noteResponse = await analystApp.request(
     `http://localhost/investigations/${investigationId}/notes`,
-    jsonRequest({ text: "Provider review requested.", noteType: "Provider Review" }, "POST", "W/\"investigation-3\""),
+    jsonRequest({ text: "Provider review requested.", noteType: "Provider Review" }, "POST", "W/\"investigation-2\""),
   );
   assert.equal(noteResponse.status, 201);
   assert.equal((await noteResponse.json()).note.noteType, "PROVIDER_REVIEW");
@@ -337,7 +338,7 @@ test("investigation endpoints create, progress, annotate, and retrieve the lifec
       evidenceType: "provider invoice",
       contentType: "text/plain",
       contentBase64: Buffer.from("Invoice used for provider review.").toString("base64"),
-    }, "POST", "W/\"investigation-4\""),
+    }, "POST", "W/\"investigation-3\""),
   );
   const evidenceBody = await evidenceResponse.json();
   assert.equal(evidenceResponse.status, 201, JSON.stringify(evidenceBody));
@@ -349,11 +350,12 @@ test("investigation endpoints create, progress, annotate, and retrieve the lifec
   const retrieved = await retrievedResponse.json();
 
   assert.equal(retrievedResponse.status, 200);
+  assert.equal(retrieved.investigation.status, "OPEN");
   assert.equal(retrieved.investigation.notes.length, 1);
   assert.equal(retrieved.investigation.evidence.length, 1);
 });
 
-test("investigation APIs enforce status transitions and investigator or analyst permissions", async () => {
+test("legacy status mutation is blocked independently of historical role permissions", async () => {
   const investigationRepository = createInvestigationRepositoryStub({
     investigations: [
       {
@@ -387,17 +389,14 @@ test("investigation APIs enforce status transitions and investigator or analyst 
   });
   const url = "http://localhost/investigations/investigation-authorization";
 
-  const invalidTransition = await investigatorApp.request(
-    url,
-    jsonRequest({ status: "CONFIRMED_FRAUD" }, "PATCH", "W/\"investigation-1\""),
-  );
-  assert.equal(invalidTransition.status, 409);
-
-  const analystStatus = await analystApp.request(
-    url,
-    jsonRequest({ status: "UNDER_REVIEW" }, "PATCH", "W/\"investigation-1\""),
-  );
-  assert.equal(analystStatus.status, 403);
+  for (const app of [investigatorApp, analystApp]) {
+    const response = await app.request(
+      url,
+      jsonRequest({ status: "UNDER_REVIEW" }, "PATCH", "W/\"investigation-1\""),
+    );
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).code, "LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED");
+  }
 
   const schemeUserCreate = await schemeUserApp.request(
     "http://localhost/investigations",
@@ -423,7 +422,7 @@ test("investigation APIs enforce status transitions and investigator or analyst 
   assert.equal(platformUpdate.status, 403);
 });
 
-test("investigation resources are isolated to the active tenant", async () => {
+test("legacy investigation resources remain tenant-isolated and disabled confirmation reveals no foreign existence", async () => {
   const investigationRepository = createInvestigationRepositoryStub({
     investigations: [
       {
@@ -467,14 +466,16 @@ test("investigation resources are isolated to the active tenant", async () => {
       reason: "Cross-tenant confirmation must fail.",
     }),
   );
+  const confirmBody = await confirmResponse.json();
 
   assert.equal(getResponse.status, 404);
   assert.equal(noteResponse.status, 404);
-  assert.equal(confirmResponse.status, 404);
-  assert.equal(fraudWorkflowRepository.confirmations.length, 1);
+  assert.equal(confirmResponse.status, 409);
+  assert.equal(confirmBody.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  assert.equal(fraudWorkflowRepository.confirmations.length, 0);
 });
 
-test("confirmation requires an existing CONFIRMED_FRAUD investigation and retains the existing response shape", async () => {
+test("legacy confirmation is consistently blocked regardless of historical status or resource existence", async () => {
   const investigationRepository = createInvestigationRepositoryStub({
     investigations: [
       {
@@ -514,43 +515,36 @@ test("confirmation requires an existing CONFIRMED_FRAUD investigation and retain
     tenantRepository: createTenantRepositoryStub(),
   });
 
-  const missingResponse = await app.request(
-    "http://localhost/investigations/confirm-fraud",
-    jsonRequest({
+  for (const payload of [
+    {
       investigationId: "missing-investigation",
       claimId: "claim-alpha-missing",
       investigatorId: "investigator-alpha",
       reason: "This investigation does not exist.",
-    }),
-  );
-  const underReviewResponse = await app.request(
-    "http://localhost/investigations/confirm-fraud",
-    jsonRequest({
+    },
+    {
       investigationId: "investigation-review",
       claimId: "claim-alpha-review",
       investigatorId: "investigator-alpha",
       reason: "The investigation must be completed first.",
-    }),
-  );
-  const confirmedResponse = await app.request(
-    "http://localhost/investigations/confirm-fraud",
-    jsonRequest({
+    },
+    {
       investigationId: "investigation-confirmed",
       claimId: "claim-alpha-confirmed",
       investigatorId: "investigator-alpha",
-      reason: "The evidence supports a fraud finding.",
+      reason: "The evidence supports a historical fraud finding.",
       schemeId: alphaTenant.scheme_id,
       reportVersion: "v20260714",
-    }),
-  );
-  const confirmed = await confirmedResponse.json();
+    },
+  ]) {
+    const response = await app.request(
+      "http://localhost/investigations/confirm-fraud",
+      jsonRequest(payload),
+    );
+    const body = await response.json();
+    assert.equal(response.status, 409);
+    assert.equal(body.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  }
 
-  assert.equal(missingResponse.status, 404);
-  assert.equal(underReviewResponse.status, 409);
-  assert.equal(confirmedResponse.status, 201);
-  assert.equal(confirmed.available, true);
-  assert.equal(confirmed.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
-  assert.equal(confirmed.entry.payload.claimId, "claim-alpha-confirmed");
-  assert.equal(confirmed.entry.payload.actor.id, "investigator-alpha");
-  assert.equal(fraudWorkflowRepository.confirmations.length, 3);
+  assert.equal(fraudWorkflowRepository.confirmations.length, 0);
 });

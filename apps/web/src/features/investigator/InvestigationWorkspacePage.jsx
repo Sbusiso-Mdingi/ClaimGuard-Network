@@ -12,18 +12,9 @@ import {
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
+import { GovernedCaseActionPanel } from "./GovernedCaseActionPanel";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-
-const NEXT_STATUS_OPTIONS = Object.freeze({
-  OPEN: ["UNDER_REVIEW", "AWAITING_EVIDENCE", "CLOSED"],
-  UNDER_REVIEW: ["AWAITING_EVIDENCE", "CONFIRMED_FRAUD", "NO_FRAUD_FOUND", "CLOSED"],
-  AWAITING_EVIDENCE: ["UNDER_REVIEW", "CLOSED"],
-  CONFIRMED_FRAUD: ["CLOSED"],
-  REVERSED: ["CLOSED"],
-  NO_FRAUD_FOUND: ["CLOSED"],
-  CLOSED: [],
-});
 
 function fileAsBase64(file) {
   return new Promise((resolve, reject) => {
@@ -51,7 +42,6 @@ export function InvestigationWorkspacePage() {
   const [noteText, setNoteText] = useState("");
   const [evidenceForm, setEvidenceForm] = useState({ file: null, description: "", evidenceType: "" });
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [decisionReason, setDecisionReason] = useState("");
   const [actionMessage, setActionMessage] = useState(null);
 
   const load = useCallback(async () => {
@@ -73,7 +63,7 @@ export function InvestigationWorkspacePage() {
     load();
   }, [load]);
 
-  async function callAction(path, body, method = "POST") {
+  async function callLegacySupportedAction(path, body, method = "POST") {
     setActionMessage(null);
     try {
       const versioned = path.startsWith(`/investigations/${encodeURIComponent(investigationId)}`);
@@ -90,7 +80,7 @@ export function InvestigationWorkspacePage() {
         setActionMessage({ tone: "error", text: json.message || "Action failed." });
         return false;
       }
-      setActionMessage({ tone: "success", text: "The investigation was updated." });
+      setActionMessage({ tone: "success", text: "The investigation record was updated." });
       await load();
       return true;
     } catch (error) {
@@ -112,19 +102,10 @@ export function InvestigationWorkspacePage() {
   }
 
   const investigation = state.investigation;
-  const canUpdateStatus = hasCapability(identity, "investigations.update_status");
   const canChangePriority = hasCapability(identity, "investigations.change_priority");
   const canAddNote = hasCapability(identity, "investigations.add_note");
   const canUploadEvidence = hasCapability(identity, "investigations.upload_evidence");
-  const canConfirmFraud = hasCapability(identity, "investigations.confirm_fraud")
-    && investigation.status === "CONFIRMED_FRAUD"
-    && !investigation.fraudConfirmedAt;
-  const canReverseFraud = hasCapability(identity, "investigations.reverse_fraud")
-    && Boolean(investigation.fraudConfirmedAt)
-    && !investigation.reversedAt;
-  const nextStatuses = NEXT_STATUS_OPTIONS[investigation.status] || [];
   const tenantLabel = identity.tenantLabel || identity.tenantId || "active scheme";
-  const canonicalDecisionReason = decisionReason.trim();
 
   return (
     <PageFrame
@@ -137,7 +118,7 @@ export function InvestigationWorkspacePage() {
             Open claim
           </Link>
         ) : null,
-        <MetricPill key="status" label="Status" value={investigation.status} />,
+        <MetricPill key="historical-status" label="Historical status" value={investigation.status} />,
         <MetricPill key="priority" label="Priority" value={investigation.priority} />,
       ].filter(Boolean)}
     >
@@ -147,9 +128,14 @@ export function InvestigationWorkspacePage() {
         </WorkspaceNotice>
       ) : null}
 
+      <GovernedCaseActionPanel
+        legacyInvestigationId={investigation.investigationId}
+        historicalStatus={investigation.status}
+      />
+
       <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-        <SectionCard title="Case details" description="Assignment, status, and priority for this investigation.">
-          <div className="grid gap-3 md:grid-cols-2">
+        <SectionCard title="Legacy compatibility details" description="Assignment, priority, and historical status remain available without controlling the governed lifecycle.">
+          <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-xl border border-border/70 px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Assigned investigator</p>
               <p className="mt-1 text-sm font-semibold">{investigation.assignedInvestigator || "Unassigned"}</p>
@@ -158,25 +144,12 @@ export function InvestigationWorkspacePage() {
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Assigned by</p>
               <p className="mt-1 text-sm font-semibold">{investigation.assignedBy || "Not recorded"}</p>
             </div>
-          </div>
-
-          {canUpdateStatus && nextStatuses.length > 0 && (
-            <div className="mt-4 rounded-xl border border-border/70 p-4">
-              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Update status</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {nextStatuses.map((option) => (
-                  <Button
-                    key={option}
-                    size="sm"
-                    variant="outline"
-                    onClick={() => callAction(`/investigations/${investigation.investigationId}`, { status: option }, "PATCH")}
-                  >
-                    {formatEnumLabel(option)}
-                  </Button>
-                ))}
-              </div>
+            <div className="rounded-xl border border-border/70 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Historical status</p>
+              <p className="mt-1 text-sm font-semibold">{formatEnumLabel(investigation.status)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Read-only audit data</p>
             </div>
-          )}
+          </div>
 
           {canChangePriority && (
             <div className="mt-4 rounded-xl border border-border/70 p-4">
@@ -188,7 +161,7 @@ export function InvestigationWorkspacePage() {
                     size="sm"
                     variant={option === investigation.priority ? "default" : "outline"}
                     disabled={option === investigation.priority}
-                    onClick={() => callAction(`/investigations/${investigation.investigationId}`, { priority: option }, "PATCH")}
+                    onClick={() => callLegacySupportedAction(`/investigations/${investigation.investigationId}`, { priority: option }, "PATCH")}
                   >
                     {formatEnumLabel(option)}
                   </Button>
@@ -196,55 +169,6 @@ export function InvestigationWorkspacePage() {
               </div>
             </div>
           )}
-
-          {(canConfirmFraud || canReverseFraud) ? (
-            <div className="mt-4 space-y-3 rounded-xl border border-rose-500/25 bg-rose-500/5 p-4">
-              <FormField
-                label={canReverseFraud ? "Reason for reversal" : "Reason for fraud decision"}
-                htmlFor="fraud-decision-reason"
-                hint="Required for the immutable audit trail. Use specific, non-sensitive case reasoning."
-              >
-                <textarea
-                  id="fraud-decision-reason"
-                  value={decisionReason}
-                  maxLength={500}
-                  onChange={(event) => setDecisionReason(event.target.value)}
-                  className="min-h-[96px] rounded-md border border-border bg-background p-3 text-sm"
-                  placeholder={canReverseFraud ? "Explain why the confirmed finding must be reversed." : "Summarise the evidence supporting the confirmed fraud decision."}
-                />
-              </FormField>
-              <div className="flex flex-wrap gap-3">
-                {canConfirmFraud ? <Button
-                  variant="destructive"
-                  disabled={!canonicalDecisionReason}
-                  onClick={async () => {
-                    const updated = await callAction("/investigations/confirm-fraud", {
-                      investigationId: investigation.investigationId,
-                      claimId: investigation.claimId,
-                      reason: canonicalDecisionReason,
-                    });
-                    if (updated) setDecisionReason("");
-                  }}
-                >
-                  Confirm fraud
-                </Button> : null}
-                {canReverseFraud ? <Button
-                  variant="outline"
-                  disabled={!canonicalDecisionReason}
-                  onClick={async () => {
-                    const updated = await callAction("/investigations/reverse-fraud", {
-                      investigationId: investigation.investigationId,
-                      claimId: investigation.claimId,
-                      reason: canonicalDecisionReason,
-                    });
-                    if (updated) setDecisionReason("");
-                  }}
-                >
-                  Reverse fraud finding
-                </Button> : null}
-              </div>
-            </div>
-          ) : null}
         </SectionCard>
 
         <SectionCard title="Timeline" description="Notes and evidence recorded against this investigation.">
@@ -297,7 +221,7 @@ export function InvestigationWorkspacePage() {
               className="self-start"
               disabled={!noteText.trim()}
               onClick={async () => {
-                const ok = await callAction(`/investigations/${investigation.investigationId}/notes`, {
+                const ok = await callLegacySupportedAction(`/investigations/${investigation.investigationId}/notes`, {
                   text: noteText,
                   noteType: "INTERNAL_NOTE",
                 });
@@ -338,7 +262,7 @@ export function InvestigationWorkspacePage() {
             disabled={!evidenceForm.file || evidenceForm.file.size > 10 * 1024 * 1024 || !evidenceForm.evidenceType.trim()}
             onClick={async () => {
               const contentBase64 = await fileAsBase64(evidenceForm.file);
-              const ok = await callAction(`/investigations/${investigation.investigationId}/evidence`, {
+              const ok = await callLegacySupportedAction(`/investigations/${investigation.investigationId}/evidence`, {
                 filename: evidenceForm.file.name,
                 description: evidenceForm.description || null,
                 evidenceType: evidenceForm.evidenceType,

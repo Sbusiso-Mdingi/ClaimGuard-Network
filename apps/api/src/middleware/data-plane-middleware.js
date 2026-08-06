@@ -1,17 +1,44 @@
 import { applicationErrorResponse, OperationalRoutePolicyError } from "../application-errors.js";
-import { isOperationalRoutePath, resolveOperationalRoutePolicy } from "../authorization-policy.js";
+import {
+  CLAIMGUARD_PERMISSIONS,
+  isOperationalRoutePath,
+  resolveOperationalRoutePolicy,
+} from "../authorization-policy.js";
 import { authorizeOperationalRouteRequest } from "./authorization-middleware.js";
 import { runWithOperationalServices } from "../operational-service-context.js";
 
+const CASE_ACTION_ROUTE_PREFIX = "/api/v1/cases/";
+const CASE_ACTION_ROUTE_POLICY = Object.freeze({
+  id: "cases.action",
+  method: "POST",
+  pathPattern: "/api/v1/cases/:caseId/actions/:action",
+  permissions: [CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY],
+  permissionMode: "all",
+  requiresOperationalDataPlane: true,
+});
+
+function isCaseActionRoute(path) {
+  return String(path || "").startsWith(CASE_ACTION_ROUTE_PREFIX);
+}
+
 export function requiresOperationalDataPlane(path) {
-  return isOperationalRoutePath(path);
+  return isOperationalRoutePath(path) || isCaseActionRoute(path);
+}
+
+function resolveDataPlaneRoutePolicy({ path, method }) {
+  if (isCaseActionRoute(path)) {
+    return String(method || "GET").toUpperCase() === "POST"
+      ? CASE_ACTION_ROUTE_POLICY
+      : undefined;
+  }
+  return resolveOperationalRoutePolicy({ path, method });
 }
 
 export function createDataPlaneMiddleware({ routeResolver, connectionManager, createServiceBundle, logger = null }) {
   if (!routeResolver || !connectionManager || !createServiceBundle) throw new TypeError("Data-plane middleware dependencies are required.");
   return async (c, next) => {
     if (!requiresOperationalDataPlane(c.req.path)) return next();
-    const routePolicy = resolveOperationalRoutePolicy({ path: c.req.path, method: c.req.method });
+    const routePolicy = resolveDataPlaneRoutePolicy({ path: c.req.path, method: c.req.method });
     if (routePolicy === undefined) {
       return applicationErrorResponse(c, new OperationalRoutePolicyError());
     }

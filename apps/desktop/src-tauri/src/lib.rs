@@ -1,6 +1,7 @@
 mod cache;
 mod enrollment;
 mod error;
+mod governed_case;
 mod http_client;
 mod secure_store;
 
@@ -9,8 +10,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use cache::{EncryptedCache, SyncPage};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use cache::{EncryptedCache, SyncPage};
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use enrollment::{
@@ -1013,6 +1014,7 @@ struct InvestigationEvidenceRequest<'a> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn desktop_upload_investigation_evidence(
     investigation_id: String,
     expected_record_version: u32,
@@ -1178,6 +1180,8 @@ pub fn run() {
             desktop_update_investigation,
             desktop_add_investigation_note,
             desktop_upload_investigation_evidence,
+            governed_case::desktop_governed_case_details,
+            governed_case::desktop_perform_case_action,
             reset_desktop,
         ])
         .run(tauri::generate_context!())

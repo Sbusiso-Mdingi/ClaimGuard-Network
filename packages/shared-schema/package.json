@@ -5,7 +5,8 @@
   "main": "./src/index.js",
   "exports": {
     ".": "./src/index.js",
-    "./product-identity": "./src/product-identity.js"
+    "./product-identity": "./src/product-identity.js",
+    "./case-workflow": "./src/case-workflow.js"
   },
   "dependencies": {
     "zod": "^3.24.0"

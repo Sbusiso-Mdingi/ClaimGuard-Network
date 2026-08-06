@@ -768,26 +768,16 @@ test("claims list and details endpoints return authoritative claim payloads", as
   assert.equal(missingJson.available, false);
 });
 
-test("investigation confirm-fraud endpoint writes confirmed ledger entry", async () => {
+test("legacy confirm-fraud route fails closed without ledger or registry writes", async () => {
+  const workflow = createFraudWorkflowRepositoryStub();
   const app = createBackendApp({
-    fraudWorkflowRepository: createFraudWorkflowRepositoryStub(),
+    fraudWorkflowRepository: workflow,
     investigationRepository: {
-      async getInvestigationById(investigationId) {
-        if (investigationId !== "investigation-300") {
-          return null;
-        }
-
-        return {
-          investigationId,
-          tenantId: "tenant_default",
-          claimId: "C-300",
-          status: "CONFIRMED_FRAUD",
-          fraudConfirmedAt: null,
-        };
+      async getInvestigationById() {
+        throw new Error("the supported guard must reject before investigation lookup");
       },
-      async markFraudPublished(investigationId) {
-        assert.equal(investigationId, "investigation-300");
-        return true;
+      async markFraudPublished() {
+        throw new Error("the supported guard must reject before publication metadata writes");
       },
     },
   });
@@ -812,30 +802,14 @@ test("investigation confirm-fraud endpoint writes confirmed ledger entry", async
   });
 
   const json = await response.json();
-  assert.equal(response.status, 201);
-  assert.equal(json.available, true);
-  assert.equal(json.entry.entryType, "INVESTIGATOR_CONFIRMED_FRAUD");
-  assert.equal(json.entry.payload.claimId, "C-300");
+  assert.equal(response.status, 409);
+  assert.equal(json.available, false);
+  assert.equal(json.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  assert.equal(workflow.confirmations.length, 0);
 });
 
-test("confirmation route uses authenticated actor and returns 200 for an idempotent replay", async () => {
-  const seen = new Map();
-  const workflow = createFraudWorkflowRepositoryStub({
-    async confirm(input, helpers) {
-      const existing = seen.get(input.idempotencyKey);
-      if (existing) {
-        return { ...existing, replayed: true };
-      }
-      const ledgerEntry = helpers.entry("INVESTIGATOR_CONFIRMED_FRAUD", input, 1);
-      const result = {
-        entry: ledgerEntry,
-        registryEntry: helpers.registry(input, ledgerEntry, "ACTIVE"),
-        replayed: false,
-      };
-      seen.set(input.idempotencyKey, result);
-      return result;
-    },
-  });
+test("repeated legacy confirmation requests remain blocked and never reserve idempotent writes", async () => {
+  const workflow = createFraudWorkflowRepositoryStub();
   const app = createBackendApp({ fraudWorkflowRepository: workflow });
   const request = () => app.request("http://localhost/investigations/confirm-fraud", {
     method: "POST",
@@ -858,14 +832,14 @@ test("confirmation route uses authenticated actor and returns 200 for an idempot
 
   const first = await request();
   const replay = await request();
+  const firstBody = await first.json();
   const replayBody = await replay.json();
 
-  assert.equal(first.status, 201);
-  assert.equal(replay.status, 200);
-  assert.equal(replayBody.replayed, true);
-  assert.equal(workflow.confirmations[0].actorId, "authenticated-investigator");
-  assert.equal(workflow.confirmations[0].idempotencyKey, "route-key-1");
-  assert.equal(Object.hasOwn(workflow.confirmations[0], "registryMetadata"), false);
+  assert.equal(first.status, 409);
+  assert.equal(replay.status, 409);
+  assert.equal(firstBody.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  assert.equal(replayBody.code, "LEGACY_FRAUD_CONFIRMATION_DISABLED");
+  assert.equal(workflow.confirmations.length, 0);
 });
 
 test("claims ingestion commits an asynchronous outbox-backed processing request", async () => {

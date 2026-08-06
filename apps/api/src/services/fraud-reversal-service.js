@@ -1,3 +1,18 @@
+export const LEGACY_FRAUD_REVERSAL_ERROR = Object.freeze({
+  code: "LEGACY_FRAUD_REVERSAL_DISABLED",
+  status: 409,
+  message: "Direct legacy fraud reversal is disabled. Use the governed case appeal or review action.",
+});
+
+export class LegacyFraudReversalDisabledError extends Error {
+  constructor() {
+    super(LEGACY_FRAUD_REVERSAL_ERROR.message);
+    this.name = "LegacyFraudReversalDisabledError";
+    this.code = LEGACY_FRAUD_REVERSAL_ERROR.code;
+    this.status = LEGACY_FRAUD_REVERSAL_ERROR.status;
+  }
+}
+
 export function createFraudReversalService({ fraudWorkflowRepository = null, logger } = {}) {
   return {
     isConfigured() {
@@ -13,17 +28,16 @@ export function createFraudReversalService({ fraudWorkflowRepository = null, log
     },
 
     async reverseFraud(input) {
-      const result = await fraudWorkflowRepository.reverseFraud(input);
-      logger?.("info", result.replayed ? "fraud_reversal_replayed" : "fraud_reversed", {
-        requestId: input.correlationId,
-        investigationId: input.investigationId,
-        actorId: input.actorId,
-        actorRole: input.actorRole,
-        auditAction: "investigations.reverse_fraud",
-        ledgerSequenceNumber: result.entry.sequenceNumber,
-        registryEntryId: result.registryEntry.registryEntryId,
+      logger?.("warn", "legacy_fraud_reversal_blocked", {
+        requestId: input?.correlationId || null,
+        investigationId: input?.investigationId || null,
+        actorId: input?.actorId || null,
+        errorCode: LEGACY_FRAUD_REVERSAL_ERROR.code,
       });
-      return result;
+
+      // Historical reversal persistence remains isolated for legacy unit
+      // compatibility. Supported callers use the governed appeal/review action.
+      throw new LegacyFraudReversalDisabledError();
     },
   };
 }
