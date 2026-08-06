@@ -1,3 +1,7 @@
+import {
+  createControlPlaneAuthenticationService as createAuthenticationService,
+} from "./authentication-service.js";
+
 export { buildControlPlaneConnectionOptions, createControlPlanePool } from "./client.js";
 export {
   assertDistinctDatabaseUrls,
@@ -13,7 +17,16 @@ export {
   createSignupCredentialGuardedIdentityRepository,
 } from "./credential-guarded-control-plane-service.js";
 export { CANONICAL_PRIVATE_SCHEMA_VERSION } from "./operational-schema.js";
-export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
+export { sha256 } from "./authentication-service.js";
+
+export function createControlPlaneAuthenticationService(options = {}) {
+  const accessRepository = options.accessRepository
+    || (typeof options.authenticationRepository?.resolveEffectivePermissions === "function"
+      ? options.authenticationRepository
+      : null);
+  return createAuthenticationService({ ...options, accessRepository });
+}
+
 export { getShadowDiagnostics } from "./diagnostics.js";
 export {
   bootstrapDevelopmentPlatformAdministrator,
