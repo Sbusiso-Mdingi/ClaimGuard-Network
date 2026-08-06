@@ -10,6 +10,7 @@ import { createReleaseGovernanceRepository } from "./release-governance-reposito
 import { createDataPlaneRoutesRepository } from "./routes-repository.js";
 import { createSecurityRepository } from "./security-repository.js";
 import { createDesktopEnrollmentRepository } from "./desktop-enrollment-repository.js";
+import { createAccessRepository } from "./access-repository.js";
 import { withControlPlaneTransaction } from "./transaction.js";
 
 export function createControlPlaneRepositories(executor) {
@@ -26,6 +27,7 @@ export function createControlPlaneRepositories(executor) {
     desktopEnrollment: createDesktopEnrollmentRepository(executor),
     security: createSecurityRepository(executor),
     configuration: createConfigurationRepository(executor),
+    access: createAccessRepository(executor),
     runInTransaction: async (operation) => {
       if (typeof operation !== "function") {
         throw new TypeError("A transaction operation is required.");

@@ -66,6 +66,25 @@ export {
   DesktopEnrollmentError,
 } from "./desktop-enrollment-service.js";
 export { withControlPlaneTransaction } from "./transaction.js";
+export { createAccessRepository } from "./access-repository.js";
+export * from "./access-errors.js";
+export {
+  PERMISSION_CATALOGUE,
+  PERMISSION_KEYS,
+  getPermissionMetadata,
+  isKnownPermission,
+  isTenantAssignable,
+  isElevatedPermission,
+  isDelegablePermission,
+  isSystemOnlyPermission,
+  validatePermissionKeys,
+  filterTenantAssignable,
+  partitionElevated,
+  getPermissionsByCategory,
+  getCategories,
+  GOVERNANCE_PROTECTED_PERMISSIONS,
+  MAX_DELEGATION_HOURS,
+} from "./permission-catalogue.js";
 export {
   assertNoPlaintextPassword,
   assertSafeControlPlaneSummary,
