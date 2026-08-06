@@ -18,6 +18,7 @@ import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerAdminRoutes } from "./routes/admin-routes.js";
 import { registerPlatformAdminRoutes } from "./routes/platform-admin-routes.js";
 import { registerSchemeAdminRoutes } from "./routes/scheme-admin-routes.js";
+import { registerAccessRoutes } from "./routes/access-routes.js";
 import { registerClaimsRoutes } from "./routes/claims-routes.js";
 import { registerDetectionRoutes } from "./routes/detection-routes.js";
 import { registerCaseRoutes } from "./routes/case-routes.js";
@@ -47,40 +48,13 @@ function createDomainServices({
   generationRepository,
   evidenceStorage,
 } = {}) {
-  const reportService = createReportService({
-    reportStorage,
-    ledgerRepository,
-    generationRepository,
-  });
-
-  const claimIngestionService = createClaimIngestionService({
-    claimIngestionRepository,
-    logger: logEvent,
-  });
-
-  const investigationService = createInvestigationService({
-    investigationRepository,
-    evidenceStorage,
-  });
-
-  const caseWorkflowService = createCaseWorkflowService({
-    caseWorkflowRepository,
-  });
-
-  const fraudConfirmationService = createFraudConfirmationService({
-    fraudWorkflowRepository,
-    logger: logEvent,
-  });
-
-  const fraudReversalService = createFraudReversalService({
-    fraudWorkflowRepository,
-    logger: logEvent,
-  });
-
-  const registryService = createRegistryService({
-    sharedFraudRegistryRepository,
-  });
-
+  const reportService = createReportService({ reportStorage, ledgerRepository, generationRepository });
+  const claimIngestionService = createClaimIngestionService({ claimIngestionRepository, logger: logEvent });
+  const investigationService = createInvestigationService({ investigationRepository, evidenceStorage });
+  const caseWorkflowService = createCaseWorkflowService({ caseWorkflowRepository });
+  const fraudConfirmationService = createFraudConfirmationService({ fraudWorkflowRepository, logger: logEvent });
+  const fraudReversalService = createFraudReversalService({ fraudWorkflowRepository, logger: logEvent });
+  const registryService = createRegistryService({ sharedFraudRegistryRepository });
   return {
     reportService,
     claimIngestionService,
@@ -119,20 +93,12 @@ export function createBackendApp({
   if (authenticationConfiguration.mode !== "session") {
     throw new TypeError("Only session authentication mode is supported.");
   }
-
   const usesSessionAuthentication = !authenticationProvider;
   if (usesSessionAuthentication && !authenticationService) {
-    throw new TypeError(
-      "createBackendApp requires authenticationService or an explicit authenticationProvider.",
-    );
+    throw new TypeError("createBackendApp requires authenticationService or an explicit authenticationProvider.");
   }
 
-  const resolvedReportStorage =
-    reportStorage ||
-    new FileReportStorage({
-      reportPath: detectionReportPath,
-    });
-
+  const resolvedReportStorage = reportStorage || new FileReportStorage({ reportPath: detectionReportPath });
   const services = createDomainServices({
     reportStorage: resolvedReportStorage,
     ledgerRepository,
@@ -171,7 +137,6 @@ export function createBackendApp({
   };
 
   const app = new Hono();
-
   app.use("*", async (c, next) => {
     const requestStart = Date.now();
     const requestId = c.req.header("x-request-id") || crypto.randomUUID();
@@ -190,23 +155,12 @@ export function createBackendApp({
     }
   });
 
-  const resolvedAuthenticationProvider = authenticationProvider ||
-    createSessionAuthenticationProvider({
-      authenticationService,
-      configuration: authenticationConfiguration,
-    });
-
-  app.use(
-    "*",
-    createAuthenticationMiddleware({
-      authenticationProvider: resolvedAuthenticationProvider,
-    }),
-  );
-
-  if (desktopDeviceProofVerifier) {
-    app.use("*", createDesktopDeviceProofMiddleware({ verifier: desktopDeviceProofVerifier }));
-  }
-
+  const resolvedAuthenticationProvider = authenticationProvider || createSessionAuthenticationProvider({
+    authenticationService,
+    configuration: authenticationConfiguration,
+  });
+  app.use("*", createAuthenticationMiddleware({ authenticationProvider: resolvedAuthenticationProvider }));
+  if (desktopDeviceProofVerifier) app.use("*", createDesktopDeviceProofMiddleware({ verifier: desktopDeviceProofVerifier }));
   if (usesSessionAuthentication) {
     app.use("*", createSessionCsrfMiddleware({ authenticationService, configuration: authenticationConfiguration }));
   }
@@ -253,22 +207,11 @@ export function createBackendApp({
   }
 
   app.use("*", createDesktopOrganisationEnforcementMiddleware());
-
-  app.use(
-    "*",
-    createTenantContextMiddleware({
-      tenantRepository: dependencies.tenantRepository,
-    }),
-  );
+  app.use("*", createTenantContextMiddleware({ tenantRepository: dependencies.tenantRepository }));
 
   if (usesSessionAuthentication) {
-    registerAuthRoutes(app, {
-      authenticationService,
-      configuration: authenticationConfiguration,
-      controlPlaneService,
-    });
+    registerAuthRoutes(app, { authenticationService, configuration: authenticationConfiguration, controlPlaneService });
   }
-
   registerDesktopRoutes(app, {
     desktopEnrollmentService,
     desktopSyncService,
@@ -279,14 +222,9 @@ export function createBackendApp({
     investigationService: dependencies.investigationService,
     identityRepository: controlPlaneRepositories?.identity || null,
   });
-
   if (controlPlaneRepositories && controlPlaneService) {
-    registerDesktopAdminRoutes(app, {
-      desktopEnrollmentService,
-      authenticationService,
-    });
+    registerDesktopAdminRoutes(app, { desktopEnrollmentService, authenticationService });
   }
-
   registerAdminRoutes(app, {
     reportService: services.reportService,
     dataPlaneRuntime,
@@ -295,7 +233,6 @@ export function createBackendApp({
     tenantRepository: dependencies.tenantRepository,
     modelDeploymentRepository: controlPlaneRepositories?.modelDeployments || null,
   });
-
   if (controlPlaneRepositories && controlPlaneService) {
     registerPlatformAdminRoutes(app, {
       controlPlaneRepositories,
@@ -309,29 +246,17 @@ export function createBackendApp({
       detectionStrategyRepository: dependencies.detectionStrategyRepository,
     });
   }
+  if (controlPlaneRepositories) registerAccessRoutes(app, { controlPlaneRepositories });
 
-  registerLedgerRoutes(app, {
-    ledgerRepository: dependencies.ledgerRepository,
-    tenantRepository: dependencies.tenantRepository,
-  });
-
-  registerDetectionRoutes(app, {
-    reportService: dependencies.reportService,
-    tenantRepository: dependencies.tenantRepository,
-  });
-
+  registerLedgerRoutes(app, { ledgerRepository: dependencies.ledgerRepository, tenantRepository: dependencies.tenantRepository });
+  registerDetectionRoutes(app, { reportService: dependencies.reportService, tenantRepository: dependencies.tenantRepository });
   registerClaimsRoutes(app, {
     claimIngestionService: dependencies.claimIngestionService,
     claimsReadRepository: dependencies.claimsReadRepository,
     tenantRepository: dependencies.tenantRepository,
     logger: logEvent,
   });
-
-  registerCaseRoutes(app, {
-    caseWorkflowService: dependencies.caseWorkflowService,
-    logger: logEvent,
-  });
-
+  registerCaseRoutes(app, { caseWorkflowService: dependencies.caseWorkflowService, logger: logEvent });
   registerInvestigationsRoutes(app, {
     investigationService: dependencies.investigationService,
     fraudConfirmationService: dependencies.fraudConfirmationService,
@@ -340,22 +265,16 @@ export function createBackendApp({
     identityRepository: controlPlaneRepositories?.identity || null,
     logger: logEvent,
   });
+  registerRegistryRoutes(app, { registryService: dependencies.registryService });
 
-  registerRegistryRoutes(app, {
-    registryService: dependencies.registryService,
-  });
-
-  app.all(`${backendRouterPath}/*`, (c) => {
-    return fetchRequestHandler({
-      endpoint: backendRouterPath,
-      req: c.req.raw,
-      router: backendRouter,
-      createContext: async () => ({
-        requestId: c.req.header("x-request-id") || null,
-        tenantContext: c.get("tenantContext") || null,
-      }),
-    });
-  });
-
+  app.all(`${backendRouterPath}/*`, (c) => fetchRequestHandler({
+    endpoint: backendRouterPath,
+    req: c.req.raw,
+    router: backendRouter,
+    createContext: async () => ({
+      requestId: c.req.header("x-request-id") || null,
+      tenantContext: c.get("tenantContext") || null,
+    }),
+  }));
   return app;
 }
