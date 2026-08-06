@@ -2,13 +2,13 @@
 
 ## Scope and safety boundary
 
-Sequrin PR 2 establishes a governed investigation-case lifecycle. Detection models, deterministic rules, graph relationships and network results create investigative signals only. Neither detection nor a governed case action may pause, reject, delay, redirect, recover, terminate or sanction a claim or benefit payment.
+Sequrin PR 2 establishes a governed investigation-case lifecycle. Detection models, deterministic rules, graph relationships and network results create immutable investigative signals only. Neither detection nor a governed case action may pause, reject, delay, redirect, recover, terminate or sanction a claim or benefit payment.
 
 The legacy `investigations` workflow contains the historical statuses `OPEN`, `UNDER_REVIEW`, `AWAITING_EVIDENCE`, `CONFIRMED_FRAUD`, `REVERSED`, `NO_FRAUD_FOUND` and `CLOSED`. It also contains historical fraud-confirmation timestamps, ledger terminology and registry-publication code. Those values remain audit and compatibility data; they are not authoritative Sequrin outcomes.
 
 ## Permission-gated case state machine
 
-Every action has a fixed server-side target state and required permission. A role name alone never grants authority, and a client never supplies a target state.
+Every action has a fixed server-side target state and required permission. A role name alone never grants authority, and a client never supplies a target state or transition matrix.
 
 | From | Permitted target(s) | Required permission class |
 |---|---|---|
@@ -43,7 +43,7 @@ The case detail service derives `allowedActions` from:
 
 Deferred network and registry actions are never returned. Legacy role names do not add actions. Every submitted action is reauthorized by the action service and repository.
 
-## Case detail APIs
+## Case detail and action APIs
 
 PR 2 exposes:
 
@@ -57,7 +57,7 @@ Direct case lookup is tenant-scoped. A tenant mismatch is represented as `CASE_N
 
 Legacy-investigation lookup returns an existing governed case when present. When no case exists, an actor with trusted `case.triage` permission may trigger neutral first access. The route propagates the trusted middleware request ID as the correlation ID; query, body and client-supplied authority fields are ignored or rejected.
 
-The service uses explicit capability checks for direct reads, legacy reads, neutral first access and actions so a partially composed repository cannot appear fully configured.
+The action name determines the target state through the fixed server policy. The request body carries a positive `expectedStateVersion` and action-specific evidence or reason fields, never `targetState`, tenant, actor, role or permissions. The service uses explicit capability checks for direct reads, legacy reads, neutral first access and actions so a partially composed repository cannot appear fully configured.
 
 ## Neutral legacy first access
 
@@ -69,7 +69,7 @@ stateVersion = 2
 migrationReviewStatus = REVIEW_REQUIRED
 ```
 
-The migration records exactly one neutral transition and one `LEGACY_MIGRATION_AUTHORIZATION` process check. It does not create an outcome, registry publication, network notice, claim mutation or payment/adjudication instruction. `fraud_confirmed_at` remains unchanged.
+The migration records exactly one neutral transition and one `LEGACY_MIGRATION_AUTHORIZATION` process check. It links exactly one immutable authoritative signal and creates zero governed outcomes. It does not publish a registry entry, activate a network notice, mutate a claim, or create a payment/adjudication instruction. The historical `fraud_confirmed_at` value remains unchanged.
 
 Missing, malformed, cross-tenant, stale, wrong-claim or ambiguous signal/investigation linkage fails closed. A replay is accepted only when the complete canonical tenant, claim, signal, neutral state, transition, process-check, idempotency-result and zero-outcome invariant set is present.
 
@@ -77,7 +77,7 @@ Missing, malformed, cross-tenant, stale, wrong-claim or ambiguous signal/investi
 
 Every governed action supplies a positive bounded expected state version. The repository locks the tenant-scoped case and performs an atomic state/version update. Stale requests fail with `CASE_STATE_VERSION_CONFLICT`; last-write-wins behavior is not used.
 
-Each tenant-scoped idempotency key stores a hash of the intended action and its original result. An exact replay returns the original result. Reusing the key for different intent fails with `CASE_IDEMPOTENCY_MISMATCH`.
+Each tenant-scoped idempotency key stores a hash of the complete intended action and its original result. An exact replay returns the authoritative original result. Reusing the key for different intent fails with `CASE_IDEMPOTENCY_MISMATCH`.
 
 Legacy first access retries only verified MySQL deadlocks and lock timeouts. The implementation rolls back, releases the failed connection and reruns the complete operation a maximum of three attempts. It never treats a deadlock as proof that another transaction committed. The diagnosed race was `ER_LOCK_DEADLOCK`, errno `1213`, SQLSTATE `40001`, while loading the legacy investigation and claim.
 
@@ -87,23 +87,40 @@ A duplicate-key race is resolved only after rollback and a complete canonical re
 
 Real-MySQL failure injection covers failure after case insertion, after legacy linkage, after the neutral transition, after the migration process check and immediately before commit. Every stage proves full rollback: no partial case, orphan transition, process check, outcome or registry mutation; unchanged claim, signal and historical investigation; and a subsequent clean retry that creates exactly one neutral migration.
 
-## Web compatibility
+## Web client contract
 
-The investigator workspace resolves the governed case from the historical investigation, displays the authoritative governed state separately from read-only historical status and renders only server-returned actions. It sends a generated `Idempotency-Key` header and the loaded expected state version. It never sends target state, tenant, actor, role or permissions.
+The investigator workspace resolves the authoritative governed case from the historical investigation, displays governed state separately from read-only historical status and renders only server-returned actions. It generates a fresh `Idempotency-Key` and sends the loaded `expectedStateVersion`. It never sends target state, tenant, actor, role or permissions.
 
-After success, the web client refreshes authoritative detail. On `CASE_STATE_VERSION_CONFLICT`, it refreshes without automatically repeating the user's decision. Legacy generic status, confirmation and reversal controls are hidden. Priority, notes and evidence remain supported. `OUTCOME_APPROVED` is explicitly described as separate from registry publication.
+After success, the web client refreshes authoritative detail. On `CASE_STATE_VERSION_CONFLICT`, it refreshes without automatically replaying the user's decision. While a request is pending, the action control is disabled. Legacy generic status, confirmation, reversal, registry-publication and network-notice controls are absent. Priority, notes and evidence remain supported. `OUTCOME_APPROVED` is explicitly separate from registry publication.
 
-## Desktop compatibility
+Browser authentication and CSRF behavior are unchanged. Browser mutating requests continue to require the existing authenticated session and CSRF token. Merely attaching a `DPoP` header does not create trusted desktop context or grant a CSRF exemption.
 
-Commit `183a2810aacff609f93f067994cdfffe07c7b673` makes historical investigation status read-only in the desktop client. The bridge throws `LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED` before any native invocation when a status payload is attempted, while priority, assignment, notes and evidence remain supported.
+## Native desktop contract
 
-The native governed case-action transport and desktop governed-action panel are implemented and validated on Windows. PR #138's native DPoP verification ensures the desktop bridge securely handles governed cases.
+Historical investigation status is read-only in the desktop workspace. The bridge throws `LEGACY_INVESTIGATION_STATUS_WRITE_DISABLED` before any native invocation when a status payload is attempted, while priority, assignment, notes and evidence remain available.
+
+The completed native governed path uses exactly these registered Tauri commands:
+
+```text
+desktop_governed_case_details
+desktop_perform_case_action
+```
+
+The JavaScript bridge invokes those exact names and does not use renderer `fetch()` for governed case traffic. The real investigation workspace mounts `GovernedDesktopCasePanel`, which resolves authoritative case detail, renders only server-returned allowed actions, displays historical status separately as read-only compatibility data, refreshes after success, and refreshes after `CASE_STATE_VERSION_CONFLICT` without replaying the stale decision. Submission is disabled while pending, preventing duplicate clicks, and native command unavailability fails safely.
+
+The Tauri request type uses `serde(deny_unknown_fields)` and contains no target state, tenant, actor, role, permissions or legacy status field. Rust validates the action and request values, serializes the JSON body once, and transmits those exact bytes. The loaded `expectedStateVersion` remains in that JSON body.
+
+Rust owns the governed HTTP boundary. It preserves the authenticated session cookie, inserts the fixed `Idempotency-Key` header through a specialized governed-action method, and does not accept arbitrary renderer-selected header names. The DPoP proof is bound to the exact HTTP method, origin, path and digest of the transmitted body. Stable server error codes survive the native bridge.
+
+On the API, valid enrolled native DPoP is verified for governed GET and POST routes outside `/desktop/*`. Verification covers signature, method, path, origin, body digest, expiry, nonce replay, enrollment status, session binding and organisation binding. Invalid or merely present proof does not create trusted desktop context, does not exempt CSRF and does not invoke the governed service. Browser requests without DPoP retain their existing behavior.
+
+The native implementation head `6c61845b5100396815db059ee1effd7d22390ddd` passed the exact-SHA `desktop-windows` run `31024861630`, including desktop frontend verification, server/web integration verification, native security-boundary verification and offline-capable NSIS packaging.
 
 ## Registry and network-notice separation
 
 `OUTCOME_APPROVED` records only a scheme-governed case outcome. It does not insert into `shared_fraud_registry_entries`, set a publication-required flag, activate a notice or change claim/payment state.
 
-Production operational composition exposes the historical shared registry as read-only. Its publication methods are not injected into production services. Complete correctable network-notice governance, publication approval and lifecycle controls remain deferred to PR 5.
+Production operational composition exposes the historical shared registry as read-only. Its publication methods are not injected into production services. Complete correctable network-notice governance, publication approval and lifecycle controls remain deferred to PR 5; PR 2 must not be interpreted as completing that work.
 
 ## Stable disabled contracts
 
