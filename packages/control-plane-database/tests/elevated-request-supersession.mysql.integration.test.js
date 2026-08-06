@@ -35,6 +35,7 @@ async function insertRequest(pool, {
   requestId, organisationId, targetType, targetId, requestedBy, requesterMembershipId,
   decision, idempotencyKey, supersededByRequestId = null,
 }) {
+  const intentHash = crypto.createHash("sha256").update(requestId).digest("hex");
   await pool.execute(
     `INSERT INTO access_elevated_requests
       (request_id, organisation_id, target_type, target_id, target_version, requested_permissions,
@@ -42,7 +43,7 @@ async function insertRequest(pool, {
        idempotency_key, superseded_by_request_id)
      VALUES (?, ?, ?, ?, 1, JSON_ARRAY('access.assignments.manage'), ?, ?, ?, ?, 1, ?, ?, ?)`,
     [requestId, organisationId, targetType, targetId, requestedBy, requesterMembershipId,
-      `fixture ${decision}`, decision, "a".repeat(64), idempotencyKey, supersededByRequestId],
+      `fixture ${decision}`, decision, intentHash, idempotencyKey, supersededByRequestId],
   );
 }
 
