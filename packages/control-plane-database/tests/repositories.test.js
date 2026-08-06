@@ -56,13 +56,14 @@ test("shadow credential accepts nullable hash, scopes username, and safe DTO hid
   );
 });
 
-test("session foundation stores only a hash and safe projection excludes it", async () => {
+test("session foundation stores only hashes and distinct trusted versions", async () => {
   let stored = null;
   const db = executor(async (sql, params) => {
     if (sql.startsWith("INSERT INTO login_sessions")) {
       stored = {
         session_id: params[0],
         hashed_bearer_secret: params[1],
+        csrf_token_hash: params[2],
         user_id: params[4],
         organisation_id: params[5],
         membership_id: params[6],
@@ -70,7 +71,8 @@ test("session foundation stores only a hash and safe projection excludes it", as
         last_activity_at: params[8],
         idle_expires_at: params[9],
         absolute_expires_at: params[10],
-        authorization_version: params[11],
+        authentication_version: params[11],
+        authorization_version: params[12],
       };
       return [{ affectedRows: 1 }, []];
     }
@@ -90,12 +92,31 @@ test("session foundation stores only a hash and safe projection excludes it", as
     issuedAt: new Date(),
     idleExpiresAt: new Date(Date.now() + 1000),
     absoluteExpiresAt: new Date(Date.now() + 2000),
-    authorizationVersion: 1,
+    authenticationVersion: 3,
+    authorizationVersion: 7,
   });
   assert.equal(Object.hasOwn(session, "hashedBearerSecret"), false);
+  assert.equal(Object.hasOwn(session, "csrfTokenHash"), false);
+  assert.equal(session.authenticationVersion, 3);
+  assert.equal(session.authorizationVersion, 7);
   await assert.rejects(
     () => repository.storeSessionFoundation({ bearerSecret: "raw" }),
     /Raw session/,
+  );
+  await assert.rejects(
+    () => repository.storeSessionFoundation({
+      hashedBearerSecret: "a".repeat(64),
+      csrfTokenHash: "b".repeat(64),
+      signingKeyId: "key-1",
+      userId: "u",
+      organisationId: "o",
+      membershipId: "m",
+      issuedAt: new Date(),
+      idleExpiresAt: new Date(Date.now() + 1000),
+      absoluteExpiresAt: new Date(Date.now() + 2000),
+      authorizationVersion: 7,
+    }),
+    /authenticationVersion/,
   );
 });
 
