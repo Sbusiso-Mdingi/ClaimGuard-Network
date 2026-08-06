@@ -73,6 +73,7 @@ const controlPlaneService = Object.freeze({
 });
 const authenticationService = createControlPlaneAuthenticationService({
   authenticationRepository: controlPlaneRepositories.authentication,
+  accessRepository: controlPlaneRepositories.access,
   integrationCredentialsRepository: controlPlaneRepositories.integrationCredentials,
   idleTimeoutMs: authenticationConfiguration.idleTimeoutMs,
   absoluteTimeoutMs: authenticationConfiguration.absoluteTimeoutMs,
