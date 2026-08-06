@@ -2,6 +2,7 @@ import {
   ACCESS_ERROR_CODE,
   PERMISSION_CATALOGUE,
   isElevatedPermission,
+  validatePermissionKeys,
 } from "@claimguard/control-plane-database";
 import { z } from "zod";
 
@@ -48,43 +49,43 @@ const updateRoleSchema = z.object({
   "At least one mutable metadata field is required.",
 );
 
-const replacePermissionsSchema = z.object({
-  expectedVersion,
-  permissionKeys,
-  idempotencyKey,
-}).strict();
-
+const replacePermissionsSchema = z.object({ expectedVersion, permissionKeys, idempotencyKey }).strict();
 const disableRoleSchema = z.object({ expectedVersion, idempotencyKey }).strict();
-
 const createAssignmentSchema = z.object({
   roleId: id,
   targetMembershipId: id,
-  targetUserId: id,
   effectiveAt: optionalDate,
   expiresAt: optionalDate,
   expectedMembershipVersion: expectedVersion.optional(),
   idempotencyKey,
 }).strict();
-
 const revokeSchema = z.object({
   expectedVersion,
   idempotencyKey,
   reason: z.string().trim().min(1).max(512).optional(),
 }).strict();
-
 const createDelegationSchema = z.object({
   targetMembershipId: id,
-  targetUserId: id,
   permissionKeys,
   expiresAt: z.string().datetime({ offset: true }),
   reason: z.string().trim().min(1).max(512),
   idempotencyKey,
 }).strict();
-
 const elevatedDecisionSchema = z.object({
   expectedVersion,
   idempotencyKey,
   decisionReason: z.string().trim().min(1).max(512),
+}).strict();
+const auditQuerySchema = z.object({
+  eventType: z.string().trim().min(1).max(128).optional(),
+  actorId: id.optional(),
+  targetUserId: id.optional(),
+  resourceType: z.string().trim().min(1).max(64).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  cursor: id.optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
+  permissions: z.string().optional(),
 }).strict();
 
 function trustedActor(c) {
@@ -155,6 +156,18 @@ async function strictJson(c, schema) {
   return result.data;
 }
 
+function strictQuery(c, schema) {
+  const result = schema.safeParse(c.req.query());
+  if (!result.success) {
+    const error = new Error("The request query is invalid.");
+    error.status = 400;
+    error.code = "ACCESS_INVALID_REQUEST";
+    error.details = result.error.issues.map((issue) => ({ path: issue.path.join("."), code: issue.code }));
+    throw error;
+  }
+  return result.data;
+}
+
 function safeError(c, error) {
   if (Number.isInteger(error?.status) && typeof error?.code === "string") {
     return c.json({
@@ -197,6 +210,17 @@ function accessCapabilities(authContext) {
   ]));
 }
 
+function ensureCanonicalPermissions(keys) {
+  const { unknown } = validatePermissionKeys(keys);
+  if (unknown.length > 0) {
+    const error = new Error("One or more permission keys are not canonical.");
+    error.status = 400;
+    error.code = "ACCESS_PERMISSION_UNKNOWN";
+    error.details = { permissionKeys: unknown };
+    throw error;
+  }
+}
+
 function ensureNoUnapprovedElevatedPermissions(keys) {
   const elevated = keys.filter((key) => isElevatedPermission(key));
   if (elevated.length > 0) {
@@ -212,38 +236,26 @@ export function registerAccessRoutes(app, { controlPlaneRepositories } = {}) {
   const access = controlPlaneRepositories?.access || null;
   const transact = controlPlaneRepositories?.runInTransaction || null;
   if (!access) return;
-
   const runMutation = async (operation) => (
     transact ? transact((repositories) => operation(repositories.access)) : operation(access)
   );
 
-  app.get("/api/v1/access/permissions", requirePermission(ACCESS_PERMISSIONS.ROLES_READ), async (c) => {
-    return c.json({
-      available: true,
-      permissions: PERMISSION_CATALOGUE.map((entry) => ({
-        key: entry.key,
-        description: entry.description,
-        category: entry.category,
-        tenantAssignable: entry.tenantAssignable,
-        elevated: entry.elevated,
-        delegable: entry.delegable,
-        systemOnly: entry.systemOnly,
-        definitionVersion: entry.definitionVersion,
-      })),
-    });
-  });
+  app.get("/api/v1/access/permissions", requirePermission(ACCESS_PERMISSIONS.ROLES_READ), async (c) => c.json({
+    available: true,
+    permissions: PERMISSION_CATALOGUE.map((entry) => ({ ...entry })),
+  }));
 
   app.get("/api/v1/access/roles", requirePermission(ACCESS_PERMISSIONS.ROLES_READ), async (c) => {
     const actor = c.get("accessActor");
-    try {
-      return c.json({ available: true, roles: await access.listRoles({ organisationId: actor.organisationId }) });
-    } catch (error) { return safeError(c, error); }
+    try { return c.json({ available: true, roles: await access.listRoles({ organisationId: actor.organisationId }) }); }
+    catch (error) { return safeError(c, error); }
   });
 
   app.post("/api/v1/access/roles", requirePermission(ACCESS_PERMISSIONS.ROLES_MANAGE), async (c) => {
     const actor = c.get("accessActor");
     try {
       const input = await strictJson(c, createRoleSchema);
+      ensureCanonicalPermissions(input.permissionKeys);
       ensureNoUnapprovedElevatedPermissions(input.permissionKeys);
       const role = await runMutation(async (repository) => {
         const created = await repository.createCustomRole({
@@ -299,6 +311,7 @@ export function registerAccessRoutes(app, { controlPlaneRepositories } = {}) {
     const actor = c.get("accessActor");
     try {
       const input = await strictJson(c, replacePermissionsSchema);
+      ensureCanonicalPermissions(input.permissionKeys);
       ensureNoUnapprovedElevatedPermissions(input.permissionKeys);
       const result = await runMutation((repository) => repository.replaceCustomRolePermissions({
         organisationId: actor.organisationId,
@@ -339,16 +352,15 @@ export function registerAccessRoutes(app, { controlPlaneRepositories } = {}) {
     const actor = c.get("accessActor");
     try {
       const input = await strictJson(c, createAssignmentSchema);
+      const target = await access.getMembership({ organisationId: actor.organisationId, membershipId: input.targetMembershipId });
+      if (!target) return notFound(c);
       if (input.expectedMembershipVersion !== undefined) {
-        const current = await access.getAuthorizationVersion(input.targetMembershipId);
-        if (current !== input.expectedMembershipVersion) {
-          ensureCurrentVersion({ version: current }, input.expectedMembershipVersion);
-        }
+        ensureCurrentVersion({ version: target.authorizationVersion }, input.expectedMembershipVersion);
       }
       const result = await runMutation((repository) => repository.createRoleAssignment({
         organisationId: actor.organisationId,
-        membershipId: input.targetMembershipId,
-        subjectUserId: input.targetUserId,
+        membershipId: target.membershipId,
+        subjectUserId: target.userId,
         roleId: input.roleId,
         effectiveFrom: input.effectiveAt ? new Date(input.effectiveAt) : null,
         expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
@@ -391,24 +403,19 @@ export function registerAccessRoutes(app, { controlPlaneRepositories } = {}) {
     const actor = c.get("accessActor");
     try {
       const input = await strictJson(c, createDelegationSchema);
-      const target = await access.explainUserAccess({ organisationId: actor.organisationId, userId: input.targetUserId });
-      if (!target || target.membershipId !== input.targetMembershipId) return notFound(c);
-      const direct = await access.explainUserAccess({ organisationId: actor.organisationId, userId: actor.userId });
-      const directPermissions = (direct?.sources || [])
-        .filter((source) => source.type !== "delegation")
-        .map((source) => source.permission || source.permissionKey)
-        .filter(Boolean);
+      ensureCanonicalPermissions(input.permissionKeys);
+      const target = await access.getMembership({ organisationId: actor.organisationId, membershipId: input.targetMembershipId });
+      if (!target) return notFound(c);
       const result = await runMutation((repository) => repository.createDelegation({
         organisationId: actor.organisationId,
         grantorUserId: actor.userId,
-        granteeUserId: input.targetUserId,
+        granteeUserId: target.userId,
         permissionKeys: input.permissionKeys,
         expiresAt: new Date(input.expiresAt),
         reason: input.reason,
         actorId: actor.userId,
         correlationId: actor.correlationId,
         idempotencyKey: input.idempotencyKey,
-        grantorEffectivePermissions: directPermissions,
       }));
       return c.json({ available: true, delegation: result }, result.replayed ? 200 : 201);
     } catch (error) { return safeError(c, error); }
@@ -468,18 +475,10 @@ export function registerAccessRoutes(app, { controlPlaneRepositories } = {}) {
   app.get("/api/v1/access/audit", requirePermission(ACCESS_PERMISSIONS.AUDIT_READ), async (c) => {
     const actor = c.get("accessActor");
     try {
-      const result = await access.listAudit({
-        organisationId: actor.organisationId,
-        eventType: c.req.query("eventType") || null,
-        actorId: c.req.query("actorId") || null,
-        targetMembershipId: c.req.query("targetMembershipId") || null,
-        resourceType: c.req.query("resourceType") || null,
-        from: c.req.query("from") || null,
-        to: c.req.query("to") || null,
-        cursor: c.req.query("cursor") || null,
-        pageSize: c.req.query("pageSize") || 50,
-      });
-      return c.json({ available: true, ...result });
+      const query = strictQuery(c, auditQuerySchema);
+      const { permissions: ignoredPermissions, ...filters } = query;
+      void ignoredPermissions;
+      return c.json({ available: true, ...await access.listAudit({ organisationId: actor.organisationId, ...filters }) });
     } catch (error) { return safeError(c, error); }
   });
 
@@ -502,10 +501,7 @@ export function registerAccessRoutes(app, { controlPlaneRepositories } = {}) {
   app.get("/api/v1/access/users/:userId", requirePermission(ACCESS_PERMISSIONS.ROLES_READ), async (c) => {
     const actor = c.get("accessActor");
     try {
-      const summary = await access.explainUserAccess({
-        organisationId: actor.organisationId,
-        userId: c.req.param("userId"),
-      });
+      const summary = await access.explainUserAccess({ organisationId: actor.organisationId, userId: c.req.param("userId") });
       return summary ? c.json({ available: true, access: summary }) : notFound(c);
     } catch (error) { return safeError(c, error); }
   });
