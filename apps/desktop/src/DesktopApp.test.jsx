@@ -34,7 +34,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("ClaimGuard desktop organisation lock", () => {
+describe("Sequrin desktop organisation lock", () => {
   it("requires activation on first launch without exposing organisation or API selectors", async () => {
     setDesktopInvokeForTests(async (command) => {
       if (command === "desktop_status") return { activationRequired: true };
@@ -77,9 +77,43 @@ describe("ClaimGuard desktop organisation lock", () => {
     expect(loginCall[1]).toEqual({ username: "analyst", password: "secret-password" });
     expect(JSON.stringify(loginCall[1])).not.toMatch(/organisation|tenant|origin/i);
   });
+
+  it("shows a stale-authority reauthentication message when initial status resolution is stale", async () => {
+    setDesktopInvokeForTests(async (command) => {
+      if (command === "desktop_status") {
+        const error = new Error("The session authorization version is stale.");
+        error.code = "ACCESS_AUTHORIZATION_VERSION_STALE";
+        throw error;
+      }
+      throw new Error(`unexpected ${command}`);
+    });
+    render(<DesktopApp />);
+    expect(await screen.findByText(/your server-side access changed\. sign in again to refresh this workstation's authority\./i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("locks to reauthentication with a stale-authority message when login authority is stale", async () => {
+    const calls = [];
+    setDesktopInvokeForTests(async (command, args) => {
+      calls.push([command, args]);
+      if (command === "desktop_status") return baseStatus();
+      if (command === "desktop_login") {
+        const error = new Error("The session authorization version is stale.");
+        error.code = "ACCESS_AUTHORIZATION_VERSION_STALE";
+        throw error;
+      }
+      throw new Error(`unexpected ${command}`);
+    });
+    render(<DesktopApp />);
+    await userEvent.type(await screen.findByLabelText("Username"), "analyst");
+    await userEvent.type(screen.getByLabelText("Password"), "secret-password");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText(/your server-side access changed\. sign in again to refresh this workstation's authority\./i)).toBeInTheDocument();
+    expect(calls.some(([command]) => command === "desktop_login")).toBe(true);
+  });
 });
 
-describe("ClaimGuard desktop cache behaviour", () => {
+describe("Sequrin desktop cache behaviour", () => {
   it("renders cached claim summaries before background synchronization completes", async () => {
     const neverCompletes = new Promise(() => {});
     setDesktopInvokeForTests(async (command) => {
@@ -331,7 +365,7 @@ describe("ClaimGuard desktop cache behaviour", () => {
   });
 });
 
-describe("ClaimGuard desktop investigation workspace", () => {
+describe("Sequrin desktop investigation workspace", () => {
   it("submits a priority-only update with the loaded version and no status", async () => {
     const calls = [];
     const currentStatus = baseStatus({
