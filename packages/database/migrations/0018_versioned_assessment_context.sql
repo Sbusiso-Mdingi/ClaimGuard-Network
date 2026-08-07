@@ -273,6 +273,12 @@ DROP TRIGGER trg_detection_results_no_delete;
 DROP TRIGGER trg_detection_results_reject_adverse_actions;
 DROP TRIGGER trg_detection_results_create_signal;
 
+-- The schema-17 signal/result foreign key uses the claim-version result key.
+-- Release only that dependency before replacing result identity. Signal rows
+-- remain intact and are reattached by immutable assessment_id below.
+ALTER TABLE detection_signals
+  DROP FOREIGN KEY fk_detection_signal_result;
+
 ALTER TABLE claim_detection_results
   ADD COLUMN assessment_id CHAR(36) NULL AFTER tenant_id;
 
@@ -304,7 +310,6 @@ JOIN claim_detection_results r
 SET s.assessment_id = r.assessment_id;
 
 ALTER TABLE detection_signals
-  DROP FOREIGN KEY fk_detection_signal_result,
   DROP INDEX uq_detection_signals_result,
   ADD UNIQUE KEY uq_detection_signals_assessment (tenant_id, assessment_id),
   ADD CONSTRAINT fk_detection_signal_result FOREIGN KEY (tenant_id, assessment_id)
