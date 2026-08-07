@@ -484,6 +484,7 @@ test(
         reason: "runtime delegation revoke",
         actorId: ids.grantor,
         correlationId: "runtime-delegation-revoke",
+        idempotencyKey: "runtime-delegation-revoke",
       }));
       const revokedAuthority = await repositories.access.resolveEffectivePermissions({
         organisationId: ids.organisation,
