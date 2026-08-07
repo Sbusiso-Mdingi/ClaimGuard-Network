@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 
 import {
+  persistMemberVersion,
+  persistProviderVersion,
+} from "./assessment-context-repository.js";
+import {
   enqueueClaimProcessingJob,
 } from "./claim-processing-outbox-repository.js";
 import {
@@ -17,8 +21,7 @@ const SUPPORTED_STRATEGIES = new Set([
 const DEPLOYMENT_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
-export class ClaimOwnershipConflictError
-  extends Error {
+export class ClaimOwnershipConflictError extends Error {
   constructor(
     message = (
       "Claim identifier is already owned "
@@ -26,288 +29,135 @@ export class ClaimOwnershipConflictError
     ),
   ) {
     super(message);
-
-    this.name =
-      "ClaimOwnershipConflictError";
-
-    this.code =
-      "CLAIM_OWNERSHIP_CONFLICT";
-
+    this.name = "ClaimOwnershipConflictError";
+    this.code = "CLAIM_OWNERSHIP_CONFLICT";
     this.status = 409;
   }
 }
 
-export class ReferenceOwnershipConflictError
-  extends Error {
+export class ReferenceOwnershipConflictError extends Error {
   constructor(entityType, entityId) {
     super(
       `${entityType} identifier ${entityId} `
       + "is already owned by another tenant.",
     );
-
-    this.name =
-      "ReferenceOwnershipConflictError";
-
-    this.code =
-      "REFERENCE_OWNERSHIP_CONFLICT";
-
+    this.name = "ReferenceOwnershipConflictError";
+    this.code = "REFERENCE_OWNERSHIP_CONFLICT";
     this.status = 409;
   }
 }
 
-export class ClaimReferenceValidationError
-  extends Error {
+export class ClaimReferenceValidationError extends Error {
   constructor(entityType, entityId) {
     super(
       `${entityType} identifier ${entityId} `
       + "is not valid for the authenticated "
       + "tenant and scheme.",
     );
-
-    this.name =
-      "ClaimReferenceValidationError";
-
-    this.code =
-      "CLAIM_REFERENCE_INVALID";
-
+    this.name = "ClaimReferenceValidationError";
+    this.code = "CLAIM_REFERENCE_INVALID";
     this.status = 422;
   }
 }
 
-export class ClaimIngestionValidationError
-  extends Error {
+export class ClaimIngestionValidationError extends Error {
   constructor(message) {
     super(message);
-
-    this.name =
-      "ClaimIngestionValidationError";
-
-    this.code =
-      "CLAIM_INGESTION_INVALID";
-
+    this.name = "ClaimIngestionValidationError";
+    this.code = "CLAIM_INGESTION_INVALID";
     this.status = 400;
   }
 }
 
-export class ClaimVersionIntegrityError
-  extends Error {
+export class ClaimVersionIntegrityError extends Error {
   constructor(message) {
     super(message);
-
-    this.name =
-      "ClaimVersionIntegrityError";
-
-    this.code =
-      "CLAIM_VERSION_INTEGRITY_ERROR";
-
+    this.name = "ClaimVersionIntegrityError";
+    this.code = "CLAIM_VERSION_INTEGRITY_ERROR";
     this.status = 500;
   }
 }
 
-export class ClaimModelSelectionUnavailableError
-  extends Error {
+export class ClaimModelSelectionUnavailableError extends Error {
   constructor(message) {
     super(message);
-
-    this.name =
-      "ClaimModelSelectionUnavailableError";
-
-    this.code =
-      "CLAIM_MODEL_SELECTION_UNAVAILABLE";
-
+    this.name = "ClaimModelSelectionUnavailableError";
+    this.code = "CLAIM_MODEL_SELECTION_UNAVAILABLE";
     this.status = 409;
   }
 }
 
 function invalid(message) {
-  return new ClaimIngestionValidationError(
-    message,
-  );
+  return new ClaimIngestionValidationError(message);
 }
 
-function requireText(
-  value,
-  field,
-  maxLength = null,
-) {
-  const normalized =
-    typeof value === "string"
-      ? value.trim()
-      : "";
-
-  if (!normalized) {
-    throw invalid(
-      `${field} is required.`,
-    );
+function requireText(value, field, maxLength = null) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) throw invalid(`${field} is required.`);
+  if (maxLength !== null && normalized.length > maxLength) {
+    throw invalid(`${field} must not exceed ${maxLength} characters.`);
   }
-
-  if (
-    maxLength !== null
-    && normalized.length > maxLength
-  ) {
-    throw invalid(
-      `${field} must not exceed `
-      + `${maxLength} characters.`,
-    );
-  }
-
   return normalized;
 }
 
-function optionalText(
-  value,
-  field,
-  maxLength = null,
-) {
-  if (
-    value === null
-    || value === undefined
-    || value === ""
-  ) {
-    return null;
-  }
-
-  return requireText(
-    value,
-    field,
-    maxLength,
-  );
+function optionalText(value, field, maxLength = null) {
+  if (value === null || value === undefined || value === "") return null;
+  return requireText(value, field, maxLength);
 }
 
-function canonicalDate(
-  value,
-  field,
-) {
-  const rendered =
-    value instanceof Date
-      ? value.toISOString().slice(0, 10)
-      : String(value ?? "").trim();
-
-  const match =
-    /^(\d{4})-(\d{2})-(\d{2})$/.exec(
-      rendered,
-    );
-
-  if (!match) {
-    throw invalid(
-      `${field} must be an ISO calendar date.`,
-    );
-  }
-
+function canonicalDate(value, field) {
+  const rendered = value instanceof Date
+    ? value.toISOString().slice(0, 10)
+    : String(value ?? "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rendered);
+  if (!match) throw invalid(`${field} must be an ISO calendar date.`);
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-
-  const parsed = new Date(
-    Date.UTC(
-      year,
-      month - 1,
-      day,
-    ),
-  );
-
+  const parsed = new Date(Date.UTC(year, month - 1, day));
   if (
     parsed.getUTCFullYear() !== year
     || parsed.getUTCMonth() !== month - 1
     || parsed.getUTCDate() !== day
   ) {
-    throw invalid(
-      `${field} must be a valid `
-      + "ISO calendar date.",
-    );
+    throw invalid(`${field} must be a valid ISO calendar date.`);
   }
-
   return rendered;
 }
 
-function canonicalDecimal(
-  value,
-  field,
-  scale,
-  maximum,
-) {
+function canonicalDecimal(value, field, scale, maximum) {
   if (
     value === null
     || value === undefined
     || value === ""
     || typeof value === "boolean"
   ) {
-    throw invalid(
-      `${field} must be a positive number.`,
-    );
+    throw invalid(`${field} must be a positive number.`);
   }
-
   const parsed = Number(value);
-
-  if (
-    !Number.isFinite(parsed)
-    || parsed <= 0
-    || parsed > maximum
-  ) {
-    throw invalid(
-      `${field} must be greater than zero `
-      + `and not exceed ${maximum}.`,
-    );
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > maximum) {
+    throw invalid(`${field} must be greater than zero and not exceed ${maximum}.`);
   }
-
-  const multiplier =
-    10 ** scale;
-
-  const scaled = Math.round(
-    parsed * multiplier,
-  );
-
+  const multiplier = 10 ** scale;
+  const scaled = Math.round(parsed * multiplier);
   if (
     !Number.isSafeInteger(scaled)
-    || Math.abs(
-      parsed * multiplier - scaled,
-    ) > 1e-7
+    || Math.abs(parsed * multiplier - scaled) > 1e-7
   ) {
-    throw invalid(
-      `${field} must contain no more than `
-      + `${scale} decimal places.`,
-    );
+    throw invalid(`${field} must contain no more than ${scale} decimal places.`);
   }
-
-  return (
-    scaled / multiplier
-  ).toFixed(scale);
+  return (scaled / multiplier).toFixed(scale);
 }
 
-function canonicalBoolean(
-  value,
-  field,
-) {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (
-    value === 1
-    || value === "1"
-    || value === "true"
-  ) {
-    return true;
-  }
-
-  if (
-    value === 0
-    || value === "0"
-    || value === "false"
-  ) {
-    return false;
-  }
-
-  throw invalid(
-    `${field} must be a boolean.`,
-  );
+function canonicalBoolean(value, field) {
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === "1" || value === "true") return true;
+  if (value === 0 || value === "0" || value === "false") return false;
+  throw invalid(`${field} must be a boolean.`);
 }
 
 function sortValue(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortValue);
-  }
-
+  if (Array.isArray(value)) return value.map(sortValue);
   if (
     value
     && typeof value === "object"
@@ -317,276 +167,117 @@ function sortValue(value) {
     return Object.fromEntries(
       Object.keys(value)
         .sort()
-        .map((key) => [
-          key,
-          sortValue(value[key]),
-        ]),
+        .map((key) => [key, sortValue(value[key])]),
     );
   }
-
   return value;
 }
 
 function stableStringify(value) {
-  return JSON.stringify(
-    sortValue(value),
-  );
+  return JSON.stringify(sortValue(value));
 }
 
 function hashClaim(claim) {
   return crypto
     .createHash("sha256")
-    .update(
-      stableStringify(claim),
-      "utf8",
-    )
+    .update(stableStringify(claim), "utf8")
     .digest("hex");
 }
 
-function normalizeClaim(
-  rawClaim,
-  index,
-) {
-  if (
-    !rawClaim
-    || typeof rawClaim !== "object"
-    || Array.isArray(rawClaim)
-  ) {
-    throw invalid(
-      `claims[${index}] must be an object.`,
-    );
+function normalizeClaim(rawClaim, index) {
+  if (!rawClaim || typeof rawClaim !== "object" || Array.isArray(rawClaim)) {
+    throw invalid(`claims[${index}] must be an object.`);
   }
-
   const claim = {
-    claim_id: requireText(
-      rawClaim.claim_id,
-      `claims[${index}].claim_id`,
+    claim_id: requireText(rawClaim.claim_id, `claims[${index}].claim_id`, 128),
+    scheme_id: requireText(rawClaim.scheme_id, `claims[${index}].scheme_id`, 64),
+    member_id: requireText(rawClaim.member_id, `claims[${index}].member_id`, 128),
+    provider_id: requireText(rawClaim.provider_id, `claims[${index}].provider_id`, 128),
+    service_date: canonicalDate(rawClaim.service_date, `claims[${index}].service_date`),
+    received_date: canonicalDate(rawClaim.received_date, `claims[${index}].received_date`),
+    billing_code: requireText(rawClaim.billing_code, `claims[${index}].billing_code`, 64),
+    amount: canonicalDecimal(rawClaim.amount, `claims[${index}].amount`, 2, 9_999_999_999.99),
+    quantity: canonicalDecimal(rawClaim.quantity, `claims[${index}].quantity`, 3, 999_999_999.999),
+    benefit_option: requireText(rawClaim.benefit_option, `claims[${index}].benefit_option`, 128),
+    network_type: requireText(rawClaim.network_type, `claims[${index}].network_type`, 64),
+    line_type: requireText(rawClaim.line_type, `claims[${index}].line_type`, 64),
+    tariff_discipline: requireText(rawClaim.tariff_discipline, `claims[${index}].tariff_discipline`, 128),
+    diagnosis_code: requireText(rawClaim.diagnosis_code, `claims[${index}].diagnosis_code`, 32),
+    rendering_practitioner_id: optionalText(
+      rawClaim.rendering_practitioner_id,
+      `claims[${index}].rendering_practitioner_id`,
       128,
     ),
-
-    scheme_id: requireText(
-      rawClaim.scheme_id,
-      `claims[${index}].scheme_id`,
-      64,
-    ),
-
-    member_id: requireText(
-      rawClaim.member_id,
-      `claims[${index}].member_id`,
+    rendering_practitioner_category: requireText(
+      rawClaim.rendering_practitioner_category,
+      `claims[${index}].rendering_practitioner_category`,
       128,
     ),
-
-    provider_id: requireText(
-      rawClaim.provider_id,
-      `claims[${index}].provider_id`,
-      128,
+    rendering_known_to_billing_provider: canonicalBoolean(
+      rawClaim.rendering_known_to_billing_provider,
+      `claims[${index}].rendering_known_to_billing_provider`,
     ),
-
-    service_date: canonicalDate(
-      rawClaim.service_date,
-      `claims[${index}].service_date`,
-    ),
-
-    received_date: canonicalDate(
-      rawClaim.received_date,
-      `claims[${index}].received_date`,
-    ),
-
-    billing_code: requireText(
-      rawClaim.billing_code,
-      `claims[${index}].billing_code`,
-      64,
-    ),
-
-    amount: canonicalDecimal(
-      rawClaim.amount,
-      `claims[${index}].amount`,
-      2,
-      9_999_999_999.99,
-    ),
-
-    quantity: canonicalDecimal(
-      rawClaim.quantity,
-      `claims[${index}].quantity`,
-      3,
-      999_999_999.999,
-    ),
-
-    benefit_option: requireText(
-      rawClaim.benefit_option,
-      `claims[${index}].benefit_option`,
-      128,
-    ),
-
-    network_type: requireText(
-      rawClaim.network_type,
-      `claims[${index}].network_type`,
-      64,
-    ),
-
-    line_type: requireText(
-      rawClaim.line_type,
-      `claims[${index}].line_type`,
-      64,
-    ),
-
-    tariff_discipline: requireText(
-      rawClaim.tariff_discipline,
-      `claims[${index}].tariff_discipline`,
-      128,
-    ),
-
-    diagnosis_code: requireText(
-      rawClaim.diagnosis_code,
-      `claims[${index}].diagnosis_code`,
-      32,
-    ),
-
-    rendering_practitioner_id:
-      optionalText(
-        rawClaim.rendering_practitioner_id,
-        `claims[${index}]`
-        + ".rendering_practitioner_id",
-        128,
-      ),
-
-    rendering_practitioner_category:
-      requireText(
-        rawClaim
-          .rendering_practitioner_category,
-        `claims[${index}]`
-        + ".rendering_practitioner_category",
-        128,
-      ),
-
-    rendering_known_to_billing_provider:
-      canonicalBoolean(
-        rawClaim
-          .rendering_known_to_billing_provider,
-        `claims[${index}]`
-        + ".rendering_known_to_billing_provider",
-      ),
   };
-
-  if (
-    claim.received_date
-    < claim.service_date
-  ) {
-    throw invalid(
-      `Claim ${claim.claim_id} received_date `
-      + "cannot be earlier than service_date.",
-    );
+  if (claim.received_date < claim.service_date) {
+    throw invalid(`Claim ${claim.claim_id} received_date cannot be earlier than service_date.`);
   }
-
   if (
     claim.rendering_practitioner_id === null
     && (
-      claim
-        .rendering_practitioner_category
-        !== "NONE"
-      || claim
-        .rendering_known_to_billing_provider
+      claim.rendering_practitioner_category !== "NONE"
+      || claim.rendering_known_to_billing_provider
     )
   ) {
-    throw invalid(
-      `Claim ${claim.claim_id} has `
-      + "inconsistent rendering-practitioner data.",
-    );
+    throw invalid(`Claim ${claim.claim_id} has inconsistent rendering-practitioner data.`);
   }
-
   if (
     claim.rendering_practitioner_id !== null
-    && claim
-      .rendering_practitioner_category
-      === "NONE"
+    && claim.rendering_practitioner_category === "NONE"
   ) {
-    throw invalid(
-      `Claim ${claim.claim_id} has `
-      + "inconsistent rendering-practitioner data.",
-    );
+    throw invalid(`Claim ${claim.claim_id} has inconsistent rendering-practitioner data.`);
   }
-
   return claim;
 }
 
 function normalizeClaims(claims) {
-  if (
-    !Array.isArray(claims)
-    || claims.length === 0
-  ) {
-    throw invalid(
-      "claims must be a non-empty array.",
-    );
+  if (!Array.isArray(claims) || claims.length === 0) {
+    throw invalid("claims must be a non-empty array.");
   }
-
-  const normalized =
-    claims.map(normalizeClaim);
-
+  const normalized = claims.map(normalizeClaim);
   const seen = new Set();
-
   for (const claim of normalized) {
     if (seen.has(claim.claim_id)) {
-      throw invalid(
-        "claims contains duplicate claim "
-        + `identifier ${claim.claim_id}.`,
-      );
+      throw invalid(`claims contains duplicate claim identifier ${claim.claim_id}.`);
     }
-
     seen.add(claim.claim_id);
   }
-
   return normalized;
 }
 
 function configuredMaxAttempts(value) {
   const parsed = Number(value);
-
-  return (
-    Number.isSafeInteger(parsed)
-    && parsed > 0
-  )
+  return Number.isSafeInteger(parsed) && parsed > 0
     ? Math.min(parsed, 100)
     : 5;
 }
 
-function emptyWriteSummary(
-  received = 0,
-) {
-  return {
-    received,
-    inserted: 0,
-    updated: 0,
-  };
+function emptyWriteSummary(received = 0) {
+  return { received, inserted: 0, updated: 0 };
 }
 
-async function readOwner(
-  connection,
-  tableName,
-  idColumn,
-  entityId,
-) {
-  const [rows] =
-    await connection.execute(
-      `SELECT tenant_id
-       FROM ${tableName}
-       WHERE ${idColumn} = ?
-       FOR UPDATE`,
-      [entityId],
-    );
-
+async function readOwner(connection, tableName, idColumn, entityId) {
+  const [rows] = await connection.execute(
+    `SELECT tenant_id
+     FROM ${tableName}
+     WHERE ${idColumn} = ?
+     FOR UPDATE`,
+    [entityId],
+  );
   return rows?.[0]?.tenant_id ?? null;
 }
 
-function referenceCacheKey(
-  tableName,
-  entityId,
-  schemeId = null,
-) {
-  return (
-    `${tableName}:`
-    + `${entityId}:`
-    + `${schemeId || ""}`
-  );
+function referenceCacheKey(tableName, entityId, schemeId = null) {
+  return `${tableName}:${entityId}:${schemeId || ""}`;
 }
 
 async function assertTenantReference(
@@ -601,48 +292,26 @@ async function assertTenantReference(
     cache,
   },
 ) {
-  const cacheKey =
-    referenceCacheKey(
-      tableName,
-      entityId,
-      schemeId,
-    );
-
-  if (cache.has(cacheKey)) {
-    return;
-  }
-
-  const selectedColumns =
-    schemeId === null
-      ? "tenant_id"
-      : "tenant_id, scheme_id";
-
-  const [rows] =
-    await connection.execute(
-      `SELECT ${selectedColumns}
-       FROM ${tableName}
-       WHERE ${idColumn} = ?
-       FOR UPDATE`,
-      [entityId],
-    );
-
-  const record =
-    rows?.[0] || null;
-
+  const cacheKey = referenceCacheKey(tableName, entityId, schemeId);
+  if (cache.has(cacheKey)) return;
+  const selectedColumns = schemeId === null
+    ? "tenant_id"
+    : "tenant_id, scheme_id";
+  const [rows] = await connection.execute(
+    `SELECT ${selectedColumns}
+     FROM ${tableName}
+     WHERE ${idColumn} = ?
+     FOR UPDATE`,
+    [entityId],
+  );
+  const record = rows?.[0] || null;
   if (
     !record
     || record.tenant_id !== tenantId
-    || (
-      schemeId !== null
-      && record.scheme_id !== schemeId
-    )
+    || (schemeId !== null && record.scheme_id !== schemeId)
   ) {
-    throw new ClaimReferenceValidationError(
-      entityType,
-      entityId,
-    );
+    throw new ClaimReferenceValidationError(entityType, entityId);
   }
-
   cache.add(cacheKey);
 }
 
@@ -660,108 +329,59 @@ async function upsertTenantOwnedRecord(
     updateParams,
   },
 ) {
-  const existingOwner =
-    await readOwner(
+  const existingOwner = await readOwner(
+    connection,
+    tableName,
+    idColumn,
+    entityId,
+  );
+  if (existingOwner && existingOwner !== tenantId) {
+    throw new ReferenceOwnershipConflictError(entityType, entityId);
+  }
+  if (existingOwner) {
+    const [result] = await connection.execute(
+      updateSql,
+      [...updateParams, entityId, tenantId],
+    );
+    return {
+      disposition: "updated",
+      changed: Number(result?.changedRows ?? result?.affectedRows ?? 0) > 0,
+    };
+  }
+  try {
+    await connection.execute(insertSql, [...insertParams, tenantId]);
+    return { disposition: "inserted", changed: true };
+  } catch (error) {
+    if (error?.code !== "ER_DUP_ENTRY") throw error;
+    const racedOwner = await readOwner(
       connection,
       tableName,
       idColumn,
       entityId,
     );
-
-  if (
-    existingOwner
-    && existingOwner !== tenantId
-  ) {
-    throw new ReferenceOwnershipConflictError(
-      entityType,
-      entityId,
-    );
-  }
-
-  if (existingOwner) {
-    const [result] = await connection.execute(
-      updateSql,
-      [
-        ...updateParams,
-        entityId,
-        tenantId,
-      ],
-    );
-
-    return {
-      disposition: "updated",
-      changed: Number(result?.changedRows ?? result?.affectedRows ?? 0) > 0,
-    };
-  }
-
-  try {
-    await connection.execute(
-      insertSql,
-      [
-        ...insertParams,
-        tenantId,
-      ],
-    );
-
-    return { disposition: "inserted", changed: true };
-  } catch (error) {
-    if (error?.code !== "ER_DUP_ENTRY") {
-      throw error;
-    }
-
-    const racedOwner =
-      await readOwner(
-        connection,
-        tableName,
-        idColumn,
-        entityId,
-      );
-
     if (racedOwner !== tenantId) {
-      throw new ReferenceOwnershipConflictError(
-        entityType,
-        entityId,
-      );
+      throw new ReferenceOwnershipConflictError(entityType, entityId);
     }
-
     const [result] = await connection.execute(
       updateSql,
-      [
-        ...updateParams,
-        entityId,
-        tenantId,
-      ],
+      [...updateParams, entityId, tenantId],
     );
-
     return {
       disposition: "updated",
       changed: Number(result?.changedRows ?? result?.affectedRows ?? 0) > 0,
     };
   }
-}
-
-async function touchClaimsForReference(connection, {
-  tenantId,
-  schemeId,
-  referenceType,
-  referenceId,
-}) {
-  const column = referenceType === "member" ? "member_id"
-    : referenceType === "provider" ? "provider_id"
-      : null;
-  if (!column) throw new TypeError("Unsupported claim reference type.");
-  await connection.execute(
-    `UPDATE claims
-     SET updated_at = UTC_TIMESTAMP(3)
-     WHERE tenant_id = ?
-       AND scheme_id = ?
-       AND ${column} = ?`,
-    [tenantId, schemeId, referenceId],
-  );
 }
 
 function recordWrite(summary, result) {
   summary[result.disposition] += 1;
+}
+
+function mapReferenceVersionError(error, entityType, entityId) {
+  if (error?.code === "REFERENCE_OWNERSHIP_CONFLICT") {
+    return new ReferenceOwnershipConflictError(entityType, entityId);
+  }
+  return error;
 }
 
 async function ingestReferenceData(
@@ -772,69 +392,45 @@ async function ingestReferenceData(
     providers,
     tenantId,
     referenceCache,
+    sourceReference,
+    correlationId,
   },
 ) {
   const summary = {
-    schemes:
-      emptyWriteSummary(schemes.length),
-
-    members:
-      emptyWriteSummary(members.length),
-
-    providers:
-      emptyWriteSummary(providers.length),
+    schemes: emptyWriteSummary(schemes.length),
+    members: emptyWriteSummary(members.length),
+    providers: emptyWriteSummary(providers.length),
   };
 
   for (const scheme of schemes) {
-    const result =
-      await upsertTenantOwnedRecord(
-        connection,
-        {
-          tableName: "schemes",
-          idColumn: "scheme_id",
-          entityType: "Scheme",
-          entityId: scheme.scheme_id,
-          tenantId,
-
-          insertSql: `
-            INSERT INTO schemes (
-              scheme_id,
-              scheme_name,
-              tenant_id
-            )
-            VALUES (?, ?, ?)
-          `,
-
-          insertParams: [
-            scheme.scheme_id,
-            scheme.scheme_name,
-          ],
-
-          updateSql: `
-            UPDATE schemes
-            SET scheme_name = ?
-            WHERE scheme_id = ?
-              AND tenant_id = ?
-          `,
-
-          updateParams: [
-            scheme.scheme_name,
-          ],
-        },
-      );
-
-    recordWrite(
-      summary.schemes,
-      result,
+    const result = await upsertTenantOwnedRecord(
+      connection,
+      {
+        tableName: "schemes",
+        idColumn: "scheme_id",
+        entityType: "Scheme",
+        entityId: scheme.scheme_id,
+        tenantId,
+        insertSql: `
+          INSERT INTO schemes (
+            scheme_id,
+            scheme_name,
+            tenant_id
+          )
+          VALUES (?, ?, ?)
+        `,
+        insertParams: [scheme.scheme_id, scheme.scheme_name],
+        updateSql: `
+          UPDATE schemes
+          SET scheme_name = ?
+          WHERE scheme_id = ?
+            AND tenant_id = ?
+        `,
+        updateParams: [scheme.scheme_name],
+      },
     );
-
-    referenceCache.add(
-      referenceCacheKey(
-        "schemes",
-        scheme.scheme_id,
-      ),
-    );
-
+    recordWrite(summary.schemes, result);
+    referenceCache.add(referenceCacheKey("schemes", scheme.scheme_id));
     await connection.execute(
       `
         INSERT INTO medical_schemes (
@@ -847,11 +443,7 @@ async function ingestReferenceData(
         ON DUPLICATE KEY UPDATE
           scheme_name = VALUES(scheme_name)
       `,
-      [
-        tenantId,
-        scheme.scheme_id,
-        scheme.scheme_name,
-      ],
+      [tenantId, scheme.scheme_id, scheme.scheme_name],
     );
   }
 
@@ -867,100 +459,23 @@ async function ingestReferenceData(
         cache: referenceCache,
       },
     );
-
-    const values = [
-      member.scheme_id,
-      member.first_name,
-      member.last_name,
-      member.date_of_birth,
-      member.gender,
-      member.identity_number,
-      member.banking_detail,
-      member.home_region,
-      member.home_lat,
-      member.home_lon,
-      member.join_date,
-    ];
-
-    const result =
-      await upsertTenantOwnedRecord(
-        connection,
-        {
-          tableName: "members",
-          idColumn: "member_id",
-          entityType: "Member",
-          entityId: member.member_id,
-          tenantId,
-
-          insertSql: `
-            INSERT INTO members (
-              member_id,
-              scheme_id,
-              first_name,
-              last_name,
-              date_of_birth,
-              gender,
-              identity_number,
-              banking_detail,
-              home_region,
-              home_lat,
-              home_lon,
-              join_date,
-              tenant_id
-            )
-            VALUES (
-              ?, ?, ?, ?, ?, ?, ?,
-              ?, ?, ?, ?, ?, ?
-            )
-          `,
-
-          insertParams: [
-            member.member_id,
-            ...values,
-          ],
-
-          updateSql: `
-            UPDATE members
-            SET
-              scheme_id = ?,
-              first_name = ?,
-              last_name = ?,
-              date_of_birth = ?,
-              gender = ?,
-              identity_number = ?,
-              banking_detail = ?,
-              home_region = ?,
-              home_lat = ?,
-              home_lon = ?,
-              join_date = ?
-            WHERE member_id = ?
-              AND tenant_id = ?
-          `,
-
-          updateParams: values,
-        },
-      );
-
-    recordWrite(
-      summary.members,
-      result,
-    );
-
-    if (result.changed) {
-      await touchClaimsForReference(connection, {
+    let result;
+    try {
+      result = await persistMemberVersion(connection, {
         tenantId,
-        schemeId: member.scheme_id,
-        referenceType: "member",
-        referenceId: member.member_id,
+        member,
+        actorId: "system:reference-ingestion",
+        reasonCode: "REFERENCE_DATA_UPDATE",
+        reasonSummary: "Member reference data changed during claim ingestion.",
+        sourceReference,
+        correlationId,
       });
+    } catch (error) {
+      throw mapReferenceVersionError(error, "Member", member.member_id);
     }
-
+    recordWrite(summary.members, result);
     referenceCache.add(
-      referenceCacheKey(
-        "members",
-        member.member_id,
-        member.scheme_id,
-      ),
+      referenceCacheKey("members", member.member_id, member.scheme_id),
     );
   }
 
@@ -976,97 +491,23 @@ async function ingestReferenceData(
         cache: referenceCache,
       },
     );
-
-    const values = [
-      provider.scheme_id,
-      provider.practice_number,
-      provider.specialty,
-      provider.practice_name,
-      provider.banking_detail,
-      provider.practice_region,
-      provider.practice_lat,
-      provider.practice_lon,
-      provider.provider_kind,
-      provider.provider_category,
-    ];
-
-    const result =
-      await upsertTenantOwnedRecord(
-        connection,
-        {
-          tableName: "providers",
-          idColumn: "provider_id",
-          entityType: "Provider",
-          entityId: provider.provider_id,
-          tenantId,
-
-          insertSql: `
-            INSERT INTO providers (
-              provider_id,
-              scheme_id,
-              practice_number,
-              specialty,
-              practice_name,
-              banking_detail,
-              practice_region,
-              practice_lat,
-              practice_lon,
-              provider_kind,
-              provider_category,
-              tenant_id
-            )
-            VALUES (
-              ?, ?, ?, ?, ?, ?, ?,
-              ?, ?, ?, ?, ?
-            )
-          `,
-
-          insertParams: [
-            provider.provider_id,
-            ...values,
-          ],
-
-          updateSql: `
-            UPDATE providers
-            SET
-              scheme_id = ?,
-              practice_number = ?,
-              specialty = ?,
-              practice_name = ?,
-              banking_detail = ?,
-              practice_region = ?,
-              practice_lat = ?,
-              practice_lon = ?,
-              provider_kind = ?,
-              provider_category = ?
-            WHERE provider_id = ?
-              AND tenant_id = ?
-          `,
-
-          updateParams: values,
-        },
-      );
-
-    recordWrite(
-      summary.providers,
-      result,
-    );
-
-    if (result.changed) {
-      await touchClaimsForReference(connection, {
+    let result;
+    try {
+      result = await persistProviderVersion(connection, {
         tenantId,
-        schemeId: provider.scheme_id,
-        referenceType: "provider",
-        referenceId: provider.provider_id,
+        provider,
+        actorId: "system:reference-ingestion",
+        reasonCode: "REFERENCE_DATA_UPDATE",
+        reasonSummary: "Provider reference data changed during claim ingestion.",
+        sourceReference,
+        correlationId,
       });
+    } catch (error) {
+      throw mapReferenceVersionError(error, "Provider", provider.provider_id);
     }
-
+    recordWrite(summary.providers, result);
     referenceCache.add(
-      referenceCacheKey(
-        "providers",
-        provider.provider_id,
-        provider.scheme_id,
-      ),
+      referenceCacheKey("providers", provider.provider_id, provider.scheme_id),
     );
   }
 
@@ -1078,110 +519,65 @@ async function readActiveStrategy(
   tenantId,
   approvedModelDeploymentIds,
 ) {
-  const [rows] =
-    await connection.execute(
-      `
-        SELECT
-          id,
-          strategy_type,
-          model_deployment_id
-        FROM detection_strategies
-        WHERE tenant_id = ?
-          AND is_active = 1
-        ORDER BY
-          activated_at DESC,
-          id DESC
-        LIMIT 2
-        FOR UPDATE
-      `,
-      [tenantId],
-    );
-
-  if (
-    (rows || []).length !== 1
-  ) {
+  const [rows] = await connection.execute(
+    `
+      SELECT
+        id,
+        strategy_type,
+        model_deployment_id
+      FROM detection_strategies
+      WHERE tenant_id = ?
+        AND is_active = 1
+      ORDER BY
+        activated_at DESC,
+        id DESC
+      LIMIT 2
+      FOR UPDATE
+    `,
+    [tenantId],
+  );
+  if ((rows || []).length !== 1) {
     throw new ClaimVersionIntegrityError(
       rows?.length
-        ? (
-          "Tenant has multiple active "
-          + "detection strategies."
-        )
-        : (
-          "Tenant has no active "
-          + "detection strategy."
-        ),
+        ? "Tenant has multiple active detection strategies."
+        : "Tenant has no active detection strategy.",
     );
   }
-
   const row = rows[0];
   const id = Number(row.id);
-
-  const strategyType =
-    String(
-      row.strategy_type || "",
-    ).trim();
-
-  const modelDeploymentId =
-    String(
-      row.model_deployment_id || "",
-    ).trim() || null;
-
+  const strategyType = String(row.strategy_type || "").trim();
+  const modelDeploymentId = String(row.model_deployment_id || "").trim() || null;
   if (
     !Number.isSafeInteger(id)
     || id <= 0
-    || !SUPPORTED_STRATEGIES.has(
-      strategyType,
-    )
+    || !SUPPORTED_STRATEGIES.has(strategyType)
   ) {
-    throw new ClaimVersionIntegrityError(
-      "The active detection strategy is invalid.",
-    );
+    throw new ClaimVersionIntegrityError("The active detection strategy is invalid.");
   }
-
   if (
     strategyType === "approved_model"
-    && (
-      !modelDeploymentId
-      || !DEPLOYMENT_ID_PATTERN.test(
-        modelDeploymentId,
-      )
-    )
+    && (!modelDeploymentId || !DEPLOYMENT_ID_PATTERN.test(modelDeploymentId))
   ) {
     throw new ClaimVersionIntegrityError(
-      "The approved model strategy "
-      + "has no valid deployment identifier.",
+      "The approved model strategy has no valid deployment identifier.",
     );
   }
-
   if (
     strategyType === "approved_model"
     && approvedModelDeploymentIds
-    && !approvedModelDeploymentIds.has(
-      modelDeploymentId,
-    )
+    && !approvedModelDeploymentIds.has(modelDeploymentId)
   ) {
     throw new ClaimModelSelectionUnavailableError(
-      "The active model deployment is no longer "
-      + "approved for new claim ingestion. Select "
-      + "a currently approved model before retrying.",
+      "The active model deployment is no longer approved for new claim ingestion. "
+      + "Select a currently approved model before retrying.",
     );
   }
-
-  if (
-    strategyType === "deterministic_rules"
-    && modelDeploymentId !== null
-  ) {
+  if (strategyType === "deterministic_rules" && modelDeploymentId !== null) {
     throw new ClaimVersionIntegrityError(
-      "The deterministic strategy unexpectedly "
-      + "references a model deployment.",
+      "The deterministic strategy unexpectedly references a model deployment.",
     );
   }
-
-  return {
-    id,
-    strategyType,
-    modelDeploymentId,
-  };
+  return { id, strategyType, modelDeploymentId };
 }
 
 function claimValues(claim) {
@@ -1200,10 +596,8 @@ function claimValues(claim) {
     claim.tariff_discipline,
     claim.diagnosis_code,
     claim.rendering_practitioner_id,
-    claim
-      .rendering_practitioner_category,
-    claim
-      .rendering_known_to_billing_provider,
+    claim.rendering_practitioner_category,
+    claim.rendering_known_to_billing_provider,
   ];
 }
 
@@ -1226,7 +620,6 @@ async function assertClaimReferences(
       cache: referenceCache,
     },
   );
-
   await assertTenantReference(
     connection,
     {
@@ -1239,7 +632,6 @@ async function assertClaimReferences(
       cache: referenceCache,
     },
   );
-
   await assertTenantReference(
     connection,
     {
@@ -1254,123 +646,69 @@ async function assertClaimReferences(
   );
 }
 
-function parseClaimPayload(
-  value,
-  claimId,
-) {
+function parseClaimPayload(value, claimId) {
   let parsed = value;
-
-  if (Buffer.isBuffer(parsed)) {
-    parsed = parsed.toString("utf8");
-  }
-
+  if (Buffer.isBuffer(parsed)) parsed = parsed.toString("utf8");
   if (typeof parsed === "string") {
     try {
       parsed = JSON.parse(parsed);
     } catch {
       throw new ClaimVersionIntegrityError(
-        `Claim ${claimId} has invalid `
-        + "version payload JSON.",
+        `Claim ${claimId} has invalid version payload JSON.`,
       );
     }
   }
-
-  if (
-    !parsed
-    || typeof parsed !== "object"
-    || Array.isArray(parsed)
-  ) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new ClaimVersionIntegrityError(
-      `Claim ${claimId} has an invalid `
-      + "version payload.",
+      `Claim ${claimId} has an invalid version payload.`,
     );
   }
-
   return parsed;
 }
 
-async function readCurrentClaim(
-  connection,
-  claimId,
-) {
-  const [rows] =
-    await connection.execute(
-      `
-        SELECT
-          c.tenant_id,
-          c.current_claim_version,
-          cv.payload_hash,
-          cv.claim_payload
-        FROM claims c
-        LEFT JOIN claim_versions cv
-          ON cv.tenant_id = c.tenant_id
-         AND cv.claim_id = c.claim_id
-         AND cv.claim_version =
-           c.current_claim_version
-        WHERE c.claim_id = ?
-        LIMIT 1
-        FOR UPDATE
-      `,
-      [claimId],
-    );
-
-  const row =
-    rows?.[0] || null;
-
-  if (!row) {
-    return null;
-  }
-
-  const currentClaimVersion =
-    Number(
-      row.current_claim_version,
-    );
-
+async function readCurrentClaim(connection, claimId) {
+  const [rows] = await connection.execute(
+    `
+      SELECT
+        c.tenant_id,
+        c.current_claim_version,
+        cv.payload_hash,
+        cv.claim_payload
+      FROM claims c
+      LEFT JOIN claim_versions cv
+        ON cv.tenant_id = c.tenant_id
+       AND cv.claim_id = c.claim_id
+       AND cv.claim_version = c.current_claim_version
+      WHERE c.claim_id = ?
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [claimId],
+  );
+  const row = rows?.[0] || null;
+  if (!row) return null;
+  const currentClaimVersion = Number(row.current_claim_version);
   if (
-    !Number.isSafeInteger(
-      currentClaimVersion,
-    )
+    !Number.isSafeInteger(currentClaimVersion)
     || currentClaimVersion <= 0
-    || currentClaimVersion
-      > MAX_CLAIM_VERSION
+    || currentClaimVersion > MAX_CLAIM_VERSION
   ) {
     throw new ClaimVersionIntegrityError(
-      `Claim ${claimId} has an invalid `
-      + "current-version pointer.",
+      `Claim ${claimId} has an invalid current-version pointer.`,
     );
   }
-
-  let currentPayloadHash =
-    String(
-      row.payload_hash || "",
+  let currentPayloadHash = String(row.payload_hash || "");
+  if (!/^[a-f0-9]{64}$/.test(currentPayloadHash)) {
+    const storedClaim = normalizeClaim(
+      parseClaimPayload(row.claim_payload, claimId),
+      0,
     );
-
-  if (
-    !/^[a-f0-9]{64}$/.test(
-      currentPayloadHash,
-    )
-  ) {
-    const storedClaim =
-      normalizeClaim(
-        parseClaimPayload(
-          row.claim_payload,
-          claimId,
-        ),
-        0,
-      );
-
-    if (
-      storedClaim.claim_id !== claimId
-    ) {
+    if (storedClaim.claim_id !== claimId) {
       throw new ClaimVersionIntegrityError(
-        `Claim ${claimId} has a mismatched `
-        + "version payload.",
+        `Claim ${claimId} has a mismatched version payload.`,
       );
     }
-
-    currentPayloadHash =
-      hashClaim(storedClaim);
-
+    currentPayloadHash = hashClaim(storedClaim);
     await connection.execute(
       `
         UPDATE claim_versions
@@ -1383,15 +721,9 @@ async function readCurrentClaim(
             OR payload_hash = ''
           )
       `,
-      [
-        currentPayloadHash,
-        row.tenant_id,
-        claimId,
-        currentClaimVersion,
-      ],
+      [currentPayloadHash, row.tenant_id, claimId, currentClaimVersion],
     );
   }
-
   return {
     tenantId: row.tenant_id,
     currentClaimVersion,
@@ -1427,10 +759,7 @@ async function insertClaimVersion(
         payload_hash,
         version_reason
       )
-      VALUES (
-        ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?
-      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       tenantId,
@@ -1482,19 +811,10 @@ async function insertNewClaim(
         rendering_known_to_billing_provider,
         tenant_id
       )
-      VALUES (
-        ?, 1, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?
-      )
+      VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    [
-      claim.claim_id,
-      ...claimValues(claim),
-      tenantId,
-    ],
+    [claim.claim_id, ...claimValues(claim), tenantId],
   );
-
   await insertClaimVersion(
     connection,
     {
@@ -1503,18 +823,12 @@ async function insertNewClaim(
       claimVersion: 1,
       claimPayload,
       claimPayloadHash,
-      versionReason:
-        "initial_submission",
+      versionReason: "initial_submission",
     },
   );
-
   return {
     disposition: "inserted",
-
-    target: {
-      claim_id: claim.claim_id,
-      claim_version: 1,
-    },
+    target: { claim_id: claim.claim_id, claim_version: 1 },
   };
 }
 
@@ -1528,35 +842,16 @@ async function updateExistingClaim(
     claimPayloadHash,
   },
 ) {
-  if (
-    current.tenantId !== tenantId
-  ) {
-    throw new ClaimOwnershipConflictError();
+  if (current.tenantId !== tenantId) throw new ClaimOwnershipConflictError();
+  if (current.currentPayloadHash === claimPayloadHash) {
+    return { disposition: "unchanged", target: null };
   }
-
-  if (
-    current.currentPayloadHash
-    === claimPayloadHash
-  ) {
-    return {
-      disposition: "unchanged",
-      target: null,
-    };
-  }
-
-  if (
-    current.currentClaimVersion
-    >= MAX_CLAIM_VERSION
-  ) {
+  if (current.currentClaimVersion >= MAX_CLAIM_VERSION) {
     throw new ClaimVersionIntegrityError(
-      `Claim ${claim.claim_id} exceeded `
-      + "the supported version range.",
+      `Claim ${claim.claim_id} exceeded the supported version range.`,
     );
   }
-
-  const nextVersion =
-    current.currentClaimVersion + 1;
-
+  const nextVersion = current.currentClaimVersion + 1;
   await insertClaimVersion(
     connection,
     {
@@ -1565,64 +860,50 @@ async function updateExistingClaim(
       claimVersion: nextVersion,
       claimPayload,
       claimPayloadHash,
-      versionReason:
-        "claim_amendment",
+      versionReason: "claim_amendment",
     },
   );
-
-  const [result] =
-    await connection.execute(
-      `
-        UPDATE claims
-        SET
-          current_claim_version = ?,
-          scheme_id = ?,
-          member_id = ?,
-          provider_id = ?,
-          service_date = ?,
-          received_date = ?,
-          billing_code = ?,
-          amount = ?,
-          quantity = ?,
-          benefit_option = ?,
-          network_type = ?,
-          line_type = ?,
-          tariff_discipline = ?,
-          diagnosis_code = ?,
-          rendering_practitioner_id = ?,
-          rendering_practitioner_category = ?,
-          rendering_known_to_billing_provider = ?
-        WHERE claim_id = ?
-          AND tenant_id = ?
-          AND current_claim_version = ?
-      `,
-      [
-        nextVersion,
-        ...claimValues(claim),
-        claim.claim_id,
-        tenantId,
-        current.currentClaimVersion,
-      ],
-    );
-
-  if (
-    Number(
-      result?.affectedRows || 0,
-    ) !== 1
-  ) {
+  const [result] = await connection.execute(
+    `
+      UPDATE claims
+      SET
+        current_claim_version = ?,
+        scheme_id = ?,
+        member_id = ?,
+        provider_id = ?,
+        service_date = ?,
+        received_date = ?,
+        billing_code = ?,
+        amount = ?,
+        quantity = ?,
+        benefit_option = ?,
+        network_type = ?,
+        line_type = ?,
+        tariff_discipline = ?,
+        diagnosis_code = ?,
+        rendering_practitioner_id = ?,
+        rendering_practitioner_category = ?,
+        rendering_known_to_billing_provider = ?
+      WHERE claim_id = ?
+        AND tenant_id = ?
+        AND current_claim_version = ?
+    `,
+    [
+      nextVersion,
+      ...claimValues(claim),
+      claim.claim_id,
+      tenantId,
+      current.currentClaimVersion,
+    ],
+  );
+  if (Number(result?.affectedRows || 0) !== 1) {
     throw new ClaimVersionIntegrityError(
-      `Claim ${claim.claim_id} changed `
-      + "while its amendment was being committed.",
+      `Claim ${claim.claim_id} changed while its amendment was being committed.`,
     );
   }
-
   return {
     disposition: "updated",
-
-    target: {
-      claim_id: claim.claim_id,
-      claim_version: nextVersion,
-    },
+    target: { claim_id: claim.claim_id, claim_version: nextVersion },
   };
 }
 
@@ -1636,69 +917,30 @@ async function persistClaim(
 ) {
   await assertClaimReferences(
     connection,
-    {
-      claim,
-      tenantId,
-      referenceCache,
-    },
+    { claim, tenantId, referenceCache },
   );
-
-  const claimPayload =
-    stableStringify(claim);
-
-  const claimPayloadHash =
-    hashClaim(claim);
-
-  const current =
-    await readCurrentClaim(
-      connection,
-      claim.claim_id,
-    );
-
+  const claimPayload = stableStringify(claim);
+  const claimPayloadHash = hashClaim(claim);
+  const current = await readCurrentClaim(connection, claim.claim_id);
   if (current) {
     return updateExistingClaim(
       connection,
-      {
-        tenantId,
-        claim,
-        current,
-        claimPayload,
-        claimPayloadHash,
-      },
+      { tenantId, claim, current, claimPayload, claimPayloadHash },
     );
   }
-
   try {
     return await insertNewClaim(
       connection,
-      {
-        tenantId,
-        claim,
-        claimPayload,
-        claimPayloadHash,
-      },
+      { tenantId, claim, claimPayload, claimPayloadHash },
     );
   } catch (error) {
-    if (
-      error?.code !== "ER_DUP_ENTRY"
-    ) {
-      throw error;
-    }
-
-    const racedCurrent =
-      await readCurrentClaim(
-        connection,
-        claim.claim_id,
-      );
-
+    if (error?.code !== "ER_DUP_ENTRY") throw error;
+    const racedCurrent = await readCurrentClaim(connection, claim.claim_id);
     if (!racedCurrent) {
       throw new ClaimVersionIntegrityError(
-        `Claim ${claim.claim_id} collided `
-        + "during insertion but could not "
-        + "be reloaded.",
+        `Claim ${claim.claim_id} collided during insertion but could not be reloaded.`,
       );
     }
-
     return updateExistingClaim(
       connection,
       {
@@ -1712,44 +954,27 @@ async function persistClaim(
   }
 }
 
-function processingResult(
-  outboxJob,
-  correlationId,
-) {
+function processingResult(outboxJob, correlationId) {
   if (!outboxJob) {
     return {
       status: "not_queued",
       asynchronous: false,
       jobId: null,
-      correlationId:
-        correlationId || null,
+      correlationId: correlationId || null,
       reused: false,
       skipped: true,
       reason: "no_claim_changes",
     };
   }
-
   return {
-    status: [
-      "pending",
-      "processing",
-      "retry",
-    ].includes(outboxJob.status)
+    status: ["pending", "processing", "retry"].includes(outboxJob.status)
       ? "queued"
       : outboxJob.status,
-
     asynchronous: true,
-
     jobId: outboxJob.id,
-
-    correlationId:
-      outboxJob.correlationId,
-
-    reused:
-      !outboxJob.enqueued,
-
+    correlationId: outboxJob.correlationId,
+    reused: !outboxJob.enqueued,
     skipped: false,
-
     reason: null,
   };
 }
@@ -1758,62 +983,30 @@ export function createClaimIngestionRepository(
   pool,
   {
     maxOutboxAttempts =
-      process.env
-        .REPORT_WORKER_MAX_ATTEMPTS
-      || process.env
-        .CLAIM_OUTBOX_MAX_ATTEMPTS,
-
+      process.env.REPORT_WORKER_MAX_ATTEMPTS
+      || process.env.CLAIM_OUTBOX_MAX_ATTEMPTS,
     dataPlaneContext = null,
-
     allowLegacyTenantContext = false,
-
     approvedModelDeploymentIds =
-      process.env
-        .APPROVED_MODEL_DEPLOYMENT_IDS,
+      process.env.APPROVED_MODEL_DEPLOYMENT_IDS,
   } = {},
 ) {
-  if (
-    !pool
-    || typeof pool.getConnection
-      !== "function"
-  ) {
-    throw invalid(
-      "A MySQL-compatible pool is required.",
-    );
+  if (!pool || typeof pool.getConnection !== "function") {
+    throw invalid("A MySQL-compatible pool is required.");
   }
-
-  if (
-    !dataPlaneContext
-    && !allowLegacyTenantContext
-  ) {
-    repositoryTenantId(null);
-  }
-
-  const canonicalTenantId = () =>
-    repositoryTenantId(
-      dataPlaneContext,
-      {
-        allowLegacyTenantContext,
-      },
-    );
-
-  const approvedDeployments =
-    String(
-      approvedModelDeploymentIds
-      || "",
-    ).trim()
-      ? new Set(
-          String(
-            approvedModelDeploymentIds,
-          )
-            .split(",")
-            .map((value) => value.trim())
-            .filter((value) =>
-              DEPLOYMENT_ID_PATTERN.test(
-                value,
-              )),
-        )
-      : null;
+  if (!dataPlaneContext && !allowLegacyTenantContext) repositoryTenantId(null);
+  const canonicalTenantId = () => repositoryTenantId(
+    dataPlaneContext,
+    { allowLegacyTenantContext },
+  );
+  const approvedDeployments = String(approvedModelDeploymentIds || "").trim()
+    ? new Set(
+        String(approvedModelDeploymentIds)
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => DEPLOYMENT_ID_PATTERN.test(value)),
+      )
+    : null;
 
   return {
     async ingestClaims({
@@ -1824,146 +1017,71 @@ export function createClaimIngestionRepository(
       source = "api",
       correlationId = null,
     }) {
-      if (
-        ![
-          schemes,
-          members,
-          providers,
-        ].every(Array.isArray)
-      ) {
-        throw invalid(
-          "schemes, members, and providers "
-          + "must be arrays.",
-        );
+      if (![schemes, members, providers].every(Array.isArray)) {
+        throw invalid("schemes, members, and providers must be arrays.");
       }
-
-      const normalizedClaims =
-        normalizeClaims(claims);
-
-      const canonicalSource =
-        requireText(
-          source,
-          "source",
-          128,
-        );
-
-      const canonicalCorrelationId =
-        (
-          correlationId === null
-          || correlationId === undefined
-          || correlationId === ""
-        )
-          ? null
-          : requireText(
-            correlationId,
-            "correlationId",
-            128,
-          );
-
-      const tenantId =
-        canonicalTenantId();
-
-      const connection =
-        await pool.getConnection();
-
-      const referenceCache =
-        new Set();
-
+      const normalizedClaims = normalizeClaims(claims);
+      const canonicalSource = requireText(source, "source", 128);
+      const canonicalCorrelationId = (
+        correlationId === null
+        || correlationId === undefined
+        || correlationId === ""
+      )
+        ? null
+        : requireText(correlationId, "correlationId", 128);
+      const tenantId = canonicalTenantId();
+      const connection = await pool.getConnection();
+      const referenceCache = new Set();
       const summary = {
         inserted: 0,
         updated: 0,
         unchanged: 0,
         targets: [],
       };
-
       let referenceData = null;
       let outboxJob = null;
-
       try {
         await connection.beginTransaction();
-
-        const activeStrategy =
-          await readActiveStrategy(
-            connection,
+        const activeStrategy = await readActiveStrategy(
+          connection,
+          tenantId,
+          approvedDeployments,
+        );
+        referenceData = await ingestReferenceData(
+          connection,
+          {
+            schemes,
+            members,
+            providers,
             tenantId,
-            approvedDeployments,
+            referenceCache,
+            sourceReference: canonicalSource,
+            correlationId: canonicalCorrelationId || crypto.randomUUID(),
+          },
+        );
+        for (const claim of normalizedClaims) {
+          const result = await persistClaim(
+            connection,
+            { tenantId, claim, referenceCache },
           );
-
-        referenceData =
-          await ingestReferenceData(
+          summary[result.disposition] += 1;
+          if (result.target) summary.targets.push(result.target);
+        }
+        if (summary.targets.length > 0) {
+          outboxJob = await enqueueClaimProcessingJob(
             connection,
             {
-              schemes,
-              members,
-              providers,
               tenantId,
-              referenceCache,
+              targets: summary.targets,
+              source: canonicalSource,
+              correlationId: canonicalCorrelationId || undefined,
+              maxAttempts: configuredMaxAttempts(maxOutboxAttempts),
+              detectionStrategyId: activeStrategy.id,
+              strategyType: activeStrategy.strategyType,
+              modelDeploymentId: activeStrategy.modelDeploymentId,
             },
           );
-
-        for (
-          const claim
-          of normalizedClaims
-        ) {
-          const result =
-            await persistClaim(
-              connection,
-              {
-                tenantId,
-                claim,
-                referenceCache,
-              },
-            );
-
-          summary[
-            result.disposition
-          ] += 1;
-
-          if (result.target) {
-            summary.targets.push(
-              result.target,
-            );
-          }
         }
-
-        if (
-          summary.targets.length > 0
-        ) {
-          outboxJob =
-            await enqueueClaimProcessingJob(
-              connection,
-              {
-                tenantId,
-
-                targets:
-                  summary.targets,
-
-                source:
-                  canonicalSource,
-
-                correlationId:
-                  canonicalCorrelationId
-                  || undefined,
-
-                maxAttempts:
-                  configuredMaxAttempts(
-                    maxOutboxAttempts,
-                  ),
-
-                detectionStrategyId:
-                  activeStrategy.id,
-
-                strategyType:
-                  activeStrategy
-                    .strategyType,
-
-                modelDeploymentId:
-                  activeStrategy
-                    .modelDeploymentId,
-              },
-            );
-        }
-
         await connection.commit();
       } catch (error) {
         await connection.rollback();
@@ -1971,33 +1089,15 @@ export function createClaimIngestionRepository(
       } finally {
         connection.release();
       }
-
       return {
-        received:
-          normalizedClaims.length,
-
-        inserted:
-          summary.inserted,
-
-        updated:
-          summary.updated,
-
-        unchanged:
-          summary.unchanged,
-
-        versioned:
-          summary.targets.length,
-
-        source:
-          canonicalSource,
-
+        received: normalizedClaims.length,
+        inserted: summary.inserted,
+        updated: summary.updated,
+        unchanged: summary.unchanged,
+        versioned: summary.targets.length,
+        source: canonicalSource,
         referenceData,
-
-        processing:
-          processingResult(
-            outboxJob,
-            canonicalCorrelationId,
-          ),
+        processing: processingResult(outboxJob, canonicalCorrelationId),
       };
     },
   };
