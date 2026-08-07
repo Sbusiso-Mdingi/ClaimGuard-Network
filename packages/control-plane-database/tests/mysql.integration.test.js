@@ -387,3 +387,112 @@ test(
     }
   },
 );
+
+test(
+  "real MySQL delegation mutation invalidates only the grantee and rolls back atomically",
+  { skip: !databaseUrl },
+  async () => {
+    const pool = createControlPlanePool(databaseUrl);
+    try {
+      await applyControlPlaneMigrations(pool, { applicationVersion: "delegation-rollback-test" });
+      await seedIdentity(pool);
+      const repositories = createControlPlaneRepositories(pool);
+
+      const [beforeRows] = await pool.execute(
+        `SELECT membership_id, authorization_version
+         FROM organisation_memberships
+         WHERE membership_id IN (?, ?)
+         ORDER BY membership_id`,
+        [ids.granteeMembership, ids.unrelatedMembership],
+      );
+      const before = new Map(beforeRows.map((row) => [row.membership_id, Number(row.authorization_version)]));
+
+      const expiresAt = new Date("2026-08-08T12:00:00.000Z");
+      await assert.rejects(
+        () => repositories.runInTransaction(async (tx) => {
+          await tx.access.createDelegation({
+            organisationId: ids.organisation,
+            grantorUserId: ids.grantor,
+            granteeUserId: ids.grantee,
+            permissionKeys: ["case.review_evidence"],
+            expiresAt,
+            reason: "Runtime rollback coverage",
+            actorId: ids.grantor,
+            correlationId: "runtime-delegation-rollback",
+            idempotencyKey: "runtime-delegation-rollback",
+            grantorEffectivePermissions: new Set(["case.review_evidence"]),
+          });
+          throw new Error("injected delegation transaction failure");
+        }),
+        /injected delegation transaction failure/,
+      );
+
+      const [rolledBackDelegations] = await pool.execute(
+        "SELECT delegation_id FROM access_delegations WHERE idempotency_key = ?",
+        ["runtime-delegation-rollback"],
+      );
+      const [rolledBackPermissions] = await pool.execute(
+        `SELECT dp.delegation_id
+           FROM access_delegation_permissions dp
+           JOIN access_delegations d ON d.delegation_id = dp.delegation_id
+          WHERE d.idempotency_key = ?`,
+        ["runtime-delegation-rollback"],
+      );
+      const [rolledBackOperations] = await pool.execute(
+        "SELECT operation_id FROM access_authorization_operations WHERE idempotency_key = ?",
+        ["runtime-delegation-rollback"],
+      );
+      const [rolledBackAudits] = await pool.execute(
+        "SELECT audit_event_id FROM access_audit_events WHERE correlation_id = ?",
+        ["runtime-delegation-rollback"],
+      );
+      assert.deepEqual(rolledBackDelegations, []);
+      assert.deepEqual(rolledBackPermissions, []);
+      assert.deepEqual(rolledBackOperations, []);
+      assert.deepEqual(rolledBackAudits, []);
+      assert.equal(await repositories.access.getAuthorizationVersion(ids.granteeMembership), before.get(ids.granteeMembership));
+      assert.equal(await repositories.access.getAuthorizationVersion(ids.unrelatedMembership), before.get(ids.unrelatedMembership));
+
+      const delegation = await repositories.runInTransaction((tx) => tx.access.createDelegation({
+        organisationId: ids.organisation,
+        grantorUserId: ids.grantor,
+        granteeUserId: ids.grantee,
+        permissionKeys: ["case.review_evidence"],
+        expiresAt,
+        reason: "Runtime delegation create",
+        actorId: ids.grantor,
+        correlationId: "runtime-delegation-create",
+        idempotencyKey: "runtime-delegation-create",
+        grantorEffectivePermissions: new Set(["case.review_evidence"]),
+      }));
+      const afterCreate = await repositories.access.getAuthorizationVersion(ids.granteeMembership);
+      assert.equal(afterCreate, before.get(ids.granteeMembership) + 1);
+      assert.equal(await repositories.access.getAuthorizationVersion(ids.unrelatedMembership), before.get(ids.unrelatedMembership));
+
+      const authority = await repositories.access.resolveEffectivePermissions({
+        organisationId: ids.organisation,
+        userId: ids.grantee,
+        membershipId: ids.granteeMembership,
+        asOf: new Date("2026-08-07T12:00:00.000Z"),
+      });
+      assert.equal(authority.permissionKeys.includes("case.review_evidence"), true);
+
+      await repositories.runInTransaction((tx) => tx.access.revokeDelegation({
+        organisationId: ids.organisation,
+        delegationId: delegation.delegationId,
+        reason: "runtime delegation revoke",
+        actorId: ids.grantor,
+        correlationId: "runtime-delegation-revoke",
+      }));
+      const revokedAuthority = await repositories.access.resolveEffectivePermissions({
+        organisationId: ids.organisation,
+        userId: ids.grantee,
+        membershipId: ids.granteeMembership,
+        asOf: new Date("2026-08-07T12:00:00.000Z"),
+      });
+      assert.equal(revokedAuthority.permissionKeys.includes("case.review_evidence"), false);
+    } finally {
+      await pool.end();
+    }
+  },
+);

@@ -1,4 +1,4 @@
-# Desktop Production Readiness
+# Sequrin Desktop Production Readiness
 
 ## Intended Users
 
@@ -51,7 +51,7 @@ Do not put the private key, pepper, cursor secret, session material, or database
    - `DESKTOP_ACTIVATION_ORIGIN=https://claimguard-api.azurewebsites.net`
    - `DESKTOP_ENROLLMENT_VERIFYING_JWK=<matching public Ed25519 JWK including kid>`
 6. Dispatch `desktop-live-pilot` for the exact main SHA with `BUILD LIVE DESKTOP PILOT`.
-7. A platform administrator sets the pilot scheme allowance. A scheme administrator then uses the web application to issue a one-time activation key. Install the pilot on a controlled scheme Windows device and verify activation, scheme-admin login, analyst login, platform-admin rejection, sync, offline expiry, reset, web-driven revocation, and explicit re-enrollment with a fresh key.
+7. A platform administrator sets the pilot scheme allowance. A scheme administrator then uses the web application to issue a one-time activation key. Install the pilot on a controlled scheme Windows device and verify activation, scheme-admin login, analyst login, platform-admin rejection, sync, offline expiry, stale authorization-version reauthentication, reset, web-driven revocation, and explicit re-enrollment with a fresh key.
 8. Discard the pilot before broad distribution. It is deliberately not Authenticode signed and uses a disposable updater key, so it cannot transition into the production updater chain.
 
 ## Production Distribution
@@ -59,3 +59,5 @@ Do not put the private key, pepper, cursor secret, session material, or database
 The protected `desktop-signed-build` workflow is the production artifact path. Before it can run, provision the `desktop-signing` environment, persistent updater key, matching public updater key, enterprise Authenticode certificate, certificate password, live origin, and enrollment public JWK. It builds but does not publish.
 
 Publishing still requires an HTTPS updater manifest/artifact service, independent hash/signature verification, a pilot ring, rollback retention, and an explicit release decision. A live API pilot is not a production-signed release.
+
+The production pilot must also preserve the stale-authority containment boundary: when server-side access changes after sign-in, the desktop must force reauthentication, retain the licensed organisation binding, and avoid using the superseded capability profile for reads or writes.
