@@ -42,6 +42,14 @@ function appFor(auth) {
   return app;
 }
 
+function extractContextHelper(source, helperName) {
+  const start = source.indexOf(`function ${helperName}(c) {`);
+  assert.ok(start >= 0, `Expected ${helperName}(c) helper to be declared.`);
+  const nextFunction = source.indexOf("\nfunction ", start + 1);
+  const end = nextFunction >= 0 ? nextFunction : source.length;
+  return source.slice(start, end);
+}
+
 test("reassessment route is bound to the canonical fixed permission policy", async () => {
   const policy = resolveOperationalRoutePolicy({
     method: "POST",
@@ -100,13 +108,37 @@ test("reassessment handler consumes only server-trusted assessment context", () 
   assert.ok(routeEnd > routeStart);
   const routeSource = source.slice(routeStart, routeEnd);
 
+  const actorHelperSource = extractContextHelper(source, "correctionActor");
+  const reassessmentSourceHelperSource = extractContextHelper(source, "reassessmentSource");
+  const correlationHelperSource = extractContextHelper(source, "correctionCorrelationId");
+
   assert.ok(routeSource.includes("requireReassessment"));
   assert.ok(routeSource.includes("requireTenantAccess"));
   assert.ok(routeSource.includes("requestAssessmentReassessment"));
   assert.ok(routeSource.includes('c.get("tenantContext")'));
-  assert.ok(routeSource.includes('c.get("authContext")'));
-  assert.ok(routeSource.includes('c.get("requestId")'));
+  assert.ok(routeSource.includes('const sourceAssessmentId = c.req.param("assessmentId");'));
+  assert.ok(routeSource.includes("const actorId = correctionActor(c);"));
+  assert.ok(routeSource.includes("const source = reassessmentSource(c);"));
+  assert.ok(routeSource.includes("const correlationId = correctionCorrelationId(c);"));
+  assert.ok(actorHelperSource.includes('c.get("authContext")'));
+  assert.ok(reassessmentSourceHelperSource.includes('c.get("authContext")'));
+  assert.ok(correlationHelperSource.includes('c.get("requestId")'));
   assert.ok(routeSource.includes('c.req.header("idempotency-key")') || source.includes('c.req.header("idempotency-key")'));
+
+  const reassessmentCallStart = routeSource.indexOf(
+    "const result = await requestAssessmentReassessment(connection, {",
+  );
+  const reassessmentCallEnd = routeSource.indexOf("});", reassessmentCallStart);
+  assert.ok(reassessmentCallStart >= 0);
+  assert.ok(reassessmentCallEnd > reassessmentCallStart);
+  const reassessmentCallSource = routeSource.slice(reassessmentCallStart, reassessmentCallEnd);
+  assert.ok(reassessmentCallSource.includes("tenantId,"));
+  assert.ok(reassessmentCallSource.includes("sourceAssessmentId,"));
+  assert.ok(reassessmentCallSource.includes("idempotencyKey: idempotency.key,"));
+  assert.ok(reassessmentCallSource.includes("createdBy: actorId,"));
+  assert.ok(reassessmentCallSource.includes("source,"));
+  assert.ok(reassessmentCallSource.includes("correlationId,"));
+
   assert.equal(routeSource.includes("c.req.json"), false);
   assert.equal(routeSource.includes("createRequirePermissionMiddleware"), false);
   assert.equal(routeSource.includes("createRequireAnyPermissionMiddleware"), false);
