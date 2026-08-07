@@ -6,28 +6,42 @@ import {
   CLAIMGUARD_ROLES,
   OPERATIONAL_ROUTE_IDS,
   getOperationalRoutePolicyById,
-  getPermissionsForRoles,
 } from "../src/authorization-policy.js";
-import { operationalPermissions } from "../src/middleware/auth-context.js";
+import {
+  createAuthenticatedAuthContext,
+  operationalPermissions,
+} from "../src/middleware/auth-context.js";
 
-test("control-plane confirmation and reversal authorities translate independently", () => {
+test("control-plane confirmation and reversal authorities remain non-operational compatibility keys", () => {
   const confirmation = new Set(operationalPermissions(["investigations.confirm"]));
   const reversal = new Set(operationalPermissions(["investigations.reverse"]));
 
-  assert.equal(confirmation.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), true);
-  assert.equal(confirmation.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD), false);
-  assert.equal(reversal.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD), true);
-  assert.equal(reversal.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
+  assert.equal(confirmation.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
+  assert.equal(confirmation.has("investigations.confirm"), true);
+  assert.equal(reversal.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD), false);
+  assert.equal(reversal.has("investigations.reverse"), true);
 });
 
-test("investigator role receives separate confirm and reverse assignments", () => {
-  const permissions = getPermissionsForRoles([CLAIMGUARD_ROLES.INVESTIGATOR]);
+test("investigator role metadata grants no confirmation or reversal authority", () => {
+  const context = createAuthenticatedAuthContext({
+    userId: "investigator-user",
+    roles: [CLAIMGUARD_ROLES.INVESTIGATOR],
+    permissions: [],
+    tenantId: "tenant-alpha",
+  });
 
-  assert.equal(permissions.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), true);
-  assert.equal(permissions.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD), true);
+  assert.deepEqual(context.roles, [CLAIMGUARD_ROLES.INVESTIGATOR]);
+  assert.equal(
+    context.permissions.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD),
+    false,
+  );
+  assert.equal(
+    context.permissions.has(CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_REVERSE_FRAUD),
+    false,
+  );
 });
 
-test("fraud confirmation and reversal routes require their own capabilities", () => {
+test("fraud confirmation and reversal routes retain separate disabled capability boundaries", () => {
   const confirmation = getOperationalRoutePolicyById(OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_CONFIRM_FRAUD);
   const reversal = getOperationalRoutePolicyById(OPERATIONAL_ROUTE_IDS.INVESTIGATIONS_REVERSE_FRAUD);
 

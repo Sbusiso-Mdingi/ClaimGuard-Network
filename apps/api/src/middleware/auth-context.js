@@ -1,6 +1,5 @@
-import { sha256 } from "@claimguard/control-plane-database";
+import { ACCESS_ERROR_CODE, sha256 } from "@claimguard/control-plane-database";
 
-import { getPermissionsForRoles } from "../authorization-policy.js";
 import { ForbiddenError } from "../application-errors.js";
 
 export const IDENTITY_AUTHORITY_HEADERS = Object.freeze([
@@ -20,45 +19,9 @@ export const LEGACY_SERVICE_IDENTITY_HEADERS = Object.freeze([
 export function createAnonymousAuthContext({ source = "anonymous" } = {}) {
   return Object.freeze({
     is_authenticated: false, user_id: null, roles: Object.freeze([]), permissions: new Set(),
-    tenant_id: null, organisation_id: null, membership_id: null, source,
+    tenant_id: null, organisation_id: null, membership_id: null, actor_type: "anonymous",
+    authentication_version: null, authorization_version: null, correlation_id: null, source,
   });
-}
-
-// Compatibility bundles only. The case policy authorises permissions, not roles.
-// Custom role and permission administration remains deferred beyond PR 2.
-const ROLE_OPERATIONAL_PERMISSION_OVERLAYS = Object.freeze({
-  fraud_analyst: Object.freeze([
-    "claims.view_own",
-    "case.triage",
-    "case.dismiss",
-    "case.monitor",
-    "case.open_investigation",
-  ]),
-  investigator: Object.freeze([
-    "claims.view_own",
-    "case.record_notice",
-    "case.record_response",
-    "case.review_evidence",
-    "case.complete_report",
-    "case.submit_outcome_review",
-  ]),
-  applications_committee_member: Object.freeze([
-    "case.review_outcome",
-    "case.approve_outcome",
-    "case.close_unsubstantiated",
-    "case.open_appeal_or_review",
-    "case.return_for_further_evidence",
-  ]),
-  scheme_administrator: Object.freeze([
-    "claims.view_own",
-    "reports.view_own",
-    "investigations.view",
-    "fraud_registry.review_history",
-  ]),
-});
-
-function roleOperationalPermissions(roles) {
-  return (roles || []).flatMap((role) => ROLE_OPERATIONAL_PERMISSION_OVERLAYS[role] || []);
 }
 
 function actorOperationalTenantId(actor) {
@@ -70,13 +33,12 @@ function actorOperationalTenantId(actor) {
 }
 
 export function createAuthenticatedAuthContext({
-  userId, roles, permissions = null, tenantId, organisationId = null, membershipId = null,
-  displayName = null, organisation = null, source = "session",
+  userId, roles, permissions = [], tenantId, organisationId = null, membershipId = null,
+  displayName = null, organisation = null, source = "session", actorType = "user",
+  authenticationVersion = null, authorizationVersion = null, correlationId = null,
 } = {}) {
   const normalizedRoles = Object.freeze([...(roles || [])]);
-  const resolvedPermissions = permissions
-    ? [...new Set(permissions)]
-    : [...getPermissionsForRoles(normalizedRoles), ...roleOperationalPermissions(normalizedRoles)];
+  const resolvedPermissions = [...new Set(permissions || [])];
   return Object.freeze({
     is_authenticated: true,
     user_id: userId,
@@ -87,6 +49,10 @@ export function createAuthenticatedAuthContext({
     organisation_id: organisationId,
     membership_id: membershipId,
     organisation,
+    actor_type: actorType,
+    authentication_version: authenticationVersion,
+    authorization_version: authorizationVersion,
+    correlation_id: correlationId,
     source,
   });
 }
@@ -109,8 +75,6 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "investigations.view_own": ["investigations.view"],
   "investigations.create": ["investigations.create"],
   "investigations.manage": ["investigations.view", "investigations.update_status", "investigations.add_note", "investigations.change_priority", "investigations.assign", "investigations.open", "investigations.complete", "investigations.upload_evidence", "investigations.submit_findings"],
-  "investigations.confirm": ["investigations.confirm_fraud"],
-  "investigations.reverse": ["investigations.reverse_fraud"],
   "registry.search": ["fraud_registry.search", "fraud_registry.view"],
   "registry.review_history": ["fraud_registry.review_history"],
   "scheme_users.manage": ["users.manage_tenant"],
@@ -126,11 +90,10 @@ const CONTROL_PERMISSION_TO_OPERATIONAL = Object.freeze({
   "desktop_fleet_policy.manage": ["desktop.fleet_policy.manage"],
 });
 
-export function operationalPermissions(controlPermissions, roles = []) {
-  return [...new Set([
-    ...(controlPermissions || []).flatMap((permission) => CONTROL_PERMISSION_TO_OPERATIONAL[permission] || []),
-    ...roleOperationalPermissions(roles),
-  ])];
+export function operationalPermissions(controlPermissions) {
+  return [...new Set((controlPermissions || []).flatMap((permission) => (
+    CONTROL_PERMISSION_TO_OPERATIONAL[permission] || [permission]
+  )))];
 }
 
 function requestMetadata(request, { trustProxy = false } = {}) {
@@ -166,9 +129,12 @@ export function createSessionAuthenticationProvider({ authenticationService, con
             authContext: createAuthenticatedAuthContext({
               userId: integration.serviceActorId,
               roles: [integration.roleKey],
+              permissions: [],
               tenantId: integration.tenantId,
               organisationId: integration.organisationId,
               source: "internal_service",
+              actorType: "service",
+              correlationId: metadata.correlationId,
             }),
             resolvedSession: null,
             metadata,
@@ -190,15 +156,20 @@ export function createSessionAuthenticationProvider({ authenticationService, con
             userId: actor.user.userId,
             displayName: actor.user.displayName,
             roles: actor.roles,
-            permissions: operationalPermissions(actor.permissions, actor.roles),
+            permissions: operationalPermissions(actor.permissions),
             tenantId: actorOperationalTenantId(actor),
             organisationId: actor.organisation.organisationId,
             membershipId: actor.membership.membershipId,
             organisation: actor.organisation,
             source: "session",
+            actorType: "user",
+            authenticationVersion: actor.authenticationVersion,
+            authorizationVersion: actor.authorizationVersion,
+            correlationId: metadata.correlationId,
           }),
         };
       } catch (error) {
+        if (error?.code === ACCESS_ERROR_CODE.AUTHORIZATION_VERSION_STALE) throw error;
         return {
           authContext: createAnonymousAuthContext({ source: "invalid_session" }),
           resolvedSession: null,

@@ -27,6 +27,10 @@ export function buildControlPlaneConnectionOptions(databaseUrl) {
     // administrative commands do not serialize Date values in the operator's
     // workstation timezone.
     timezone: "Z",
+    // Repository mappers intentionally normalize JSON at their trust boundary.
+    // Keep persisted JSON values driver-independent so idempotency replays and
+    // safe projections behave identically in MySQL and repository doubles.
+    jsonStrings: true,
     connectionLimit: 5,
     namedPlaceholders: false,
   };

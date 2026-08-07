@@ -1,3 +1,7 @@
+import {
+  createControlPlaneAuthenticationService as createAuthenticationService,
+} from "./authentication-service.js";
+
 export { buildControlPlaneConnectionOptions, createControlPlanePool } from "./client.js";
 export {
   assertDistinctDatabaseUrls,
@@ -13,7 +17,16 @@ export {
   createSignupCredentialGuardedIdentityRepository,
 } from "./credential-guarded-control-plane-service.js";
 export { CANONICAL_PRIVATE_SCHEMA_VERSION } from "./operational-schema.js";
-export { createControlPlaneAuthenticationService, sha256 } from "./authentication-service.js";
+export { sha256 } from "./authentication-service.js";
+
+export function createControlPlaneAuthenticationService(options = {}) {
+  const accessRepository = options.accessRepository
+    || (typeof options.authenticationRepository?.resolveEffectivePermissions === "function"
+      ? options.authenticationRepository
+      : null);
+  return createAuthenticationService({ ...options, accessRepository });
+}
+
 export { getShadowDiagnostics } from "./diagnostics.js";
 export {
   bootstrapDevelopmentPlatformAdministrator,
@@ -66,6 +79,25 @@ export {
   DesktopEnrollmentError,
 } from "./desktop-enrollment-service.js";
 export { withControlPlaneTransaction } from "./transaction.js";
+export { createAccessRepository } from "./access-repository.js";
+export * from "./access-errors.js";
+export {
+  PERMISSION_CATALOGUE,
+  PERMISSION_KEYS,
+  getPermissionMetadata,
+  isKnownPermission,
+  isTenantAssignable,
+  isElevatedPermission,
+  isDelegablePermission,
+  isSystemOnlyPermission,
+  validatePermissionKeys,
+  filterTenantAssignable,
+  partitionElevated,
+  getPermissionsByCategory,
+  getCategories,
+  GOVERNANCE_PROTECTED_PERMISSIONS,
+  MAX_DELEGATION_HOURS,
+} from "./permission-catalogue.js";
 export {
   assertNoPlaintextPassword,
   assertSafeControlPlaneSummary,

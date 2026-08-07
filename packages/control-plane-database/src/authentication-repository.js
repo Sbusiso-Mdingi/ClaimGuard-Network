@@ -8,6 +8,11 @@ function jsonValue(value) {
   try { return JSON.parse(value); } catch { return null; }
 }
 
+function versionValue(value) {
+  const version = Number(value);
+  return Number.isInteger(version) && version > 0 ? version : null;
+}
+
 function mapOrganisation(row) {
   if (!row) return null;
   return {
@@ -28,7 +33,7 @@ function mapUser(row) {
   if (!row) return null;
   return {
     userId: row.user_id, displayName: row.display_name, canonicalContact: row.canonical_contact || null,
-    status: row.status, authenticationVersion: Number(row.authentication_version), disabledAt: row.disabled_at || null,
+    status: row.status, authenticationVersion: versionValue(row.authentication_version), disabledAt: row.disabled_at || null,
   };
 }
 
@@ -37,6 +42,7 @@ function mapMembership(row) {
   return {
     membershipId: row.membership_id, userId: row.user_id, organisationId: row.organisation_id,
     status: row.status, validFrom: row.valid_from || null, validUntil: row.valid_until || null,
+    authorizationVersion: versionValue(row.authorization_version),
   };
 }
 
@@ -59,9 +65,17 @@ function mapSession(row) {
     membershipId: row.membership_id, credentialId: row.credential_id || null, issuedAt: row.issued_at,
     lastActivityAt: row.last_activity_at, idleExpiresAt: row.idle_expires_at, absoluteExpiresAt: row.absolute_expires_at,
     revokedAt: row.revoked_at || null, revocationReason: row.revocation_reason || null,
-    authorizationVersion: Number(row.authorization_version), rotationGeneration: Number(row.rotation_generation || 1),
+    authenticationVersion: versionValue(row.authentication_version),
+    authorizationVersion: versionValue(row.authorization_version),
+    rotationGeneration: Number(row.rotation_generation || 1),
     rotatedFromSessionId: row.rotated_from_session_id || null, clientMetadata: jsonValue(row.client_metadata),
   };
+}
+
+function assertVersion(value, fieldName) {
+  const version = versionValue(value);
+  if (version === null) throw new TypeError(`${fieldName} must be a positive integer.`);
+  return version;
 }
 
 export function createAuthenticationRepository(defaultExecutor) {
@@ -176,16 +190,18 @@ export function createAuthenticationRepository(defaultExecutor) {
 
     async createSession(input, { executor } = {}) {
       const sessionId = input.sessionId || crypto.randomUUID();
+      const authenticationVersion = assertVersion(input.authenticationVersion, "authenticationVersion");
+      const authorizationVersion = assertVersion(input.authorizationVersion, "authorizationVersion");
       await executorOr(defaultExecutor, executor).execute(
         `INSERT INTO login_sessions
           (session_id, hashed_bearer_secret, csrf_token_hash, signing_key_id, user_id, organisation_id,
            membership_id, credential_id, issued_at, last_activity_at, idle_expires_at, absolute_expires_at,
-           authorization_version, rotation_generation, rotated_from_session_id, client_metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           authentication_version, authorization_version, rotation_generation, rotated_from_session_id, client_metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [sessionId, input.hashedBearerSecret, input.csrfTokenHash, input.signingKeyId, input.userId,
           input.organisationId, input.membershipId, input.credentialId || null, input.issuedAt,
-          input.lastActivityAt, input.idleExpiresAt, input.absoluteExpiresAt, input.authorizationVersion,
-          input.rotationGeneration || 1, input.rotatedFromSessionId || null,
+          input.lastActivityAt, input.idleExpiresAt, input.absoluteExpiresAt, authenticationVersion,
+          authorizationVersion, input.rotationGeneration || 1, input.rotatedFromSessionId || null,
           input.clientMetadata ? JSON.stringify(input.clientMetadata) : null],
       );
       return { sessionId };

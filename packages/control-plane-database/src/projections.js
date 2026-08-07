@@ -61,6 +61,7 @@ export function projectSafeSession(row) {
     absoluteExpiresAt: row.absolute_expires_at,
     revokedAt: row.revoked_at || null,
     revocationReason: row.revocation_reason || null,
+    authenticationVersion: Number(row.authentication_version),
     authorizationVersion: Number(row.authorization_version),
   };
 }

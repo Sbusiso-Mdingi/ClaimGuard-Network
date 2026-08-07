@@ -34,7 +34,7 @@ test("unauthenticated users see organisation login and configured URL preview", 
   });
   const user = userEvent.setup();
   render(<AppRoot />);
-  expect(await screen.findByRole("heading", { name: /Sign in to ClaimGuard/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Sign in to Sequrin/i })).toBeInTheDocument();
   await user.type(screen.getByLabelText("Organisation"), "Alpha-Health");
   expect(screen.getByText("https://alpha-health.claimguard.example")).toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /demo identity/i })).not.toBeInTheDocument();

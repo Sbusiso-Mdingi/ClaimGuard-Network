@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 
+import { authorizationVersionStale } from "./access-errors.js";
 import {
   AuthenticationRejectedError,
   ControlPlaneConflictError,
@@ -39,6 +40,10 @@ function isFuture(value, now) {
 function isPast(value, now) {
   const date = asDate(value);
   return Boolean(date && date.getTime() <= now.getTime());
+}
+
+function validVersion(value) {
+  return Number.isInteger(Number(value)) && Number(value) > 0;
 }
 
 function safeSourceMetadata(metadata = {}) {
@@ -90,6 +95,7 @@ function actorProjection({ organisation, user, membership, credential, authoriza
     membership: {
       membershipId: membership.membershipId,
       status: membership.status,
+      authorizationVersion: membership.authorizationVersion,
     },
     credential: {
       credentialId: credential.credentialId,
@@ -97,9 +103,10 @@ function actorProjection({ organisation, user, membership, credential, authoriza
       normalizedUsername: credential.normalizedUsername || null,
       status: credential.status || null,
     },
-    roles: Object.freeze([...authorization.roles]),
-    permissions: Object.freeze([...authorization.permissions]),
-    authorizationVersion: user.authenticationVersion,
+    roles: Object.freeze([...(authorization.roles || [])]),
+    permissions: Object.freeze([...(authorization.permissions || [])]),
+    authenticationVersion: user.authenticationVersion,
+    authorizationVersion: membership.authorizationVersion,
     legacyTenant: bridge ? {
       tenantId: bridge.legacyTenantId,
       tenantSlug: bridge.legacyTenantSlug,
@@ -109,6 +116,7 @@ function actorProjection({ organisation, user, membership, credential, authoriza
 
 export function createControlPlaneAuthenticationService({
   authenticationRepository,
+  accessRepository,
   integrationCredentialsRepository = null,
   now = () => new Date(),
   randomBytes = crypto.randomBytes,
@@ -123,6 +131,7 @@ export function createControlPlaneAuthenticationService({
   throttleLockoutMs = 15 * 60 * 1000,
 } = {}) {
   if (!authenticationRepository) throw new TypeError("authenticationRepository is required.");
+  if (!accessRepository?.resolveEffectivePermissions) throw new TypeError("accessRepository is required.");
   const dummyHash = Promise.resolve().then(() => passwordHasher.hash(secureToken(randomBytes), argon2Parameters));
 
   async function recordEvent(eventType, result, metadata, references = {}, failureCategory = null) {
@@ -174,6 +183,17 @@ export function createControlPlaneAuthenticationService({
     throw new AuthenticationRejectedError(reason);
   }
 
+  async function resolveAuthority({ organisationId, userId, membershipId, asOf }) {
+    const [displayAuthorization, effectiveAuthorization] = await Promise.all([
+      authenticationRepository.getAuthorization(membershipId),
+      accessRepository.resolveEffectivePermissions({ organisationId, userId, membershipId, asOf }),
+    ]);
+    return {
+      roles: displayAuthorization.roles || [],
+      permissions: effectiveAuthorization.permissionKeys || [],
+    };
+  }
+
   async function validateSession(session, bearerSecret, metadata, { touch = true } = {}) {
     const timestamp = now();
     const references = session ? {
@@ -211,13 +231,33 @@ export function createControlPlaneAuthenticationService({
     if (credential && (credential.status !== "active" || isFuture(credential.lockedUntil, timestamp))) {
       return invalidate("credential_inactive");
     }
-    if (user.authenticationVersion !== session.authorizationVersion) {
-      await authenticationRepository.revokeSession(session.sessionId, "authorization_version_changed");
-      await recordEvent("authorization_version_mismatch", "failure", metadata, references, "authorization_version_mismatch");
-      throw new SessionRejectedError("authorization_version_mismatch");
+    if (!validVersion(user.authenticationVersion) || !validVersion(session.authenticationVersion)) {
+      return invalidate("authentication_version_unavailable");
     }
+    if (user.authenticationVersion !== session.authenticationVersion) {
+      await authenticationRepository.revokeSession(session.sessionId, "authentication_version_changed");
+      await recordEvent("authentication_version_mismatch", "failure", metadata, references, "authentication_version_mismatch");
+      throw new SessionRejectedError("authentication_version_mismatch", { organisationId: session.organisationId });
+    }
+    if (!validVersion(membership.authorizationVersion) || !validVersion(session.authorizationVersion)) {
+      return invalidate("authorization_version_unavailable");
+    }
+    if (membership.authorizationVersion !== session.authorizationVersion) {
+      await recordEvent("authorization_version_mismatch", "failure", metadata, references, "authorization_version_mismatch");
+      throw authorizationVersionStale(
+        membership.membershipId,
+        session.authorizationVersion,
+        membership.authorizationVersion,
+      );
+    }
+
     const [authorization, bridge] = await Promise.all([
-      authenticationRepository.getAuthorization(membership.membershipId),
+      resolveAuthority({
+        organisationId: session.organisationId,
+        userId: session.userId,
+        membershipId: membership.membershipId,
+        asOf: timestamp,
+      }),
       authenticationRepository.getLegacyTenantBridge(session.organisationId),
     ]);
     if (!validLegacyBridge(resolvedOrganisation, bridge)) return invalidate("legacy_tenant_bridge_unavailable");
@@ -315,9 +355,16 @@ export function createControlPlaneAuthenticationService({
       ]);
       if (!user || user.status !== "active") return rejectLogin("user_inactive", metadata, references, throttle);
       if (!validMembership(membership, timestamp)) return rejectLogin("membership_inactive", metadata, references, throttle);
+      if (!validVersion(user.authenticationVersion)) return rejectLogin("authentication_version_unavailable", metadata, references, throttle);
+      if (!validVersion(membership.authorizationVersion)) return rejectLogin("authorization_version_unavailable", metadata, references, throttle);
       if (!validLegacyBridge(organisation, bridge)) return rejectLogin("legacy_tenant_bridge_unavailable", metadata, references, throttle);
-      const authorization = await authenticationRepository.getAuthorization(membership.membershipId);
-      if (authorization.roles.length === 0) return rejectLogin("authorization_unavailable", metadata, references, throttle);
+      const authorization = await resolveAuthority({
+        organisationId: organisation.organisationId,
+        userId: user.userId,
+        membershipId: membership.membershipId,
+        asOf: timestamp,
+      });
+      if (authorization.permissions.length === 0) return rejectLogin("authorization_unavailable", metadata, references, throttle);
 
       if (passwordHasher.needsRehash(credential.passwordHash, argon2Parameters)) {
         const upgraded = await passwordHasher.hash(password, argon2Parameters);
@@ -336,7 +383,9 @@ export function createControlPlaneAuthenticationService({
         hashedBearerSecret: sha256(bearerSecret), csrfTokenHash: sha256(csrfToken), signingKeyId: "opaque-v1",
         userId: user.userId, organisationId: organisation.organisationId, membershipId: membership.membershipId,
         credentialId: credential.credentialId, issuedAt: timestamp, lastActivityAt: timestamp,
-        idleExpiresAt, absoluteExpiresAt, authorizationVersion: user.authenticationVersion,
+        idleExpiresAt, absoluteExpiresAt,
+        authenticationVersion: user.authenticationVersion,
+        authorizationVersion: membership.authorizationVersion,
         clientMetadata: { sourceNetworkHash: metadata.sourceNetworkHash || null, userAgentHash: metadata.userAgentHash || null },
       };
       const created = await authenticationRepository.createSession(session);

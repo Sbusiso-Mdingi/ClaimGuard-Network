@@ -9,6 +9,7 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ApiError, apiJson, safeApiErrorMessage } from "../../lib/apiClient";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
   DataTableShell,
   CopyableIdentifier,
@@ -269,7 +270,7 @@ export function ReleaseGovernancePanel() {
   if (loading && !overview) {
     return (
       <WorkspaceNotice title="Loading governed releases">
-        ClaimGuard is reading immutable release and deployment records from the control plane.
+        {PRODUCT_NAME} is reading immutable release and deployment records from the control plane.
       </WorkspaceNotice>
     );
   }
@@ -281,7 +282,7 @@ export function ReleaseGovernancePanel() {
 
       <SectionCard
         title="Production deployment"
-        description="The authoritative source commit and artifact currently serving ClaimGuard."
+        description={`The authoritative source commit and artifact currently serving ${PRODUCT_NAME}.`}
         actions={(
           <Button type="button" variant="outline" size="sm" disabled={loading} onClick={loadOverview}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />

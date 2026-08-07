@@ -7,6 +7,7 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ApiError, apiJson, safeApiErrorMessage } from "../../lib/apiClient";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
   DataTableShell,
   CopyableIdentifier,
@@ -106,7 +107,7 @@ function AdministratorStepUpDialog({
         <form className="grid gap-4 p-5" onSubmit={submit}>
           <FormField
             label="Current password"
-            hint="ClaimGuard verifies your current credential for this action. It is never written to an invitation or audit record."
+            hint={`${PRODUCT_NAME} verifies your current credential for this action. It is never written to an invitation or audit record.`}
           >
             <Input
               type="password"
@@ -268,7 +269,7 @@ export function PlatformAdministratorAccessPanel() {
   if (loading && !access) {
     return (
       <WorkspaceNotice title="Loading platform administrator access">
-        ClaimGuard is reading safe user, membership, role and invitation records
+        {PRODUCT_NAME} is reading safe user, membership, role and invitation records
         from the control plane.
       </WorkspaceNotice>
     );
@@ -330,7 +331,7 @@ export function PlatformAdministratorAccessPanel() {
         {invitationUrl ? (
           <WorkspaceNotice title="Copy this one-time invitation URL now" tone="warning">
             <p className="mb-2">
-              ClaimGuard stores only the token hash. This URL cannot be recovered
+              {PRODUCT_NAME} stores only the token hash. This URL cannot be recovered
               after you leave or refresh this page.
             </p>
             <code className="break-all font-data text-xs">{invitationUrl}</code>
@@ -496,7 +497,7 @@ export function PlatformAdministratorAccessPanel() {
       {reviewedEmail ? (
         <AdministratorStepUpDialog
           title={`Invite ${reviewedEmail}`}
-          description="This creates privileged, persistent ClaimGuard access. Confirm the recipient is a separate trusted person before continuing."
+          description={`This creates privileged, persistent ${PRODUCT_NAME} access. Confirm the recipient is a separate trusted person before continuing.`}
           confirmation={invitationConfirmation(reviewedEmail)}
           submitLabel="Create audited invitation"
           submitting={submitting}

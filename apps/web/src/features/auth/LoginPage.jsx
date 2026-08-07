@@ -7,6 +7,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { useRole } from "../../context/RoleContext";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 
 function configuredInitialSlug() {
   const match = window.location.pathname.match(/^\/o\/([^/]+)\/login\/?$/);
@@ -64,7 +65,7 @@ export function LoginPage() {
                 <Activity className="h-5 w-5" aria-hidden="true" />
               </span>
               <div>
-                <p className="font-display text-lg font-semibold">ClaimGuard Network</p>
+                <p className="font-display text-lg font-semibold">{PRODUCT_NAME}</p>
                 <p className="font-data text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Medical-scheme integrity</p>
               </div>
             </div>
@@ -100,7 +101,7 @@ export function LoginPage() {
         <div className="flex flex-col justify-center gap-5 p-5 sm:p-8 lg:p-10">
           <Card className="border-border/80 shadow-none">
             <CardHeader>
-              <CardTitle className="font-display text-2xl">Sign in to ClaimGuard</CardTitle>
+              <CardTitle className="font-display text-2xl">Sign in to {PRODUCT_NAME}</CardTitle>
               <CardDescription>Use your organisation and assigned account credentials.</CardDescription>
             </CardHeader>
             <CardContent>

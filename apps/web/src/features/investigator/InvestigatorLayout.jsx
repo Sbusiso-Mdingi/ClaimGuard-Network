@@ -16,12 +16,14 @@ import SearchCheck from "lucide-react/dist/esm/icons/search-check.mjs";
 import Settings from "lucide-react/dist/esm/icons/settings.mjs";
 import ShieldAlert from "lucide-react/dist/esm/icons/shield-alert.mjs";
 import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
+import Shield from "lucide-react/dist/esm/icons/shield.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { useRole } from "../../context/RoleContext";
 import { AccountMenu } from "../auth/AccountMenu";
 import { canAccessNavItem, NAV_GROUPS } from "../../lib/roleNav";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
   defaultRouteForIdentity,
   formatIdentityRoles,
@@ -53,6 +55,7 @@ const NAV_ICONS = Object.freeze({
   "platform-releases": FileClock,
   "platform-administrators": ShieldCheck,
   "platform-detection": Settings,
+  "access-management": Shield,
 });
 
 export function InvestigatorLayout({ ledgerStatus }) {
@@ -170,7 +173,7 @@ export function InvestigatorLayout({ ledgerStatus }) {
             <ShieldCheck className="h-4 w-4" aria-hidden="true" />
           </span>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold leading-none">ClaimGuard</p>
+            <p className="truncate text-sm font-semibold leading-none">{PRODUCT_NAME}</p>
             <p className="mt-1 truncate text-[10px] text-muted-foreground">{workspaceLabel}</p>
           </div>
         </div>
@@ -214,13 +217,13 @@ export function InvestigatorLayout({ ledgerStatus }) {
             <Link
               to={defaultRouteForIdentity(effectiveIdentity)}
               className={`flex min-w-0 flex-1 items-center gap-2.5 ${sidebarCollapsed ? "lg:justify-center" : ""}`}
-              title={sidebarCollapsed ? "ClaimGuard" : undefined}
+              title={sidebarCollapsed ? PRODUCT_NAME : undefined}
             >
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-[hsl(var(--sidebar-primary))] text-[hsl(var(--sidebar-primary-foreground))]">
                 <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               </span>
               <span className={`min-w-0 ${sidebarCollapsed ? "lg:hidden" : ""}`}>
-                <span className="block truncate text-sm font-semibold tracking-tight">ClaimGuard</span>
+                <span className="block truncate text-sm font-semibold tracking-tight">{PRODUCT_NAME}</span>
                 <span className="mt-0.5 block truncate text-[10px] text-[hsl(var(--sidebar-foreground)/0.58)]">
                   {isPlatformWorkspace ? workspaceLabel : "Network · Fraud Detection"}
                 </span>

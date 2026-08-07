@@ -4,6 +4,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { apiJson } from "../../lib/apiClient";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 
 export function SignupPage() {
   const [searchParams] = useSearchParams();
@@ -130,7 +131,7 @@ export function SignupPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="mb-4 text-sm">You can now sign in to your organisation.</p>
+            <p className="mb-4 text-sm">You can now sign in to {PRODUCT_NAME} for your organisation.</p>
             <Button onClick={() => navigate(`/o/${invitation.canonicalSlug}/login`)} className="w-full">
               Proceed to Login
             </Button>

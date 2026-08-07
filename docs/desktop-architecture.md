@@ -1,4 +1,4 @@
-# ClaimGuard Desktop Architecture
+# Sequrin Desktop Architecture
 
 ## Scope
 
@@ -6,7 +6,7 @@
 
 The desktop is a universal application. Organisation identity comes only from a signed device enrollment; there is no per-scheme binary, editable tenant slug, database selector, or API-origin selector.
 
-The desktop is distributed to medical-scheme organisations. Scheme administrators are valid desktop users for their enrolled scheme, subject to the same server-authorised operational permissions as any other user. ClaimGuard platform administrators are web-only identities and are rejected by desktop authentication. Device-fleet management remains on the web: the desktop has no role-management, activation-key issuance, device-policy, fleet-revocation, audit-management, or platform-governance surface. Its reset command is local recovery that deletes this Windows user's cache and enrollment; re-enrollment still requires a key issued from the web application.
+The desktop is distributed to medical-scheme organisations. Scheme administrators are valid desktop users for their enrolled scheme, subject to the same server-authorised operational permissions as any other user. ClaimGuard platform administrators are web-only identities and are rejected by desktop authentication. Device-fleet management remains on the web: the desktop has no role-management, activation-key issuance, device-policy, fleet-revocation, audit-management, or platform-governance surface. Its reset command is local recovery that deletes this Windows user's cache and enrollment; re-enrollment still requires a key issued from the Sequrin web application.
 
 ## Trust and Data Flow
 
@@ -69,6 +69,8 @@ This is record-level authenticated encryption, not full-database page encryption
 The cache fails closed on an organisation/device binding mismatch, failed SQLite integrity check, invalid nonce, authentication-tag failure, malformed enrollment, expired licence, or expired offline grace.
 
 When offline grace has expired, the cache stays locked but device-bound user authentication remains available online. A successful login revalidates the active device, returns a newly signed grace window for the same immutable organisation/device pair, and only then unlocks the cache. A revoked or expired device cannot renew.
+
+When the server rejects the desktop session with `ACCESS_AUTHORIZATION_VERSION_STALE`, the desktop fails closed to a locked reauthentication state. The user sees a stale-authority message, the cached organisation binding remains fixed, and the workstation requires a fresh sign-in before any capability-driven workspace is reopened. The desktop does not silently downgrade authority, replay a stale mutation, or keep using the superseded capability profile.
 
 ## Configuration
 

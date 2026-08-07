@@ -10,20 +10,38 @@ import {
   verifyPassword,
 } from "../src/index.js";
 
-function fixture({ passwordHash = "current-hash", organisationStatus = "active", membershipStatus = "active", userStatus = "active", credentialStatus = "active", mapping = true, membershipValidUntil = null, idleTimeoutMs, absoluteTimeoutMs, integrationCredentialsRepository = null } = {}) {
+function fixture({
+  passwordHash = "current-hash",
+  organisationStatus = "active",
+  membershipStatus = "active",
+  userStatus = "active",
+  credentialStatus = "active",
+  mapping = true,
+  membershipValidUntil = null,
+  authenticationVersion = 3,
+  authorizationVersion = 7,
+  effectivePermissions = ["investigations.manage", "case.review_evidence"],
+  idleTimeoutMs,
+  absoluteTimeoutMs,
+  integrationCredentialsRepository = null,
+} = {}) {
   let currentTime = new Date("2026-07-16T08:00:00Z");
   let randomCounter = 0;
   const sessions = new Map();
   const throttle = new Map();
   const events = [];
   const upgrades = [];
+  const resolutionCalls = [];
   const organisation = {
     organisationId: "org-1", displayName: "Alpha", canonicalSlug: "alpha", organisationType: "medical_scheme",
     deploymentClass: "demo", status: organisationStatus, activationState: "activated",
     matchedSlug: "alpha", matchedSlugType: "canonical", matchedSlugStatus: "active",
   };
-  const user = { userId: "user-1", displayName: "User", status: userStatus, authenticationVersion: 3 };
-  const membership = { membershipId: "membership-1", userId: "user-1", organisationId: "org-1", status: membershipStatus, validUntil: membershipValidUntil };
+  const user = { userId: "user-1", displayName: "User", status: userStatus, authenticationVersion };
+  const membership = {
+    membershipId: "membership-1", userId: "user-1", organisationId: "org-1",
+    status: membershipStatus, validUntil: membershipValidUntil, authorizationVersion,
+  };
   const credential = {
     credentialId: "credential-1", userId: "user-1", organisationId: "org-1", authenticationProvider: "local_password",
     normalizedUsername: "investigator", passwordHash, status: credentialStatus, lockedUntil: null,
@@ -35,12 +53,17 @@ function fixture({ passwordHash = "current-hash", organisationStatus = "active",
     async getCredentialById(id) { return id === credential.credentialId ? credential : null; },
     async getUser(id) { return id === user.userId ? user : null; },
     async getMembership() { return membership; },
-    async getAuthorization() { return { roles: ["investigator"], permissions: ["investigations.manage", "investigations.confirm"] }; },
+    async getAuthorization() { return { roles: ["investigator"], permissions: ["role-name-permission-must-not-authorize"] }; },
     async getLegacyTenantBridge() { return mapping ? { legacyTenantId: "tenant-alpha", legacyTenantSlug: "alpha", migrationStatus: "verified", verifiedAt: new Date() } : null; },
     async upgradePasswordHash(input) { upgrades.push(input); credential.passwordHash = input.passwordHash; return true; },
     async recordCredentialFailure() { credential.failedAttemptCount = Number(credential.failedAttemptCount || 0) + 1; },
     async clearCredentialFailures() { credential.failedAttemptCount = 0; credential.lockedUntil = null; },
-    async createSession(input) { const sessionId = `session-${sessions.size + 1}`; assert.equal(Object.hasOwn(input, "bearerSecret"), false); sessions.set(sessionId, { ...input, sessionId, revokedAt: null }); return { sessionId }; },
+    async createSession(input) {
+      const sessionId = `session-${sessions.size + 1}`;
+      assert.equal(Object.hasOwn(input, "bearerSecret"), false);
+      sessions.set(sessionId, { ...input, sessionId, revokedAt: null });
+      return { sessionId };
+    },
     async getSessionByBearerHash(hash) { return [...sessions.values()].find((session) => session.hashedBearerSecret === hash) || null; },
     async touchSession(id, updates) { Object.assign(sessions.get(id), updates); },
     async rotateCsrfToken(id, csrfTokenHash) { sessions.get(id).csrfTokenHash = csrfTokenHash; },
@@ -52,6 +75,19 @@ function fixture({ passwordHash = "current-hash", organisationStatus = "active",
     async resetThrottle(key) { throttle.delete(key); },
     async recordAuthenticationEvent(event) { events.push(event); return { eventId: String(events.length) }; },
   };
+  const accessRepository = {
+    async resolveEffectivePermissions(input) {
+      resolutionCalls.push(input);
+      return {
+        organisationId: input.organisationId,
+        userId: input.userId,
+        membershipId: input.membershipId,
+        permissionKeys: [...new Set(effectivePermissions)],
+        permissions: [...new Set(effectivePermissions)].map((permission) => ({ permission, sources: [{ type: "system_role" }] })),
+        resolvedAt: input.asOf,
+      };
+    },
+  };
   const passwordHasher = {
     async hash(password) { return password === "replacement-password" ? "replacement-hash" : "upgraded-hash"; },
     async verify(hash, password) {
@@ -61,12 +97,21 @@ function fixture({ passwordHash = "current-hash", organisationStatus = "active",
     needsRehash(hash) { return hash === "current-hash"; },
   };
   const service = createControlPlaneAuthenticationService({
-    authenticationRepository: repository, passwordHasher, now: () => new Date(currentTime),
+    authenticationRepository: repository,
+    accessRepository,
+    passwordHasher,
+    now: () => new Date(currentTime),
     integrationCredentialsRepository,
-    randomBytes: () => Buffer.alloc(32, (randomCounter += 1)), throttleBaseDelayMs: 1,
-    ...(idleTimeoutMs ? { idleTimeoutMs } : {}), ...(absoluteTimeoutMs ? { absoluteTimeoutMs } : {}),
+    randomBytes: () => Buffer.alloc(32, (randomCounter += 1)),
+    throttleBaseDelayMs: 1,
+    ...(idleTimeoutMs ? { idleTimeoutMs } : {}),
+    ...(absoluteTimeoutMs ? { absoluteTimeoutMs } : {}),
   });
-  return { service, repository, sessions, events, upgrades, organisation, user, membership, credential, setNow(value) { currentTime = new Date(value); } };
+  return {
+    service, repository, accessRepository, resolutionCalls, sessions, events, upgrades,
+    organisation, user, membership, credential,
+    setNow(value) { currentTime = new Date(value); },
+  };
 }
 
 const metadata = { sourceNetworkHash: sha256("127.0.0.1"), userAgentHash: sha256("test"), correlationId: "corr" };
@@ -105,48 +150,49 @@ test("Argon2id hashes verify correctly, use unique salts, and support rehash det
   assert.equal(passwordHashNeedsRehash(first), false);
 });
 
-test("canonical and alias organisation login creates one hashed server session and upgrades an old hash", async () => {
-  const f = fixture();
+test("login stores distinct authentication and authorization versions and resolves current permissions", async () => {
+  const f = fixture({ authenticationVersion: 3, authorizationVersion: 11 });
   const result = await f.service.login({ organisationSlug: " alpha-old ", username: " Investigator ", password: "correct" }, metadata);
+  const stored = [...f.sessions.values()][0];
   assert.equal(result.actor.organisation.organisationId, "org-1");
   assert.deepEqual(result.actor.roles, ["investigator"]);
-  assert.equal(f.sessions.size, 1);
-  assert.equal([...f.sessions.values()][0].hashedBearerSecret, sha256(result.bearerSecret));
-  assert.notEqual([...f.sessions.values()][0].hashedBearerSecret, result.bearerSecret);
+  assert.deepEqual(result.actor.permissions, ["investigations.manage", "case.review_evidence"]);
+  assert.equal(stored.authenticationVersion, 3);
+  assert.equal(stored.authorizationVersion, 11);
+  assert.notEqual(stored.authenticationVersion, stored.authorizationVersion);
+  assert.equal(stored.hashedBearerSecret, sha256(result.bearerSecret));
+  assert.notEqual(stored.hashedBearerSecret, result.bearerSecret);
   assert.equal(f.upgrades.length, 1);
+  assert.equal(f.resolutionCalls.length, 1);
+});
+
+test("login fails closed when either authoritative version is unavailable", async () => {
+  for (const options of [
+    { authenticationVersion: null, authorizationVersion: 7 },
+    { authenticationVersion: 3, authorizationVersion: null },
+  ]) {
+    const f = fixture(options);
+    await assert.rejects(
+      () => f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata),
+      (error) => error.code === "AUTHENTICATION_FAILED",
+    );
+    assert.equal(f.sessions.size, 0);
+  }
 });
 
 test("sensitive actions require a fresh password check bound to the current session identity", async () => {
   const f = fixture();
-  const login = await f.service.login({
-    organisationSlug: "alpha",
-    username: "investigator",
-    password: "correct",
-  }, metadata);
+  const login = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
   const resolved = await f.service.resolveSession(login.bearerSecret, metadata);
-
-  const reauthenticated = await f.service.reauthenticate(
-    resolved,
-    "correct",
-    metadata,
-  );
+  const reauthenticated = await f.service.reauthenticate(resolved, "correct", metadata);
   assert.equal(reauthenticated.userId, "user-1");
   assert.equal(reauthenticated.credentialId, "credential-1");
-  assert.deepEqual(
-    f.events.slice(-1).map((event) => [event.eventType, event.result]),
-    [["reauthentication_success", "success"]],
-  );
-
+  assert.deepEqual(f.events.slice(-1).map((event) => [event.eventType, event.result]), [["reauthentication_success", "success"]]);
   await assert.rejects(
     () => f.service.reauthenticate(resolved, "wrong", metadata),
-    (error) =>
-      error instanceof AuthenticationRejectedError
-      && error.code === "AUTHENTICATION_FAILED",
+    (error) => error instanceof AuthenticationRejectedError && error.code === "AUTHENTICATION_FAILED",
   );
-  assert.deepEqual(
-    f.events.slice(-1).map((event) => [event.eventType, event.result]),
-    [["reauthentication_failure", "failure"]],
-  );
+  assert.deepEqual(f.events.slice(-1).map((event) => [event.eventType, event.result]), [["reauthentication_failure", "failure"]]);
 });
 
 test("password changes verify the current secret, replace the Argon2id hash, and revoke other sessions", async () => {
@@ -154,21 +200,13 @@ test("password changes verify the current secret, replace the Argon2id hash, and
   const first = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
   const second = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
   const resolved = await f.service.resolveSession(second.bearerSecret, metadata);
-
-  const changed = await f.service.changePassword(resolved, {
-    currentPassword: "correct",
-    newPassword: "replacement-password",
-  }, metadata);
-
+  const changed = await f.service.changePassword(resolved, { currentPassword: "correct", newPassword: "replacement-password" }, metadata);
   assert.equal(changed.changed, true);
   assert.equal(changed.otherSessionsRevoked, 1);
   assert.equal(f.credential.passwordHash, "replacement-hash");
   assert.equal(f.sessions.get("session-1").revocationReason, "password_changed");
   assert.equal(f.sessions.get("session-2").revokedAt, null);
-  assert.deepEqual(
-    f.events.slice(-1).map((event) => [event.eventType, event.result]),
-    [["password_changed", "success"]],
-  );
+  assert.deepEqual(f.events.slice(-1).map((event) => [event.eventType, event.result]), [["password_changed", "success"]]);
   await assert.rejects(() => f.service.resolveSession(first.bearerSecret, metadata), /not valid/);
 });
 
@@ -176,7 +214,6 @@ test("password changes reject a wrong current password and password reuse with a
   const f = fixture();
   const login = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
   const resolved = await f.service.resolveSession(login.bearerSecret, metadata);
-
   await assert.rejects(
     () => f.service.changePassword(resolved, { currentPassword: "wrong", newPassword: "replacement-password" }, metadata),
     (error) => error.code === "AUTHENTICATION_FAILED",
@@ -212,30 +249,48 @@ test("login failures are generic for wrong passwords, unknown, suspended, disabl
 
 test("path organisation constraint accepts a canonical alias match and rejects a different immutable organisation generically", async () => {
   const accepted = fixture();
-  const result = await accepted.service.login({
-    organisationSlug: "alpha-old", username: "investigator", password: "correct", requiredOrganisationId: "org-1",
-  }, metadata);
+  const result = await accepted.service.login({ organisationSlug: "alpha-old", username: "investigator", password: "correct", requiredOrganisationId: "org-1" }, metadata);
   assert.equal(result.actor.organisation.organisationId, "org-1");
-
   const rejected = fixture();
-  await assert.rejects(() => rejected.service.login({
-    organisationSlug: "alpha", username: "investigator", password: "correct", requiredOrganisationId: "org-2",
-  }, metadata), (error) => error.code === "AUTHENTICATION_FAILED" && error.status === 401);
+  await assert.rejects(() => rejected.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct", requiredOrganisationId: "org-2" }, metadata), (error) => error.code === "AUTHENTICATION_FAILED" && error.status === 401);
 });
 
-test("session resolution enforces CSRF, expiry, authorization version, and explicit revocation", async () => {
+test("session resolution distinguishes authentication and authorization version failures", async () => {
+  const authenticationChanged = fixture({ authenticationVersion: 3, authorizationVersion: 7 });
+  const authnLogin = await authenticationChanged.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
+  authenticationChanged.user.authenticationVersion = 4;
+  await assert.rejects(() => authenticationChanged.service.resolveSession(authnLogin.bearerSecret, metadata), /not valid/);
+  assert.equal([...authenticationChanged.sessions.values()][0].revocationReason, "authentication_version_changed");
+
+  const authorizationChanged = fixture({ authenticationVersion: 3, authorizationVersion: 7 });
+  const authzLogin = await authorizationChanged.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
+  const staleSession = [...authorizationChanged.sessions.values()][0];
+  authorizationChanged.membership.authorizationVersion = 8;
+  await assert.rejects(
+    () => authorizationChanged.service.resolveSession(authzLogin.bearerSecret, metadata),
+    (error) => error.code === "ACCESS_AUTHORIZATION_VERSION_STALE" && error.status === 409,
+  );
+  assert.equal(staleSession.authorizationVersion, 7);
+  assert.equal(staleSession.revokedAt, null);
+  assert.equal(authorizationChanged.resolutionCalls.length, 1);
+  assert.deepEqual(
+    authorizationChanged.events.slice(-1).map((event) => [event.eventType, event.failureCategory]),
+    [["authorization_version_mismatch", "authorization_version_mismatch"]],
+  );
+});
+
+test("matching session versions re-resolve current permissions and preserve CSRF", async () => {
   const f = fixture();
   const login = await f.service.login({ organisationSlug: "alpha", username: "investigator", password: "correct" }, metadata);
   const resolved = await f.service.resolveSession(login.bearerSecret, metadata);
   assert.equal(resolved.actor.legacyTenant.tenantId, "tenant-alpha");
+  assert.deepEqual(resolved.actor.permissions, ["investigations.manage", "case.review_evidence"]);
+  assert.equal(f.resolutionCalls.length, 2);
   assert.equal(f.service.verifyCsrf(resolved, login.csrfToken), true);
   assert.equal(f.service.verifyCsrf(resolved, "wrong"), false);
   const rotated = await f.service.rotateCsrf(resolved);
   assert.equal(f.service.verifyCsrf(resolved, rotated), true);
   assert.equal(f.service.verifyCsrf(resolved, login.csrfToken), false);
-  f.user.authenticationVersion += 1;
-  await assert.rejects(() => f.service.resolveSession(login.bearerSecret, metadata), /not valid/);
-  assert.equal([...f.sessions.values()][0].revocationReason, "authorization_version_changed");
 });
 
 test("each successful login rotates bearer and CSRF material and absolute expiry is enforced independently", async () => {

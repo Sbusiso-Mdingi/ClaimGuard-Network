@@ -79,6 +79,24 @@ export const NAV_GROUPS = [
         capabilityMode: "any",
       },
       {
+        key: "access-management",
+        to: "/admin/scheme/access",
+        label: "Access management",
+        capabilities: [
+          "access.roles.read",
+          "access.roles.manage",
+          "access.assignments.read",
+          "access.assignments.manage",
+          "access.delegations.read",
+          "access.delegations.grant",
+          "access.delegations.revoke",
+          "access.elevated_permissions.review",
+          "access.audit.read",
+        ],
+        capabilityMode: "any",
+        organisationTypes: ["medical_scheme"],
+      },
+      {
         key: "platform-overview",
         to: "/admin/platform",
         label: "Platform Overview",
@@ -125,6 +143,7 @@ export const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
 export function canAccessNavItem(identity, item) {
   if (!item) return true;
+  if (item.organisationTypes && !item.organisationTypes.includes(identity?.organisationType)) return false;
   const required = item.capabilities || [];
   if (required.length === 0) return true;
   if (item.capabilityMode === "any") return hasAnyCapability(identity, required);

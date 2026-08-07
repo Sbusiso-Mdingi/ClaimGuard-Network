@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { apiJson, safeApiErrorMessage } from "../../lib/apiClient";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
   DefinitionList,
   EmptyState,
@@ -141,7 +142,7 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
   async function activateStagedRelease(model) {
     const confirmed = window.confirm(
       `Activate ${model.deploymentId} in the governed catalogue? `
-      + "This retires the prior ClaimGuard-managed catalogue entry. "
+      + `This retires the prior ${PRODUCT_NAME}-managed catalogue entry. `
       + "Runtime selection remains a separate deployment-controlled step.",
     );
     if (!confirmed) return;
@@ -180,7 +181,7 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
   if (loading && !strategy && models.length === 0) {
     return (
       <WorkspaceNotice title="Loading managed model configuration">
-        ClaimGuard is reading the deployment-authoritative setting and model catalogue.
+        {PRODUCT_NAME} is reading the deployment-authoritative setting and model catalogue.
       </WorkspaceNotice>
     );
   }
@@ -283,7 +284,7 @@ export function GlobalDetectionEngineSettings({ organisations = [] }) {
                       label: "Owner",
                       value: model.ownerType === "scheme"
                         ? model.ownerOrganisationId
-                        : "ClaimGuard",
+                        : PRODUCT_NAME,
                       mono: model.ownerType === "scheme",
                     },
                     {

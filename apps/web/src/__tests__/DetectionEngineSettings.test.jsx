@@ -48,13 +48,13 @@ describe("DetectionEngineSettings", () => {
     });
 
     expect(screen.getByText(/Deterministic scoring is no longer selectable/i)).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /ClaimGuard-managed updates/i })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: /Sequrin-managed updates/i })).toHaveAttribute("aria-checked", "false");
     expect(screen.getByRole("radio", { name: /Scheme-owned model pin/i })).toHaveAttribute("aria-checked", "false");
     expect(screen.queryByRole("radio", { name: /rules/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Model Policy" })).toBeDisabled();
   });
 
-  test("selects the ClaimGuard-managed model without accepting a deployment ID", async () => {
+  test("selects the Sequrin-managed model without accepting a deployment ID", async () => {
     const user = await renderLoaded({
       strategyType: "selection_required",
       requiresSelection: true,
@@ -66,7 +66,7 @@ describe("DetectionEngineSettings", () => {
       modelDeploymentId: "claimguard-fraud-model:1.2.0",
     }));
 
-    await user.click(screen.getByRole("radio", { name: /ClaimGuard-managed updates/i }));
+    await user.click(screen.getByRole("radio", { name: /Sequrin-managed updates/i }));
     await user.type(screen.getByLabelText("Reason for change"), "Use the managed production model.");
     await user.click(screen.getByRole("button", { name: "Save Model Policy" }));
 
@@ -143,9 +143,9 @@ describe("DetectionEngineSettings", () => {
       modelDeploymentId: "claimguard-fraud-model:1.2.0",
     });
 
-    expect(screen.getByText("ClaimGuard managed")).toBeInTheDocument();
+    expect(screen.getByText("Sequrin managed")).toBeInTheDocument();
     expect(screen.getAllByText("claimguard-fraud-model:1.2.0")).toHaveLength(2);
-    expect(screen.getByText(/Eligible for audited ClaimGuard model rollouts/i)).toBeInTheDocument();
+    expect(screen.getByText(/Eligible for audited Sequrin model rollouts/i)).toBeInTheDocument();
     expect(screen.getByText(/existing claims and historical outbox work are never rewritten/i)).toBeInTheDocument();
   });
 

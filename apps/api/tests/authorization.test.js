@@ -147,10 +147,14 @@ function confirmationPayload({ schemeId = alphaTenant.scheme_id } = {}) {
   };
 }
 
-test("authenticated contexts support tenant-scoped multi-role identities", () => {
+test("authenticated contexts preserve multiple roles and explicit effective permissions", () => {
   const authContext = createAuthenticatedAuthContext({
     userId: "user-alpha",
     roles: [CLAIMGUARD_ROLES.SCHEME_USER, CLAIMGUARD_ROLES.INVESTIGATOR],
+    permissions: [
+      CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST,
+      CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN,
+    ],
     tenantId: alphaTenant.tenant_id,
     organisationId: medicalSchemeOrganisation.organisationId,
     organisation: medicalSchemeOrganisation,
@@ -165,42 +169,58 @@ test("authenticated contexts support tenant-scoped multi-role identities", () =>
     CLAIMGUARD_ROLES.INVESTIGATOR,
   ]);
   assert.equal(hasPermission(authContext, CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST), true);
-  assert.equal(hasPermission(authContext, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), true);
+  assert.equal(hasPermission(authContext, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), true);
+  assert.equal(hasPermission(authContext, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
 });
 
-test("permission evaluation grants only the capabilities assigned to each role", () => {
+test("permission evaluation grants only explicitly resolved capabilities", () => {
   const analyst = createAuthenticatedAuthContext({
     userId: "analyst-alpha",
     roles: [CLAIMGUARD_ROLES.FRAUD_ANALYST],
+    permissions: [CLAIMGUARD_PERMISSIONS.ALERTS_TRIAGE],
+    tenantId: alphaTenant.tenant_id,
+  });
+  const roleOnlyAnalyst = createAuthenticatedAuthContext({
+    userId: "role-only-analyst",
+    roles: [CLAIMGUARD_ROLES.FRAUD_ANALYST],
+    permissions: [],
     tenantId: alphaTenant.tenant_id,
   });
   const schemeUser = createAuthenticatedAuthContext({
     userId: "scheme-user-alpha",
     roles: [CLAIMGUARD_ROLES.SCHEME_USER],
+    permissions: [CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST],
     tenantId: alphaTenant.tenant_id,
   });
   const platformAdmin = createAuthenticatedAuthContext({
     userId: "platform-admin",
     roles: [CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR],
+    permissions: [
+      CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
+      CLAIMGUARD_PERMISSIONS.DESKTOP_FLEET_POLICY_MANAGE,
+    ],
     tenantId: null,
     organisationId: platformOrganisation.organisationId,
     organisation: platformOrganisation,
   });
+  const schemeAdministrator = createAuthenticatedAuthContext({
+    userId: "scheme-admin",
+    roles: [CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR],
+    permissions: [CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE],
+    tenantId: alphaTenant.tenant_id,
+    organisationId: medicalSchemeOrganisation.organisationId,
+    organisation: medicalSchemeOrganisation,
+  });
 
   assert.equal(hasPermission(analyst, CLAIMGUARD_PERMISSIONS.ALERTS_TRIAGE), true);
+  assert.equal(hasPermission(roleOnlyAnalyst, CLAIMGUARD_PERMISSIONS.ALERTS_TRIAGE), false);
   assert.equal(hasPermission(analyst, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
   assert.equal(hasPermission(schemeUser, CLAIMGUARD_PERMISSIONS.CLAIMS_INGEST), true);
   assert.equal(hasPermission(schemeUser, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
   assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_CONFIRM_FRAUD), false);
   assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE), true);
   assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.DESKTOP_FLEET_POLICY_MANAGE), true);
-  const schemeAdministrator = createAuthenticatedAuthContext({
-    userId: "scheme-admin",
-    roles: [CLAIMGUARD_ROLES.SCHEME_ADMINISTRATOR],
-    tenantId: alphaTenant.tenant_id,
-    organisationId: medicalSchemeOrganisation.organisationId,
-    organisation: medicalSchemeOrganisation,
-  });
+  assert.equal(hasPermission(platformAdmin, CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN), false);
   assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE), true);
   assert.equal(hasPermission(schemeAdministrator, CLAIMGUARD_PERMISSIONS.DESKTOP_FLEET_POLICY_MANAGE), false);
 });
