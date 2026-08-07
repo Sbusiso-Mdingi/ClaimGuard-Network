@@ -62,9 +62,12 @@ export {
   ClaimOwnershipConflictError,
   ClaimReferenceValidationError,
   ClaimVersionIntegrityError,
-  createClaimIngestionRepository,
   ReferenceOwnershipConflictError,
 } from "./claim-ingestion-repository.js";
+
+export {
+  createClaimIngestionRepository,
+} from "./versioned-claim-ingestion-repository.js";
 
 export {
   createClaimsReadRepository,
