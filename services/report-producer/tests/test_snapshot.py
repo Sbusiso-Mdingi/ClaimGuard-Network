@@ -161,10 +161,10 @@ def outbox_job(
         ),
         payload={
             "schema_version":
-                CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+                2,
 
             "dataset_scope":
-                CLAIM_PROCESSING_DATASET_SCOPE,
+                "triggering_claim_versions",
 
             "source":
                 "api:test",
@@ -1321,7 +1321,7 @@ class SnapshotTests(
             connection.events,
             [
                 "begin",
-                "commit",
+                "rollback",
                 "close",
             ],
         )

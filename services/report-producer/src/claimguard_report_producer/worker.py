@@ -1297,17 +1297,29 @@ class ReportProducerWorker:
                 "an object."
             )
 
-        expected_payload_keys = (
-            frozenset(
-                {
-                    "schema_version",
-                    "dataset_scope",
-                    "source",
-                    "context_cutoff_at",
-                    "targets",
-                }
+        schema_version = job.payload.get("schema_version")
+
+        if schema_version == CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION:
+            expected_payload_keys = (
+                frozenset(
+                    {
+                        "schema_version",
+                        "dataset_scope",
+                        "assessment_id",
+                        "source",
+                        "targets",
+                    }
+                )
             )
-        )
+        elif schema_version == 2:
+            raise UnsupportedJobTypeError(
+                "LEGACY_UNPINNED_ASSESSMENT_JOB"
+            )
+        else:
+            raise MalformedJobPayloadError(
+                "Outbox payload schema "
+                "version is unsupported."
+            )
 
         if (
             frozenset(
@@ -1318,19 +1330,6 @@ class ReportProducerWorker:
             raise MalformedJobPayloadError(
                 "Outbox payload has "
                 "an incompatible schema."
-            )
-
-        if (
-            job.payload.get(
-                "schema_version"
-            )
-            != (
-                CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION
-            )
-        ):
-            raise MalformedJobPayloadError(
-                "Outbox payload schema "
-                "version is unsupported."
             )
 
         if (
@@ -1357,14 +1356,28 @@ class ReportProducerWorker:
                 "is required."
             )
 
-        _canonical_timestamp(
+        if not str(
             job.payload.get(
-                "context_cutoff_at"
-            ),
-            field=(
-                "payload.context_cutoff_at"
-            ),
+                "assessment_id"
+            )
+            or ""
+        ).strip():
+            raise MalformedJobPayloadError(
+                "Outbox payload assessment_id "
+                "is required."
+            )
+
+        raw_targets = job.payload.get(
+            "targets"
         )
+        if (
+            not isinstance(raw_targets, list)
+            or len(raw_targets) != 1
+        ):
+            raise MalformedJobPayloadError(
+                "Outbox payload must contain "
+                "exactly one target."
+            )
 
         _job_target_references(
             job
@@ -1431,31 +1444,13 @@ class ReportProducerWorker:
                 "does not match the outbox job."
             )
 
-        job_cutoff = _canonical_timestamp(
-            job.payload.get(
-                "context_cutoff_at"
-            ),
-            field=(
-                "payload.context_cutoff_at"
-            ),
-        )
-
-        snapshot_cutoff = (
-            _canonical_timestamp(
-                snapshot.context_cutoff_at,
-                field=(
-                    "snapshot.context_cutoff_at"
-                ),
-            )
-        )
-
         if (
-            snapshot_cutoff
-            != job_cutoff
+            snapshot.assessment_id
+            != job.assessment_id
         ):
             raise SnapshotIdentityError(
-                "Snapshot context cutoff does not "
-                "match the pinned outbox job."
+                "Snapshot assessment ID does "
+                "not match the outbox job."
             )
 
         job_targets = (

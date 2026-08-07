@@ -92,6 +92,7 @@ def _snapshot(
         for name in PREDICTOR_NAMES
     }
     return ProspectiveScoringSnapshot(
+        assessment_id="test-assessment-id",
         tenant_id="tenant-1",
         tenant_slug="ubuntu",
         tenant_display_name="Ubuntu Medical Aid",

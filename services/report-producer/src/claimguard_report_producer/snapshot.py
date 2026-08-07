@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 if TYPE_CHECKING:
     from .outbox import OutboxJob
@@ -288,6 +288,24 @@ def _decode_json_object(
         )
 
     return dict(decoded)
+
+
+def _canonical_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_canonical_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _canonical_value(value[k]) for k in sorted(value.keys())}
+    if isinstance(value, datetime):
+        return value.isoformat().replace('+00:00', 'Z')
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _sha256_canonical_json(value: Any) -> str:
+    canonical = _canonical_value(value)
+    json_str = json.dumps(canonical, separators=(",", ":"))
+    return hashlib.sha256(json_str.encode("utf-8")).hexdigest()
 
 
 def _chunks(
@@ -587,15 +605,16 @@ def _canonical_job_scope(
         and None not in assessment_ids
     )
 
-    if is_v3_batch:
-        effective_cutoff = datetime.now(UTC)
-    else:
+    if not is_v3_batch:
         if len(cutoffs) != 1:
             raise ValueError(
                 "Coalesced jobs must share "
                 "one context cutoff."
             )
         effective_cutoff = next(iter(cutoffs))
+    else:
+        # For v3, effective_cutoff will be resolved from the assessment row later
+        effective_cutoff = datetime.min.replace(tzinfo=UTC)
 
     if (
         not targets
@@ -1481,126 +1500,21 @@ class PyMySqlTenantSnapshotRepository:
             connection.begin()
 
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                        SELECT
-                            tenant_id,
-                            tenant_slug,
-                            tenant_name
-                        FROM tenants
-                        WHERE tenant_id = %s
-                          AND status = 'active'
-                        LIMIT 1
-                    """,
-                    [
-                        canonical_tenant_id
-                    ],
-                )
-
-                tenant = cursor.fetchone()
-
-                if not tenant:
-                    raise ValueError(
-                        "The canonical tenant is "
-                        "unavailable for snapshot export."
+                if scope.assessment_id is not None:
+                    snapshot = self._load_schema3_snapshot(
+                        cursor=cursor,
+                        tenant_id=canonical_tenant_id,
+                        scope=scope,
                     )
-
-                cursor.execute(
-                    """
-                        SELECT
-                            scheme_id,
-                            scheme_name
-                        FROM schemes
-                        WHERE tenant_id = %s
-                        ORDER BY scheme_id
-                    """,
-                    [
-                        canonical_tenant_id
-                    ],
-                )
-
-                schemes = list(
-                    cursor.fetchall()
-                )
-
-                cursor.execute(
-                    """
-                        SELECT
-                            member_id,
-                            scheme_id,
-                            first_name,
-                            last_name,
-                            date_of_birth,
-                            gender,
-                            identity_number,
-                            banking_detail,
-                            home_region,
-                            home_lat,
-                            home_lon,
-                            join_date
-                        FROM members
-                        WHERE tenant_id = %s
-                        ORDER BY member_id
-                    """,
-                    [
-                        canonical_tenant_id
-                    ],
-                )
-
-                members = list(
-                    cursor.fetchall()
-                )
-
-                cursor.execute(
-                    """
-                        SELECT
-                            provider_id,
-                            scheme_id,
-                            practice_number,
-                            specialty,
-                            practice_name,
-                            banking_detail,
-                            practice_region,
-                            practice_lat,
-                            practice_lon,
-                            provider_kind,
-                            provider_category
-                        FROM providers
-                        WHERE tenant_id = %s
-                        ORDER BY provider_id
-                    """,
-                    [
-                        canonical_tenant_id
-                    ],
-                )
-
-                providers = list(
-                    cursor.fetchall()
-                )
-
-                target_rows = (
-                    self._load_target_rows(
-                        cursor,
-                        tenant_id=(
-                            canonical_tenant_id
-                        ),
-                        targets=scope.targets,
+                else:
+                    snapshot = self._load_legacy_snapshot(
+                        cursor=cursor,
+                        tenant_id=canonical_tenant_id,
+                        scope=scope,
                     )
-                )
-
-                history_rows = (
-                    self._load_history_rows(
-                        cursor,
-                        tenant_id=(
-                            canonical_tenant_id
-                        ),
-                        cutoff=(
-                            scope.context_cutoff
-                        ),
-                    )
-                )
-
+                    
             connection.commit()
+            return snapshot
 
         except Exception:
             connection.rollback()
@@ -1608,6 +1522,303 @@ class PyMySqlTenantSnapshotRepository:
 
         finally:
             connection.close()
+
+    def _load_schema3_snapshot(
+        self,
+        *,
+        cursor,
+        tenant_id: str,
+        scope: _JobScope,
+    ) -> ProspectiveScoringSnapshot:
+        cursor.execute(
+            """
+                SELECT
+                    assessment_id,
+                    tenant_id,
+                    claim_id,
+                    claim_version,
+                    member_id,
+                    member_version,
+                    provider_id,
+                    provider_version,
+                    detection_strategy_id,
+                    strategy_type,
+                    model_deployment_id,
+                    input_snapshot,
+                    input_hash,
+                    provenance_status,
+                    created_at
+                FROM assessment_versions
+                WHERE tenant_id = %s
+                  AND assessment_id = %s
+                LIMIT 1
+            """,
+            [tenant_id, scope.assessment_id],
+        )
+
+        assessment = cursor.fetchone()
+        if not assessment:
+            raise ValueError(
+                "Assessment not found or cross-tenant access attempted."
+            )
+
+        if assessment["provenance_status"] != "COMPLETE":
+            raise ValueError(
+                "Executable assessment must have COMPLETE provenance."
+            )
+
+        # Validate job and assessment match
+        if assessment["claim_id"] != scope.targets[0].claim_id:
+            raise ValueError("Target claim identity mismatch.")
+        if assessment["claim_version"] != scope.targets[0].claim_version:
+            raise ValueError("Target claim version mismatch.")
+        if assessment["detection_strategy_id"] != scope.detection_strategy_id:
+            raise ValueError("Strategy identity mismatch.")
+        if assessment["strategy_type"] != scope.strategy_type:
+            raise ValueError("Strategy type mismatch.")
+        if (assessment["model_deployment_id"] or None) != scope.model_deployment_id:
+            raise ValueError("Model deployment mismatch.")
+
+        input_snapshot = _decode_json_object(
+            assessment["input_snapshot"],
+            field="input_snapshot"
+        )
+
+        # Validate schema and fields
+        if input_snapshot.get("schema") != "sequrin.assessment-input.v1":
+            raise ValueError("Unsupported input snapshot schema.")
+        if input_snapshot.get("tenant_id") != tenant_id:
+            raise ValueError("Snapshot tenant_id mismatch.")
+            
+        claim_snap = input_snapshot.get("claim", {})
+        if claim_snap.get("claim_id") != assessment["claim_id"]:
+            raise ValueError("Snapshot claim_id mismatch.")
+        if claim_snap.get("claim_version") != assessment["claim_version"]:
+            raise ValueError("Snapshot claim_version mismatch.")
+
+        member_snap = input_snapshot.get("member", {})
+        if member_snap.get("member_id") != assessment["member_id"]:
+            raise ValueError("Snapshot member_id mismatch.")
+            
+        provider_snap = input_snapshot.get("provider", {})
+        if provider_snap.get("provider_id") != assessment["provider_id"]:
+            raise ValueError("Snapshot provider_id mismatch.")
+
+        strategy_snap = input_snapshot.get("strategy", {})
+        if strategy_snap.get("detection_strategy_id") != assessment["detection_strategy_id"]:
+            raise ValueError("Snapshot strategy mismatch.")
+
+        # Hash validation
+        computed_hash = _sha256_canonical_json(input_snapshot)
+        if computed_hash != assessment["input_hash"]:
+            raise ValueError("Input hash validation failed (tampered snapshot).")
+
+        # Security bounds: ensure no banking details
+        if "banking_detail" in member_snap or "banking_detail" in provider_snap:
+            raise ValueError("Schema-3 snapshot must not contain banking details.")
+
+        created_at = _parse_timestamp(
+            assessment["created_at"],
+            field="assessment.created_at"
+        )
+
+        history_rows = self._load_history_rows(
+            cursor,
+            tenant_id=tenant_id,
+            cutoff=created_at,
+        )
+
+        historical = [
+            _historical_claim(
+                row,
+                field=f"history_rows[{index}]",
+            )
+            for index, row in enumerate(
+                history_rows
+            )
+        ]
+
+        target_payload = claim_snap.get("payload", {})
+        target_payload["claim_id"] = assessment["claim_id"]
+        target_payload["claim_version"] = assessment["claim_version"]
+        target_payload.pop("tenant_id", None)
+        
+        target_claims = [target_payload]
+
+        context_features = [
+            _context_for_target(
+                target_payload,
+                history=historical,
+                cutoff=created_at,
+            )
+        ]
+
+        # Use empty list/None for mutable state
+        schemes = []
+        tenant_slug = None
+        tenant_display_name = None
+
+        scope_with_cutoff = _JobScope(
+            detection_strategy_id=scope.detection_strategy_id,
+            strategy_type=scope.strategy_type,
+            model_deployment_id=scope.model_deployment_id,
+            context_cutoff=created_at,
+            targets=scope.targets,
+            source_job_ids=scope.source_job_ids,
+            assessment_id=scope.assessment_id,
+        )
+
+        watermark = _stable_watermark(
+            tenant_id=tenant_id,
+            scope=scope_with_cutoff,
+            target_claims=target_claims,
+            context_features=context_features,
+        )
+
+        return ProspectiveScoringSnapshot(
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+            tenant_display_name=tenant_display_name,
+            detection_strategy_id=scope.detection_strategy_id,
+            detection_strategy=scope.strategy_type,
+            model_deployment_id=scope.model_deployment_id,
+            captured_at=created_at.isoformat(),
+            context_cutoff_at=created_at.isoformat(),
+            watermark=watermark,
+            source_job_ids=scope.source_job_ids,
+            assessment_id=scope.assessment_id,
+            schemes=schemes,
+            members=[member_snap],
+            providers=[provider_snap],
+            target_claims=target_claims,
+            context_features=context_features,
+        )
+
+    def _load_legacy_snapshot(
+        self,
+        *,
+        cursor,
+        tenant_id: str,
+        scope: _JobScope,
+    ) -> ProspectiveScoringSnapshot:
+        cursor.execute(
+            """
+                SELECT
+                    tenant_id,
+                    tenant_slug,
+                    tenant_name
+                FROM tenants
+                WHERE tenant_id = %s
+                  AND status = 'active'
+                LIMIT 1
+            """,
+            [
+                tenant_id
+            ],
+        )
+
+        tenant = cursor.fetchone()
+
+        if not tenant:
+            raise ValueError(
+                "The canonical tenant is "
+                "unavailable for snapshot export."
+            )
+
+        cursor.execute(
+            """
+                SELECT
+                    scheme_id,
+                    scheme_name
+                FROM schemes
+                WHERE tenant_id = %s
+                ORDER BY scheme_id
+            """,
+            [
+                tenant_id
+            ],
+        )
+
+        schemes = list(
+            cursor.fetchall()
+        )
+
+        cursor.execute(
+            """
+                SELECT
+                    member_id,
+                    scheme_id,
+                    first_name,
+                    last_name,
+                    date_of_birth,
+                    gender,
+                    identity_number,
+                    banking_detail,
+                    home_region,
+                    home_lat,
+                    home_lon,
+                    join_date
+                FROM members
+                WHERE tenant_id = %s
+                ORDER BY member_id
+            """,
+            [
+                tenant_id
+            ],
+        )
+
+        members = list(
+            cursor.fetchall()
+        )
+
+        cursor.execute(
+            """
+                SELECT
+                    provider_id,
+                    scheme_id,
+                    practice_number,
+                    specialty,
+                    practice_name,
+                    banking_detail,
+                    practice_region,
+                    practice_lat,
+                    practice_lon,
+                    provider_kind,
+                    provider_category
+                FROM providers
+                WHERE tenant_id = %s
+                ORDER BY provider_id
+            """,
+            [
+                tenant_id
+            ],
+        )
+
+        providers = list(
+            cursor.fetchall()
+        )
+
+        target_rows = (
+            self._load_target_rows(
+                cursor,
+                tenant_id=(
+                    tenant_id
+                ),
+                targets=scope.targets,
+            )
+        )
+
+        history_rows = (
+            self._load_history_rows(
+                cursor,
+                tenant_id=(
+                    tenant_id
+                ),
+                cutoff=(
+                    scope.context_cutoff
+                ),
+            )
+        )
 
         target_by_ref: dict[
             ClaimVersionRef,
@@ -1755,7 +1966,7 @@ class PyMySqlTenantSnapshotRepository:
         ]
 
         watermark = _stable_watermark(
-            tenant_id=canonical_tenant_id,
+            tenant_id=tenant_id,
             scope=scope,
             target_claims=target_claims,
             context_features=context_features,
@@ -1766,7 +1977,7 @@ class PyMySqlTenantSnapshotRepository:
         )
 
         return ProspectiveScoringSnapshot(
-            tenant_id=canonical_tenant_id,
+            tenant_id=tenant_id,
             tenant_slug=_optional_text(
                 tenant.get(
                     "tenant_slug"

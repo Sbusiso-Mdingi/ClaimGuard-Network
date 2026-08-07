@@ -134,6 +134,10 @@ def deterministic_payload(
     }
 
 
+def assessment_uuid(n: int) -> str:
+    return f"00000000-0000-0000-0000-{n:012d}"
+
+
 def deterministic_record(
     *,
     claim_id: str = "CLAIM-1",
@@ -271,9 +275,11 @@ def target_claim(
 
 
 def model_snapshot(
+    assessment_id: str = "00000000-0000-0000-0000-000000000001",
 ) -> ProspectiveScoringSnapshot:
     return ProspectiveScoringSnapshot(
         tenant_id=TENANT_ID,
+        assessment_id=assessment_id,
         tenant_slug="alpha",
         tenant_display_name="Alpha",
         detection_strategy_id=29,
@@ -295,13 +301,6 @@ def model_snapshot(
         members=[],
         providers=[],
         target_claims=[
-            target_claim(
-                claim_id="CLAIM-B",
-                claim_version=1,
-                member_id="MEMBER-B",
-                provider_id="PROVIDER-B",
-                amount=200,
-            ),
             target_claim(
                 claim_id="CLAIM-A",
                 claim_version=2,
@@ -373,11 +372,6 @@ def model_review(
                 claim_id="CLAIM-A",
                 claim_version=2,
                 recommended=False,
-            ),
-            model_score(
-                claim_id="CLAIM-B",
-                claim_version=1,
-                recommended=True,
             ),
         ),
     )
@@ -970,10 +964,12 @@ class DetectionResultsTests(
             deterministic_record(
                 claim_id="CLAIM-1",
                 claim_version=1,
+                assessment_id=assessment_uuid(1),
             ),
             deterministic_record(
                 claim_id="CLAIM-2",
                 claim_version=3,
+                assessment_id=assessment_uuid(2),
                 payload=(
                     deterministic_payload(
                         claim_id="CLAIM-2",
@@ -1243,6 +1239,7 @@ class DetectionResultsTests(
             deterministic_record(
                 claim_id="CLAIM-2",
                 claim_version=1,
+                assessment_id=assessment_uuid(2),
             )
         )
 
@@ -1266,6 +1263,7 @@ class DetectionResultsTests(
                     deterministic_record(
                         claim_id="CLAIM-1",
                         claim_version=1,
+                        assessment_id=assessment_uuid(1),
                     ),
                     conflicting_existing,
                 ]
@@ -1274,8 +1272,7 @@ class DetectionResultsTests(
         self.assertNotIn(
             (
                 TENANT_ID,
-                "CLAIM-1",
-                1,
+                assessment_uuid(1),
             ),
             database.rows,
         )
@@ -1283,8 +1280,7 @@ class DetectionResultsTests(
         self.assertIn(
             (
                 TENANT_ID,
-                "CLAIM-2",
-                1,
+                assessment_uuid(2),
             ),
             database.rows,
         )
@@ -1617,10 +1613,6 @@ class DetectionResultsTests(
             ],
             [
                 (
-                    "CLAIM-B",
-                    1,
-                ),
-                (
                     "CLAIM-A",
                     2,
                 ),
@@ -1694,14 +1686,14 @@ class DetectionResultsTests(
             payload[
                 "claimId"
             ],
-            "CLAIM-B",
+            "CLAIM-A",
         )
 
         self.assertEqual(
             payload[
                 "claimVersion"
             ],
-            1,
+            2,
         )
 
         self.assertEqual(
@@ -1740,7 +1732,7 @@ class DetectionResultsTests(
             ][
                 "compositeReviewRecommended"
             ],
-            True,
+            False,
         )
 
     def test_model_save_rejects_identity_and_coverage_mismatches_before_write(
@@ -1752,6 +1744,31 @@ class DetectionResultsTests(
 
         base_review = (
             model_review()
+        )
+
+        multi_snapshot = replace(
+            base_snapshot,
+            target_claims=[
+                base_snapshot.target_claims[0],
+                target_claim(
+                    claim_id="CLAIM-B",
+                    claim_version=1,
+                    member_id="MEMBER-B",
+                    provider_id="PROVIDER-B",
+                    amount=200,
+                ),
+            ]
+        )
+        multi_review = replace(
+            base_review,
+            scores=(
+                base_review.scores[0],
+                model_score(
+                    claim_id="CLAIM-B",
+                    claim_version=1,
+                    recommended=True,
+                ),
+            )
         )
 
         cases = [
@@ -1774,12 +1791,11 @@ class DetectionResultsTests(
                 ),
             ),
             (
-                base_snapshot,
+                multi_snapshot,
                 replace(
-                    base_review,
+                    multi_review,
                     scores=(
-                        base_review
-                        .scores[0],
+                        multi_review.scores[0],
                     ),
                 ),
             ),
@@ -1898,10 +1914,12 @@ class DetectionResultsTests(
                 deterministic_record(
                     claim_id="CLAIM-1",
                     claim_version=1,
+                    assessment_id=assessment_uuid(1),
                 ),
                 deterministic_record(
                     claim_id="CLAIM-2",
                     claim_version=4,
+                    assessment_id=assessment_uuid(2),
                 ),
             ]
         )
@@ -1964,6 +1982,7 @@ class DetectionResultsTests(
                 deterministic_record(
                     claim_id="CLAIM-1",
                     claim_version=1,
+                    assessment_id=assessment_uuid(1),
                 ),
             ]
         )
@@ -2010,8 +2029,7 @@ class DetectionResultsTests(
 
         key = (
             TENANT_ID,
-            "CLAIM-1",
-            1,
+            assessment_uuid(1),
         )
 
         database.rows[key][
