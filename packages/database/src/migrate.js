@@ -24,6 +24,7 @@ export const defaultMigrationPath = coreDefaultMigrationPath;
 const extensionMigrationPaths = Object.freeze([
   fileURLToPath(new URL("../migrations/0016_domain_safety_foundation.sql", import.meta.url)),
   fileURLToPath(new URL("../migrations/0017_case_state_machine.sql", import.meta.url)),
+  fileURLToPath(new URL("../migrations/0018_versioned_assessment_context.sql", import.meta.url)),
 ]);
 
 export const defaultMigrationPaths = Object.freeze([
@@ -43,6 +44,12 @@ const adoptionCodes = new Set([
   "ER_TABLE_EXISTS_ERROR",
   "ER_TRG_ALREADY_EXISTS",
 ]);
+
+const EXTENSION_SCHEMA_CHECKPOINTS = Object.freeze(new Map([
+  ["0016_domain_safety_foundation", { schemaVersion: "16", migrationVersion: 16 }],
+  ["0017_case_state_machine", { schemaVersion: "17", migrationVersion: 17 }],
+  ["0018_versioned_assessment_context", { schemaVersion: "18", migrationVersion: 18 }],
+]));
 
 export class OperationalMigrationQueryResultError extends Error {
   constructor(queryName) {
@@ -193,7 +200,11 @@ function validateRecordedStatement(migration, index, recorded) {
   }
 }
 
-async function verifyCanonicalMetadata(connection) {
+async function verifyMetadata(connection, {
+  schemaVersion,
+  migrationVersion,
+  label,
+}) {
   const rows = extractOperationalMigrationRows(
     await connection.query(
       `SELECT schema_version, migration_version
@@ -204,12 +215,25 @@ async function verifyCanonicalMetadata(connection) {
     "schema metadata",
   );
   if (rows.length !== 1
-      || String(rows[0].schema_version) !== CANONICAL_OPERATIONAL_SCHEMA_VERSION
-      || Number(rows[0].migration_version) < CANONICAL_OPERATIONAL_MIGRATION_VERSION) {
-    const error = new Error("Operational metadata was not advanced monotonically to schema 17.");
+      || String(rows[0].schema_version) !== String(schemaVersion)
+      || Number(rows[0].migration_version) < Number(migrationVersion)) {
+    const error = new Error(
+      `Operational metadata was not advanced monotonically to schema ${schemaVersion}${label ? ` after ${label}` : ""}.`,
+    );
     error.code = "OPERATIONAL_MIGRATION_METADATA_MISMATCH";
+    error.expectedSchemaVersion = String(schemaVersion);
+    error.expectedMigrationVersion = Number(migrationVersion);
+    error.migrationId = label || null;
     throw error;
   }
+}
+
+async function verifyCanonicalMetadata(connection) {
+  return verifyMetadata(connection, {
+    schemaVersion: CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+    migrationVersion: CANONICAL_OPERATIONAL_MIGRATION_VERSION,
+    label: "canonical migration completion",
+  });
 }
 
 async function applyExtensionMigrations(pool, paths, { applicationVersion = null } = {}) {
@@ -267,7 +291,13 @@ async function applyExtensionMigrations(pool, paths, { applicationVersion = null
             adoptedStatements += 1;
           }
         }
-        if (migration.id === "0017_case_state_machine") await verifyCanonicalMetadata(connection);
+        const checkpoint = EXTENSION_SCHEMA_CHECKPOINTS.get(migration.id);
+        if (checkpoint) {
+          await verifyMetadata(connection, {
+            ...checkpoint,
+            label: migration.id,
+          });
+        }
         await connection.query(
           `INSERT INTO operational_migration_history
              (migration_id, checksum, execution_duration_ms, application_version)
