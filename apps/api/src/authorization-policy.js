@@ -42,6 +42,11 @@ export const CLAIMGUARD_PERMISSIONS = Object.freeze({
   PLATFORM_ADMINISTRATORS_MANAGE: "platform_administrators.manage",
   DESKTOP_DEVICES_MANAGE: "desktop.devices.manage",
   DESKTOP_FLEET_POLICY_MANAGE: "desktop.fleet_policy.manage",
+  ASSESSMENT_READ: "assessment.read",
+  MEMBER_CORRECT: "member.correct",
+  PROVIDER_CORRECT: "provider.correct",
+  ASSESSMENT_REQUEST_REASSESSMENT: "assessment.request_reassessment",
+  CORRECTION_REVIEW_IMPACT: "correction.review_impact",
 });
 
 const rolePermissionMap = Object.freeze({
@@ -232,11 +237,20 @@ export const OPERATIONAL_ROUTE_IDS = Object.freeze({
   DESKTOP_INVESTIGATION_PATCH: "desktop.investigation.patch",
   DESKTOP_INVESTIGATION_ADD_NOTE: "desktop.investigation.add_note",
   DESKTOP_INVESTIGATION_UPLOAD_EVIDENCE: "desktop.investigation.upload_evidence",
+  ASSESSMENT_PROVENANCE: "assessment.provenance",
+  MEMBER_CORRECTION: "assessment.member.correction",
+  PROVIDER_CORRECTION: "assessment.provider.correction",
+  ASSESSMENT_REQUEST_REASSESSMENT: "assessment.request_reassessment",
+  ASSESSMENT_READ_PROVENANCE: "assessment.read_provenance",
+  MEMBER_CORRECT: "member.correct",
+  PROVIDER_CORRECT: "provider.correct",
+  ASSESSMENT_REQUEST_REASSESSMENT: "assessment.request_reassessment",
 });
 
 export const OPERATIONAL_ROUTE_PREFIXES = Object.freeze([
   "/claims", "/investigations", "/detection", "/ledger", "/registry", "/internal/data-plane",
   "/desktop/sync", "/desktop/claims", "/desktop/investigators", "/desktop/investigations",
+  "/assessment",
 ]);
 
 function normalizeRequestPath(path) {
@@ -363,6 +377,10 @@ const operationalRoutePolicyEntries = [
   },
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_ADD_NOTE, method: "POST", pathPattern: "/desktop/investigations/:id/notes", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_UPLOAD_EVIDENCE, method: "POST", pathPattern: "/desktop/investigations/:id/evidence", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.ASSESSMENT_PROVENANCE, method: "GET", pathPattern: "/assessment/versions/:assessmentId", permissions: [CLAIMGUARD_PERMISSIONS.ASSESSMENT_READ], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.MEMBER_CORRECTION, method: "POST", pathPattern: "/assessment/members/:memberId/correction", permissions: [CLAIMGUARD_PERMISSIONS.MEMBER_CORRECT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.PROVIDER_CORRECTION, method: "POST", pathPattern: "/assessment/providers/:providerId/correction", permissions: [CLAIMGUARD_PERMISSIONS.PROVIDER_CORRECT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.ASSESSMENT_REQUEST_REASSESSMENT, method: "POST", pathPattern: "/assessment/versions/:assessmentId/reassess", permissions: [CLAIMGUARD_PERMISSIONS.ASSESSMENT_REQUEST_REASSESSMENT], permissionMode: "all", requiresOperationalDataPlane: true },
 ];
 
 export const OPERATIONAL_ROUTE_POLICIES = Object.freeze(operationalRoutePolicyEntries.map((entry) => Object.freeze(entry)));

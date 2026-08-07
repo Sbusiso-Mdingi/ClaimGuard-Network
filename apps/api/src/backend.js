@@ -26,6 +26,7 @@ import { registerInvestigationsRoutes } from "./routes/investigations-routes.js"
 import { registerLedgerRoutes } from "./routes/ledger-routes.js";
 import { registerRegistryRoutes } from "./routes/registry-routes.js";
 import { registerDesktopAdminRoutes, registerDesktopRoutes } from "./routes/desktop-routes.js";
+import { registerAssessmentRoutes } from "./routes/assessment-routes.js";
 import { createCaseWorkflowService } from "./services/case-workflow-service.js";
 import { createClaimIngestionService } from "./services/claim-ingestion-service.js";
 import { createFraudConfirmationService } from "./services/fraud-confirmation-service.js";
@@ -193,6 +194,7 @@ export function createBackendApp({
         }
         return {
           ...servicesForRequest,
+          pool,
           claimsReadRepository: repositories.claimsRead,
           reportService: tenantReportServices.get(reportServiceKey),
           ledgerRepository: repositories.ledger,
@@ -266,6 +268,7 @@ export function createBackendApp({
     logger: logEvent,
   });
   registerRegistryRoutes(app, { registryService: dependencies.registryService });
+  registerAssessmentRoutes(app, { tenantRepository: dependencies.tenantRepository });
 
   app.all(`${backendRouterPath}/*`, (c) => fetchRequestHandler({
     endpoint: backendRouterPath,

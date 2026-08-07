@@ -179,6 +179,21 @@ export {
 } from "./tenant-context-store.js";
 
 export {
+  AssessmentContextRepositoryError,
+  createAssessmentVersion,
+  createReplacementAssessmentsForCorrection,
+  enqueueAssessmentProcessingJob,
+  persistMemberVersion,
+  persistProviderVersion,
+} from "./assessment-context-repository.js";
+
+export {
+  CORRECTION_IMPACT_CLASS,
+  ASSESSMENT_IMPACT,
+  classifyCorrectionFields,
+} from "./assessment-context-policy.js";
+
+export {
   applyMigrations,
   defaultMigrationPath,
   defaultMigrationPaths,
