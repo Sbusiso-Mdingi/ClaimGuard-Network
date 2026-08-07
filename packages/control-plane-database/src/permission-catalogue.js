@@ -35,6 +35,16 @@ const PERMISSION_ENTRIES = Object.freeze([
   { key: "case.open_appeal_or_review", description: "Open a governed appeal or review.", category: "case_governance", tenantAssignable: true, elevated: true, delegable: false, systemOnly: false, definitionVersion: 1 },
   { key: "case.return_for_further_evidence", description: "Return a governed case for further evidence.", category: "case_governance", tenantAssignable: true, elevated: false, delegable: false, systemOnly: false, definitionVersion: 1 },
 
+  // PR 4 immutable assessment-context permissions. These are fixed catalogue keys;
+  // client-supplied role names or permission arrays are never authority.
+  { key: "member.read", description: "Read tenant-scoped immutable member version history.", category: "assessment_context", tenantAssignable: true, elevated: false, delegable: true, systemOnly: false, definitionVersion: 1 },
+  { key: "member.correct", description: "Record a governed member correction and immutable member version.", category: "assessment_context", tenantAssignable: true, elevated: true, delegable: false, systemOnly: false, definitionVersion: 1 },
+  { key: "provider.read", description: "Read tenant-scoped immutable provider version history.", category: "assessment_context", tenantAssignable: true, elevated: false, delegable: true, systemOnly: false, definitionVersion: 1 },
+  { key: "provider.correct", description: "Record a governed provider correction and immutable provider version.", category: "assessment_context", tenantAssignable: true, elevated: true, delegable: false, systemOnly: false, definitionVersion: 1 },
+  { key: "assessment.read", description: "Read immutable assessment provenance for the member organisation.", category: "assessment_context", tenantAssignable: true, elevated: false, delegable: true, systemOnly: false, definitionVersion: 1 },
+  { key: "assessment.request_reassessment", description: "Request an explicit replacement assessment without adjudication authority.", category: "assessment_context", tenantAssignable: true, elevated: false, delegable: false, systemOnly: false, definitionVersion: 1 },
+  { key: "correction.review_impact", description: "Review correction impact without mutating governed case or notice state.", category: "assessment_context", tenantAssignable: true, elevated: true, delegable: false, systemOnly: false, definitionVersion: 1 },
+
   { key: "registry.search", description: "Search the minimal shared registry.", category: "registry", tenantAssignable: true, elevated: false, delegable: true, systemOnly: false, definitionVersion: 1 },
   { key: "registry.review_history", description: "Review permitted shared registry history.", category: "registry", tenantAssignable: true, elevated: false, delegable: true, systemOnly: false, definitionVersion: 1 },
 
@@ -104,10 +114,22 @@ export function getCategories() {
 }
 
 export const SYSTEM_ROLE_PERMISSION_COMPATIBILITY = Object.freeze({
-  fraud_analyst: Object.freeze(["case.triage", "case.dismiss", "case.monitor", "case.open_investigation"]),
-  investigator: Object.freeze(["case.record_notice", "case.record_response", "case.review_evidence", "case.complete_report", "case.submit_outcome_review"]),
-  applications_committee_member: Object.freeze(["case.review_outcome", "case.approve_outcome", "case.close_unsubstantiated", "case.open_appeal_or_review", "case.return_for_further_evidence"]),
-  scheme_administrator: Object.freeze(["access.roles.read", "access.roles.manage", "access.assignments.read", "access.assignments.manage", "access.delegations.read", "access.delegations.grant", "access.delegations.revoke", "access.elevated_permissions.review", "access.audit.read"]),
+  fraud_analyst: Object.freeze([
+    "case.triage", "case.dismiss", "case.monitor", "case.open_investigation",
+    "member.read", "provider.read", "assessment.read",
+  ]),
+  investigator: Object.freeze([
+    "case.record_notice", "case.record_response", "case.review_evidence", "case.complete_report", "case.submit_outcome_review",
+    "member.read", "provider.read", "assessment.read",
+  ]),
+  applications_committee_member: Object.freeze([
+    "case.review_outcome", "case.approve_outcome", "case.close_unsubstantiated", "case.open_appeal_or_review", "case.return_for_further_evidence",
+    "assessment.read", "correction.review_impact",
+  ]),
+  scheme_administrator: Object.freeze([
+    "access.roles.read", "access.roles.manage", "access.assignments.read", "access.assignments.manage", "access.delegations.read", "access.delegations.grant", "access.delegations.revoke", "access.elevated_permissions.review", "access.audit.read",
+    "member.read", "member.correct", "provider.read", "provider.correct", "assessment.read", "assessment.request_reassessment", "correction.review_impact",
+  ]),
 });
 
 export function getSystemRoleCompatibilityPermissions(roleKey) {
