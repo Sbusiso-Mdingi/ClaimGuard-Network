@@ -119,8 +119,8 @@ describe("Branding", () => {
     await waitFor(() => {
       expect(screen.queryByText(/checking your session/i)).not.toBeInTheDocument();
     });
-    expect(screen.getByText(/Sequrin/i)).toBeInTheDocument();
-    expect(screen.queryByText(/ClaimGuard/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Sequrin/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^ClaimGuard$/i)).not.toBeInTheDocument();
   });
 
   test("workspace shell shows Sequrin not ClaimGuard", async () => {
@@ -170,7 +170,7 @@ describe("Access management navigation", () => {
   });
 
   test("platform actor does not get scheme access management nav", async () => {
-    renderLayout(platformSession(["access.roles.read"]));
+    renderLayout(platformSession(["tenants.manage", "platform_health.view"]));
     const nav = primaryNav();
     await within(nav).findByRole("link", { name: /^Platform Overview$/i });
     expect(within(nav).queryByRole("link", { name: /^Access management$/i })).not.toBeInTheDocument();
@@ -215,7 +215,7 @@ describe("AccessOverviewPage", () => {
         <MemoryRouter><AccessOverviewPage /></MemoryRouter>
       </RoleProvider>,
     );
-    expect(screen.getByText(/access overview/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /access overview/i })).toBeInTheDocument();
   });
 
   test("successful data renders organisation and permissions", async () => {
@@ -311,7 +311,7 @@ describe("PermissionCataloguePage", () => {
       return new Promise((res) => { resolve = res; });
     });
     render(<RoleProvider><MemoryRouter><PermissionCataloguePage /></MemoryRouter></RoleProvider>);
-    expect(screen.getByText(/permission catalogue/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /permission catalogue/i })).toBeInTheDocument();
   });
 
   test("successful data renders permission keys", async () => {

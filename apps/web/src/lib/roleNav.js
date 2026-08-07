@@ -94,6 +94,7 @@ export const NAV_GROUPS = [
           "access.audit.read",
         ],
         capabilityMode: "any",
+        organisationTypes: ["medical_scheme"],
       },
       {
         key: "platform-overview",
@@ -142,6 +143,7 @@ export const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
 export function canAccessNavItem(identity, item) {
   if (!item) return true;
+  if (item.organisationTypes && !item.organisationTypes.includes(identity?.organisationType)) return false;
   const required = item.capabilities || [];
   if (required.length === 0) return true;
   if (item.capabilityMode === "any") return hasAnyCapability(identity, required);
