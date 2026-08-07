@@ -11,6 +11,7 @@ import {
 const DETERMINISTIC_RULE_VERSION = "claimguard.deterministic-request.v1";
 const ASSESSMENT_SNAPSHOT_SCHEMA = "sequrin.assessment-input.v1";
 const OUTBOX_PAYLOAD_SCHEMA_VERSION = 3;
+const EXPLICIT_REASSESSMENT_OPERATION = "EXPLICIT_REASSESSMENT";
 
 export class AssessmentContextRepositoryError extends Error {
   constructor(code, message, status = 409, details = null) {
@@ -723,4 +724,204 @@ export async function createReplacementAssessmentsForCorrection(connection, {
     results.push({ assessment, job });
   }
   return results;
+}
+
+function normalizeReassessmentIdempotencyKey(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new AssessmentContextRepositoryError(
+      "MISSING_IDEMPOTENCY_KEY",
+      "Idempotency-Key is required for an assessment reassessment request.",
+      400,
+    );
+  }
+  const normalized = value.trim();
+  if (normalized.length > 128) {
+    throw new AssessmentContextRepositoryError(
+      "INVALID_IDEMPOTENCY_KEY",
+      "Idempotency-Key must be at most 128 characters.",
+      400,
+    );
+  }
+  return normalized;
+}
+
+function reassessmentIdempotencyMismatch() {
+  return new AssessmentContextRepositoryError(
+    "ASSESSMENT_REASSESSMENT_IDEMPOTENCY_MISMATCH",
+    "Idempotency-Key has already been used for a different reassessment intent.",
+    409,
+  );
+}
+
+function persistedReassessmentResult(value) {
+  let parsed;
+  try {
+    parsed = parseJsonObject(value, "reassessment result_payload");
+  } catch (error) {
+    if (error instanceof AssessmentContextRepositoryError) {
+      throw new AssessmentContextRepositoryError(
+        "ASSESSMENT_REASSESSMENT_OPERATION_INVALID",
+        "Persisted reassessment operation result is invalid.",
+        500,
+      );
+    }
+    throw error;
+  }
+  for (const field of ["sourceAssessmentId", "assessmentId", "jobId"]) {
+    if (typeof parsed[field] !== "string" || !parsed[field]) {
+      throw new AssessmentContextRepositoryError(
+        "ASSESSMENT_REASSESSMENT_OPERATION_INVALID",
+        "Persisted reassessment operation result is incomplete.",
+        500,
+      );
+    }
+  }
+  return {
+    sourceAssessmentId: parsed.sourceAssessmentId,
+    assessmentId: parsed.assessmentId,
+    jobId: parsed.jobId,
+    status: typeof parsed.status === "string" && parsed.status ? parsed.status : "pending",
+  };
+}
+
+export async function requestAssessmentReassessment(connection, {
+  tenantId,
+  sourceAssessmentId,
+  idempotencyKey,
+  createdBy,
+  source,
+  correlationId,
+  maxAttempts = 5,
+}) {
+  requireExecutor(connection);
+  const normalizedIdempotencyKey = normalizeReassessmentIdempotencyKey(idempotencyKey);
+
+  const [sourceRows] = await connection.execute(
+    `SELECT
+       assessment_id, tenant_id, claim_id, claim_version,
+       member_id, member_version, provider_id, provider_version,
+       detection_strategy_id, strategy_type, model_deployment_id,
+       provenance_status
+     FROM assessment_versions
+     WHERE tenant_id = ? AND assessment_id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, sourceAssessmentId],
+  );
+  const sourceAssessment = sourceRows?.[0] ?? null;
+  if (!sourceAssessment) {
+    throw new AssessmentContextRepositoryError(
+      "ASSESSMENT_NOT_FOUND",
+      `Assessment ${sourceAssessmentId} was not found.`,
+      404,
+    );
+  }
+  if (sourceAssessment.provenance_status !== "COMPLETE") {
+    throw new AssessmentContextRepositoryError(
+      "ASSESSMENT_REASSESSMENT_PROVENANCE_INCOMPLETE",
+      "Explicit reassessment requires a COMPLETE immutable source assessment.",
+      409,
+    );
+  }
+
+  const intentHash = sha256CanonicalJson({
+    tenantId,
+    operation: EXPLICIT_REASSESSMENT_OPERATION,
+    sourceAssessmentId: sourceAssessment.assessment_id,
+  });
+  const [operationRows] = await connection.execute(
+    `SELECT operation_id, intent_hash, assessment_id, result_payload
+     FROM reassessment_operations
+     WHERE tenant_id = ? AND idempotency_key = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, normalizedIdempotencyKey],
+  );
+  const existingOperation = operationRows?.[0] ?? null;
+  if (existingOperation) {
+    if (
+      String(existingOperation.assessment_id) !== String(sourceAssessment.assessment_id)
+      || String(existingOperation.intent_hash) !== intentHash
+    ) {
+      throw reassessmentIdempotencyMismatch();
+    }
+    const persisted = persistedReassessmentResult(existingOperation.result_payload);
+    if (persisted.sourceAssessmentId !== sourceAssessment.assessment_id) {
+      throw new AssessmentContextRepositoryError(
+        "ASSESSMENT_REASSESSMENT_OPERATION_INVALID",
+        "Persisted reassessment operation does not match its immutable source assessment.",
+        500,
+      );
+    }
+    return {
+      operationId: existingOperation.operation_id,
+      ...persisted,
+      replayed: true,
+    };
+  }
+
+  const strategy = {
+    id: Number(sourceAssessment.detection_strategy_id),
+    strategyType: sourceAssessment.strategy_type,
+    modelDeploymentId: sourceAssessment.model_deployment_id ?? null,
+  };
+  const assessment = await createAssessmentVersion(connection, {
+    tenantId,
+    claimId: sourceAssessment.claim_id,
+    claimVersion: Number(sourceAssessment.claim_version),
+    strategy,
+    assessmentReason: EXPLICIT_REASSESSMENT_OPERATION,
+    createdBy,
+    memberVersion: Number(sourceAssessment.member_version),
+    providerVersion: Number(sourceAssessment.provider_version),
+    supersedesAssessmentId: sourceAssessment.assessment_id,
+    sourceCorrectionEventId: null,
+  });
+  const job = await enqueueAssessmentProcessingJob(connection, {
+    tenantId,
+    assessment,
+    strategy,
+    source,
+    correlationId,
+    maxAttempts,
+  });
+  const resultPayload = {
+    sourceAssessmentId: sourceAssessment.assessment_id,
+    assessmentId: assessment.assessmentId,
+    jobId: job.id,
+    status: job.status,
+  };
+  const operationId = sha256CanonicalJson({
+    tenantId,
+    operation: EXPLICIT_REASSESSMENT_OPERATION,
+    idempotencyKey: normalizedIdempotencyKey,
+  });
+
+  try {
+    await connection.execute(
+      `INSERT INTO reassessment_operations (
+         operation_id, tenant_id, idempotency_key, intent_hash,
+         assessment_id, result_payload
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        operationId,
+        tenantId,
+        normalizedIdempotencyKey,
+        intentHash,
+        sourceAssessment.assessment_id,
+        JSON.stringify(resultPayload),
+      ],
+    );
+  } catch (error) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      throw reassessmentIdempotencyMismatch();
+    }
+    throw error;
+  }
+
+  return {
+    operationId,
+    ...resultPayload,
+    replayed: false,
+  };
 }
