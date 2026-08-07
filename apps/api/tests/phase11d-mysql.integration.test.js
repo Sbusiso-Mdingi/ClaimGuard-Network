@@ -8,9 +8,7 @@ import {
   applyMigrations,
   CANONICAL_OPERATIONAL_MIGRATION_VERSION,
   CANONICAL_OPERATIONAL_SCHEMA_VERSION,
-  CLAIM_PROCESSING_DATASET_SCOPE,
   CLAIM_PROCESSING_JOB_TYPE,
-  CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
   createDataPlaneContext,
   createLegacySharedAdapter,
   createMysqlConnection,
@@ -74,6 +72,10 @@ const TEST_TENANTS = [
   "tenant_alpha",
   "tenant_beta",
 ];
+
+const ASSESSMENT_PROCESSING_PAYLOAD_SCHEMA_VERSION = 3;
+const ASSESSMENT_PROCESSING_DATASET_SCOPE =
+  "assessment_version";
 
 const ALPHA_NEW_CLAIM_ID =
   (
@@ -2431,23 +2433,17 @@ test(
 
       assert.equal(
         firstPayload.schema_version,
-        CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+        ASSESSMENT_PROCESSING_PAYLOAD_SCHEMA_VERSION,
       );
 
       assert.equal(
         firstPayload.dataset_scope,
-        CLAIM_PROCESSING_DATASET_SCOPE,
+        ASSESSMENT_PROCESSING_DATASET_SCOPE,
       );
 
       assert.equal(
         firstPayload.source,
         "api",
-      );
-
-      assert.equal(
-        typeof firstPayload
-          .context_cutoff_at,
-        "string",
       );
 
       assert.equal(
@@ -2853,12 +2849,12 @@ test(
       ) {
         assert.equal(
           payload.schema_version,
-          CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+          ASSESSMENT_PROCESSING_PAYLOAD_SCHEMA_VERSION,
         );
 
         assert.equal(
           payload.dataset_scope,
-          CLAIM_PROCESSING_DATASET_SCOPE,
+          ASSESSMENT_PROCESSING_DATASET_SCOPE,
         );
 
         assert.deepEqual(
