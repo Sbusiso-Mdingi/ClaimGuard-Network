@@ -8,11 +8,11 @@ const simulatorSourceUrl = new URL("../../../tools/scheme-simulator/simulator.py
 test("claim ingestion repository mirrors the migrated identifier widths", async () => {
   const source = await readFile(repositorySourceUrl, "utf8");
   const expected = [
-    [/`claims\[\$\{index\}\]\.claim_id`,\s*128,/, "claim_id"],
-    [/`claims\[\$\{index\}\]\.scheme_id`,\s*64,/, "scheme_id"],
-    [/`claims\[\$\{index\}\]\.member_id`,\s*128,/, "member_id"],
-    [/`claims\[\$\{index\}\]\.provider_id`,\s*128,/, "provider_id"],
-    [/`claims\[\$\{index\}\]\.billing_code`,\s*64,/, "billing_code"],
+    [/requireText\(\s*rawClaim\.claim_id,\s*`claims\[\$\{index\}\]\.claim_id`,\s*128\s*\)/, "claim_id"],
+    [/requireText\(\s*rawClaim\.scheme_id,\s*`claims\[\$\{index\}\]\.scheme_id`,\s*64\s*\)/, "scheme_id"],
+    [/requireText\(\s*rawClaim\.member_id,\s*`claims\[\$\{index\}\]\.member_id`,\s*128\s*\)/, "member_id"],
+    [/requireText\(\s*rawClaim\.provider_id,\s*`claims\[\$\{index\}\]\.provider_id`,\s*128\s*\)/, "provider_id"],
+    [/requireText\(\s*rawClaim\.billing_code,\s*`claims\[\$\{index\}\]\.billing_code`,\s*64\s*\)/, "billing_code"],
   ];
   for (const [pattern, field] of expected) {
     assert.match(source, pattern, `${field} validator must match migration 0010 and the public schema`);
