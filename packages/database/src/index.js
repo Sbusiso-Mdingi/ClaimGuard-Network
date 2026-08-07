@@ -185,6 +185,7 @@ export {
   enqueueAssessmentProcessingJob,
   persistMemberVersion,
   persistProviderVersion,
+  requestAssessmentReassessment,
 } from "./assessment-context-repository.js";
 
 export {
