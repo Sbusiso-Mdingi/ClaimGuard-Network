@@ -3,6 +3,7 @@ import {
   persistMemberVersion,
   persistProviderVersion,
   createReplacementAssessmentsForCorrection,
+  requestAssessmentReassessment,
 } from "@claimguard/database";
 
 import { OPERATIONAL_ROUTE_IDS } from "../authorization-policy.js";
@@ -24,6 +25,34 @@ function correctionCorrelationId(c) {
   return c.get("requestId") || undefined;
 }
 
+function reassessmentSource(c) {
+  return `api:reassessment:${c.get("authContext")?.user_id || "unknown"}`;
+}
+
+function validateReassessmentIdempotencyKey(c) {
+  const value = c.req.header("idempotency-key");
+  if (typeof value !== "string" || !value.trim()) {
+    return {
+      ok: false,
+      response: c.json({
+        code: "MISSING_IDEMPOTENCY_KEY",
+        message: "Idempotency-Key is required for an assessment reassessment request.",
+      }, 400),
+    };
+  }
+  const key = value.trim();
+  if (key.length > 128) {
+    return {
+      ok: false,
+      response: c.json({
+        code: "INVALID_IDEMPOTENCY_KEY",
+        message: "Idempotency-Key must be at most 128 characters.",
+      }, 400),
+    };
+  }
+  return { ok: true, key };
+}
+
 function resolvePool() {
   const services = getOperationalServices();
   return services?.pool || null;
@@ -40,6 +69,9 @@ export function registerAssessmentRoutes(app, {
   });
   const requireProviderCorrection = createRequireOperationalRouteAuthorizationMiddleware({
     routeId: OPERATIONAL_ROUTE_IDS.PROVIDER_CORRECTION,
+  });
+  const requireReassessment = createRequireOperationalRouteAuthorizationMiddleware({
+    routeId: OPERATIONAL_ROUTE_IDS.ASSESSMENT_REQUEST_REASSESSMENT,
   });
   const requireTenantAccess = createRequireTenantAccessMiddleware({ tenantRepository });
 
@@ -221,6 +253,64 @@ export function registerAssessmentRoutes(app, {
             jobId: r.job.id,
           })),
         }, 200);
+      } catch (error) {
+        try { await connection?.rollback(); } catch { /* preserve original */ }
+        if (error instanceof AssessmentContextRepositoryError) {
+          return c.json({ code: error.code, message: error.message }, error.status ?? 409);
+        }
+        throw error;
+      } finally {
+        connection?.release();
+      }
+    },
+  );
+
+  // POST /assessment/versions/:assessmentId/reassess
+  app.post(
+    "/assessment/versions/:assessmentId/reassess",
+    requireReassessment,
+    requireTenantAccess,
+    async (c) => {
+      const tenantContext = c.get("tenantContext") || null;
+      if (!tenantContext?.tenant_id) {
+        return c.json({ code: "TENANT_CONTEXT_MISSING", message: "Tenant context could not be resolved." }, 403);
+      }
+      const idempotency = validateReassessmentIdempotencyKey(c);
+      if (!idempotency.ok) return idempotency.response;
+
+      const pool = resolvePool();
+      if (!pool) {
+        return c.json({ code: "DATA_PLANE_UNAVAILABLE", message: "Operational data plane is not available." }, 503);
+      }
+
+      const tenantId = tenantContext.tenant_id;
+      const sourceAssessmentId = c.req.param("assessmentId");
+      const actorId = correctionActor(c);
+      const source = reassessmentSource(c);
+      const correlationId = correctionCorrelationId(c);
+
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const result = await requestAssessmentReassessment(connection, {
+          tenantId,
+          sourceAssessmentId,
+          idempotencyKey: idempotency.key,
+          createdBy: actorId,
+          source,
+          correlationId,
+        });
+        await connection.commit();
+
+        return c.json({
+          sourceAssessmentId: result.sourceAssessmentId,
+          assessmentId: result.assessmentId,
+          jobId: result.jobId,
+          status: result.status,
+          replayed: result.replayed === true,
+          correlationId,
+        }, result.replayed ? 200 : 201);
       } catch (error) {
         try { await connection?.rollback(); } catch { /* preserve original */ }
         if (error instanceof AssessmentContextRepositoryError) {
