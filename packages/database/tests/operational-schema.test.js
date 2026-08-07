@@ -28,8 +28,12 @@ test("canonical operational schema bindings and deployment inputs do not drift",
   );
 
   assert.deepEqual(
-    defaultMigrationPaths.slice(-2).map((migrationPath) => path.basename(migrationPath)),
-    ["0016_domain_safety_foundation.sql", "0017_case_state_machine.sql"],
+    defaultMigrationPaths.slice(-3).map((migrationPath) => path.basename(migrationPath)),
+    [
+      "0016_domain_safety_foundation.sql",
+      "0017_case_state_machine.sql",
+      "0018_versioned_assessment_context.sql",
+    ],
   );
 
   const canonicalMigrationPath = defaultMigrationPaths.at(-1);
