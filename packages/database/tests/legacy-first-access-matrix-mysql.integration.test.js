@@ -209,24 +209,35 @@ async function createSignal(pool, repositories, suffix) {
     source: "legacy-first-access-matrix",
     correlationId: `ingest-${suffix}`,
   });
-  const [strategies] = await pool.execute(
-    "SELECT id, strategy_type, model_deployment_id FROM detection_strategies WHERE tenant_id = 'tenant_default' AND is_active = 1 LIMIT 1",
+  const [assessments] = await pool.execute(
+    `SELECT assessment_id, detection_strategy_id, strategy_type,
+            model_deployment_id, provenance_status
+       FROM assessment_versions
+      WHERE tenant_id = 'tenant_default'
+        AND assessment_id = ?
+        AND claim_id = ?
+        AND claim_version = 1
+      LIMIT 1`,
+    [ingestion.processing.assessmentId, value.claimId],
   );
-  assert.equal(strategies.length, 1);
+  assert.equal(assessments.length, 1);
+  assert.equal(assessments[0].provenance_status, "COMPLETE");
   await pool.execute(
     `INSERT INTO claim_detection_results (
-       tenant_id, claim_id, claim_version, detection_strategy_id, strategy_type,
-       model_deployment_id, source_job_id, request_id, analysis_mode,
+       tenant_id, assessment_id, claim_id, claim_version,
+       detection_strategy_id, strategy_type, model_deployment_id,
+       source_job_id, request_id, analysis_mode,
        ensemble_id, ensemble_version, feature_schema_version, scored_at,
        result_payload, result_hash
-     ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'PROSPECTIVE_CLAIM_SCREENING',
+     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, 'PROSPECTIVE_CLAIM_SCREENING',
        NULL, NULL, NULL, UTC_TIMESTAMP(3), ?, ?)`,
     [
       "tenant_default",
+      assessments[0].assessment_id,
       value.claimId,
-      strategies[0].id,
-      strategies[0].strategy_type,
-      strategies[0].model_deployment_id,
+      assessments[0].detection_strategy_id,
+      assessments[0].strategy_type,
+      assessments[0].model_deployment_id,
       ingestion.processing.jobId,
       `detect-${suffix}`,
       JSON.stringify({
