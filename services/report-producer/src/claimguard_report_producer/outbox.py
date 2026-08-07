@@ -10,8 +10,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 CLAIM_PROCESSING_JOB_TYPE = "claim_detection"
 CLAIM_PROCESSING_AGGREGATE_TYPE = "claim_batch"
-CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION = 2
-CLAIM_PROCESSING_DATASET_SCOPE = "triggering_claim_versions"
+CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION = 3
+CLAIM_PROCESSING_DATASET_SCOPE = "assessment_version"
+_LEGACY_PAYLOAD_SCHEMA_VERSION = 2
+_LEGACY_DATASET_SCOPE = "triggering_claim_versions"
 
 MAX_LEASE_LIMIT = 100
 MAX_LEASE_SECONDS = 86_400
@@ -117,6 +119,15 @@ class OutboxJob:
         return tuple(
             targets
         )
+
+    @property
+    def assessment_id(
+        self,
+    ) -> str | None:
+        value = self.payload.get(
+            "assessment_id"
+        )
+        return str(value) if value else None
 
     @property
     def context_cutoff_at(
@@ -521,32 +532,17 @@ def _normalise_targets(
     ]
 
 
+_UUID_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
 def _normalise_payload(
     value: object,
 ) -> dict[str, object]:
     payload = _decode_payload(
         value
     )
-
-    expected_keys = frozenset(
-        {
-            "schema_version",
-            "dataset_scope",
-            "source",
-            "context_cutoff_at",
-            "targets",
-        }
-    )
-
-    if (
-        frozenset(
-            payload
-        )
-        != expected_keys
-    ):
-        raise OutboxContractError(
-            "Outbox payload has an incompatible schema."
-        )
 
     schema_version = _positive_integer(
         payload.get(
@@ -557,69 +553,176 @@ def _normalise_payload(
         ),
     )
 
-    if (
-        schema_version
-        != CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION
-    ):
-        raise OutboxContractError(
-            "Outbox payload schema version "
-            "is unsupported."
+    # Schema version 3: assessment-pinned payload (no context_cutoff_at).
+    if schema_version == CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION:
+        expected_keys = frozenset(
+            {
+                "schema_version",
+                "dataset_scope",
+                "assessment_id",
+                "source",
+                "targets",
+            }
         )
 
-    dataset_scope = _required_text(
-        payload.get(
-            "dataset_scope"
-        ),
-        field=(
-            "payload.dataset_scope"
-        ),
-        maximum=64,
+        if (
+            frozenset(
+                payload
+            )
+            != expected_keys
+        ):
+            raise OutboxContractError(
+                "Outbox payload has an incompatible schema."
+            )
+
+        dataset_scope = _required_text(
+            payload.get(
+                "dataset_scope"
+            ),
+            field=(
+                "payload.dataset_scope"
+            ),
+            maximum=64,
+        )
+
+        if (
+            dataset_scope
+            != CLAIM_PROCESSING_DATASET_SCOPE
+        ):
+            raise OutboxContractError(
+                "Outbox payload dataset scope "
+                "is unsupported."
+            )
+
+        assessment_id = _required_text(
+            payload.get(
+                "assessment_id"
+            ),
+            field=(
+                "payload.assessment_id"
+            ),
+            maximum=36,
+        )
+
+        if not _UUID_PATTERN.fullmatch(
+            assessment_id
+        ):
+            raise OutboxContractError(
+                "Outbox payload assessment_id "
+                "is not a valid UUID."
+            )
+
+        return {
+            "schema_version":
+                schema_version,
+
+            "dataset_scope":
+                dataset_scope,
+
+            "assessment_id":
+                assessment_id,
+
+            "source":
+                _required_text(
+                    payload.get(
+                        "source"
+                    ),
+                    field=(
+                        "payload.source"
+                    ),
+                    maximum=128,
+                ),
+
+            "targets":
+                _normalise_targets(
+                    payload.get(
+                        "targets"
+                    )
+                ),
+        }
+
+    # Schema version 2: legacy payload with context_cutoff_at (read-only
+    # support for dead-letter recovery of pre-schema-18 jobs).
+    if schema_version == _LEGACY_PAYLOAD_SCHEMA_VERSION:
+        expected_keys = frozenset(
+            {
+                "schema_version",
+                "dataset_scope",
+                "source",
+                "context_cutoff_at",
+                "targets",
+            }
+        )
+
+        if (
+            frozenset(
+                payload
+            )
+            != expected_keys
+        ):
+            raise OutboxContractError(
+                "Outbox payload has an incompatible schema."
+            )
+
+        dataset_scope = _required_text(
+            payload.get(
+                "dataset_scope"
+            ),
+            field=(
+                "payload.dataset_scope"
+            ),
+            maximum=64,
+        )
+
+        if (
+            dataset_scope
+            != _LEGACY_DATASET_SCOPE
+        ):
+            raise OutboxContractError(
+                "Outbox payload dataset scope "
+                "is unsupported."
+            )
+
+        return {
+            "schema_version":
+                schema_version,
+
+            "dataset_scope":
+                dataset_scope,
+
+            "source":
+                _required_text(
+                    payload.get(
+                        "source"
+                    ),
+                    field=(
+                        "payload.source"
+                    ),
+                    maximum=128,
+                ),
+
+            "context_cutoff_at":
+                _canonical_timestamp(
+                    payload.get(
+                        "context_cutoff_at"
+                    ),
+                    field=(
+                        "payload.context_cutoff_at"
+                    ),
+                ),
+
+            "targets":
+                _normalise_targets(
+                    payload.get(
+                        "targets"
+                    )
+                ),
+        }
+
+    raise OutboxContractError(
+        "Outbox payload schema version "
+        "is unsupported."
     )
-
-    if (
-        dataset_scope
-        != CLAIM_PROCESSING_DATASET_SCOPE
-    ):
-        raise OutboxContractError(
-            "Outbox payload dataset scope "
-            "is unsupported."
-        )
-
-    return {
-        "schema_version":
-            schema_version,
-
-        "dataset_scope":
-            dataset_scope,
-
-        "source":
-            _required_text(
-                payload.get(
-                    "source"
-                ),
-                field=(
-                    "payload.source"
-                ),
-                maximum=128,
-            ),
-
-        "context_cutoff_at":
-            _canonical_timestamp(
-                payload.get(
-                    "context_cutoff_at"
-                ),
-                field=(
-                    "payload.context_cutoff_at"
-                ),
-            ),
-
-        "targets":
-            _normalise_targets(
-                payload.get(
-                    "targets"
-                )
-            ),
-    }
 
 
 def _normalise_strategy(

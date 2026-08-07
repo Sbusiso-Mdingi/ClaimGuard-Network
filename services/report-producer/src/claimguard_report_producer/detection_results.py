@@ -49,6 +49,7 @@ class DetectionResultIntegrityError(
 @dataclass(frozen=True)
 class StoredDetectionResult:
     tenant_id: str
+    assessment_id: str | None
     claim_id: str
     claim_version: int
 
@@ -509,6 +510,14 @@ def _normalise_record(
             64,
         ),
 
+        "assessment_id": _optional_text(
+            raw.get(
+                "assessment_id"
+            ),
+            "results[0].assessment_id",
+            64,
+        ),
+
         "claim_id": _text(
             raw.get(
                 "claim_id"
@@ -798,6 +807,14 @@ def _stored(
             64,
         ),
 
+        assessment_id=_optional_text(
+            row.get(
+                "assessment_id"
+            ),
+            "stored assessment_id",
+            64,
+        ),
+
         claim_id=_text(
             row.get(
                 "claim_id"
@@ -880,6 +897,11 @@ def _assert_same(
             "tenant_id",
             existing.tenant_id,
             record["tenant_id"],
+        ),
+        (
+            "assessment_id",
+            existing.assessment_id,
+            record["assessment_id"],
         ),
         (
             "claim_id",
@@ -1110,6 +1132,31 @@ class PyMySqlDetectionResultsRepository:
     _SELECT_ONE = """
         SELECT
           tenant_id,
+          assessment_id,
+          claim_id,
+          claim_version,
+          detection_strategy_id,
+          strategy_type,
+          model_deployment_id,
+          source_job_id,
+          request_id,
+          analysis_mode,
+          ensemble_id,
+          ensemble_version,
+          feature_schema_version,
+          scored_at,
+          result_payload,
+          result_hash
+        FROM claim_detection_results
+        WHERE tenant_id = %s
+          AND assessment_id = %s
+        LIMIT 1
+    """
+
+    _SELECT_BY_CLAIM = """
+        SELECT
+          tenant_id,
+          assessment_id,
           claim_id,
           claim_version,
           detection_strategy_id,
@@ -1194,24 +1241,39 @@ class PyMySqlDetectionResultsRepository:
         cls,
         cursor,
         tenant_id: str,
-        claim_id: str,
-        claim_version: int,
+        assessment_id: str | None,
+        claim_id: str | None = None,
+        claim_version: int | None = None,
         *,
         for_update: bool,
     ) -> StoredDetectionResult | None:
-        cursor.execute(
-            cls._SELECT_ONE
-            + (
-                " FOR UPDATE"
-                if for_update
-                else ""
-            ),
-            [
-                tenant_id,
-                claim_id,
-                claim_version,
-            ],
-        )
+        if assessment_id is not None:
+            cursor.execute(
+                cls._SELECT_ONE
+                + (
+                    " FOR UPDATE"
+                    if for_update
+                    else ""
+                ),
+                [
+                    tenant_id,
+                    assessment_id,
+                ],
+            )
+        else:
+            cursor.execute(
+                cls._SELECT_BY_CLAIM
+                + (
+                    " FOR UPDATE"
+                    if for_update
+                    else ""
+                ),
+                [
+                    tenant_id,
+                    claim_id,
+                    claim_version,
+                ],
+            )
 
         row = cursor.fetchone()
 
@@ -1280,6 +1342,7 @@ class PyMySqlDetectionResultsRepository:
             """
                 INSERT INTO claim_detection_results (
                   tenant_id,
+                  assessment_id,
                   claim_id,
                   claim_version,
                   detection_strategy_id,
@@ -1298,12 +1361,13 @@ class PyMySqlDetectionResultsRepository:
                 VALUES (
                   %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s,
-                  %s, %s, UTC_TIMESTAMP(3),
+                  %s, %s, %s, UTC_TIMESTAMP(3),
                   %s, %s
                 )
             """,
             [
                 record["tenant_id"],
+                record.get("assessment_id"),
                 record["claim_id"],
                 record["claim_version"],
                 record[
@@ -1377,10 +1441,7 @@ class PyMySqlDetectionResultsRepository:
         }
 
         references = [
-            (
-                record["claim_id"],
-                record["claim_version"],
-            )
+            record["assessment_id"]
             for (
                 record,
                 _,
@@ -1441,15 +1502,16 @@ class PyMySqlDetectionResultsRepository:
                                 "tenant_id"
                             ]
                         ),
-                        str(
-                            record[
-                                "claim_id"
-                            ]
+                        record.get(
+                            "assessment_id"
                         ),
-                        int(
-                            record[
-                                "claim_version"
-                            ]
+                        record.get(
+                            "claim_id"
+                        ),
+                        (
+                            int(record["claim_version"])
+                            if record.get("claim_version") is not None
+                            else None
                         ),
                         for_update=True,
                     )
@@ -1488,15 +1550,16 @@ class PyMySqlDetectionResultsRepository:
                                     "tenant_id"
                                 ]
                             ),
-                            str(
-                                record[
-                                    "claim_id"
-                                ]
+                            record.get(
+                                "assessment_id"
                             ),
-                            int(
-                                record[
-                                    "claim_version"
-                                ]
+                            record.get(
+                                "claim_id"
+                            ),
+                            (
+                                int(record["claim_version"])
+                                if record.get("claim_version") is not None
+                                else None
                             ),
                             for_update=True,
                         )
@@ -1528,15 +1591,16 @@ class PyMySqlDetectionResultsRepository:
                                 "tenant_id"
                             ]
                         ),
-                        str(
-                            record[
-                                "claim_id"
-                            ]
+                        record.get(
+                            "assessment_id"
                         ),
-                        int(
-                            record[
-                                "claim_version"
-                            ]
+                        record.get(
+                            "claim_id"
+                        ),
+                        (
+                            int(record["claim_version"])
+                            if record.get("claim_version") is not None
+                            else None
                         ),
                         for_update=True,
                     )
@@ -1857,6 +1921,16 @@ class PyMySqlDetectionResultsRepository:
             ]
         ] = []
 
+        snapshot_assessment_id = _text(
+            getattr(
+                snapshot,
+                "assessment_id",
+                None,
+            ),
+            "snapshot.assessment_id",
+            64,
+        )
+
         for (
             claim_id,
             claim_version,
@@ -1926,6 +2000,9 @@ class PyMySqlDetectionResultsRepository:
                 {
                     "tenant_id":
                         tenant_id,
+
+                    "assessment_id":
+                        snapshot_assessment_id,
 
                     "claim_id":
                         claim_id,

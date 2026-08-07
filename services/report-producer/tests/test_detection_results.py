@@ -138,6 +138,7 @@ def deterministic_record(
     *,
     claim_id: str = "CLAIM-1",
     claim_version: int = 1,
+    assessment_id: str = "00000000-0000-0000-0000-000000000001",
     tenant_id: str = TENANT_ID,
     source_job_id: str = (
         "job-deterministic-1"
@@ -153,6 +154,9 @@ def deterministic_record(
     return {
         "tenant_id":
             tenant_id,
+
+        "assessment_id":
+            assessment_id,
 
         "claim_id":
             claim_id,
@@ -384,7 +388,7 @@ class FakeDatabase:
         self,
     ) -> None:
         self.rows: dict[
-            tuple[str, str, int],
+            tuple[str, str],
             dict[str, object],
         ] = {}
 
@@ -400,7 +404,7 @@ class FakeDatabase:
         )
 
         self.race_target: (
-            tuple[str, str, int]
+            tuple[str, str]
             | None
         ) = None
 
@@ -461,49 +465,52 @@ class FakeCursor:
             "tenant_id":
                 params[0],
 
-            "claim_id":
+            "assessment_id":
                 params[1],
 
-            "claim_version":
+            "claim_id":
                 params[2],
 
-            "detection_strategy_id":
+            "claim_version":
                 params[3],
 
-            "strategy_type":
+            "detection_strategy_id":
                 params[4],
 
-            "model_deployment_id":
+            "strategy_type":
                 params[5],
 
-            "source_job_id":
+            "model_deployment_id":
                 params[6],
 
-            "request_id":
+            "source_job_id":
                 params[7],
 
-            "analysis_mode":
+            "request_id":
                 params[8],
 
-            "ensemble_id":
+            "analysis_mode":
                 params[9],
 
-            "ensemble_version":
+            "ensemble_id":
                 params[10],
 
-            "feature_schema_version":
+            "ensemble_version":
                 params[11],
+
+            "feature_schema_version":
+                params[12],
 
             "scored_at":
                 SCORED_AT,
 
             "result_payload":
                 json.loads(
-                    params[12]
+                    params[13]
                 ),
 
             "result_hash":
-                params[13],
+                params[14],
         }
 
     def execute(
@@ -574,11 +581,16 @@ class FakeCursor:
                     row["tenant_id"]
                 ),
                 str(
-                    row["claim_id"]
+                    row["assessment_id"]
+                    or ""
                 ),
-                int(
-                    row["claim_version"]
-                ),
+            )
+
+            # Also maintain a claim-based index for _SELECT_BY_CLAIM lookups.
+            claim_key = (
+                str(row["tenant_id"]),
+                str(row["claim_id"]),
+                int(row["claim_version"]),
             )
 
             if (
@@ -627,11 +639,12 @@ class FakeCursor:
             if key in database.rows:
                 raise DuplicateEntryError()
 
-            database.rows[key] = (
-                copy.deepcopy(
-                    row
-                )
-            )
+            stored = copy.deepcopy(row)
+            database.rows[key] = stored
+            # Keep claim-based secondary index.
+            if not hasattr(database, "_claim_index"):
+                database._claim_index = {}
+            database._claim_index[claim_key] = key
 
             self.result = []
 
@@ -647,26 +660,18 @@ class FakeCursor:
                 in normalized
             )
         ):
-            key = (
-                str(
-                    canonical_params[0]
-                ),
-                str(
-                    canonical_params[1]
-                ),
-                int(
-                    canonical_params[2]
-                ),
+            # results_exist queries by (tenant_id, claim_id, claim_version)
+            claim_key = (
+                str(canonical_params[0]),
+                str(canonical_params[1]),
+                int(canonical_params[2]),
             )
+            claim_index = getattr(database, "_claim_index", {})
+            pk = claim_index.get(claim_key)
 
             self.result = (
-                [
-                    {
-                        "1": 1,
-                    }
-                ]
-                if key
-                in database.rows
+                [{"1": 1}]
+                if pk is not None and pk in database.rows
                 else []
             )
 
@@ -685,17 +690,13 @@ class FakeCursor:
             )
             and "LIMIT 1"
             in normalized
+            and "AND assessment_id"
+            in normalized
         ):
+            # _SELECT_ONE by (tenant_id, assessment_id)
             key = (
-                str(
-                    canonical_params[0]
-                ),
-                str(
-                    canonical_params[1]
-                ),
-                int(
-                    canonical_params[2]
-                ),
+                str(canonical_params[0]),
+                str(canonical_params[1]),
             )
 
             if (
@@ -746,6 +747,40 @@ class FakeCursor:
                 "claim_detection_results"
                 in normalized
             )
+            and "LIMIT 1"
+            in normalized
+            and "AND claim_id"
+            in normalized
+        ):
+            # _SELECT_BY_CLAIM by (tenant_id, claim_id, claim_version)
+            claim_key = (
+                str(canonical_params[0]),
+                str(canonical_params[1]),
+                int(canonical_params[2]),
+            )
+            claim_index = getattr(database, "_claim_index", {})
+            pk = claim_index.get(claim_key)
+            row = database.rows.get(pk) if pk else None
+
+            self.result = (
+                [copy.deepcopy(row)]
+                if row is not None
+                else []
+            )
+
+            return len(
+                self.result
+            )
+
+        if (
+            normalized.startswith(
+                "SELECT"
+            )
+            and (
+                "FROM "
+                "claim_detection_results"
+                in normalized
+            )
             and (
                 "( claim_id, "
                 "claim_version ) IN"
@@ -780,18 +815,19 @@ class FakeCursor:
             ]
 
             rows = []
+            claim_index = getattr(database, "_claim_index", {})
 
             for (
                 claim_id,
                 claim_version,
             ) in references:
-                row = database.rows.get(
-                    (
-                        tenant_id,
-                        claim_id,
-                        claim_version,
-                    )
+                claim_key = (
+                    tenant_id,
+                    claim_id,
+                    claim_version,
                 )
+                pk = claim_index.get(claim_key)
+                row = database.rows.get(pk) if pk else None
 
                 if row is not None:
                     rows.append(

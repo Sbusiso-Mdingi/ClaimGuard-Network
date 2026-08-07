@@ -11,11 +11,20 @@ from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Mapping, Sequenc
 if TYPE_CHECKING:
     from .outbox import OutboxJob
 
+from .outbox import (
+    CLAIM_PROCESSING_DATASET_SCOPE,
+    CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+)
+
+_LEGACY_PAYLOAD_SCHEMA_VERSION = 2
+_LEGACY_DATASET_SCOPE = "triggering_claim_versions"
 
 MAX_TARGET_CLAIMS = 10_000
 TARGET_QUERY_BATCH_SIZE = 500
 CONTEXT_LOOKBACK_DAYS = 365
-SUPPORTED_PAYLOAD_SCHEMA_VERSION = 2
+SUPPORTED_PAYLOAD_SCHEMA_VERSION = (
+    CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION
+)
 SUPPORTED_STRATEGIES = frozenset(
     {
         "deterministic_rules",
@@ -45,6 +54,8 @@ class ProspectiveScoringSnapshot:
     watermark: str
     source_job_ids: tuple[str, ...]
 
+    assessment_id: str | None
+
     schemes: list[dict[str, object]]
     members: list[dict[str, object]]
     providers: list[dict[str, object]]
@@ -61,6 +72,7 @@ class _JobScope:
     context_cutoff: datetime
     targets: tuple[ClaimVersionRef, ...]
     source_job_ids: tuple[str, ...]
+    assessment_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -308,6 +320,7 @@ def _canonical_job_scope(
     cutoffs: set[datetime] = set()
     targets: set[ClaimVersionRef] = set()
     job_ids: set[str] = set()
+    assessment_ids: set[str | None] = set()
 
     for job in jobs:
         job_id = _required_text(
@@ -422,9 +435,9 @@ def _canonical_job_scope(
             ),
         )
 
-        if (
-            schema_version
-            != SUPPORTED_PAYLOAD_SCHEMA_VERSION
+        if schema_version not in (
+            CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+            _LEGACY_PAYLOAD_SCHEMA_VERSION,
         ):
             raise ValueError(
                 f"Outbox job {job_id} payload "
@@ -441,24 +454,45 @@ def _canonical_job_scope(
             ),
         )
 
-        if (
-            dataset_scope
-            != "triggering_claim_versions"
-        ):
-            raise ValueError(
-                f"Outbox job {job_id} dataset scope "
-                "must be triggering_claim_versions."
+        if schema_version == CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION:
+            # v3: assessment-pinned, no context_cutoff_at
+            if dataset_scope != CLAIM_PROCESSING_DATASET_SCOPE:
+                raise ValueError(
+                    f"Outbox job {job_id} dataset scope "
+                    f"must be {CLAIM_PROCESSING_DATASET_SCOPE}."
+                )
+
+            job_assessment_id = _required_text(
+                payload.get(
+                    "assessment_id"
+                ),
+                field=(
+                    f"outbox job {job_id} "
+                    "assessment_id"
+                ),
             )
 
-        cutoff = _parse_timestamp(
-            payload.get(
-                "context_cutoff_at"
-            ),
-            field=(
-                f"outbox job {job_id} "
-                "context_cutoff_at"
-            ),
-        )
+            cutoff = datetime.now(UTC)
+
+        else:
+            # v2 legacy: context_cutoff_at, triggering_claim_versions
+            if dataset_scope != _LEGACY_DATASET_SCOPE:
+                raise ValueError(
+                    f"Outbox job {job_id} dataset scope "
+                    "must be triggering_claim_versions."
+                )
+
+            cutoff = _parse_timestamp(
+                payload.get(
+                    "context_cutoff_at"
+                ),
+                field=(
+                    f"outbox job {job_id} "
+                    "context_cutoff_at"
+                ),
+            )
+
+            job_assessment_id = None
 
         raw_targets = payload.get(
             "targets"
@@ -531,6 +565,9 @@ def _canonical_job_scope(
         cutoffs.add(
             cutoff
         )
+        assessment_ids.add(
+            job_assessment_id
+        )
 
     if (
         len(strategy_ids) != 1
@@ -542,11 +579,23 @@ def _canonical_job_scope(
             "one pinned strategy."
         )
 
-    if len(cutoffs) != 1:
-        raise ValueError(
-            "Coalesced jobs must share "
-            "one context cutoff."
-        )
+    # For v3 (assessment-pinned) jobs the cutoff is not part of the payload;
+    # we use datetime.now(UTC) computed once here so all jobs in the batch
+    # share the same logical time.
+    is_v3_batch = (
+        assessment_ids
+        and None not in assessment_ids
+    )
+
+    if is_v3_batch:
+        effective_cutoff = datetime.now(UTC)
+    else:
+        if len(cutoffs) != 1:
+            raise ValueError(
+                "Coalesced jobs must share "
+                "one context cutoff."
+            )
+        effective_cutoff = next(iter(cutoffs))
 
     if (
         not targets
@@ -556,6 +605,15 @@ def _canonical_job_scope(
             "The target claim-version count "
             "is unsupported."
         )
+
+    # Collapse to a single assessment_id when all jobs agree (v3 single-target).
+    collapsed_assessment_id: str | None
+    if len(assessment_ids) == 1:
+        collapsed_assessment_id = next(
+            iter(assessment_ids)
+        )
+    else:
+        collapsed_assessment_id = None
 
     return _JobScope(
         detection_strategy_id=next(
@@ -567,15 +625,14 @@ def _canonical_job_scope(
         model_deployment_id=next(
             iter(deployment_ids)
         ),
-        context_cutoff=next(
-            iter(cutoffs)
-        ),
+        context_cutoff=effective_cutoff,
         targets=tuple(
             sorted(targets)
         ),
         source_job_ids=tuple(
             sorted(job_ids)
         ),
+        assessment_id=collapsed_assessment_id,
     )
 
 
@@ -1734,6 +1791,9 @@ class PyMySqlTenantSnapshotRepository:
             watermark=watermark,
             source_job_ids=(
                 scope.source_job_ids
+            ),
+            assessment_id=(
+                scope.assessment_id
             ),
             schemes=schemes,
             members=members,
