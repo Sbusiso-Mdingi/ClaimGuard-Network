@@ -480,6 +480,7 @@ test(
       await repositories.runInTransaction((tx) => tx.access.revokeDelegation({
         organisationId: ids.organisation,
         delegationId: delegation.delegationId,
+        expectedVersion: delegation.version,
         reason: "runtime delegation revoke",
         actorId: ids.grantor,
         correlationId: "runtime-delegation-revoke",
