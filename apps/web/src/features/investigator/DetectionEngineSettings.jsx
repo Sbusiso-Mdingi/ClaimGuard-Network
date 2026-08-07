@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import { apiJson } from "../../lib/apiClient";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 import "./DetectionEngineSettings.css";
 
 const MODEL_SELECTIONS = new Set([
@@ -23,7 +24,7 @@ function normaliseSelection(strategy) {
       strategyType: "",
       modelDeploymentId: "",
       requiresSelection: true,
-      message: strategy?.message || "Choose the ML model that ClaimGuard should use for this scheme.",
+      message: strategy?.message || `Choose the ML model that ${PRODUCT_NAME} should use for this scheme.`,
     };
   }
 
@@ -205,15 +206,15 @@ export function DetectionEngineSettings({ tenantId }) {
   const displayedDeploymentId = strategyType === "scheme_managed"
     ? canonicalProprietaryDeploymentId || "Not selected"
     : savedSelection.strategyType === "claimguard_managed"
-      ? savedSelection.modelDeploymentId || "Resolved by ClaimGuard"
+      ? savedSelection.modelDeploymentId || `Resolved by ${PRODUCT_NAME}`
       : "Resolved when activated";
   const policyLabel = strategyType === "claimguard_managed"
-    ? "ClaimGuard managed"
+    ? `${PRODUCT_NAME} managed`
     : strategyType === "scheme_managed"
       ? "Scheme-owned pin"
       : "Selection required";
   const updateBehaviour = strategyType === "claimguard_managed"
-    ? "Eligible for audited ClaimGuard model rollouts"
+    ? `Eligible for audited ${PRODUCT_NAME} model rollouts`
     : strategyType === "scheme_managed"
       ? "Remains pinned until a scheme administrator changes it"
       : "No supported model policy is active";
@@ -237,7 +238,7 @@ export function DetectionEngineSettings({ tenantId }) {
     setNotice(null);
 
     if (!MODEL_SELECTIONS.has(strategyType)) {
-      setError("Choose ClaimGuard's managed model or a registered proprietary model.");
+      setError(`Choose ${PRODUCT_NAME}'s managed model or a registered proprietary model.`);
       return;
     }
     if (!customDeploymentValid) {
@@ -320,7 +321,7 @@ export function DetectionEngineSettings({ tenantId }) {
         <div className="managed-update-notice" role="status">
           <strong>Managed model update available</strong>
           <span>
-            ClaimGuard recommends <code>{savedSelection.recommendedModelDeploymentId}</code>.
+            {PRODUCT_NAME} recommends <code>{savedSelection.recommendedModelDeploymentId}</code>.
             Save with an auditable reason to activate it for new claims.
           </span>
         </div>
@@ -343,9 +344,9 @@ export function DetectionEngineSettings({ tenantId }) {
 
       <div className="strategy-toggle-group" role="radiogroup" aria-label="Model update policy">
         <ModelChoice
-          title="ClaimGuard-managed updates"
-          description="Use ClaimGuard's current approved detection model. Validated version changes are applied through audited rollout operations, with monitoring and rollback."
-          badge="Managed by ClaimGuard"
+          title={`${PRODUCT_NAME}-managed updates`}
+          description={`Use ${PRODUCT_NAME}'s current approved detection model. Validated version changes are applied through audited rollout operations, with monitoring and rollback.`}
+          badge={`Managed by ${PRODUCT_NAME}`}
           selected={strategyType === "claimguard_managed"}
           disabled={saving}
           onSelect={() => select("claimguard_managed")}
@@ -363,7 +364,7 @@ export function DetectionEngineSettings({ tenantId }) {
 
       {strategyType === "claimguard_managed" && savedSelection.strategyType === "claimguard_managed" && savedSelection.modelDeploymentId ? (
         <div className="url-input-container">
-          <p className="url-input-label">Current ClaimGuard deployment</p>
+          <p className="url-input-label">Current {PRODUCT_NAME} deployment</p>
           <code className="block break-all rounded-lg bg-background p-3 text-sm">{savedSelection.modelDeploymentId}</code>
         </div>
       ) : null}

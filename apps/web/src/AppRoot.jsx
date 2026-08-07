@@ -10,6 +10,7 @@ import { RoleProvider, useRole } from "./context/RoleContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { SignupPage } from "./features/auth/SignupPage";
 import { RequireRoleAccess } from "./features/investigator/RequireRoleAccess";
+import { PRODUCT_NAME } from "./lib/productBrand";
 import {
   defaultRouteForIdentity,
   hasAnyCapability,
@@ -39,6 +40,15 @@ const PlatformReleasesPage = lazyNamed(() => import("./features/investigator/Pla
 const PlatformAdministratorsPage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformAdministratorsPage");
 const PlatformDetectionEnginePage = lazyNamed(() => import("./features/investigator/PlatformAdminPage"), "PlatformDetectionEnginePage");
 const ProfilePage = lazyNamed(() => import("./features/auth/ProfilePage"), "ProfilePage");
+
+const AccessManagementLayout = lazyNamed(() => import("./features/access/AccessManagementLayout"), "AccessManagementLayout");
+const AccessOverviewPage = lazyNamed(() => import("./features/access/AccessOverviewPage"), "AccessOverviewPage");
+const PermissionCataloguePage = lazyNamed(() => import("./features/access/PermissionCataloguePage"), "PermissionCataloguePage");
+const AccessRolesPage = lazyNamed(() => import("./features/access/AccessRolesPage"), "AccessRolesPage");
+const AccessAssignmentsPage = lazyNamed(() => import("./features/access/AccessAssignmentsPage"), "AccessAssignmentsPage");
+const AccessDelegationsPage = lazyNamed(() => import("./features/access/AccessDelegationsPage"), "AccessDelegationsPage");
+const ElevatedRequestsPage = lazyNamed(() => import("./features/access/ElevatedRequestsPage"), "ElevatedRequestsPage");
+const AccessAuditPage = lazyNamed(() => import("./features/access/AccessAuditPage"), "AccessAuditPage");
 
 function StatusScreen({ title, description, actionLabel, onAction }) {
   return (
@@ -77,7 +87,7 @@ function InvestigatorRoutes() {
   }
 
   return (
-    <Suspense fallback={<StatusScreen title="Opening workspace" description="Loading the authorised ClaimGuard view…" />}>
+    <Suspense fallback={<StatusScreen title="Opening workspace" description={`Loading the authorised ${PRODUCT_NAME} view…`} />}>
       <Routes>
         <Route path="/" element={<InvestigatorLayout ledgerStatus={ledger.status} />}>
           <Route index element={<RoleLanding />} />
@@ -91,6 +101,15 @@ function InvestigatorRoutes() {
           <Route path="investigations/:investigationId" element={<RequireRoleAccess navKey="investigations"><InvestigationWorkspacePage /></RequireRoleAccess>} />
           <Route path="committee" element={<RequireRoleAccess navKey="committee"><CommitteeRegistryPage /></RequireRoleAccess>} />
           <Route path="admin/scheme" element={<RequireRoleAccess navKey="scheme-admin"><SchemeAdminPage /></RequireRoleAccess>} />
+          <Route path="admin/scheme/access" element={<RequireRoleAccess navKey="access-management"><AccessManagementLayout /></RequireRoleAccess>}>
+            <Route index element={<AccessOverviewPage />} />
+            <Route path="permissions" element={<PermissionCataloguePage />} />
+            <Route path="roles" element={<AccessRolesPage />} />
+            <Route path="assignments" element={<AccessAssignmentsPage />} />
+            <Route path="delegations" element={<AccessDelegationsPage />} />
+            <Route path="elevated" element={<ElevatedRequestsPage />} />
+            <Route path="audit" element={<AccessAuditPage />} />
+          </Route>
           <Route path="admin/platform" element={<RequireRoleAccess navKey="platform-overview"><PlatformOperationsOverviewPage /></RequireRoleAccess>} />
           <Route path="admin/platform/schemes" element={<RequireRoleAccess navKey="platform-schemes"><PlatformSchemesPage /></RequireRoleAccess>} />
           <Route path="admin/platform/integrations" element={<RequireRoleAccess navKey="platform-integrations"><PlatformIntegrationsPage /></RequireRoleAccess>} />
@@ -98,7 +117,7 @@ function InvestigatorRoutes() {
           <Route path="admin/platform/administrators" element={<RequireRoleAccess navKey="platform-administrators"><PlatformAdministratorsPage /></RequireRoleAccess>} />
           <Route path="admin/platform/detection-engine" element={<RequireRoleAccess navKey="platform-detection"><PlatformDetectionEnginePage /></RequireRoleAccess>} />
           <Route path="profile" element={<ProfilePage />} />
-          <Route path="access" element={<StatusScreen title="No workspace access" description="This account is authenticated but has no ClaimGuard workspace capabilities. Ask an administrator to review its organisation membership and roles." />} />
+          <Route path="access" element={<StatusScreen title="No workspace access" description={`This account is authenticated but has no ${PRODUCT_NAME} workspace capabilities. Ask an administrator to review its organisation membership and roles.`} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
@@ -108,7 +127,7 @@ function InvestigatorRoutes() {
 
 function AuthenticationBoundary() {
   const { status, authenticated } = useRole();
-  if (status === "loading") return <StatusScreen title="Checking your session" description="Verifying the secure server-side session…" />;
+  if (status === "loading") return <StatusScreen title="Checking your session" description={`Verifying the secure ${PRODUCT_NAME} server-side session…`} />;
   if (!authenticated) return <LoginPage />;
   return <InvestigatorRoutes />;
 }

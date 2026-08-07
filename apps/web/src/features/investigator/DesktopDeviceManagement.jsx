@@ -15,6 +15,7 @@ import {
   WorkspaceNotice,
   formatEnumLabel,
 } from "./InvestigatorUI";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 
 function formatDate(value) {
   if (!value) return "Not available";
@@ -107,7 +108,7 @@ export function DesktopFleetPolicyEditor({ organisationId }) {
       <form onSubmit={save} className="grid gap-4 rounded-xl border border-border/70 bg-background/30 p-4 sm:p-5">
         <div>
           <h4 className="font-semibold">Set licensed computer allowance</h4>
-          <p className="mt-1 text-sm text-muted-foreground">Only ClaimGuard platform administrators can change this value. Reducing it never revokes existing devices.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Only {PRODUCT_NAME} platform administrators can change this value. Reducing it never revokes existing devices.</p>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
           <FormField label="Licensed computers" hint="Enter an explicit allowance from 1 to 10,000."><Input type="number" min="1" max="10000" value={form.deviceLimit} onChange={(event) => setForm((previous) => ({ ...previous, deviceLimit: event.target.value }))} required /></FormField>
@@ -205,8 +206,8 @@ export function DesktopDeviceManagement() {
   return (
     <div className="space-y-6">
       {state.error ? <WorkspaceNotice title="Desktop device administration failed" tone="danger">{state.error}</WorkspaceNotice> : null}
-      {overLimit ? <WorkspaceNotice title="Desktop fleet is over its licensed allowance" tone="warning">Existing devices remain active. Revoke devices or ask ClaimGuard to raise the allowance before enrolling another computer.</WorkspaceNotice> : null}
-      {!overLimit && enrollmentBlocked ? <WorkspaceNotice title={deviceLimit == null ? "Desktop allowance is not configured" : "Desktop allowance is full"} tone="warning">{deviceLimit == null ? "ClaimGuard must configure the scheme licence before a new computer can be enrolled." : "Revoke an unused device or ask ClaimGuard to raise the licensed allowance."}</WorkspaceNotice> : null}
+      {overLimit ? <WorkspaceNotice title="Desktop fleet is over its licensed allowance" tone="warning">Existing devices remain active. Revoke devices or ask {PRODUCT_NAME} to raise the allowance before enrolling another computer.</WorkspaceNotice> : null}
+      {!overLimit && enrollmentBlocked ? <WorkspaceNotice title={deviceLimit == null ? "Desktop allowance is not configured" : "Desktop allowance is full"} tone="warning">{deviceLimit == null ? `${PRODUCT_NAME} must configure the scheme licence before a new computer can be enrolled.` : `Revoke an unused device or ask ${PRODUCT_NAME} to raise the licensed allowance.`}</WorkspaceNotice> : null}
       {oneTimeKey ? (
         <WorkspaceNotice
           title="Copy this organisation activation key now"

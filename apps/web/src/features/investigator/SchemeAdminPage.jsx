@@ -15,6 +15,7 @@ import {
 import { DetectionEngineSettings } from "./DetectionEngineSettings";
 import { apiJson } from "../../lib/apiClient";
 import { hasCapability } from "../../lib/capabilities";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
 import { DesktopDeviceManagement } from "./DesktopDeviceManagement";
@@ -41,7 +42,7 @@ function OperationsOverview({ overview, status, error, onRefresh }) {
     return (
       <SectionCard title="Scheme operations" description="Tenant-scoped operational metrics and processing health.">
         <WorkspaceNotice title="Loading scheme operations">
-          ClaimGuard is reading the latest tenant-scoped claims and detection state.
+          {PRODUCT_NAME} is reading the latest tenant-scoped claims and detection state.
         </WorkspaceNotice>
       </SectionCard>
     );
@@ -202,7 +203,7 @@ function UserManagementPanel() {
       <form onSubmit={handleCreateUser} className="grid gap-5 rounded-xl border border-border/70 bg-background/30 p-4 sm:p-5">
         <div>
           <h4 className="font-semibold">Create new user</h4>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">Create a tenant-scoped account and assign its initial ClaimGuard role.</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">Create a tenant-scoped account and assign its initial {PRODUCT_NAME} role.</p>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Display name">

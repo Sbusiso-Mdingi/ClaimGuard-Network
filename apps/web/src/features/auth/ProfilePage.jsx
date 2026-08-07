@@ -13,6 +13,7 @@ import { Input } from "../../components/ui/input";
 import { useRole } from "../../context/RoleContext";
 import { apiJson, safeApiErrorMessage } from "../../lib/apiClient";
 import { formatIdentityRoles } from "../../lib/capabilities";
+import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
   formatEnumLabel,
   PageFrame,
@@ -120,7 +121,7 @@ export function ProfilePage() {
     <PageFrame
       eyebrow="Account"
       title="Profile"
-      description="Your ClaimGuard work identity, organisation access, and account security."
+      description={`Your ${PRODUCT_NAME} work identity, organisation access, and account security.`}
       actions={(
         <Button type="button" variant="outline" onClick={logout}>
           <LogOut className="mr-2 h-4 w-4" aria-hidden="true" /> Sign out
@@ -130,7 +131,7 @@ export function ProfilePage() {
       <section className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <SectionCard
           title="Work profile"
-          description="These details come from your organisation-managed ClaimGuard account."
+          description={`These details come from your organisation-managed ${PRODUCT_NAME} account.`}
           variant="console"
           contentClassName="p-5"
         >
@@ -259,7 +260,7 @@ export function ProfilePage() {
               <LockKeyhole className="h-5 w-5 text-primary" aria-hidden="true" />
               <h3 className="mt-3 text-sm font-semibold">What happens next</h3>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                ClaimGuard keeps this session open and signs out other sessions for this account. The password itself is never stored or returned.
+                {PRODUCT_NAME} keeps this session open and signs out other sessions for this account. The password itself is never stored or returned.
               </p>
               <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
                 <Mail className="h-3.5 w-3.5" aria-hidden="true" />
