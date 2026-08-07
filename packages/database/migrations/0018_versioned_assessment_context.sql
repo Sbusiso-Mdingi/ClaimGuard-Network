@@ -4,11 +4,13 @@
 
 ALTER TABLE members
   ADD COLUMN current_member_version INT UNSIGNED NULL,
+  ADD UNIQUE KEY uq_members_tenant_member (tenant_id, member_id),
   ADD CONSTRAINT chk_members_current_member_version
     CHECK (current_member_version IS NULL OR current_member_version > 0);
 
 ALTER TABLE providers
   ADD COLUMN current_provider_version INT UNSIGNED NULL,
+  ADD UNIQUE KEY uq_providers_tenant_provider (tenant_id, provider_id),
   ADD CONSTRAINT chk_providers_current_provider_version
     CHECK (current_provider_version IS NULL OR current_provider_version > 0);
 
@@ -20,8 +22,8 @@ CREATE TABLE member_versions (
   first_name VARCHAR(128) NOT NULL,
   last_name VARCHAR(128) NOT NULL,
   date_of_birth DATE NOT NULL,
-  gender CHAR(1) NOT NULL,
-  identity_number VARCHAR(32) NOT NULL,
+  gender VARCHAR(32) NOT NULL,
+  identity_number VARCHAR(128) NOT NULL,
   banking_detail VARCHAR(255) NOT NULL,
   home_region VARCHAR(128) NOT NULL,
   home_lat DECIMAL(10,5) NOT NULL,
@@ -47,8 +49,8 @@ CREATE TABLE provider_versions (
   provider_id VARCHAR(128) NOT NULL,
   provider_version INT UNSIGNED NOT NULL,
   scheme_id VARCHAR(64) NOT NULL,
-  practice_number VARCHAR(32) NOT NULL,
-  specialty VARCHAR(64) NOT NULL,
+  practice_number VARCHAR(64) NOT NULL,
+  specialty VARCHAR(128) NOT NULL,
   practice_name VARCHAR(255) NOT NULL,
   banking_detail VARCHAR(255) NOT NULL,
   practice_region VARCHAR(128) NOT NULL,
@@ -80,9 +82,9 @@ INSERT INTO member_versions (
 SELECT
   tenant_id, member_id, 1, scheme_id, first_name, last_name,
   date_of_birth, gender, identity_number, banking_detail, home_region,
-  home_lat, home_lon, join_date, COALESCE(created_at, UTC_TIMESTAMP(3)),
+  home_lat, home_lon, join_date, UTC_TIMESTAMP(3),
   'legacy_baseline', 'migration:0018', 'migration:0018',
-  COALESCE(created_at, UTC_TIMESTAMP(3)),
+  UTC_TIMESTAMP(3),
   SHA2(CAST(JSON_OBJECT(
     'scheme_id', scheme_id,
     'first_name', first_name,
@@ -111,8 +113,8 @@ SELECT
   tenant_id, provider_id, 1, scheme_id, practice_number,
   specialty, practice_name, banking_detail, practice_region, practice_lat,
   practice_lon, provider_kind, provider_category,
-  COALESCE(created_at, UTC_TIMESTAMP(3)), 'legacy_baseline',
-  'migration:0018', 'migration:0018', COALESCE(created_at, UTC_TIMESTAMP(3)),
+  UTC_TIMESTAMP(3), 'legacy_baseline',
+  'migration:0018', 'migration:0018', UTC_TIMESTAMP(3),
   SHA2(CAST(JSON_OBJECT(
     'scheme_id', scheme_id,
     'practice_number', practice_number,
