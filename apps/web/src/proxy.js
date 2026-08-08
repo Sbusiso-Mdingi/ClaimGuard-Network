@@ -4,11 +4,64 @@ const rejectedClientIdentityHeaders = new Set([
   "authorization",
 ]);
 const forwardingHeaders = new Set(["forwarded", "x-forwarded-for", "x-real-ip"]);
+const clerkManagedHeaders = new Set([
+  "clerk-proxy-url", "clerk-secret-key", "x-client-ip", "x-forwarded-host", "x-forwarded-proto",
+]);
 
 const hopByHopHeaders = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
   "transfer-encoding", "upgrade", "host", "content-length",
 ]);
+const localRequestOrigin = "http://request.invalid";
+const clerkFrontendApiOrigin = "https://frontend-api.clerk.dev";
+const safePathSegment = /^[A-Za-z0-9._~-]+$/;
+
+function parseLocalRequestUrl(value) {
+  const rawUrl = String(value || "/");
+  if (!rawUrl.startsWith("/") || rawUrl.startsWith("//") || rawUrl.includes("\\") || rawUrl.includes("#")) {
+    throw new Error("The proxy request URL must be a local absolute path.");
+  }
+
+  const queryIndex = rawUrl.indexOf("?");
+  const rawPath = queryIndex === -1 ? rawUrl : rawUrl.slice(0, queryIndex);
+  const rawQuery = queryIndex === -1 ? "" : rawUrl.slice(queryIndex + 1);
+  const parsed = new URL(localRequestOrigin);
+  parsed.pathname = sanitizeProxyPath(rawPath);
+  if (rawQuery) parsed.search = `?${rawQuery}`;
+  return parsed;
+}
+
+function sanitizeProxyPath(pathname) {
+  if (!pathname.startsWith("/")) throw new Error("The proxy path must be absolute.");
+  if (pathname === "/") return pathname;
+
+  const segments = pathname.slice(1).split("/");
+  return `/${segments.map((segment, index) => {
+    if (!segment && index === segments.length - 1) return "";
+    if (!segment) throw new Error("The proxy path must not contain empty segments.");
+
+    let decoded;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw new Error("The proxy path contains invalid encoding.");
+    }
+    if (decoded === "." || decoded === ".." || !safePathSegment.test(decoded)) {
+      throw new Error("The proxy path contains a disallowed segment.");
+    }
+    return encodeURIComponent(decoded);
+  }).join("/")}`;
+}
+
+function buildFixedOriginUrl(origin, pathname, search = "") {
+  const target = new URL(origin);
+  const expectedOrigin = target.origin;
+  target.pathname = sanitizeProxyPath(pathname);
+  target.search = search;
+  target.hash = "";
+  if (target.origin !== expectedOrigin) throw new Error("The proxy destination origin changed unexpectedly.");
+  return target;
+}
 
 export function buildUpstreamHeaders(req, { trustProxy = false } = {}) {
   const headers = new Headers();
@@ -38,18 +91,57 @@ export function buildUpstreamHeaders(req, { trustProxy = false } = {}) {
   return headers;
 }
 
-export async function proxyApiRequest(req, res, { baseUrl, trustProxy = false, fetchImpl = fetch } = {}) {
-  if (!baseUrl) throw new Error("A proxy base URL is required.");
-  const upstreamUrl = new URL(req.url.replace(/^\/api/, ""), baseUrl);
-  const method = (req.method || "GET").toUpperCase();
-  const hasBody = method !== "GET" && method !== "HEAD";
-  const upstreamResponse = await fetchImpl(upstreamUrl, {
-    method,
-    headers: buildUpstreamHeaders(req, { trustProxy }),
-    body: hasBody ? req : undefined,
-    duplex: hasBody ? "half" : undefined,
-  });
+export function normalizeClientIp(value) {
+  const first = String(Array.isArray(value) ? value[0] : value || "").split(",")[0].trim();
+  if (!first) return "";
+  const bracketedIpv6 = first.match(/^\[([^\]]+)\](?::\d+)?$/);
+  if (bracketedIpv6) return bracketedIpv6[1];
+  const ipv4WithPort = first.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);
+  return ipv4WithPort ? ipv4WithPort[1] : first;
+}
 
+export function resolveOriginalClientIp(req, { trustProxy = false } = {}) {
+  if (trustProxy) {
+    return normalizeClientIp(req.headers?.["x-client-ip"]);
+  }
+  return normalizeClientIp(req.socket?.remoteAddress);
+}
+
+export function buildClerkFrontendApiHeaders(
+  req,
+  { proxyUrl, secretKey, trustProxy = false } = {},
+) {
+  const parsedProxyUrl = new URL(proxyUrl);
+  if (parsedProxyUrl.protocol !== "https:") throw new Error("The Clerk proxy URL must use HTTPS.");
+  if (!String(secretKey || "").trim()) throw new Error("A Clerk secret key is required for the frontend API proxy.");
+
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers || {})) {
+    const lowerName = name.toLowerCase();
+    if (
+      hopByHopHeaders.has(lowerName) || forwardingHeaders.has(lowerName)
+      || clerkManagedHeaders.has(lowerName) || value == null
+    ) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) headers.append(name, entry);
+    } else {
+      headers.set(name, value);
+    }
+  }
+
+  const clientIp = resolveOriginalClientIp(req, { trustProxy });
+  if (!clientIp) throw new Error("The original client IP is unavailable for the Clerk frontend API proxy.");
+  headers.set("clerk-proxy-url", parsedProxyUrl.toString().replace(/\/$/, ""));
+  headers.set("clerk-secret-key", String(secretKey).trim());
+  headers.set("x-forwarded-for", clientIp);
+  headers.set("x-forwarded-host", parsedProxyUrl.host);
+  headers.set("x-forwarded-proto", "https");
+  return headers;
+}
+
+async function forwardUpstreamResponse(upstreamResponse, res) {
   const body = await upstreamResponse.arrayBuffer();
   for (const [name, value] of upstreamResponse.headers.entries()) {
     const lowerName = name.toLowerCase();
@@ -64,4 +156,69 @@ export async function proxyApiRequest(req, res, { baseUrl, trustProxy = false, f
   if (!res.hasHeader("content-type")) res.setHeader("content-type", "application/json");
   res.statusCode = upstreamResponse.status;
   res.end(Buffer.from(body));
+}
+
+export async function proxyApiRequest(req, res, { baseUrl, trustProxy = false, fetchImpl = fetch } = {}) {
+  if (!baseUrl) throw new Error("A proxy base URL is required.");
+  const parsedBaseUrl = new URL(baseUrl);
+  if (!["http:", "https:"].includes(parsedBaseUrl.protocol) || parsedBaseUrl.username || parsedBaseUrl.password) {
+    throw new Error("The proxy base URL must be an HTTP(S) origin without credentials.");
+  }
+  if ((parsedBaseUrl.pathname && parsedBaseUrl.pathname !== "/") || parsedBaseUrl.search || parsedBaseUrl.hash) {
+    throw new Error("The proxy base URL must not include a path, query string, or fragment.");
+  }
+
+  const incomingUrl = parseLocalRequestUrl(req.url);
+  if (incomingUrl.pathname !== "/api" && !incomingUrl.pathname.startsWith("/api/")) {
+    throw new Error("The request is outside the configured API proxy path.");
+  }
+  const upstreamPath = incomingUrl.pathname.slice("/api".length) || "/";
+  const upstreamUrl = buildFixedOriginUrl(parsedBaseUrl.origin, upstreamPath, incomingUrl.search);
+  const method = (req.method || "GET").toUpperCase();
+  const hasBody = method !== "GET" && method !== "HEAD";
+  const upstreamResponse = await fetchImpl(upstreamUrl, {
+    method,
+    headers: buildUpstreamHeaders(req, { trustProxy }),
+    body: hasBody ? req : undefined,
+    duplex: hasBody ? "half" : undefined,
+  });
+
+  await forwardUpstreamResponse(upstreamResponse, res);
+}
+
+export async function proxyClerkFrontendApiRequest(
+  req,
+  res,
+  {
+    proxyUrl,
+    secretKey,
+    trustProxy = false,
+    fetchImpl = fetch,
+  } = {},
+) {
+  const parsedProxyUrl = new URL(proxyUrl);
+  const incomingUrl = parseLocalRequestUrl(req.url);
+  const proxyPath = parsedProxyUrl.pathname.replace(/\/$/, "");
+  if (
+    incomingUrl.pathname !== proxyPath && !incomingUrl.pathname.startsWith(`${proxyPath}/`)
+  ) {
+    throw new Error("The request is outside the configured Clerk proxy path.");
+  }
+
+  const upstreamPath = incomingUrl.pathname.slice(proxyPath.length) || "/";
+  if (upstreamPath !== "/v1" && !upstreamPath.startsWith("/v1/")) {
+    throw new Error("The request is outside the supported Clerk Frontend API path.");
+  }
+  const upstreamUrl = buildFixedOriginUrl(clerkFrontendApiOrigin, upstreamPath, incomingUrl.search);
+  const method = (req.method || "GET").toUpperCase();
+  const hasBody = method !== "GET" && method !== "HEAD";
+  const upstreamResponse = await fetchImpl(upstreamUrl, {
+    method,
+    headers: buildClerkFrontendApiHeaders(req, { proxyUrl, secretKey, trustProxy }),
+    body: hasBody ? req : undefined,
+    duplex: hasBody ? "half" : undefined,
+    redirect: "manual",
+  });
+
+  await forwardUpstreamResponse(upstreamResponse, res);
 }

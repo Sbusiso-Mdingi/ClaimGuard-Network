@@ -114,6 +114,8 @@ Model endpoints, credentials and authentication material must not be stored in t
 - `NODE_ENV`
 - `CLAIMGUARD_API_BASE_URL`
 - `CLERK_PUBLISHABLE_KEY`
+- `CLERK_PROXY_URL`
+- `CLERK_SECRET_KEY` (Key Vault reference; server-side Frontend API proxy only)
 - `SCM_DO_BUILD_DURING_DEPLOYMENT`
 - `WEBSITE_RUN_FROM_PACKAGE`
 

@@ -2,16 +2,28 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { proxyApiRequest } from "./proxy.js";
+import { proxyApiRequest, proxyClerkFrontendApiRequest } from "./proxy.js";
 
 const port = Number(process.env.PORT || 3002);
 const srcRoot = fileURLToPath(new URL(".", import.meta.url));
 const distRoot = join(srcRoot, "..", "dist");
 const apiBaseUrl = process.env.CLAIMGUARD_API_BASE_URL || "http://127.0.0.1:3004";
+const clerkProxyUrl = String(process.env.CLERK_PROXY_URL || "").trim();
+const clerkSecretKey = String(process.env.CLERK_SECRET_KEY || "").trim();
 const root = process.env.NODE_ENV === "production" ? distRoot : srcRoot;
 const trustProxyValue = String(process.env.TRUST_PROXY || "false").trim().toLowerCase();
 if (!["true", "false"].includes(trustProxyValue)) throw new Error("TRUST_PROXY must be true or false.");
 const trustProxy = trustProxyValue === "true";
+if (Boolean(clerkProxyUrl) !== Boolean(clerkSecretKey)) {
+  throw new Error("CLERK_PROXY_URL and CLERK_SECRET_KEY must be configured together.");
+}
+if (clerkProxyUrl) {
+  const parsedClerkProxyUrl = new URL(clerkProxyUrl);
+  if (parsedClerkProxyUrl.protocol !== "https:") throw new Error("CLERK_PROXY_URL must use HTTPS.");
+  if (parsedClerkProxyUrl.search || parsedClerkProxyUrl.hash) {
+    throw new Error("CLERK_PROXY_URL must not include a query string or fragment.");
+  }
+}
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -30,10 +42,31 @@ function injectRuntimeConfiguration(content) {
     .replaceAll("__CLAIMGUARD_API_BASE_URL__", scriptString(apiBaseUrl))
     .replaceAll("__PUBLIC_ORGANISATION_URL_SCHEME__", scriptString(process.env.PUBLIC_ORGANISATION_URL_SCHEME || "https"))
     .replaceAll("__PUBLIC_ORGANISATION_HOST__", scriptString(process.env.PUBLIC_ORGANISATION_HOST || "localhost:3002"))
-    .replaceAll("__CLERK_PUBLISHABLE_KEY__", scriptString(process.env.CLERK_PUBLISHABLE_KEY || ""));
+    .replaceAll("__CLERK_PUBLISHABLE_KEY__", scriptString(process.env.CLERK_PUBLISHABLE_KEY || ""))
+    .replaceAll("__CLERK_PROXY_URL__", scriptString(clerkProxyUrl));
 }
 
 const server = http.createServer(async (req, res) => {
+  if (req.url === "/__clerk" || req.url?.startsWith("/__clerk/")) {
+    if (!clerkProxyUrl || !clerkSecretKey) {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "clerk_proxy_unavailable" }));
+      return;
+    }
+    try {
+      await proxyClerkFrontendApiRequest(req, res, {
+        proxyUrl: clerkProxyUrl,
+        secretKey: clerkSecretKey,
+        trustProxy,
+      });
+    } catch (error) {
+      console.error("Clerk frontend API proxy error:", error?.message || "unknown error");
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "clerk_proxy_bad_gateway" }));
+    }
+    return;
+  }
+
   if (req.url?.startsWith("/api/")) {
     try {
       await proxyApiRequest(req, res, { baseUrl: apiBaseUrl, trustProxy });

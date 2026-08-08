@@ -31,10 +31,12 @@ const el = document.getElementById("app");
 if (el) {
   const root = createRoot(el);
   const publishableKey = String(window.__CLERK_PUBLISHABLE_KEY__ || "").trim();
+  const proxyUrl = String(window.__CLERK_PROXY_URL__ || "").trim();
   root.render(
     publishableKey ? (
       <ClerkProvider
         publishableKey={publishableKey}
+        proxyUrl={proxyUrl || undefined}
         signInUrl="/sign-in"
         signUpUrl="/sign-up"
         signInFallbackRedirectUrl="/"
