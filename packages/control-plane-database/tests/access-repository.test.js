@@ -799,6 +799,41 @@ test("resolver combines system-role and custom-role permissions", async () => {
   assert.ok(reportsSource.sources.some((s) => s.type === "custom_role_assignment"));
 });
 
+test("resolver retains fixed platform and desktop system-role permissions", async () => {
+  const db = createFakeExecutor();
+  seedMembership(db, { membershipId: MEMBERSHIP_A, userId: USER_A, organisationId: ORG_ID });
+  const permissionKeys = [
+    "platform_releases.view",
+    "platform_releases.request",
+    "platform_releases.approve",
+    "platform_administrators.manage",
+    "desktop_devices.manage",
+    "desktop_fleet_policy.manage",
+  ];
+  seedSystemRole(db, {
+    roleId: "platform_administrator",
+    roleKey: "platform_administrator",
+    permissionKeys,
+  });
+  db.tables.membership_roles.push({
+    membership_id: MEMBERSHIP_A,
+    role_id: "platform_administrator",
+    revoked_at: null,
+  });
+
+  const result = await createAccessRepository(db).resolveEffectivePermissions({
+    organisationId: ORG_ID,
+    userId: USER_A,
+    membershipId: MEMBERSHIP_A,
+    executor: db,
+  });
+
+  assert.deepEqual(new Set(result.permissionKeys), new Set(permissionKeys));
+  assert.ok(result.permissions.every((permission) => (
+    permission.sources.some((source) => source.type === "system_role")
+  )));
+});
+
 test("resolver excludes permissions from disabled role", async () => {
   const db = createFakeExecutor();
   seedMembership(db, { membershipId: MEMBERSHIP_A, userId: USER_A, organisationId: ORG_ID });

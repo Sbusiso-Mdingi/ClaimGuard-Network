@@ -55,6 +55,13 @@ const PERMISSION_ENTRIES = Object.freeze([
   { key: "organisation.manage", description: "Manage control-plane organisations.", category: "platform", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 1 },
   { key: "platform_health.view", description: "View non-sensitive platform health.", category: "platform", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 1 },
   { key: "provisioning.manage", description: "Manage organisation provisioning state.", category: "platform", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 1 },
+  { key: "platform_releases.view", description: "View non-sensitive release and production deployment governance metadata.", category: "platform", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 2 },
+  { key: "platform_releases.request", description: "Request promotion of an eligible immutable release.", category: "platform", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 2 },
+  { key: "platform_releases.approve", description: "Approve or reject another administrator release promotion request.", category: "platform", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 2 },
+  { key: "platform_administrators.manage", description: "Invite and revoke ClaimGuard platform administrator access.", category: "platform", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 2 },
+
+  { key: "desktop_devices.manage", description: "Issue activation keys and manage enrolled desktop devices.", category: "desktop_management", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 2 },
+  { key: "desktop_fleet_policy.manage", description: "Set the licensed Windows desktop allowance for medical-scheme organisations.", category: "desktop_management", tenantAssignable: false, elevated: false, delegable: false, systemOnly: true, definitionVersion: 2 },
 
   { key: "simulator.status", description: "View simulator status.", category: "simulator", tenantAssignable: true, elevated: false, delegable: false, systemOnly: false, definitionVersion: 1 },
   { key: "simulator.control_own", description: "Control an explicitly enabled organisation simulator.", category: "simulator", tenantAssignable: true, elevated: false, delegable: false, systemOnly: false, definitionVersion: 1 },

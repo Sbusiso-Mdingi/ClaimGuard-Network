@@ -220,6 +220,36 @@ test(
       });
       assert.equal(platformAuthority.permissionKeys.some((key) => key.startsWith("case.")), false);
       assert.equal(platformAuthority.permissionKeys.some((key) => key.startsWith("access.")), false);
+      for (const permission of [
+        "platform_releases.view",
+        "platform_releases.request",
+        "platform_releases.approve",
+        "platform_administrators.manage",
+        "desktop_devices.manage",
+        "desktop_fleet_policy.manage",
+      ]) {
+        assert.equal(
+          platformAuthority.permissionKeys.includes(permission),
+          true,
+          `platform administrator authority must include ${permission}`,
+        );
+      }
+
+      const [systemManagedPermissions] = await pool.execute(
+        `SELECT permission_key, tenant_assignable, delegable, system_only
+         FROM permissions
+         WHERE permission_key IN (
+           'platform_releases.view', 'platform_releases.request', 'platform_releases.approve',
+           'platform_administrators.manage', 'desktop_devices.manage', 'desktop_fleet_policy.manage'
+         )
+         ORDER BY permission_key`,
+      );
+      assert.equal(systemManagedPermissions.length, 6);
+      assert.ok(systemManagedPermissions.every((row) => (
+        Number(row.tenant_assignable) === 0
+        && Number(row.delegable) === 0
+        && Number(row.system_only) === 1
+      )));
 
       const [legacyPermissions] = await pool.execute(
         `SELECT permission_key, tenant_assignable, delegable

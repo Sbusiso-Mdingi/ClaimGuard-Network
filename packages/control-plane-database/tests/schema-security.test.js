@@ -100,6 +100,26 @@ test("desktop fleet policy removes the implicit production allowance and grants 
   assert.doesNotMatch(sql, /\('scheme_administrator', 'desktop_fleet_policy\.manage'\)/);
 });
 
+test("trusted authorization metadata keeps release and desktop authority system-managed", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0104_system_permission_catalogue_alignment.sql", import.meta.url),
+    "utf8",
+  );
+  for (const permission of [
+    "platform_releases.view",
+    "platform_releases.request",
+    "platform_releases.approve",
+    "platform_administrators.manage",
+    "desktop_devices.manage",
+    "desktop_fleet_policy.manage",
+  ]) {
+    assert.match(sql, new RegExp(permission.replace(".", "\\.")));
+  }
+  assert.match(sql, /tenant_assignable = 0/);
+  assert.match(sql, /delegable = 0/);
+  assert.match(sql, /system_only = 1/);
+});
+
 test("Phase 11C migration adds only hashed CSRF/session authority and durable throttling", async () => {
   const sql = await readFile(new URL("../migrations/0005_session_authority_and_throttling.sql", import.meta.url), "utf8");
   assert.match(sql, /csrf_token_hash CHAR\(64\) NOT NULL/);
