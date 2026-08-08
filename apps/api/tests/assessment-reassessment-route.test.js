@@ -11,6 +11,7 @@ import {
   OPERATIONAL_ROUTE_IDS,
   resolveOperationalRoutePolicy,
 } from "../src/authorization-policy.js";
+import { runWithOperationalServices } from "../src/operational-service-context.js";
 import { registerAssessmentRoutes } from "../src/routes/assessment-routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -186,6 +187,88 @@ test("member and provider immutable history routes use their canonical read perm
   assert.equal((await permitted.request("/assessment/providers/provider-1/versions")).status, 503);
 });
 
+test("immutable history routes return tenant-scoped versions without banking data", async () => {
+  const calls = [];
+  const pool = {
+    async execute(sql, params) {
+      calls.push({ sql, params });
+      assert.equal(params[0], TENANT_CONTEXT.tenant_id);
+      if (sql.includes("FROM member_versions mv")) {
+        return [[{
+          member_id: "member-1",
+          member_version: 2,
+          current_member_version: 2,
+          scheme_id: "scheme-1",
+          first_name: "René",
+          last_name: "Member",
+          date_of_birth: "1990-01-01",
+          gender: "X",
+          identity_number: "identity-token",
+          home_region: "Gauteng",
+          home_lat: -26.2,
+          home_lon: 28.0,
+          join_date: "2020-01-01",
+          effective_from: "2026-08-01T00:00:00.000Z",
+          effective_to: null,
+          version_reason: "IDENTITY_CORRECTION",
+          source_reference: "evidence-1",
+          created_by: "user:submitter",
+          created_at: "2026-08-01T00:00:00.000Z",
+          payload_hash: "a".repeat(64),
+          banking_detail: "must-not-leak",
+        }], []];
+      }
+      if (sql.includes("FROM provider_versions pv")) {
+        return [[{
+          provider_id: "provider-1",
+          provider_version: 3,
+          current_provider_version: 3,
+          scheme_id: "scheme-1",
+          practice_number: "practice-1",
+          specialty: "General",
+          practice_name: "Practice One",
+          practice_region: "Gauteng",
+          practice_lat: -26.2,
+          practice_lon: 28.0,
+          provider_kind: "PRACTICE",
+          provider_category: "GENERAL",
+          effective_from: "2026-08-01T00:00:00.000Z",
+          effective_to: null,
+          version_reason: "PROVIDER_CORRECTION",
+          source_reference: null,
+          created_by: "user:submitter",
+          created_at: "2026-08-01T00:00:00.000Z",
+          payload_hash: "b".repeat(64),
+          banking_detail: "must-not-leak",
+        }], []];
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  const app = appFor(authContext([
+    CLAIMGUARD_PERMISSIONS.MEMBER_READ,
+    CLAIMGUARD_PERMISSIONS.PROVIDER_READ,
+  ]));
+
+  const member = await runWithOperationalServices(
+    { pool },
+    () => app.request("/assessment/members/member-1/versions"),
+  );
+  const provider = await runWithOperationalServices(
+    { pool },
+    () => app.request("/assessment/providers/provider-1/versions"),
+  );
+
+  assert.equal(member.status, 200);
+  assert.equal(provider.status, 200);
+  const memberBody = await member.json();
+  const providerBody = await provider.json();
+  assert.equal(memberBody.versions[0].firstName, "René");
+  assert.equal(providerBody.versions[0].version, 3);
+  assert.doesNotMatch(JSON.stringify({ memberBody, providerBody }), /bank|must-not-leak/i);
+  assert.equal(calls.length, 2);
+});
+
 test("correction commands require external idempotency and an expected version", async () => {
   const app = appFor(authContext([
     CLAIMGUARD_PERMISSIONS.MEMBER_CORRECT,
@@ -274,4 +357,82 @@ test("assessment provenance response selects non-sensitive fingerprints and excl
     assert.ok(routeSource.includes(field), `Expected provenance field ${field}.`);
   }
   assert.equal(routeSource.includes("input_snapshot"), false);
+});
+
+test("assessment provenance route returns fingerprints and excludes sensitive snapshot fields", async () => {
+  const calls = [];
+  const pool = {
+    async execute(sql, params) {
+      calls.push({ sql, params });
+      assert.equal(params[0], TENANT_CONTEXT.tenant_id);
+      if (sql.includes("FROM assessment_versions")) {
+        return [[{
+          assessment_id: "assessment-1",
+          tenant_id: TENANT_CONTEXT.tenant_id,
+          claim_id: "claim-1",
+          claim_version: 4,
+          member_id: "member-1",
+          member_version: 2,
+          provider_id: "provider-1",
+          provider_version: 3,
+          detection_strategy_id: 17,
+          strategy_type: "deterministic_rules",
+          model_deployment_id: null,
+          model_or_rule_version: "claimguard.deterministic-request.v1",
+          feature_schema_version: `sha256:${"a".repeat(64)}`,
+          reference_data_version: `sha256:${"b".repeat(64)}`,
+          input_hash: "c".repeat(64),
+          input_snapshot: { banking_detail: "must-not-leak" },
+          assessment_reason: "REFERENCE_CORRECTION_REPLACEMENT",
+          provenance_status: "COMPLETE",
+          source_correction_event_id: "correction-1",
+          supersedes_assessment_id: "assessment-0",
+          created_by: "user:submitter",
+          created_at: new Date("2026-08-01T00:00:00.000Z"),
+        }], []];
+      }
+      if (sql.includes("FROM detection_signal_supersessions")) {
+        return [[{
+          supersession_id: "supersession-1",
+          superseded_signal_id: "signal-0",
+          replacement_signal_id: "signal-1",
+          replacement_assessment_id: "assessment-1",
+          correction_event_id: "correction-1",
+          reason_code: "IDENTITY_CORRECTION",
+          reason_summary: "Corrected immutable identity context.",
+          correlation_id: "request-1",
+          created_by: "user:submitter",
+          created_at: new Date("2026-08-01T00:01:00.000Z"),
+        }], []];
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  const app = appFor(authContext([CLAIMGUARD_PERMISSIONS.ASSESSMENT_READ]));
+
+  const response = await runWithOperationalServices(
+    { pool },
+    () => app.request("/assessment/versions/assessment-1"),
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual({
+    assessmentId: body.assessmentId,
+    claimVersion: body.claimVersion,
+    memberVersion: body.memberVersion,
+    providerVersion: body.providerVersion,
+    inputHash: body.inputHash,
+    provenanceStatus: body.provenanceStatus,
+  }, {
+    assessmentId: "assessment-1",
+    claimVersion: 4,
+    memberVersion: 2,
+    providerVersion: 3,
+    inputHash: "c".repeat(64),
+    provenanceStatus: "COMPLETE",
+  });
+  assert.equal(body.signalSupersessions[0].replacementSignalId, "signal-1");
+  assert.doesNotMatch(JSON.stringify(body), /input_snapshot|banking_detail|must-not-leak/i);
+  assert.equal(calls.length, 2);
 });
