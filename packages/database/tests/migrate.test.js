@@ -993,6 +993,26 @@ test(
 
 
 test(
+  "applyMigrations permits a governed partial migration target and verifies its checkpoint",
+  async () => {
+    const pool = createFakePool();
+    const recoveryMigrationPaths = defaultMigrationPaths.slice(0, -1);
+
+    const result = await applyMigrations(
+      pool,
+      recoveryMigrationPaths,
+      { applicationVersion: "governed-schema-17-recovery" },
+    );
+
+    assert.equal(result.applied.length, recoveryMigrationPaths.length);
+    assert.equal(pool.metadata.schema_version, "17");
+    assert.equal(pool.metadata.migration_version, 17);
+    assert.equal(pool.history.has(CANONICAL_OPERATIONAL_MIGRATION_ID), false);
+  },
+);
+
+
+test(
   `canonical migration ${CANONICAL_OPERATIONAL_MIGRATION_ID} is not complete until metadata reports schema ${CANONICAL_OPERATIONAL_SCHEMA_VERSION}`,
   async () => {
     const migrationPath =

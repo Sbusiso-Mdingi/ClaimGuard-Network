@@ -1,10 +1,66 @@
-# Ensemble 2.1.1 governed production release
+# Governed production release plans
 
-> **Status:** Validated — staged resource exact; guarded retry pending approval
+> **Status:** Validated — web/API recovery
 >
 > **Scope:** Azure for Students
 > (`896d3c72-d979-4bdc-a37f-060988d12032`), resource group `ClaimGuard`,
 > South Africa North.
+>
+> **Recipe:** CI/CD (`.github/workflows/ci.yml`)
+
+## Web/API recovery and Clerk release — 2026-08-08
+
+The user explicitly authorised recovery and deployment of the existing Sequrin
+web and API App Services. No new Azure resource, region, subscription, pricing
+tier, role assignment, data-plane route, or production claim mutation is in
+scope.
+
+Targets:
+
+- `https://claimguard-web.azurewebsites.net`
+- `https://claimguard-api.azurewebsites.net`
+- exact `main` release through the governed GitHub `production` environment;
+- Clerk workforce authentication configured for the exact Azure origins;
+- production deployment remains subject to immutable artifacts, exact SHA,
+  successful CI/security evidence, and the existing independent platform-admin
+  approval rule.
+
+Recovery finding: the operational migration package script invoked
+`src/migrate.js`, but that module exported migrations without executing them.
+Consequently the operational database remained at schema 15 while later API
+releases required schema 17, leaving `/health` live but `/ready` fail-closed.
+The focused recovery adds an explicit, guarded migration entry point and a
+regression test. The production database will be migrated only through the
+validated `OPERATIONAL_ADMIN_MODE=legacy_shared` boundary.
+
+Web/API validation proof is recorded in the addendum at the end of this plan.
+
+### Web/API recovery validation proof
+
+Validated on 2026-08-08:
+
+| Check | Result |
+|---|---|
+| Azure context | Subscription `896d3c72-d979-4bdc-a37f-060988d12032`, tenant `8efc1bb9-b90f-4a48-bf6c-ba0686193b80`, resource group `ClaimGuard`, South Africa North |
+| Live endpoints before recovery | Web `/` 200; API `/health` 200; API `/ready` 503 fail-closed on operational schema incompatibility |
+| Database provenance | Operational database is the approved `legacy_shared` target at schema 15; the currently deployed API requires schema 17 |
+| Focused migration tests | 10/10 passed, including fail-closed mode/URL gates and connection cleanup |
+| Monorepo lint | 10/10 packages passed |
+| Monorepo build | 10/10 packages passed |
+| Monorepo tests | 13/13 tasks passed; API 267 passed + 1 expected skip; web 116/116 |
+| Workflow YAML | Parsed successfully |
+| Bicep build | `infra/main.bicep` compiled successfully |
+| Authenticated ARM validation | `Succeeded`; correlation `849e5df6-01db-4e92-afc5-037eedf9d089` |
+| Structured ARM what-if | `Succeeded`; existing drift detected, so no infrastructure template deployment is in scope |
+| Live managed identities | API and web identities resolved; existing Key Vault, blob, queue, and worker roles match the application boundaries |
+| GitHub release boundary | OIDC settings present; immutable exact-SHA and independent platform-admin approval gates remain unchanged |
+
+The recovery migration may advance only schema 15 to schema 17 while the old
+API is deployed. Schema 18 remains reserved for the subsequently approved exact
+`main` release. No application data, approval record, role assignment, or
+deployment authorization may be fabricated or bypassed.
+
+## Ensemble 2.1.1 governed production release
 
 Prepared: 2026-07-28
 
