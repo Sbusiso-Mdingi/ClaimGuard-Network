@@ -158,3 +158,120 @@ test("reassessment handler consumes only server-trusted assessment context", () 
     );
   }
 });
+
+test("member and provider immutable history routes use their canonical read permissions", async () => {
+  const memberPolicy = resolveOperationalRoutePolicy({
+    method: "GET",
+    path: "/assessment/members/member-1/versions",
+  });
+  assert.equal(memberPolicy?.id, OPERATIONAL_ROUTE_IDS.MEMBER_VERSION_HISTORY);
+  assert.deepEqual(memberPolicy?.permissions, [CLAIMGUARD_PERMISSIONS.MEMBER_READ]);
+
+  const providerPolicy = resolveOperationalRoutePolicy({
+    method: "GET",
+    path: "/assessment/providers/provider-1/versions",
+  });
+  assert.equal(providerPolicy?.id, OPERATIONAL_ROUTE_IDS.PROVIDER_VERSION_HISTORY);
+  assert.deepEqual(providerPolicy?.permissions, [CLAIMGUARD_PERMISSIONS.PROVIDER_READ]);
+
+  const denied = appFor(authContext());
+  assert.equal((await denied.request("/assessment/members/member-1/versions")).status, 403);
+  assert.equal((await denied.request("/assessment/providers/provider-1/versions")).status, 403);
+
+  const permitted = appFor(authContext([
+    CLAIMGUARD_PERMISSIONS.MEMBER_READ,
+    CLAIMGUARD_PERMISSIONS.PROVIDER_READ,
+  ]));
+  assert.equal((await permitted.request("/assessment/members/member-1/versions")).status, 503);
+  assert.equal((await permitted.request("/assessment/providers/provider-1/versions")).status, 503);
+});
+
+test("correction commands require external idempotency and an expected version", async () => {
+  const app = appFor(authContext([
+    CLAIMGUARD_PERMISSIONS.MEMBER_CORRECT,
+    CLAIMGUARD_PERMISSIONS.PROVIDER_CORRECT,
+  ]));
+
+  const memberMissingKey = await app.request("/assessment/members/member-1/correction", {
+    method: "POST",
+  });
+  assert.equal(memberMissingKey.status, 400);
+  assert.equal((await memberMissingKey.json()).code, "MISSING_IDEMPOTENCY_KEY");
+
+  const memberMissingVersion = await app.request("/assessment/members/member-1/correction", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": "member-correction-1" },
+    body: JSON.stringify({ member: { member_id: "member-1" } }),
+  });
+  assert.equal(memberMissingVersion.status, 422);
+  assert.equal((await memberMissingVersion.json()).code, "EXPECTED_VERSION_INVALID");
+
+  const providerMissingKey = await app.request("/assessment/providers/provider-1/correction", {
+    method: "POST",
+  });
+  assert.equal(providerMissingKey.status, 400);
+  assert.equal((await providerMissingKey.json()).code, "MISSING_IDEMPOTENCY_KEY");
+
+  const providerMissingVersion = await app.request("/assessment/providers/provider-1/correction", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": "provider-correction-1" },
+    body: JSON.stringify({ provider: { provider_id: "provider-1" } }),
+  });
+  assert.equal(providerMissingVersion.status, 422);
+  assert.equal((await providerMissingVersion.json()).code, "EXPECTED_VERSION_INVALID");
+});
+
+test("correction impact review routes are fixed-policy and state-version guarded", async () => {
+  const routeCases = [
+    ["GET", "/assessment/correction-impact-reviews", OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEWS_LIST],
+    ["GET", "/assessment/correction-impact-reviews/review-1", OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEW_READ],
+    ["POST", "/assessment/correction-impact-reviews/review-1/claim", OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEW_CLAIM],
+    ["POST", "/assessment/correction-impact-reviews/review-1/complete", OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEW_COMPLETE],
+  ];
+  for (const [method, pathName, routeId] of routeCases) {
+    const policy = resolveOperationalRoutePolicy({ method, path: pathName });
+    assert.equal(policy?.id, routeId);
+    assert.deepEqual(policy?.permissions, [CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT]);
+  }
+
+  const denied = appFor(authContext());
+  assert.equal((await denied.request("/assessment/correction-impact-reviews")).status, 403);
+
+  const permitted = appFor(authContext([CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT]));
+  const claim = await permitted.request("/assessment/correction-impact-reviews/review-1/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(claim.status, 422);
+  assert.equal((await claim.json()).code, "EXPECTED_STATE_VERSION_INVALID");
+
+  const complete = await permitted.request("/assessment/correction-impact-reviews/review-1/complete", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(complete.status, 422);
+  assert.equal((await complete.json()).code, "EXPECTED_STATE_VERSION_INVALID");
+});
+
+test("assessment provenance response selects non-sensitive fingerprints and excludes the snapshot", () => {
+  const source = readFileSync(
+    path.resolve(__dirname, "../src/routes/assessment-routes.js"),
+    "utf8",
+  );
+  const routeStart = source.indexOf("// GET /assessment/versions/:assessmentId");
+  assert.ok(routeStart >= 0);
+  const routeSource = source.slice(routeStart);
+  for (const field of [
+    "model_or_rule_version",
+    "feature_schema_version",
+    "reference_data_version",
+    "input_hash",
+    "assessment_reason",
+    "created_by",
+  ]) {
+    assert.ok(routeSource.includes(field), `Expected provenance field ${field}.`);
+  }
+  assert.equal(routeSource.includes("input_snapshot"), false);
+});

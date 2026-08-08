@@ -180,9 +180,17 @@ export {
 
 export {
   AssessmentContextRepositoryError,
+  claimCorrectionImpactReview,
+  completeCorrectionImpactReview,
   createAssessmentVersion,
   createReplacementAssessmentsForCorrection,
   enqueueAssessmentProcessingJob,
+  executeMemberCorrection,
+  executeProviderCorrection,
+  getCorrectionImpactReview,
+  listCorrectionImpactReviews,
+  listMemberVersions,
+  listProviderVersions,
   persistMemberVersion,
   persistProviderVersion,
   requestAssessmentReassessment,

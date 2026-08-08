@@ -52,7 +52,42 @@ async function ingestAssessment(repositories, suffix) {
     source: "assessment-reassessment-mysql-test",
     correlationId: `ingest-${suffix}`,
   });
-  return { fixture, assessmentId: ingestion.processing.assessmentId };
+  return {
+    fixture,
+    assessmentId: ingestion.processing.assessmentId,
+    jobId: ingestion.processing.jobId,
+  };
+}
+
+async function insertDetectionResult(pool, { assessment, jobId, requestId }) {
+  const payload = JSON.stringify({
+    schemaVersion: "claimguard.claim-detection-result.v1",
+    reasonCodes: ["ASSESSMENT_REASSESSMENT_TEST"],
+    evidenceReferences: [`evidence:${requestId}`],
+  });
+  await pool.execute(
+    `INSERT INTO claim_detection_results (
+       tenant_id, assessment_id, claim_id, claim_version,
+       detection_strategy_id, strategy_type, model_deployment_id,
+       source_job_id, request_id, analysis_mode,
+       ensemble_id, ensemble_version, feature_schema_version,
+       scored_at, result_payload, result_hash
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PROSPECTIVE_CLAIM_SCREENING',
+       NULL, NULL, NULL, UTC_TIMESTAMP(3), ?, ?)`,
+    [
+      assessment.tenant_id,
+      assessment.assessment_id,
+      assessment.claim_id,
+      assessment.claim_version,
+      assessment.detection_strategy_id,
+      assessment.strategy_type,
+      assessment.model_deployment_id,
+      jobId,
+      requestId,
+      payload,
+      crypto.createHash("sha256").update(payload).digest("hex"),
+    ],
+  );
 }
 
 test(
@@ -64,7 +99,11 @@ test(
       await applyMigrations(pool, undefined, { applicationVersion: "assessment-reassessment-test" });
       const repositories = createOperationalRepositories(legacyDataPlaneContext(), pool);
       const suffix = `RA${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`;
-      const { fixture, assessmentId: sourceAssessmentId } = await ingestAssessment(repositories, suffix);
+      const {
+        fixture,
+        assessmentId: sourceAssessmentId,
+        jobId: sourceJobId,
+      } = await ingestAssessment(repositories, suffix);
 
       const [sourceRows] = await pool.execute(
         `SELECT assessment_id, tenant_id, claim_id, claim_version,
@@ -220,6 +259,50 @@ test(
         claim_version: Number(source.claim_version),
       }]);
       assert.equal(Object.hasOwn(payload, "context_cutoff_at"), false);
+
+      await insertDetectionResult(pool, {
+        assessment: replacement,
+        jobId: first.jobId,
+        requestId: `replacement-${suffix}`,
+      });
+      assert.equal(
+        await countRows(
+          pool,
+          `SELECT COUNT(*) AS total FROM detection_signal_supersessions
+            WHERE tenant_id = ? AND replacement_assessment_id = ?`,
+          [source.tenant_id, first.assessmentId],
+        ),
+        0,
+      );
+
+      await insertDetectionResult(pool, {
+        assessment: source,
+        jobId: sourceJobId,
+        requestId: `source-${suffix}`,
+      });
+      const [supersessionRows] = await pool.execute(
+        `SELECT supersession_id, superseded_signal_id, replacement_signal_id,
+                previous_assessment_id, replacement_assessment_id,
+                correction_event_id, reason_code, correlation_id
+           FROM detection_signal_supersessions
+          WHERE tenant_id = ? AND previous_assessment_id = ?
+            AND replacement_assessment_id = ?`,
+        [source.tenant_id, sourceAssessmentId, first.assessmentId],
+      );
+      assert.equal(supersessionRows.length, 1);
+      assert.notEqual(supersessionRows[0].superseded_signal_id, supersessionRows[0].replacement_signal_id);
+      assert.equal(supersessionRows[0].correction_event_id, null);
+      assert.equal(supersessionRows[0].reason_code, "EXPLICIT_REASSESSMENT");
+      assert.equal(supersessionRows[0].correlation_id, `replacement-${suffix}`);
+
+      await assert.rejects(
+        () => pool.execute(
+          `UPDATE detection_signal_supersessions SET reason_code = 'MUTATED'
+            WHERE supersession_id = ?`,
+          [supersessionRows[0].supersession_id],
+        ),
+        /SIGNAL_SUPERSESSION_IMMUTABLE/,
+      );
 
       const [operationRows] = await pool.execute(
         `SELECT operation_id, assessment_id, intent_hash, result_payload

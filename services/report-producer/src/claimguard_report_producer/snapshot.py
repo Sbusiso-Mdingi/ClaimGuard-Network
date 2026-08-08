@@ -1544,6 +1544,9 @@ class PyMySqlTenantSnapshotRepository:
                     detection_strategy_id,
                     strategy_type,
                     model_deployment_id,
+                    model_or_rule_version,
+                    feature_schema_version,
+                    reference_data_version,
                     input_snapshot,
                     input_hash,
                     provenance_status,
@@ -1591,22 +1594,71 @@ class PyMySqlTenantSnapshotRepository:
             raise ValueError("Snapshot tenant_id mismatch.")
             
         claim_snap = input_snapshot.get("claim", {})
+        if not isinstance(claim_snap, dict):
+            raise ValueError("Snapshot claim must be an object.")
         if claim_snap.get("claim_id") != assessment["claim_id"]:
             raise ValueError("Snapshot claim_id mismatch.")
         if claim_snap.get("claim_version") != assessment["claim_version"]:
             raise ValueError("Snapshot claim_version mismatch.")
 
         member_snap = input_snapshot.get("member", {})
+        if not isinstance(member_snap, dict):
+            raise ValueError("Snapshot member must be an object.")
         if member_snap.get("member_id") != assessment["member_id"]:
             raise ValueError("Snapshot member_id mismatch.")
-            
+        if _positive_integer(
+            member_snap.get("member_version"),
+            field="snapshot.member.member_version",
+        ) != _positive_integer(
+            assessment["member_version"],
+            field="assessment.member_version",
+        ):
+            raise ValueError("Snapshot member_version mismatch.")
+
         provider_snap = input_snapshot.get("provider", {})
+        if not isinstance(provider_snap, dict):
+            raise ValueError("Snapshot provider must be an object.")
         if provider_snap.get("provider_id") != assessment["provider_id"]:
             raise ValueError("Snapshot provider_id mismatch.")
+        if _positive_integer(
+            provider_snap.get("provider_version"),
+            field="snapshot.provider.provider_version",
+        ) != _positive_integer(
+            assessment["provider_version"],
+            field="assessment.provider_version",
+        ):
+            raise ValueError("Snapshot provider_version mismatch.")
 
         strategy_snap = input_snapshot.get("strategy", {})
-        if strategy_snap.get("detection_strategy_id") != assessment["detection_strategy_id"]:
-            raise ValueError("Snapshot strategy mismatch.")
+        if not isinstance(strategy_snap, dict):
+            raise ValueError("Snapshot strategy must be an object.")
+        if _positive_integer(
+            strategy_snap.get("detection_strategy_id"),
+            field="snapshot.strategy.detection_strategy_id",
+        ) != _positive_integer(
+            assessment["detection_strategy_id"],
+            field="assessment.detection_strategy_id",
+        ):
+            raise ValueError("Snapshot strategy identity mismatch.")
+        if strategy_snap.get("strategy_type") != assessment["strategy_type"]:
+            raise ValueError("Snapshot strategy_type mismatch.")
+        if _optional_text(strategy_snap.get("model_deployment_id")) != _optional_text(
+            assessment["model_deployment_id"]
+        ):
+            raise ValueError("Snapshot model_deployment_id mismatch.")
+        for field in (
+            "model_or_rule_version",
+            "feature_schema_version",
+            "reference_data_version",
+        ):
+            if _required_text(
+                strategy_snap.get(field),
+                field=f"snapshot.strategy.{field}",
+            ) != _required_text(
+                assessment[field],
+                field=f"assessment.{field}",
+            ):
+                raise ValueError(f"Snapshot {field} mismatch.")
 
         # Hash validation
         computed_hash = _sha256_canonical_json(input_snapshot)
@@ -1638,7 +1690,10 @@ class PyMySqlTenantSnapshotRepository:
             )
         ]
 
-        target_payload = claim_snap.get("payload", {})
+        raw_target_payload = claim_snap.get("payload", {})
+        if not isinstance(raw_target_payload, dict):
+            raise ValueError("Snapshot claim payload must be an object.")
+        target_payload = dict(raw_target_payload)
         target_payload["claim_id"] = assessment["claim_id"]
         target_payload["claim_version"] = assessment["claim_version"]
         target_payload.pop("tenant_id", None)

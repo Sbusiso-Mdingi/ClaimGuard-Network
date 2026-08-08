@@ -49,7 +49,7 @@ class DetectionResultIntegrityError(
 @dataclass(frozen=True)
 class StoredDetectionResult:
     tenant_id: str
-    assessment_id: str | None
+    assessment_id: str
     claim_id: str
     claim_version: int
 
@@ -510,11 +510,11 @@ def _normalise_record(
             64,
         ),
 
-        "assessment_id": _optional_text(
+        "assessment_id": _text(
             raw.get(
                 "assessment_id"
             ),
-            "results[0].assessment_id",
+            f"results[{index}].assessment_id",
             64,
         ),
 
@@ -807,7 +807,7 @@ def _stored(
             64,
         ),
 
-        assessment_id=_optional_text(
+        assessment_id=_text(
             row.get(
                 "assessment_id"
             ),
@@ -1153,31 +1153,6 @@ class PyMySqlDetectionResultsRepository:
         LIMIT 1
     """
 
-    _SELECT_BY_CLAIM = """
-        SELECT
-          tenant_id,
-          assessment_id,
-          claim_id,
-          claim_version,
-          detection_strategy_id,
-          strategy_type,
-          model_deployment_id,
-          source_job_id,
-          request_id,
-          analysis_mode,
-          ensemble_id,
-          ensemble_version,
-          feature_schema_version,
-          scored_at,
-          result_payload,
-          result_hash
-        FROM claim_detection_results
-        WHERE tenant_id = %s
-          AND claim_id = %s
-          AND claim_version = %s
-        LIMIT 1
-    """
-
     def __init__(
         self,
         connection_factory: Callable[
@@ -1241,39 +1216,22 @@ class PyMySqlDetectionResultsRepository:
         cls,
         cursor,
         tenant_id: str,
-        assessment_id: str | None,
-        claim_id: str | None = None,
-        claim_version: int | None = None,
+        assessment_id: str,
         *,
         for_update: bool,
     ) -> StoredDetectionResult | None:
-        if assessment_id is not None:
-            cursor.execute(
-                cls._SELECT_ONE
-                + (
-                    " FOR UPDATE"
-                    if for_update
-                    else ""
-                ),
-                [
-                    tenant_id,
-                    assessment_id,
-                ],
-            )
-        else:
-            cursor.execute(
-                cls._SELECT_BY_CLAIM
-                + (
-                    " FOR UPDATE"
-                    if for_update
-                    else ""
-                ),
-                [
-                    tenant_id,
-                    claim_id,
-                    claim_version,
-                ],
-            )
+        cursor.execute(
+            cls._SELECT_ONE
+            + (
+                " FOR UPDATE"
+                if for_update
+                else ""
+            ),
+            [
+                tenant_id,
+                assessment_id,
+            ],
+        )
 
         row = cursor.fetchone()
 
@@ -1390,6 +1348,81 @@ class PyMySqlDetectionResultsRepository:
             ],
         )
 
+    @staticmethod
+    def _append_signal_supersessions(
+        cursor,
+        *,
+        tenant_id: str,
+        assessment_id: str,
+    ) -> None:
+        """Append lineage links once both immutable signals exist."""
+        cursor.execute(
+            """
+                INSERT INTO detection_signal_supersessions (
+                  supersession_id,
+                  tenant_id,
+                  superseded_signal_id,
+                  replacement_signal_id,
+                  previous_assessment_id,
+                  replacement_assessment_id,
+                  correction_event_id,
+                  reason_code,
+                  reason_summary,
+                  correlation_id,
+                  created_by
+                )
+                SELECT
+                  UUID(),
+                  replacement.tenant_id,
+                  superseded_signal.signal_id,
+                  replacement_signal.signal_id,
+                  previous.assessment_id,
+                  replacement.assessment_id,
+                  replacement.source_correction_event_id,
+                  COALESCE(
+                    correction.reason_code,
+                    replacement.assessment_reason
+                  ),
+                  COALESCE(
+                    correction.reason_summary,
+                    CONCAT(
+                      'Replacement assessment ',
+                      replacement.assessment_id,
+                      ' supersedes assessment ',
+                      previous.assessment_id,
+                      '.'
+                    )
+                  ),
+                  replacement_signal.correlation_id,
+                  replacement.created_by
+                FROM assessment_versions replacement
+                JOIN assessment_versions previous
+                  ON previous.tenant_id = replacement.tenant_id
+                 AND previous.assessment_id = replacement.supersedes_assessment_id
+                JOIN detection_signals superseded_signal
+                  ON superseded_signal.tenant_id = previous.tenant_id
+                 AND superseded_signal.assessment_id = previous.assessment_id
+                JOIN detection_signals replacement_signal
+                  ON replacement_signal.tenant_id = replacement.tenant_id
+                 AND replacement_signal.assessment_id = replacement.assessment_id
+                LEFT JOIN correction_events correction
+                  ON correction.tenant_id = replacement.tenant_id
+                 AND correction.correction_event_id = replacement.source_correction_event_id
+                WHERE replacement.tenant_id = %s
+                  AND (
+                    replacement.assessment_id = %s
+                    OR previous.assessment_id = %s
+                  )
+                ON DUPLICATE KEY UPDATE
+                  supersession_id = supersession_id
+            """,
+            [
+                tenant_id,
+                assessment_id,
+                assessment_id,
+            ],
+        )
+
     def save_result_records(
         self,
         records: Iterable[
@@ -1467,7 +1500,7 @@ class PyMySqlDetectionResultsRepository:
         ):
             raise DetectionResultContractError(
                 "A result write contains duplicate "
-                "claim-version references."
+                "assessment references."
             )
 
         connection = (
@@ -1502,17 +1535,7 @@ class PyMySqlDetectionResultsRepository:
                                 "tenant_id"
                             ]
                         ),
-                        record.get(
-                            "assessment_id"
-                        ),
-                        record.get(
-                            "claim_id"
-                        ),
-                        (
-                            int(record["claim_version"])
-                            if record.get("claim_version") is not None
-                            else None
-                        ),
+                        str(record["assessment_id"]),
                         for_update=True,
                     )
 
@@ -1525,6 +1548,12 @@ class PyMySqlDetectionResultsRepository:
 
                         stored_results.append(
                             existing
+                        )
+
+                        self._append_signal_supersessions(
+                            cursor,
+                            tenant_id=str(record["tenant_id"]),
+                            assessment_id=str(record["assessment_id"]),
                         )
 
                         continue
@@ -1550,17 +1579,7 @@ class PyMySqlDetectionResultsRepository:
                                     "tenant_id"
                                 ]
                             ),
-                            record.get(
-                                "assessment_id"
-                            ),
-                            record.get(
-                                "claim_id"
-                            ),
-                            (
-                                int(record["claim_version"])
-                                if record.get("claim_version") is not None
-                                else None
-                            ),
+                            str(record["assessment_id"]),
                             for_update=True,
                         )
 
@@ -1582,6 +1601,12 @@ class PyMySqlDetectionResultsRepository:
                             existing
                         )
 
+                        self._append_signal_supersessions(
+                            cursor,
+                            tenant_id=str(record["tenant_id"]),
+                            assessment_id=str(record["assessment_id"]),
+                        )
+
                         continue
 
                     inserted = self._select_one(
@@ -1591,17 +1616,7 @@ class PyMySqlDetectionResultsRepository:
                                 "tenant_id"
                             ]
                         ),
-                        record.get(
-                            "assessment_id"
-                        ),
-                        record.get(
-                            "claim_id"
-                        ),
-                        (
-                            int(record["claim_version"])
-                            if record.get("claim_version") is not None
-                            else None
-                        ),
+                        str(record["assessment_id"]),
                         for_update=True,
                     )
 
@@ -1619,6 +1634,12 @@ class PyMySqlDetectionResultsRepository:
 
                     stored_results.append(
                         inserted
+                    )
+
+                    self._append_signal_supersessions(
+                        cursor,
+                        tenant_id=str(record["tenant_id"]),
+                        assessment_id=str(record["assessment_id"]),
                     )
 
             connection.commit()

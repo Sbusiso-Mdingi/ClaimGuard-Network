@@ -323,7 +323,7 @@ CREATE TABLE detection_signal_supersessions (
   replacement_signal_id CHAR(36) NOT NULL,
   previous_assessment_id CHAR(36) NOT NULL,
   replacement_assessment_id CHAR(36) NOT NULL,
-  correction_event_id CHAR(36) NOT NULL,
+  correction_event_id CHAR(36) NULL,
   reason_code VARCHAR(128) NOT NULL,
   reason_summary VARCHAR(1024) NOT NULL,
   correlation_id VARCHAR(128) NOT NULL,
@@ -331,7 +331,7 @@ CREATE TABLE detection_signal_supersessions (
   created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (supersession_id),
   UNIQUE KEY uq_signal_supersession_tenant_event (tenant_id, supersession_id),
-  UNIQUE KEY uq_signal_supersession_old (tenant_id, superseded_signal_id),
+  INDEX idx_signal_supersession_old (tenant_id, superseded_signal_id),
   UNIQUE KEY uq_signal_supersession_pair (tenant_id, superseded_signal_id, replacement_signal_id),
   CONSTRAINT fk_signal_supersession_old FOREIGN KEY (tenant_id, superseded_signal_id)
     REFERENCES detection_signals (tenant_id, signal_id) ON DELETE RESTRICT,
@@ -392,6 +392,26 @@ CREATE TABLE reassessment_operations (
     REFERENCES assessment_versions (tenant_id, assessment_id) ON DELETE RESTRICT
 );
 
+CREATE TABLE correction_operations (
+  operation_id CHAR(64) NOT NULL,
+  tenant_id VARCHAR(64) NOT NULL,
+  idempotency_key VARCHAR(128) NOT NULL,
+  intent_hash CHAR(64) NOT NULL,
+  entity_type VARCHAR(32) NOT NULL,
+  entity_id VARCHAR(128) NOT NULL,
+  expected_version INT UNSIGNED NOT NULL,
+  correction_event_id CHAR(36) NULL,
+  result_payload JSON NOT NULL,
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (operation_id),
+  UNIQUE KEY uq_correction_operations_idempotency (tenant_id, idempotency_key),
+  CONSTRAINT chk_correction_operations_intent_hash CHECK (intent_hash REGEXP '^[0-9a-f]{64}$'),
+  CONSTRAINT chk_correction_operations_entity CHECK (entity_type IN ('MEMBER','PROVIDER')),
+  CONSTRAINT chk_correction_operations_expected_version CHECK (expected_version > 0),
+  CONSTRAINT fk_correction_operation_event FOREIGN KEY (tenant_id, correction_event_id)
+    REFERENCES correction_events (tenant_id, correction_event_id) ON DELETE RESTRICT
+);
+
 DELIMITER $$
 CREATE TRIGGER trg_member_versions_no_update BEFORE UPDATE ON member_versions
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'MEMBER_VERSION_IMMUTABLE'$$
@@ -413,6 +433,10 @@ CREATE TRIGGER trg_signal_supersessions_no_update BEFORE UPDATE ON detection_sig
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SIGNAL_SUPERSESSION_IMMUTABLE'$$
 CREATE TRIGGER trg_signal_supersessions_no_delete BEFORE DELETE ON detection_signal_supersessions
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SIGNAL_SUPERSESSION_IMMUTABLE'$$
+CREATE TRIGGER trg_correction_operations_no_update BEFORE UPDATE ON correction_operations
+FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CORRECTION_OPERATION_IMMUTABLE'$$
+CREATE TRIGGER trg_correction_operations_no_delete BEFORE DELETE ON correction_operations
+FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CORRECTION_OPERATION_IMMUTABLE'$$
 
 CREATE TRIGGER trg_detection_results_reject_adverse_actions
 BEFORE INSERT ON claim_detection_results
@@ -468,6 +492,45 @@ BEGIN
                 'resultSchemaVersion', JSON_UNQUOTE(JSON_EXTRACT(NEW.result_payload, '$.schemaVersion'))),
     NEW.request_id, NEW.scored_at, 'SIGNAL_GENERATED'
   );
+
+  INSERT INTO detection_signal_supersessions (
+    supersession_id, tenant_id, superseded_signal_id, replacement_signal_id,
+    previous_assessment_id, replacement_assessment_id, correction_event_id,
+    reason_code, reason_summary, correlation_id, created_by
+  )
+  SELECT
+    UUID(), replacement.tenant_id, superseded_signal.signal_id,
+    replacement_signal.signal_id, previous.assessment_id,
+    replacement.assessment_id, replacement.source_correction_event_id,
+    COALESCE(correction.reason_code, replacement.assessment_reason),
+    COALESCE(
+      correction.reason_summary,
+      CONCAT(
+        'Replacement assessment ', replacement.assessment_id,
+        ' supersedes assessment ', previous.assessment_id, '.'
+      )
+    ),
+    replacement_signal.correlation_id,
+    replacement.created_by
+  FROM assessment_versions replacement
+  JOIN assessment_versions previous
+    ON previous.tenant_id = replacement.tenant_id
+   AND previous.assessment_id = replacement.supersedes_assessment_id
+  JOIN detection_signals superseded_signal
+    ON superseded_signal.tenant_id = previous.tenant_id
+   AND superseded_signal.assessment_id = previous.assessment_id
+  JOIN detection_signals replacement_signal
+    ON replacement_signal.tenant_id = replacement.tenant_id
+   AND replacement_signal.assessment_id = replacement.assessment_id
+  LEFT JOIN correction_events correction
+    ON correction.tenant_id = replacement.tenant_id
+   AND correction.correction_event_id = replacement.source_correction_event_id
+  WHERE replacement.tenant_id = NEW.tenant_id
+    AND (
+      replacement.assessment_id = NEW.assessment_id
+      OR previous.assessment_id = NEW.assessment_id
+    )
+  ON DUPLICATE KEY UPDATE supersession_id = supersession_id;
 END$$
 
 CREATE TRIGGER trg_detection_results_no_update BEFORE UPDATE ON claim_detection_results

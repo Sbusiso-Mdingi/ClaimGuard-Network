@@ -539,6 +539,13 @@ class FakeCursor:
         )
 
         if normalized.startswith(
+            "INSERT INTO "
+            "detection_signal_supersessions"
+        ):
+            self.result = []
+            return 0
+
+        if normalized.startswith(
             "SELECT CAST(%s AS JSON)"
         ):
             payload = json.loads(
@@ -1113,7 +1120,7 @@ class DetectionResultsTests(
 
         insert_count_before = sum(
             entry["sql"].startswith(
-                "INSERT INTO "
+                "INSERT INTO claim_detection_results"
             )
             for entry
             in database.sql_history
@@ -1130,7 +1137,7 @@ class DetectionResultsTests(
 
         insert_count_after = sum(
             entry["sql"].startswith(
-                "INSERT INTO "
+                "INSERT INTO claim_detection_results"
             )
             for entry
             in database.sql_history
@@ -1453,6 +1460,48 @@ class DetectionResultsTests(
                     database.connections,
                     [],
                 )
+
+    def test_new_result_write_requires_assessment_identity_before_connecting(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        repository = repository_for(database)
+        record = deterministic_record()
+        record.pop("assessment_id")
+
+        with self.assertRaisesRegex(
+            DetectionResultContractError,
+            "assessment_id is required",
+        ):
+            repository.save_result_records([record])
+
+        self.assertEqual(database.connections, [])
+
+    def test_supersession_append_is_attempted_for_insert_and_exact_replay(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        repository = repository_for(database)
+        record = deterministic_record()
+
+        repository.save_result_records([record])
+        repository.save_result_records([record])
+
+        supersession_writes = [
+            entry
+            for entry in database.sql_history
+            if entry["sql"].startswith(
+                "INSERT INTO detection_signal_supersessions"
+            )
+        ]
+        self.assertEqual(len(supersession_writes), 2)
+        self.assertTrue(
+            all(
+                entry["params"]
+                == [TENANT_ID, assessment_uuid(1), assessment_uuid(1)]
+                for entry in supersession_writes
+            )
+        )
 
     def test_verified_tenant_scope_is_enforced_before_connecting(
         self,
