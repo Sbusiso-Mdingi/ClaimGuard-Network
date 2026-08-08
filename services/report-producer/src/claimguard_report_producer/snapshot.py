@@ -304,7 +304,11 @@ def _canonical_value(value: Any) -> Any:
 
 def _sha256_canonical_json(value: Any) -> str:
     canonical = _canonical_value(value)
-    json_str = json.dumps(canonical, separators=(",", ":"))
+    json_str = json.dumps(
+        canonical,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(json_str.encode("utf-8")).hexdigest()
 
 

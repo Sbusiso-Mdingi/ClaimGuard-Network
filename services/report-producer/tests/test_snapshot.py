@@ -282,7 +282,12 @@ def complete_assessment_row() -> dict[str, object]:
             "reference_data_version": reference_data_version,
         },
     }
-    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        snapshot,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return {
         "assessment_id": ASSESSMENT_ID,
         "tenant_id": "tenant_alpha",
@@ -649,6 +654,33 @@ class SnapshotTests(
             )
         )
 
+    def test_schema3_snapshot_accepts_javascript_unicode_hashes(
+        self,
+    ) -> None:
+        row = complete_assessment_row()
+        row["input_snapshot"]["member"]["first_name"] = "René"
+        canonical = json.dumps(
+            row["input_snapshot"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        row["input_hash"] = hashlib.sha256(
+            canonical.encode("utf-8")
+        ).hexdigest()
+        connection = FakeConnection(assessment=row, history_rows=[])
+        repository = PyMySqlTenantSnapshotRepository(
+            lambda: connection,
+            allowed_tenant_ids=frozenset({"tenant_alpha"}),
+        )
+
+        snapshot = repository.load_tenant_snapshot(
+            tenant_id="tenant_alpha",
+            jobs=[assessment_outbox_job()],
+        )
+
+        self.assertEqual(snapshot.members[0]["first_name"], "René")
+
     def test_schema3_snapshot_rejects_row_snapshot_provenance_mismatches(
         self,
     ) -> None:
@@ -666,7 +698,12 @@ class SnapshotTests(
             with self.subTest(field=label):
                 row = complete_assessment_row()
                 mutate(row)
-                canonical = json.dumps(row["input_snapshot"], sort_keys=True, separators=(",", ":"))
+                canonical = json.dumps(
+                    row["input_snapshot"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
                 row["input_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
                 connection = FakeConnection(assessment=row, history_rows=[])
                 repository = PyMySqlTenantSnapshotRepository(
