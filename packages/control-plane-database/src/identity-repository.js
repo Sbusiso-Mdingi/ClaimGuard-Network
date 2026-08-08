@@ -38,6 +38,51 @@ function mapMembership(row) {
 
 export function createIdentityRepository(defaultExecutor) {
   return {
+    async getClerkOrganisationMapping(organisationId, { executor } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT mapping_id, organisation_id, clerk_organisation_id, status,
+                created_by, created_at, updated_at, disabled_at
+         FROM clerk_organisation_mappings
+         WHERE organisation_id = ?
+         LIMIT 1`,
+        [organisationId],
+      );
+      const row = rows?.[0];
+      return row ? {
+        mappingId: row.mapping_id,
+        organisationId: row.organisation_id,
+        clerkOrganisationId: row.clerk_organisation_id,
+        status: row.status,
+        createdBy: row.created_by || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        disabledAt: row.disabled_at || null,
+      } : null;
+    },
+
+    async createClerkOrganisationMapping(
+      {
+        mappingId = crypto.randomUUID(),
+        organisationId,
+        clerkOrganisationId,
+        createdBy = null,
+      },
+      { executor } = {},
+    ) {
+      const db = executorOr(defaultExecutor, executor);
+      try {
+        await db.execute(
+          `INSERT INTO clerk_organisation_mappings
+            (mapping_id, organisation_id, clerk_organisation_id, status, created_by)
+           VALUES (?, ?, ?, 'active', ?)`,
+          [mappingId, organisationId, clerkOrganisationId, createdBy],
+        );
+      } catch (error) {
+        conflict(error, "This Clerk organisation is already linked.", "CLERK_ORGANISATION_MAPPING_CONFLICT");
+      }
+      return this.getClerkOrganisationMapping(organisationId, { executor: db });
+    },
+
     async createUser({ userId = crypto.randomUUID(), displayName, canonicalContact = null, status = "invited" }, { executor } = {}) {
       const db = executorOr(defaultExecutor, executor);
       requireEnum(status, USER_STATUSES, "user_status");
@@ -136,6 +181,106 @@ export function createIdentityRepository(defaultExecutor) {
         [credentialId],
       );
       return projectSafeCredential(rows?.[0]);
+    },
+
+    async disableLocalCredentialsForUserOrganisation(
+      { userId, organisationId },
+      { executor } = {},
+    ) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE credential_identities
+         SET status = 'disabled',
+             password_hash = NULL,
+             password_algorithm = NULL,
+             password_parameters = NULL,
+             password_version = NULL,
+             locked_until = NULL,
+             failed_attempt_count = 0
+         WHERE user_id = ?
+           AND organisation_id = ?
+           AND authentication_provider = 'local_password'
+           AND status IN ('pending_activation', 'active', 'locked')`,
+        [userId, organisationId],
+      );
+      return Number(result.affectedRows || 0);
+    },
+
+    async getPendingWorkforceInvitation(
+      { organisationId, email },
+      { executor, lockForUpdate = false } = {},
+    ) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT invitation_id, organisation_id, invitation_type, role_key, email,
+                status, invited_by, expires_at, external_identity_provider,
+                external_invitation_id
+         FROM admin_invitations
+         WHERE organisation_id = ?
+           AND email = ?
+           AND status = 'pending'
+         ORDER BY created_at DESC
+         LIMIT 1${lockForUpdate ? " FOR UPDATE" : ""}`,
+        [organisationId, String(email || "").trim().toLowerCase()],
+      );
+      const row = rows?.[0];
+      return row ? {
+        invitationId: row.invitation_id,
+        organisationId: row.organisation_id,
+        invitationType: row.invitation_type,
+        roleKey: row.role_key || (row.invitation_type === "platform_administrator"
+          ? "platform_administrator"
+          : "scheme_administrator"),
+        email: row.email,
+        status: row.status,
+        invitedBy: row.invited_by || null,
+        expiresAt: row.expires_at,
+        externalIdentityProvider: row.external_identity_provider || null,
+        externalInvitationId: row.external_invitation_id || null,
+      } : null;
+    },
+
+    async activateInvitedUser(userId, { executor } = {}) {
+      await executorOr(defaultExecutor, executor).execute(
+        `UPDATE users
+         SET status = 'active', disabled_at = NULL, disabled_reason = NULL
+         WHERE user_id = ? AND status = 'invited'`,
+        [userId],
+      );
+      return this.getSafeUser(userId, { executor });
+    },
+
+    async activateInvitedMembership(membershipId, { executor } = {}) {
+      await executorOr(defaultExecutor, executor).execute(
+        `UPDATE organisation_memberships
+         SET status = 'active',
+             valid_from = COALESCE(valid_from, UTC_TIMESTAMP(3)),
+             valid_until = NULL
+         WHERE membership_id = ? AND status = 'invited'`,
+        [membershipId],
+      );
+      return this.getMembership(membershipId, { executor });
+    },
+
+    async consumeWorkforceInvitation(
+      { invitationId, userId, externalInvitationId = null },
+      { executor } = {},
+    ) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE admin_invitations
+         SET status = 'consumed',
+             consumed_at = UTC_TIMESTAMP(3),
+             consumed_by_user_id = ?,
+             external_identity_provider = 'clerk',
+             external_invitation_id = COALESCE(external_invitation_id, ?)
+         WHERE invitation_id = ? AND status = 'pending'`,
+        [userId, externalInvitationId, invitationId],
+      );
+      if (result.affectedRows !== 1) {
+        throw new ControlPlaneConflictError(
+          "The workforce invitation is no longer pending.",
+          "INVITATION_CONSUMED",
+        );
+      }
+      return { invitationId, userId };
     },
 
     async createMembership(input, { executor } = {}) {

@@ -24,6 +24,7 @@ export function safeApiErrorMessage(error, fallback = "The service is temporaril
 
 let csrfToken = null;
 let unauthorizedHandler = null;
+let accessTokenProvider = null;
 
 export function setCsrfToken(value) {
   csrfToken = typeof value === "string" && value ? value : null;
@@ -33,10 +34,20 @@ export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = typeof handler === "function" ? handler : null;
 }
 
+export function setAccessTokenProvider(provider) {
+  accessTokenProvider = typeof provider === "function" ? provider : null;
+}
+
 export async function apiRequest(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   const mutating = !["GET", "HEAD", "OPTIONS"].includes(method);
   const headers = new Headers(options.headers || {});
+  const accessToken = accessTokenProvider
+    ? await accessTokenProvider().catch(() => null)
+    : null;
+  if (accessToken && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${accessToken}`);
+  }
   if (mutating && csrfToken) headers.set("x-csrf-token", csrfToken);
   if (options.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await fetch(path.startsWith("/api") ? path : `/api${path}`, {

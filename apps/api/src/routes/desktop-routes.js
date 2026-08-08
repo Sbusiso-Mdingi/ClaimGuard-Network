@@ -5,8 +5,13 @@ import {
   createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
 import { safeSessionResponse, serializeCookie } from "./auth-routes.js";
+import {
+  clerkReverificationResponse,
+  isClerkReverificationRequired,
+} from "../clerk-reverification.js";
 
 function desktopError(c, error, fallbackMessage, fallbackCode = "DESKTOP_REQUEST_FAILED") {
+  if (isClerkReverificationRequired(error)) return clerkReverificationResponse(c);
   const status = Number.isInteger(error?.status) ? error.status : 500;
   return c.json({
     available: false,
@@ -101,6 +106,13 @@ export function registerDesktopRoutes(app, {
   });
 
   app.post("/desktop/auth/login", async (c) => {
+    if (authenticationConfiguration?.mode === "clerk") {
+      return c.json({
+        available: false,
+        code: "CLERK_DESKTOP_AUTHENTICATION_REQUIRED",
+        message: "Desktop sign-in is managed by Clerk; local account credentials are not accepted.",
+      }, 410);
+    }
     if (!authenticationService || !authenticationConfiguration || !desktopEnrollmentService?.renewEnrollment) {
       return c.json({ available: false, code: "DESKTOP_AUTHENTICATION_UNAVAILABLE", message: "Desktop authentication is not configured." }, 503);
     }
@@ -457,7 +469,7 @@ export function registerDesktopAdminRoutes(app, {
   });
 
   app.put("/admin/desktop/organisations/:organisationId/policy", requireFleetPolicyManage, async (c) => {
-    if (!desktopEnrollmentService?.setFleetPolicy || !authenticationService?.reauthenticate) {
+    if (!desktopEnrollmentService?.setFleetPolicy || !authenticationService?.requireRecentVerification) {
       return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop fleet policy administration is not configured." }, 503);
     }
     const auth = c.get("authContext") || {};
@@ -472,7 +484,7 @@ export function registerDesktopAdminRoutes(app, {
       return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The desktop allowance confirmation did not match." }, 400);
     }
     try {
-      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      await authenticationService.requireRecentVerification(c.get("resolvedSession"), c.get("authenticationMetadata") || {});
       return c.json({
         available: true,
         ...(await desktopEnrollmentService.setFleetPolicy({
@@ -486,7 +498,7 @@ export function registerDesktopAdminRoutes(app, {
   });
 
   app.post("/admin/desktop/organisations/:organisationId/activation-keys", requireDesktopManage, async (c) => {
-    if (!desktopEnrollmentService?.issueActivationKey || !authenticationService?.reauthenticate) {
+    if (!desktopEnrollmentService?.issueActivationKey || !authenticationService?.requireRecentVerification) {
       return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop device administration is not configured." }, 503);
     }
     const organisationId = targetOrganisation(c);
@@ -496,7 +508,7 @@ export function registerDesktopAdminRoutes(app, {
       return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The activation-key confirmation did not match." }, 400);
     }
     try {
-      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      await authenticationService.requireRecentVerification(c.get("resolvedSession"), c.get("authenticationMetadata") || {});
       const result = await desktopEnrollmentService.issueActivationKey({
         organisationId,
         expiresInHours: payload.expiresInHours,
@@ -509,7 +521,7 @@ export function registerDesktopAdminRoutes(app, {
   });
 
   app.post("/admin/desktop/organisations/:organisationId/activation-keys/:activationKeyId/revoke", requireDesktopManage, async (c) => {
-    if (!desktopEnrollmentService?.revokeActivationKey || !authenticationService?.reauthenticate) {
+    if (!desktopEnrollmentService?.revokeActivationKey || !authenticationService?.requireRecentVerification) {
       return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop device administration is not configured." }, 503);
     }
     const organisationId = targetOrganisation(c);
@@ -520,7 +532,7 @@ export function registerDesktopAdminRoutes(app, {
       return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The activation-key revocation confirmation did not match." }, 400);
     }
     try {
-      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      await authenticationService.requireRecentVerification(c.get("resolvedSession"), c.get("authenticationMetadata") || {});
       return c.json({ available: true, ...(await desktopEnrollmentService.revokeActivationKey({ organisationId, activationKeyId, reason: payload.reason }, actorFromContext(c))) });
     } catch (error) {
       return desktopError(c, error, "The activation key could not be revoked.");
@@ -528,7 +540,7 @@ export function registerDesktopAdminRoutes(app, {
   });
 
   app.post("/admin/desktop/organisations/:organisationId/devices/:deviceEnrollmentId/revoke", requireDesktopManage, async (c) => {
-    if (!desktopEnrollmentService?.revokeDevice || !authenticationService?.reauthenticate) {
+    if (!desktopEnrollmentService?.revokeDevice || !authenticationService?.requireRecentVerification) {
       return c.json({ available: false, code: "DESKTOP_ADMINISTRATION_UNAVAILABLE", message: "Desktop device administration is not configured." }, 503);
     }
     const organisationId = targetOrganisation(c);
@@ -539,7 +551,7 @@ export function registerDesktopAdminRoutes(app, {
       return c.json({ available: false, code: "DESKTOP_CONFIRMATION_MISMATCH", message: "The device revocation confirmation did not match." }, 400);
     }
     try {
-      await authenticationService.reauthenticate(c.get("resolvedSession"), payload.password, c.get("authenticationMetadata") || {});
+      await authenticationService.requireRecentVerification(c.get("resolvedSession"), c.get("authenticationMetadata") || {});
       return c.json({ available: true, ...(await desktopEnrollmentService.revokeDevice({ organisationId, deviceEnrollmentId, reason: payload.reason }, actorFromContext(c))) });
     } catch (error) {
       return desktopError(c, error, "The desktop device could not be revoked.");

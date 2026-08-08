@@ -73,7 +73,7 @@ export function AccessOverviewPage() {
       <PageFrame title="Access overview">
         <WorkspaceNotice title="Session authority is stale" tone="warning">
           Your session&apos;s authorization version is out of date.{" "}
-          <Link to="/auth/login" className="underline">Sign in again</Link> to refresh your access context.
+          <Link to="/sign-in" className="underline">Sign in again through Clerk</Link> to refresh your access context.
         </WorkspaceNotice>
       </PageFrame>
     );

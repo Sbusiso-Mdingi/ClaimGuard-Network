@@ -12,6 +12,7 @@ if (process.env.SENTRY_DSN_API) {
 }
 
 import { serve } from "@hono/node-server";
+import { createClerkClient } from "@clerk/backend";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,12 +41,17 @@ import { logEvent } from "./services/log-event.js";
 import { createDesktopDeviceProofVerifier } from "./desktop-device-proof.js";
 import { createDesktopSyncService } from "./desktop-sync-service.js";
 import { createInvestigationEvidenceStorageFromEnvironment } from "./investigation-evidence-storage.js";
+import { createClerkWorkforceService } from "./services/clerk-workforce-service.js";
 
 const port = Number(process.env.PORT || process.env.WEBSITES_PORT || 3004);
 const databaseUrl = process.env.MYSQL_URL;
 const moduleDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
 const authenticationConfiguration = resolveAuthenticationConfiguration();
+const clerkClient = createClerkClient({
+  publishableKey: authenticationConfiguration.clerk.publishableKey,
+  secretKey: authenticationConfiguration.clerk.secretKey,
+});
 const supportedDataPlaneSchemaVersions = String(
   process.env.DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS
   || CANONICAL_OPERATIONAL_SCHEMA_VERSION,
@@ -82,6 +88,15 @@ const authenticationService = createControlPlaneAuthenticationService({
   throttleBaseDelayMs: authenticationConfiguration.throttle.baseDelayMs,
   throttleMaxDelayMs: authenticationConfiguration.throttle.maxDelayMs,
   throttleLockoutMs: authenticationConfiguration.throttle.lockoutMs,
+});
+const clerkWorkforceService = createClerkWorkforceService({
+  clerkClient,
+  controlPlaneRepositories,
+  controlPlaneService,
+  signUpRedirectUrl: new URL(
+    "/sign-up",
+    authenticationConfiguration.allowedOrigins[0],
+  ).toString(),
 });
 
 const routeResolver = createControlPlaneDataPlaneRouteResolver({
@@ -186,6 +201,8 @@ const app = createBackendApp({
   reportStorage,
   authenticationConfiguration,
   authenticationService,
+  clerkClient,
+  clerkWorkforceService,
   controlPlaneConfigurationRepository: controlPlaneRepositories.configuration,
   controlPlaneRepositories,
   controlPlaneService,

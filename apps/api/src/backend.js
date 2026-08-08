@@ -5,16 +5,21 @@ import { createOperationalRepositories } from "@claimguard/database";
 
 import { FileReportStorage } from "./report-storage.js";
 import { createSessionAuthenticationProvider } from "./middleware/auth-context.js";
+import { createClerkAuthenticationProvider } from "./middleware/clerk-auth-context.js";
 import { createAuthenticationMiddleware } from "./middleware/authorization-middleware.js";
 import { createTenantContextMiddleware } from "./middleware/tenant-context-middleware.js";
 import { createDataPlaneMiddleware } from "./middleware/data-plane-middleware.js";
 import { createOperationalDependencyProxy } from "./operational-service-context.js";
-import { createSessionCsrfMiddleware } from "./session-security-middleware.js";
+import {
+  createClerkOriginMiddleware,
+  createSessionCsrfMiddleware,
+} from "./session-security-middleware.js";
 import {
   createDesktopDeviceProofMiddleware,
   createDesktopOrganisationEnforcementMiddleware,
 } from "./desktop-device-proof.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
+import { registerClerkAuthRoutes } from "./routes/clerk-auth-routes.js";
 import { registerAdminRoutes } from "./routes/admin-routes.js";
 import { registerPlatformAdminRoutes } from "./routes/platform-admin-routes.js";
 import { registerSchemeAdminRoutes } from "./routes/scheme-admin-routes.js";
@@ -81,6 +86,8 @@ export function createBackendApp({
   authenticationProvider = null,
   authenticationConfiguration = Object.freeze({ mode: "session" }),
   authenticationService = null,
+  clerkClient = null,
+  clerkWorkforceService = null,
   controlPlaneRepositories = null,
   controlPlaneService = null,
   reportStorage = null,
@@ -91,11 +98,15 @@ export function createBackendApp({
   desktopDeviceProofVerifier = null,
   investigationEvidenceStorage = null,
 } = {}) {
-  if (authenticationConfiguration.mode !== "session") {
-    throw new TypeError("Only session authentication mode is supported.");
+  if (!["clerk", "session"].includes(authenticationConfiguration.mode)) {
+    throw new TypeError("Only Clerk workforce authentication is supported at runtime.");
   }
-  const usesSessionAuthentication = !authenticationProvider;
-  if (usesSessionAuthentication && !authenticationService) {
+  const usesConfiguredAuthentication = !authenticationProvider;
+  const usesLegacySessionAuthentication = usesConfiguredAuthentication
+    && authenticationConfiguration.mode === "session";
+  const usesClerkAuthentication = usesConfiguredAuthentication
+    && authenticationConfiguration.mode === "clerk";
+  if (usesConfiguredAuthentication && !authenticationService) {
     throw new TypeError("createBackendApp requires authenticationService or an explicit authenticationProvider.");
   }
 
@@ -156,14 +167,24 @@ export function createBackendApp({
     }
   });
 
-  const resolvedAuthenticationProvider = authenticationProvider || createSessionAuthenticationProvider({
-    authenticationService,
-    configuration: authenticationConfiguration,
-  });
+  const resolvedAuthenticationProvider = authenticationProvider
+    || (usesClerkAuthentication
+      ? createClerkAuthenticationProvider({
+          clerkClient,
+          authenticationService,
+          configuration: authenticationConfiguration,
+          workforceService: clerkWorkforceService,
+        })
+      : createSessionAuthenticationProvider({
+          authenticationService,
+          configuration: authenticationConfiguration,
+        }));
   app.use("*", createAuthenticationMiddleware({ authenticationProvider: resolvedAuthenticationProvider }));
   if (desktopDeviceProofVerifier) app.use("*", createDesktopDeviceProofMiddleware({ verifier: desktopDeviceProofVerifier }));
-  if (usesSessionAuthentication) {
+  if (usesLegacySessionAuthentication) {
     app.use("*", createSessionCsrfMiddleware({ authenticationService, configuration: authenticationConfiguration }));
+  } else if (usesClerkAuthentication) {
+    app.use("*", createClerkOriginMiddleware({ authenticationService, configuration: authenticationConfiguration }));
   }
 
   if (dataPlaneRuntime) {
@@ -211,8 +232,10 @@ export function createBackendApp({
   app.use("*", createDesktopOrganisationEnforcementMiddleware());
   app.use("*", createTenantContextMiddleware({ tenantRepository: dependencies.tenantRepository }));
 
-  if (usesSessionAuthentication) {
+  if (usesLegacySessionAuthentication) {
     registerAuthRoutes(app, { authenticationService, configuration: authenticationConfiguration, controlPlaneService });
+  } else if (usesClerkAuthentication) {
+    registerClerkAuthRoutes(app, { configuration: authenticationConfiguration });
   }
   registerDesktopRoutes(app, {
     desktopEnrollmentService,
@@ -240,10 +263,12 @@ export function createBackendApp({
       controlPlaneRepositories,
       controlPlaneService,
       authenticationService,
+      clerkWorkforceService,
       deploymentClass: authenticationConfiguration.deploymentClass,
     });
     registerSchemeAdminRoutes(app, {
       controlPlaneService,
+      clerkWorkforceService,
       claimsReadRepository: dependencies.claimsReadRepository,
       detectionStrategyRepository: dependencies.detectionStrategyRepository,
     });

@@ -21,6 +21,7 @@ export function projectSafeCredential(row) {
     organisationId: row.organisation_id,
     authenticationProvider: row.authentication_provider,
     normalizedUsername: row.normalized_username,
+    externalSubjectConfigured: Boolean(row.external_subject),
     status: row.status,
     failedAttemptCount: Number(row.failed_attempt_count || 0),
     lockedUntil: row.locked_until || null,

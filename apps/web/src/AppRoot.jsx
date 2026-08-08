@@ -138,6 +138,8 @@ export default function AppRoot() {
       <RoleProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/sign-in/*" element={<LoginPage />} />
+            <Route path="/sign-up/*" element={<SignupPage />} />
             <Route path="/auth/signup" element={<SignupPage />} />
             <Route path="*" element={<AuthenticationBoundary />} />
           </Routes>

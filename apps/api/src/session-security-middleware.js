@@ -40,3 +40,29 @@ export function createSessionCsrfMiddleware({ authenticationService, configurati
     return next();
   };
 }
+
+export function createClerkOriginMiddleware({ authenticationService, configuration }) {
+  return async (c, next) => {
+    if (configuration.mode !== "clerk" || SAFE_METHODS.has(c.req.method.toUpperCase())) {
+      return next();
+    }
+    if (c.get("desktopDevice")) return next();
+    const authContext = c.get("authContext") || null;
+    if (!authContext?.is_authenticated || authContext.actor_type !== "user") return next();
+    if (isAllowedOrigin(c.req.raw, configuration)) return next();
+
+    await authenticationService.recordSecurityEvent(
+      "csrf_rejection",
+      "failure",
+      c.get("authenticationMetadata") || {},
+      {
+        organisationId: authContext.organisation_id || null,
+        userId: authContext.user_id || null,
+      },
+      "origin_rejected",
+    );
+    const error = new ForbiddenError("Request origin validation failed.");
+    error.code = "ORIGIN_REJECTED";
+    return applicationErrorResponse(c, error);
+  };
+}

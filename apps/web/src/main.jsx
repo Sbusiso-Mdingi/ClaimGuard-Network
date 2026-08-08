@@ -1,7 +1,9 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import * as Sentry from "@sentry/react";
+import { ClerkProvider } from "@clerk/react";
 import App from "./AppRoot";
+import { ClerkWorkforceIdentityBridge } from "./context/WorkforceIdentityContext";
 import { scrubSentryBreadcrumb, scrubSentryEvent } from "./lib/sentryScrub";
 import "./styles.css";
 import "./workspace-polish.css";
@@ -25,5 +27,20 @@ if (window.__CLAIMGUARD_WEB_SENTRY_READY__ !== true) {
 const el = document.getElementById("app");
 if (el) {
   const root = createRoot(el);
-  root.render(<App />);
+  const publishableKey = String(window.__CLERK_PUBLISHABLE_KEY__ || "").trim();
+  root.render(
+    publishableKey ? (
+      <ClerkProvider
+        publishableKey={publishableKey}
+        signInUrl="/sign-in"
+        signUpUrl="/sign-up"
+        signInFallbackRedirectUrl="/"
+        signUpFallbackRedirectUrl="/"
+      >
+        <ClerkWorkforceIdentityBridge>
+          <App />
+        </ClerkWorkforceIdentityBridge>
+      </ClerkProvider>
+    ) : <App />,
+  );
 }

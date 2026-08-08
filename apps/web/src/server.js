@@ -29,7 +29,8 @@ function injectRuntimeConfiguration(content) {
     .replaceAll("__CLAIMGUARD_RELEASE__", scriptString(process.env.CLAIMGUARD_RELEASE || ""))
     .replaceAll("__CLAIMGUARD_API_BASE_URL__", scriptString(apiBaseUrl))
     .replaceAll("__PUBLIC_ORGANISATION_URL_SCHEME__", scriptString(process.env.PUBLIC_ORGANISATION_URL_SCHEME || "https"))
-    .replaceAll("__PUBLIC_ORGANISATION_HOST__", scriptString(process.env.PUBLIC_ORGANISATION_HOST || "localhost:3002"));
+    .replaceAll("__PUBLIC_ORGANISATION_HOST__", scriptString(process.env.PUBLIC_ORGANISATION_HOST || "localhost:3002"))
+    .replaceAll("__CLERK_PUBLISHABLE_KEY__", scriptString(process.env.CLERK_PUBLISHABLE_KEY || ""));
 }
 
 const server = http.createServer(async (req, res) => {

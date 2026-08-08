@@ -1,17 +1,15 @@
-import React, { useState } from "react";
+import React from "react";
 import Activity from "lucide-react/dist/esm/icons/activity.mjs";
 import Building2 from "lucide-react/dist/esm/icons/building-2.mjs";
 import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2.mjs";
 import KeyRound from "lucide-react/dist/esm/icons/key-round.mjs";
 import LockKeyhole from "lucide-react/dist/esm/icons/lock-keyhole.mjs";
 import LogOut from "lucide-react/dist/esm/icons/log-out.mjs";
-import Mail from "lucide-react/dist/esm/icons/mail.mjs";
 import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
 import UserRound from "lucide-react/dist/esm/icons/user-round.mjs";
 import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
 import { useRole } from "../../context/RoleContext";
-import { apiJson, safeApiErrorMessage } from "../../lib/apiClient";
+import { useWorkforceIdentity } from "../../context/WorkforceIdentityContext";
 import { formatIdentityRoles } from "../../lib/capabilities";
 import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
@@ -62,10 +60,7 @@ function StatusBadge({ value }) {
 
 export function ProfilePage() {
   const { session, identity, logout } = useRole();
-  const [form, setForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const workforce = useWorkforceIdentity();
   const user = session?.user || {};
   const account = session?.account || {};
   const organisation = session?.organisation || {};
@@ -73,49 +68,6 @@ export function ProfilePage() {
   const roles = session?.roles || [];
   const capabilities = session?.clientCapabilities || [];
   const roleLabel = formatIdentityRoles(identity);
-  const passwordMinLength = Number(account.passwordMinLength || (organisation.organisationType === "platform" ? 12 : 8));
-
-  function updateField(event) {
-    const { name, value } = event.target;
-    setForm((previous) => ({ ...previous, [name]: value }));
-  }
-
-  async function changePassword(event) {
-    event.preventDefault();
-    setError("");
-    setSuccess("");
-    if (form.newPassword !== form.confirmPassword) {
-      setError("The new password and confirmation do not match.");
-      return;
-    }
-    if (form.newPassword.length < passwordMinLength) {
-      setError(`Password must be at least ${passwordMinLength} characters.`);
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const result = await apiJson("/auth/password/change", {
-        method: "POST",
-        body: JSON.stringify({
-          currentPassword: form.currentPassword,
-          newPassword: form.newPassword,
-        }),
-        skipUnauthorizedHandler: true,
-      });
-      const revoked = Number(result.otherSessionsRevoked || 0);
-      setForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-      setSuccess(
-        revoked > 0
-          ? `Password changed. ${revoked} other ${revoked === 1 ? "session was" : "sessions were"} signed out.`
-          : "Password changed successfully.",
-      );
-    } catch (caught) {
-      setError(safeApiErrorMessage(caught, "The password could not be changed. Try again."));
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   return (
     <PageFrame
@@ -221,54 +173,24 @@ export function ProfilePage() {
       </section>
 
       <SectionCard
-        title="Change password"
-        description="Confirm your current password before choosing a replacement."
+        title="Account security"
+        description="Clerk manages sign-in methods, verified email, MFA, recovery, and active sessions."
         variant="console"
         contentClassName="p-5"
       >
-        {account.passwordChangeAvailable === false ? (
-          <WorkspaceNotice title="Password managed by your identity provider">
-            This account signs in through {formatEnumLabel(account.authenticationProvider)}. Change its password with that provider.
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,560px)_minmax(280px,1fr)]">
+          <WorkspaceNotice title="Passwordless workforce account" tone="info">
+            Sequrin never accepts or stores your login password. Use Clerk to manage your verified work email, authenticator app, backup codes, and active sessions.
           </WorkspaceNotice>
-        ) : (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,560px)_minmax(280px,1fr)]">
-            <form className="space-y-4" onSubmit={changePassword}>
-              <div className="space-y-1.5">
-                <label htmlFor="current-password" className="text-sm font-semibold">Current password</label>
-                <Input id="current-password" name="currentPassword" type="password" autoComplete="current-password" value={form.currentPassword} onChange={updateField} required />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="new-password" className="text-sm font-semibold">New password</label>
-                <Input id="new-password" name="newPassword" type="password" autoComplete="new-password" minLength={passwordMinLength} maxLength={128} value={form.newPassword} onChange={updateField} required aria-describedby="password-requirements" />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="confirm-password" className="text-sm font-semibold">Confirm new password</label>
-                <Input id="confirm-password" name="confirmPassword" type="password" autoComplete="new-password" minLength={passwordMinLength} maxLength={128} value={form.confirmPassword} onChange={updateField} required />
-              </div>
-              <p id="password-requirements" className="text-xs leading-5 text-muted-foreground">
-                Use {passwordMinLength}–128 characters. A longer, unique passphrase is recommended.
-              </p>
-              {error ? <p role="alert" className="rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
-              {success ? <p role="status" className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">{success}</p> : null}
-              <Button type="submit" disabled={submitting}>
-                <KeyRound className="mr-2 h-4 w-4" aria-hidden="true" />
-                {submitting ? "Changing password…" : "Change password"}
-              </Button>
-            </form>
-
-            <div className="rounded-xl border border-border/70 bg-secondary/35 p-4">
-              <LockKeyhole className="h-5 w-5 text-primary" aria-hidden="true" />
-              <h3 className="mt-3 text-sm font-semibold">What happens next</h3>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                {PRODUCT_NAME} keeps this session open and signs out other sessions for this account. The password itself is never stored or returned.
-              </p>
-              <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-                <Mail className="h-3.5 w-3.5" aria-hidden="true" />
-                Contact your administrator if you cannot confirm your current password.
-              </div>
-            </div>
+          <div className="rounded-xl border border-border/70 bg-secondary/35 p-4">
+            <LockKeyhole className="h-5 w-5 text-primary" aria-hidden="true" />
+            <h3 className="mt-3 text-sm font-semibold">Clerk security centre</h3>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">Consumer social sign-in is disabled. Sensitive administrative actions require fresh Clerk verification.</p>
+            <Button type="button" className="mt-4" onClick={() => workforce.openUserProfile?.()} disabled={!workforce.openUserProfile}>
+              <KeyRound className="mr-2 h-4 w-4" aria-hidden="true" /> Manage account security
+            </Button>
           </div>
-        )}
+        </div>
       </SectionCard>
     </PageFrame>
   );

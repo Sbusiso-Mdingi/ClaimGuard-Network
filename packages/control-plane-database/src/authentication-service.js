@@ -306,6 +306,94 @@ export function createControlPlaneAuthenticationService({
       }
     },
 
+    async resolveExternalIdentity(
+      {
+        authenticationProvider = "oidc",
+        externalSubject,
+        externalOrganisationId,
+      },
+      metadata = {},
+    ) {
+      const timestamp = now();
+      const organisation = await authenticationRepository.getOrganisationByClerkId?.(
+        externalOrganisationId,
+      );
+      const references = {
+        organisationId: organisation?.organisationId || null,
+      };
+      const reject = async (reason) => {
+        await recordEvent(
+          "external_authentication_failure",
+          "failure",
+          metadata,
+          references,
+          reason,
+        );
+        throw new AuthenticationRejectedError(reason);
+      };
+
+      if (
+        !organisation
+        || organisation.mappingStatus !== "active"
+        || organisation.status !== "active"
+        || organisation.activationState !== "activated"
+      ) {
+        return reject("external_organisation_unavailable");
+      }
+
+      const credential = await authenticationRepository.getExternalCredential?.({
+        organisationId: organisation.organisationId,
+        authenticationProvider,
+        externalSubject,
+      });
+      if (!credential || credential.status !== "active") {
+        return reject("external_identity_unlinked");
+      }
+      references.userId = credential.userId;
+      references.credentialId = credential.credentialId;
+
+      const [user, membership, bridge] = await Promise.all([
+        authenticationRepository.getUser(credential.userId),
+        authenticationRepository.getMembership({
+          userId: credential.userId,
+          organisationId: organisation.organisationId,
+        }),
+        authenticationRepository.getLegacyTenantBridge(organisation.organisationId),
+      ]);
+      if (!user || user.status !== "active") return reject("user_inactive");
+      if (!validMembership(membership, timestamp)) return reject("membership_inactive");
+      if (!validVersion(user.authenticationVersion)) {
+        return reject("authentication_version_unavailable");
+      }
+      if (!validVersion(membership.authorizationVersion)) {
+        return reject("authorization_version_unavailable");
+      }
+      if (!validLegacyBridge(organisation, bridge)) {
+        return reject("legacy_tenant_bridge_unavailable");
+      }
+
+      const authorization = await resolveAuthority({
+        organisationId: organisation.organisationId,
+        userId: user.userId,
+        membershipId: membership.membershipId,
+        asOf: timestamp,
+      });
+      if (authorization.permissions.length === 0) {
+        return reject("authorization_unavailable");
+      }
+
+      return {
+        actor: actorProjection({
+          organisation,
+          user,
+          membership,
+          credential,
+          authorization,
+          bridge,
+        }),
+      };
+    },
+
     async login({ organisationSlug, username, password, requiredOrganisationId = null }, metadata = {}) {
       let normalizedSlug;
       let normalizedUsername;
@@ -461,6 +549,44 @@ export function createControlPlaneAuthenticationService({
       return {
         userId: references.userId,
         credentialId,
+        reauthenticatedAt,
+      };
+    },
+
+    async requireRecentVerification(resolvedIdentity, metadata = {}) {
+      const actor = resolvedIdentity?.actor || null;
+      const externalIdentity = resolvedIdentity?.externalIdentity || null;
+      const references = {
+        organisationId: actor?.organisation?.organisationId || null,
+        userId: actor?.user?.userId || null,
+        credentialId: actor?.credential?.credentialId || null,
+      };
+      if (!externalIdentity?.reverified) {
+        await recordEvent(
+          "reauthentication_failure",
+          "failure",
+          metadata,
+          references,
+          "recent_clerk_verification_required",
+        );
+        const error = new AuthenticationRejectedError(
+          "recent_clerk_verification_required",
+        );
+        error.code = "RECENT_CLERK_VERIFICATION_REQUIRED";
+        error.status = 403;
+        error.clerkReverification = "strict";
+        throw error;
+      }
+      const reauthenticatedAt = now();
+      await recordEvent(
+        "reauthentication_success",
+        "success",
+        metadata,
+        references,
+      );
+      return {
+        userId: references.userId,
+        credentialId: references.credentialId,
         reauthenticatedAt,
       };
     },
