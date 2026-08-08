@@ -58,6 +58,16 @@ TRUST_PROXY=false
 
 The publishable key may be injected into the web shell. The secret key must come from the deployment secret store and must never be committed, logged, returned to a client, or placed in a desktop build.
 
+When the production web origin is a provider-managed hostname whose DNS cannot be changed, the web service exposes Clerk's documented same-origin Frontend API proxy:
+
+```text
+CLERK_PROXY_URL=https://claimguard-web.azurewebsites.net/__clerk
+CLERK_SECRET_KEY=<Key Vault reference>
+TRUST_PROXY=true
+```
+
+The server forwards only `/<proxy path>/*` to Clerk's fixed Frontend API endpoint, overwrites the Clerk proxy headers, preserves Clerk browser cookies and authorization material, and derives the original client address from Azure App Service's trusted ingress headers. The secret key remains server-only. Configure `CLERK_PROXY_URL` on the web service and pass it to `ClerkProvider`; do not configure both Clerk `domain` and `proxyUrl`. The proxy must be deployed and return a healthy Clerk proxy check before enabling the proxy on the Clerk production domain.
+
 ## Clerk instance policy
 
 Before production deployment, verify the production Clerk instance—not only development—has:
