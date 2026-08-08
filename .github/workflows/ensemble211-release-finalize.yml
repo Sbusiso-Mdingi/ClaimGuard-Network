@@ -83,7 +83,7 @@ jobs:
           test "$CONFIGURED_MANAGED_MODEL_DEPLOYMENT_ID" = "$ENSEMBLE_DEPLOYMENT_ID"
 
       - name: Azure login with OIDC
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
