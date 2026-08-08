@@ -449,6 +449,7 @@ export function registerAssessmentRoutes(app, {
           reviewId: c.req.param("reviewId"),
           expectedStateVersion: expected.value,
           actorId: correctionActor(c),
+          correlationId: correctionCorrelationId(c),
         });
         await connection.commit();
         return c.json(review, 200);
@@ -497,6 +498,7 @@ export function registerAssessmentRoutes(app, {
           expectedStateVersion: expected.value,
           actorId: correctionActor(c),
           reviewResult: body?.review_result,
+          correlationId: correctionCorrelationId(c),
         });
         await connection.commit();
         return c.json(review, 200);

@@ -37,7 +37,7 @@ Every schema-18 assessment pins:
 
 `COMPLETE` means those values were captured as authoritative immutable provenance. `LEGACY_PARTIAL` marks a historical result created before schema 18, where the actual member, provider or strategy context was not fully pinned. Migration 0018 preserves such results without pretending that current reference data was their historical input.
 
-New schema-3 worker execution accepts only `COMPLETE` assessments. Before scoring it verifies the snapshot hash and cross-checks the pinned claim, member version, provider version and complete strategy provenance against the assessment row. Current mutable member/provider rows are not scoring authority, and banking data is excluded from the scoring snapshot.
+New schema-3 worker execution accepts only `COMPLETE` assessments. Before scoring it verifies the snapshot hash and cross-checks the pinned claim, member version, provider version and complete strategy provenance against the assessment row. Snapshot hashes use canonical UTF-8 JSON with raw Unicode characters, matching JavaScript `JSON.stringify` output rather than an ASCII-escaped representation. Current mutable member/provider rows are not scoring authority, and banking data is excluded from the scoring snapshot.
 
 New detection-result writes are assessment-addressed and fail closed when `assessment_id` is missing or inconsistent. The old claim/version lookup is not a new-write fallback.
 
@@ -65,6 +65,8 @@ Correction operations are durable and immutable:
 - the same tenant, key and complete intent returns the original result;
 - reusing the key for different intent fails closed;
 - a caller whose `expected_version` is no longer current receives a stale-writer conflict;
+- the stable member or provider row is locked before the idempotency record is inspected, serializing concurrent commands for the same entity without relying on a missing-row gap lock;
+- concurrent same-key, same-intent submissions converge on one authoritative write and one replay result;
 - no-op corrections are recorded and replayable without creating a reference version;
 - material corrections append a reference version and correction event;
 - the original reference version, claim and historical assessment remain unchanged.
@@ -88,7 +90,9 @@ The state path is append-audited and optimistic-concurrency guarded:
 PENDING -> IN_REVIEW -> COMPLETED
 ```
 
-Claim and completion commands require the last positive `expected_state_version`. Completion is limited to the assigned actor and records a bounded `review_result`. A stale state version, wrong tenant, wrong state or different actor fails closed.
+Every transition appends an immutable `correction_impact_review_events` record containing the before/after status and state version, actor, correlation identifier and bounded event payload. Event rows cannot be updated or deleted. Review reads return this history with the current review state.
+
+Claim and completion commands require the last positive `expected_state_version`. The actor who submitted the underlying correction cannot claim or complete its impact review. Completion is limited to the independently assigned actor and records a bounded `review_result`. A stale state version, wrong tenant, wrong state, correction submitter or different assigned actor fails closed.
 
 Completing a correction-impact review does not transition a governed case, approve or reverse an outcome, publish a registry record, or activate, correct, suspend, withdraw, expire or supersede a network notice. Those decisions remain in their separately governed workflows.
 

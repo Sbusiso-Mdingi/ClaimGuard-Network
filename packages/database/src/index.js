@@ -188,6 +188,7 @@ export {
   executeMemberCorrection,
   executeProviderCorrection,
   getCorrectionImpactReview,
+  listCorrectionImpactReviewEvents,
   listCorrectionImpactReviews,
   listMemberVersions,
   listProviderVersions,

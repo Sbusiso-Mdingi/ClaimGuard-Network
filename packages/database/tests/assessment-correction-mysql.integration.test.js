@@ -11,6 +11,8 @@ import {
   createOperationalRepositories,
   executeMemberCorrection,
   executeProviderCorrection,
+  getCorrectionImpactReview,
+  listCorrectionImpactReviewEvents,
   listCorrectionImpactReviews,
   listMemberVersions,
   listProviderVersions,
@@ -76,18 +78,60 @@ test(
         member,
         expectedVersion: 1,
         idempotencyKey: memberKey,
-        actorId: "user:correction-reviewer",
+        actorId: "user:correction-submitter",
         reasonCode: "IDENTITY_CORRECTION",
         reasonSummary: "Verified member identity correction.",
         sourceReference: `evidence:${suffix}`,
-        source: "api:correction:correction-reviewer",
+        source: "api:correction:correction-submitter",
         correlationId: `member-${suffix}`,
       };
 
-      const firstMember = await inTransaction(
-        pool,
-        (connection) => executeMemberCorrection(connection, memberValues),
+      const rollbackTables = [
+        "member_versions",
+        "correction_events",
+        "correction_impact_reviews",
+        "correction_impact_review_events",
+        "correction_operations",
+        "assessment_versions",
+        "claim_processing_outbox",
+      ];
+      const rollbackBefore = Object.fromEntries(await Promise.all(
+        rollbackTables.map(async (table) => [table, await countRows(pool, table)]),
+      ));
+      await assert.rejects(
+        () => inTransaction(pool, async (connection) => {
+          await executeMemberCorrection(connection, {
+            ...memberValues,
+            idempotencyKey: `member-rollback-${suffix}`,
+            correlationId: `member-rollback-${suffix}`,
+          });
+          throw new Error("injected correction transaction failure");
+        }),
+        /injected correction transaction failure/,
       );
+      for (const table of rollbackTables) {
+        assert.equal(await countRows(pool, table), rollbackBefore[table], `${table} must roll back`);
+      }
+      const [rolledBackMemberRows] = await pool.execute(
+        "SELECT current_member_version FROM members WHERE tenant_id = ? AND member_id = ?",
+        ["tenant_default", member.member_id],
+      );
+      assert.equal(Number(rolledBackMemberRows[0].current_member_version), 1);
+
+      const concurrent = await Promise.allSettled([
+        inTransaction(pool, (connection) => executeMemberCorrection(connection, memberValues)),
+        inTransaction(pool, (connection) => executeMemberCorrection(connection, {
+          ...memberValues,
+          correlationId: `member-concurrent-retry-${suffix}`,
+        })),
+      ]);
+      assert.deepEqual(concurrent.map(({ status }) => status), ["fulfilled", "fulfilled"]);
+      const concurrentResults = concurrent.map(({ value }) => value);
+      const firstMember = concurrentResults.find(({ replayed }) => replayed === false);
+      const concurrentReplay = concurrentResults.find(({ replayed }) => replayed === true);
+      assert.ok(firstMember);
+      assert.ok(concurrentReplay);
+      assert.deepEqual({ ...concurrentReplay, replayed: false }, firstMember);
       assert.equal(firstMember.replayed, false);
       assert.equal(firstMember.changed, true);
       assert.equal(firstMember.version, 2);
@@ -150,6 +194,30 @@ test(
       );
       assert.ok(review);
       assert.equal(review.stateVersion, 1);
+      assert.equal(review.correctionActorId, "user:correction-submitter");
+
+      await assert.rejects(
+        () => getCorrectionImpactReview(pool, {
+          tenantId: "tenant_foreign",
+          reviewId: review.reviewId,
+        }),
+        (error) => error instanceof AssessmentContextRepositoryError
+          && error.code === "CORRECTION_REVIEW_NOT_FOUND",
+      );
+      await assert.rejects(
+        () => inTransaction(
+          pool,
+          (connection) => claimCorrectionImpactReview(connection, {
+            tenantId: "tenant_default",
+            reviewId: review.reviewId,
+            expectedStateVersion: 1,
+            actorId: "user:correction-submitter",
+            correlationId: `review-self-${suffix}`,
+          }),
+        ),
+        (error) => error instanceof AssessmentContextRepositoryError
+          && error.code === "CORRECTION_REVIEWER_NOT_INDEPENDENT",
+      );
 
       const claimed = await inTransaction(
         pool,
@@ -157,7 +225,8 @@ test(
           tenantId: "tenant_default",
           reviewId: review.reviewId,
           expectedStateVersion: 1,
-          actorId: "user:correction-reviewer",
+          actorId: "user:impact-reviewer",
+          correlationId: `review-claim-${suffix}`,
         }),
       );
       assert.equal(claimed.status, "IN_REVIEW");
@@ -171,6 +240,7 @@ test(
             reviewId: review.reviewId,
             expectedStateVersion: 1,
             actorId: "user:other-reviewer",
+            correlationId: `review-stale-${suffix}`,
           }),
         ),
         (error) => error instanceof AssessmentContextRepositoryError
@@ -185,6 +255,7 @@ test(
             expectedStateVersion: 2,
             actorId: "user:other-reviewer",
             reviewResult: { disposition: "FOLLOW_UP_REQUIRED", summary: "Escalate." },
+            correlationId: `review-wrong-actor-${suffix}`,
           }),
         ),
         (error) => error instanceof AssessmentContextRepositoryError
@@ -197,17 +268,47 @@ test(
           tenantId: "tenant_default",
           reviewId: review.reviewId,
           expectedStateVersion: 2,
-          actorId: "user:correction-reviewer",
+          actorId: "user:impact-reviewer",
           reviewResult: {
             disposition: "FOLLOW_UP_REQUIRED",
             summary: "Identity evidence requires governed follow-up.",
             evidenceReferences: [`evidence:${suffix}`],
           },
+          correlationId: `review-complete-${suffix}`,
         }),
       );
       assert.equal(completed.status, "COMPLETED");
       assert.equal(completed.stateVersion, 3);
       assert.equal(completed.reviewResult.disposition, "FOLLOW_UP_REQUIRED");
+      assert.deepEqual(completed.events.map((event) => ({
+        type: event.eventType,
+        before: event.stateVersionBefore,
+        after: event.stateVersionAfter,
+        actor: event.actorId,
+      })), [
+        { type: "CREATED", before: null, after: 1, actor: "user:correction-submitter" },
+        { type: "CLAIMED", before: 1, after: 2, actor: "user:impact-reviewer" },
+        { type: "COMPLETED", before: 2, after: 3, actor: "user:impact-reviewer" },
+      ]);
+      const reviewEvents = await listCorrectionImpactReviewEvents(pool, {
+        tenantId: "tenant_default",
+        reviewId: review.reviewId,
+      });
+      assert.deepEqual(reviewEvents, completed.events);
+      await assert.rejects(
+        () => pool.execute(
+          "UPDATE correction_impact_review_events SET event_type = 'CLAIMED' WHERE review_event_id = ?",
+          [reviewEvents[0].reviewEventId],
+        ),
+        /CORRECTION_REVIEW_EVENT_IMMUTABLE/,
+      );
+      await assert.rejects(
+        () => pool.execute(
+          "DELETE FROM correction_impact_review_events WHERE review_event_id = ?",
+          [reviewEvents[0].reviewEventId],
+        ),
+        /CORRECTION_REVIEW_EVENT_IMMUTABLE/,
+      );
 
       const provider = fixture.providers[0];
       const providerKey = `provider-noop-${suffix}`;
@@ -216,11 +317,11 @@ test(
         provider,
         expectedVersion: 1,
         idempotencyKey: providerKey,
-        actorId: "user:correction-reviewer",
+        actorId: "user:correction-submitter",
         reasonCode: "PROVIDER_CORRECTION",
         reasonSummary: "Provider correction command.",
         sourceReference: null,
-        source: "api:correction:correction-reviewer",
+        source: "api:correction:correction-submitter",
         correlationId: `provider-${suffix}`,
       };
       const providerNoop = await inTransaction(

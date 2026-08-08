@@ -73,6 +73,33 @@ function providerPayload(value) {
   };
 }
 
+async function appendCorrectionReviewEvent(connection, {
+  tenantId,
+  reviewId,
+  eventType,
+  statusBefore = null,
+  statusAfter,
+  stateVersionBefore = null,
+  stateVersionAfter,
+  actorId,
+  correlationId,
+  payload = {},
+}) {
+  await connection.execute(
+    `INSERT INTO correction_impact_review_events (
+       review_event_id, tenant_id, review_id, event_type,
+       review_status_before, review_status_after,
+       state_version_before, state_version_after,
+       actor_id, correlation_id, event_payload
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      crypto.randomUUID(), tenantId, reviewId, eventType,
+      statusBefore, statusAfter, stateVersionBefore, stateVersionAfter,
+      actorId, correlationId || crypto.randomUUID(), JSON.stringify(payload),
+    ],
+  );
+}
+
 async function correctionReviewRows(connection, {
   tenantId,
   correctionEventId,
@@ -80,6 +107,8 @@ async function correctionReviewRows(connection, {
   entityId,
   previousVersion,
   reviewReason,
+  actorId,
+  correlationId,
 }) {
   const versionPredicate = entityType === "MEMBER"
     ? "a.member_id = ? AND a.member_version = ?"
@@ -104,17 +133,29 @@ async function correctionReviewRows(connection, {
   );
 
   if (!affected.length) {
+    const reviewId = crypto.randomUUID();
     await connection.execute(
       `INSERT INTO correction_impact_reviews (
          review_id, tenant_id, correction_event_id,
          entity_type, entity_id, review_reason
        ) VALUES (?, ?, ?, ?, ?, ?)`,
-      [crypto.randomUUID(), tenantId, correctionEventId, entityType, entityId, reviewReason],
+      [reviewId, tenantId, correctionEventId, entityType, entityId, reviewReason],
     );
+    await appendCorrectionReviewEvent(connection, {
+      tenantId,
+      reviewId,
+      eventType: "CREATED",
+      statusAfter: "PENDING",
+      stateVersionAfter: 1,
+      actorId,
+      correlationId,
+      payload: { correctionEventId, entityType, entityId },
+    });
     return;
   }
 
   for (const row of affected) {
+    const reviewId = crypto.randomUUID();
     await connection.execute(
       `INSERT INTO correction_impact_reviews (
          review_id, tenant_id, correction_event_id,
@@ -122,10 +163,27 @@ async function correctionReviewRows(connection, {
          affected_signal_id, affected_case_id, review_reason
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        crypto.randomUUID(), tenantId, correctionEventId, entityType, entityId,
+        reviewId, tenantId, correctionEventId, entityType, entityId,
         row.assessment_id, row.signal_id ?? null, row.case_id ?? null, reviewReason,
       ],
     );
+    await appendCorrectionReviewEvent(connection, {
+      tenantId,
+      reviewId,
+      eventType: "CREATED",
+      statusAfter: "PENDING",
+      stateVersionAfter: 1,
+      actorId,
+      correlationId,
+      payload: {
+        correctionEventId,
+        entityType,
+        entityId,
+        affectedAssessmentId: row.assessment_id,
+        affectedSignalId: row.signal_id ?? null,
+        affectedCaseId: row.case_id ?? null,
+      },
+    });
   }
 }
 
@@ -181,6 +239,8 @@ async function appendCorrectionEvent(connection, {
       entityId,
       previousVersion,
       reviewReason: `${reasonCode}: ${reasonSummary}`,
+      actorId,
+      correlationId,
     });
   }
 
@@ -812,6 +872,19 @@ function correctionIdempotencyMismatch() {
   );
 }
 
+async function lockCorrectionEntity(connection, { tenantId, entityType, entityId }) {
+  const table = entityType === "MEMBER" ? "members" : "providers";
+  const identifier = entityType === "MEMBER" ? "member_id" : "provider_id";
+  await connection.execute(
+    `SELECT ${identifier}
+       FROM ${table}
+      WHERE tenant_id = ? AND ${identifier} = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, entityId],
+  );
+}
+
 function persistedCorrectionResult(value) {
   let parsed;
   try {
@@ -882,13 +955,13 @@ async function executeCorrectionOperation(connection, {
     reasonSummary,
     sourceReference: sourceReference ?? null,
   });
+  await lockCorrectionEntity(connection, { tenantId, entityType, entityId });
   const [operationRows] = await connection.execute(
     `SELECT operation_id, intent_hash, entity_type, entity_id,
             expected_version, correction_event_id, result_payload
        FROM correction_operations
       WHERE tenant_id = ? AND idempotency_key = ?
-      LIMIT 1
-      FOR UPDATE`,
+      LIMIT 1`,
     [tenantId, normalizedIdempotencyKey],
   );
   const existing = operationRows?.[0] ?? null;
@@ -1135,6 +1208,7 @@ function correctionReview(row) {
     newVersion: Number(row.new_version),
     changedFields: parseJsonValue(row.changed_fields) ?? [],
     assessmentImpact: row.assessment_impact,
+    correctionActorId: row.correction_actor_id,
   };
 }
 
@@ -1143,7 +1217,8 @@ const CORRECTION_REVIEW_SELECT = `SELECT
   r.affected_assessment_id, r.affected_signal_id, r.affected_case_id,
   r.review_reason, r.review_status, r.state_version, r.assigned_to,
   r.created_at, r.reviewed_at, r.reviewed_by, r.review_result,
-  e.previous_version, e.new_version, e.changed_fields, e.assessment_impact
+  e.previous_version, e.new_version, e.changed_fields, e.assessment_impact,
+  e.actor_id AS correction_actor_id
 FROM correction_impact_reviews r
 JOIN correction_events e
   ON e.tenant_id = r.tenant_id AND e.correction_event_id = r.correction_event_id`;
@@ -1192,9 +1267,43 @@ async function loadCorrectionImpactReview(connection, { tenantId, reviewId, forU
   return correctionReview(row);
 }
 
+export async function listCorrectionImpactReviewEvents(connection, {
+  tenantId,
+  reviewId,
+}) {
+  requireExecutor(connection);
+  const [rows] = await connection.execute(
+    `SELECT review_event_id, review_id, event_type,
+            review_status_before, review_status_after,
+            state_version_before, state_version_after,
+            actor_id, correlation_id, event_payload, created_at
+       FROM correction_impact_review_events
+      WHERE tenant_id = ? AND review_id = ?
+      ORDER BY state_version_after ASC, review_event_id ASC`,
+    [tenantId, reviewId],
+  );
+  return (rows || []).map((row) => ({
+    reviewEventId: row.review_event_id,
+    reviewId: row.review_id,
+    eventType: row.event_type,
+    statusBefore: row.review_status_before ?? null,
+    statusAfter: row.review_status_after,
+    stateVersionBefore: row.state_version_before === null
+      ? null
+      : Number(row.state_version_before),
+    stateVersionAfter: Number(row.state_version_after),
+    actorId: row.actor_id,
+    correlationId: row.correlation_id,
+    payload: parseJsonValue(row.event_payload) ?? {},
+    createdAt: timestampValue(row.created_at),
+  }));
+}
+
 export async function getCorrectionImpactReview(connection, values) {
   requireExecutor(connection);
-  return loadCorrectionImpactReview(connection, values);
+  const review = await loadCorrectionImpactReview(connection, values);
+  const events = await listCorrectionImpactReviewEvents(connection, values);
+  return { ...review, events };
 }
 
 export async function claimCorrectionImpactReview(connection, {
@@ -1202,6 +1311,7 @@ export async function claimCorrectionImpactReview(connection, {
   reviewId,
   expectedStateVersion,
   actorId,
+  correlationId = crypto.randomUUID(),
 }) {
   requireExecutor(connection);
   const expected = normalizeExpectedVersion(expectedStateVersion, "expected state version");
@@ -1220,6 +1330,13 @@ export async function claimCorrectionImpactReview(connection, {
       409,
     );
   }
+  if (review.correctionActorId === actorId) {
+    throw new AssessmentContextRepositoryError(
+      "CORRECTION_REVIEWER_NOT_INDEPENDENT",
+      "The correction submitter cannot review the impact of their own correction.",
+      403,
+    );
+  }
   const [updated] = await connection.execute(
     `UPDATE correction_impact_reviews
         SET review_status = 'IN_REVIEW', assigned_to = ?, state_version = state_version + 1
@@ -1234,7 +1351,19 @@ export async function claimCorrectionImpactReview(connection, {
       409,
     );
   }
-  return loadCorrectionImpactReview(connection, { tenantId, reviewId });
+  await appendCorrectionReviewEvent(connection, {
+    tenantId,
+    reviewId,
+    eventType: "CLAIMED",
+    statusBefore: "PENDING",
+    statusAfter: "IN_REVIEW",
+    stateVersionBefore: expected,
+    stateVersionAfter: expected + 1,
+    actorId,
+    correlationId,
+    payload: { assignedTo: actorId },
+  });
+  return getCorrectionImpactReview(connection, { tenantId, reviewId });
 }
 
 function normalizedReviewResult(value) {
@@ -1292,6 +1421,7 @@ export async function completeCorrectionImpactReview(connection, {
   expectedStateVersion,
   actorId,
   reviewResult,
+  correlationId = crypto.randomUUID(),
 }) {
   requireExecutor(connection);
   const expected = normalizeExpectedVersion(expectedStateVersion, "expected state version");
@@ -1311,6 +1441,13 @@ export async function completeCorrectionImpactReview(connection, {
       409,
     );
   }
+  if (review.correctionActorId === actorId) {
+    throw new AssessmentContextRepositoryError(
+      "CORRECTION_REVIEWER_NOT_INDEPENDENT",
+      "The correction submitter cannot review the impact of their own correction.",
+      403,
+    );
+  }
   const [updated] = await connection.execute(
     `UPDATE correction_impact_reviews
         SET review_status = 'COMPLETED', state_version = state_version + 1,
@@ -1326,7 +1463,19 @@ export async function completeCorrectionImpactReview(connection, {
       409,
     );
   }
-  return loadCorrectionImpactReview(connection, { tenantId, reviewId });
+  await appendCorrectionReviewEvent(connection, {
+    tenantId,
+    reviewId,
+    eventType: "COMPLETED",
+    statusBefore: "IN_REVIEW",
+    statusAfter: "COMPLETED",
+    stateVersionBefore: expected,
+    stateVersionAfter: expected + 1,
+    actorId,
+    correlationId,
+    payload: { reviewResult: normalizedResult },
+  });
+  return getCorrectionImpactReview(connection, { tenantId, reviewId });
 }
 
 function normalizeReassessmentIdempotencyKey(value) {

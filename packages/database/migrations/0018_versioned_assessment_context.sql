@@ -377,6 +377,37 @@ CREATE TABLE correction_impact_reviews (
     REFERENCES investigation_cases (tenant_id, case_id) ON DELETE RESTRICT
 );
 
+CREATE TABLE correction_impact_review_events (
+  review_event_id CHAR(36) NOT NULL,
+  tenant_id VARCHAR(64) NOT NULL,
+  review_id CHAR(36) NOT NULL,
+  event_type VARCHAR(32) NOT NULL,
+  review_status_before VARCHAR(64) NULL,
+  review_status_after VARCHAR(64) NOT NULL,
+  state_version_before INT UNSIGNED NULL,
+  state_version_after INT UNSIGNED NOT NULL,
+  actor_id VARCHAR(255) NOT NULL,
+  correlation_id VARCHAR(128) NOT NULL,
+  event_payload JSON NOT NULL,
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (review_event_id),
+  UNIQUE KEY uq_correction_review_events_tenant_event (tenant_id, review_event_id),
+  UNIQUE KEY uq_correction_review_events_state (tenant_id, review_id, state_version_after),
+  INDEX idx_correction_review_events_review (tenant_id, review_id, created_at),
+  CONSTRAINT chk_correction_review_events_type CHECK (event_type IN ('CREATED','CLAIMED','COMPLETED')),
+  CONSTRAINT chk_correction_review_events_status_after CHECK (review_status_after IN ('PENDING','IN_REVIEW','COMPLETED')),
+  CONSTRAINT chk_correction_review_events_status_before CHECK (
+    review_status_before IS NULL OR review_status_before IN ('PENDING','IN_REVIEW','COMPLETED')
+  ),
+  CONSTRAINT chk_correction_review_events_versions CHECK (
+    (state_version_before IS NULL AND state_version_after = 1)
+    OR (state_version_before > 0 AND state_version_after = state_version_before + 1)
+  ),
+  CONSTRAINT chk_correction_review_events_payload CHECK (JSON_TYPE(event_payload) = 'OBJECT'),
+  CONSTRAINT fk_correction_review_event_review FOREIGN KEY (tenant_id, review_id)
+    REFERENCES correction_impact_reviews (tenant_id, review_id) ON DELETE RESTRICT
+);
+
 CREATE TABLE reassessment_operations (
   operation_id CHAR(64) NOT NULL,
   tenant_id VARCHAR(64) NOT NULL,
@@ -437,6 +468,10 @@ CREATE TRIGGER trg_correction_operations_no_update BEFORE UPDATE ON correction_o
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CORRECTION_OPERATION_IMMUTABLE'$$
 CREATE TRIGGER trg_correction_operations_no_delete BEFORE DELETE ON correction_operations
 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CORRECTION_OPERATION_IMMUTABLE'$$
+CREATE TRIGGER trg_correction_review_events_no_update BEFORE UPDATE ON correction_impact_review_events
+FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CORRECTION_REVIEW_EVENT_IMMUTABLE'$$
+CREATE TRIGGER trg_correction_review_events_no_delete BEFORE DELETE ON correction_impact_review_events
+FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CORRECTION_REVIEW_EVENT_IMMUTABLE'$$
 
 CREATE TRIGGER trg_detection_results_reject_adverse_actions
 BEFORE INSERT ON claim_detection_results
