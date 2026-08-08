@@ -29,6 +29,8 @@ test("catalogue contains all expected permission keys", () => {
     "registry.search", "registry.review_history",
     "scheme_users.manage", "scheme_roles.assign", "scheme_health.view",
     "organisation.manage", "platform_health.view", "provisioning.manage",
+    "platform_releases.view", "platform_releases.request", "platform_releases.approve",
+    "platform_administrators.manage", "desktop_devices.manage", "desktop_fleet_policy.manage",
     "access.roles.read", "access.roles.manage",
     "access.assignments.read", "access.assignments.manage",
     "access.delegations.read", "access.delegations.grant", "access.delegations.revoke",
@@ -84,12 +86,32 @@ test("system-only permissions are correctly classified", () => {
   assert.equal(isSystemOnlyPermission("organisation.manage"), true);
   assert.equal(isSystemOnlyPermission("platform_health.view"), true);
   assert.equal(isSystemOnlyPermission("provisioning.manage"), true);
+  assert.equal(isSystemOnlyPermission("platform_releases.view"), true);
+  assert.equal(isSystemOnlyPermission("platform_releases.request"), true);
+  assert.equal(isSystemOnlyPermission("platform_releases.approve"), true);
+  assert.equal(isSystemOnlyPermission("platform_administrators.manage"), true);
+  assert.equal(isSystemOnlyPermission("desktop_devices.manage"), true);
+  assert.equal(isSystemOnlyPermission("desktop_fleet_policy.manage"), true);
   assert.equal(isSystemOnlyPermission("simulator.control_platform"), true);
   // Non-system permissions
   assert.equal(isSystemOnlyPermission("claims.view_own"), false);
   assert.equal(isSystemOnlyPermission("access.roles.read"), false);
   // Unknown key fails closed
   assert.equal(isSystemOnlyPermission("nonexistent.permission"), false);
+});
+
+test("governance and desktop management permissions cannot be tenant-assigned or delegated", () => {
+  for (const key of [
+    "platform_releases.view",
+    "platform_releases.request",
+    "platform_releases.approve",
+    "platform_administrators.manage",
+    "desktop_devices.manage",
+    "desktop_fleet_policy.manage",
+  ]) {
+    assert.equal(isTenantAssignable(key), false, `${key} must not be tenant-assignable`);
+    assert.equal(isDelegablePermission(key), false, `${key} must not be delegable`);
+  }
 });
 
 test("validatePermissionKeys separates valid and unknown", () => {
