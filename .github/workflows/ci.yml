@@ -548,7 +548,7 @@ jobs:
           fi
 
           pnpm --filter @claimguard/control-plane-database migrate
-          pnpm --filter @claimguard/database exec node src/migrate.js
+          pnpm --filter @claimguard/database migrate
 
       - name: Authorize the exact governed release
         id: release_authorization

@@ -11,10 +11,12 @@ import {
   getOperationalMigrationStatus as getCoreOperationalMigrationStatus,
 } from "./migrate-core.js";
 import {
+  CANONICAL_OPERATIONAL_MIGRATION_ID,
   CANONICAL_OPERATIONAL_MIGRATION_VERSION,
   CANONICAL_OPERATIONAL_SCHEMA_VERSION,
 } from "./operational-schema.js";
 import { splitOperationalMigrationStatements } from "./mysql-migration-parser.js";
+import { createMysqlConnection } from "./client.js";
 
 export * from "./migrate-core.js";
 export { splitOperationalMigrationStatements } from "./mysql-migration-parser.js";
@@ -313,7 +315,9 @@ async function applyExtensionMigrations(pool, paths, { applicationVersion = null
           resumedStatements,
         });
       }
-      await verifyCanonicalMetadata(connection);
+      if (migrations.some((migration) => migration.id === CANONICAL_OPERATIONAL_MIGRATION_ID)) {
+        await verifyCanonicalMetadata(connection);
+      }
       return result;
     } finally {
       await connection.query("SELECT RELEASE_LOCK(?) AS released", [MIGRATION_LOCK_NAME]).catch(() => undefined);
@@ -379,4 +383,45 @@ export async function applyMigrations(pool, migrationPath = defaultMigrationPath
     migrationPath: null,
     migrationPaths: canonicalPaths(migrationPath),
   };
+}
+
+export async function runOperationalMigrationCli({
+  env = process.env,
+  poolFactory = createMysqlConnection,
+  migrate = applyMigrations,
+  writeOutput = (value) => process.stdout.write(value),
+} = {}) {
+  if (env.OPERATIONAL_ADMIN_MODE !== "legacy_shared") {
+    throw new Error(
+      "Operational migrations require OPERATIONAL_ADMIN_MODE=legacy_shared.",
+    );
+  }
+
+  const databaseUrl = String(env.MYSQL_URL || "").trim();
+  if (!databaseUrl) {
+    throw new Error("MYSQL_URL must be set to run operational migrations.");
+  }
+
+  const pool = poolFactory(databaseUrl);
+  try {
+    const result = await migrate(pool, undefined, {
+      applicationVersion: String(env.CLAIMGUARD_RELEASE || "").trim() || null,
+    });
+    writeOutput(`${JSON.stringify(result, null, 2)}\n`);
+    return result;
+  } finally {
+    await pool.end();
+  }
+}
+
+const isDirectExecution = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isDirectExecution) {
+  runOperationalMigrationCli().catch((error) => {
+    process.stderr.write(`${JSON.stringify({
+      error: error?.code || error?.name || "Error",
+      message: error?.message || "Operational migration failed.",
+    })}\n`);
+    process.exitCode = 1;
+  });
 }
