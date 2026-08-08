@@ -164,6 +164,12 @@ test(
       {
         const suffix = `${crypto.randomBytes(4).toString("hex")}immutable`;
         const signal = await createLegacySignal(pool, repositories, suffix);
+        const [signalRows] = await pool.execute(
+          "SELECT assessment_id FROM detection_signals WHERE tenant_id = 'tenant_default' AND signal_id = ? LIMIT 1",
+          [signal.signalId],
+        );
+        assert.equal(signalRows.length, 1);
+        const assessmentId = signalRows[0].assessment_id;
         await assert.rejects(
           () => pool.execute(
             "UPDATE detection_signals SET claim_id = ? WHERE tenant_id = 'tenant_default' AND signal_id = ?",
@@ -174,11 +180,11 @@ test(
         await assert.rejects(
           () => pool.execute(
             `INSERT INTO detection_signals (
-               signal_id, tenant_id, claim_id, claim_version, detection_strategy_id,
+               signal_id, tenant_id, assessment_id, claim_id, claim_version, detection_strategy_id,
                strategy_type, model_deployment_id, source_job_id, request_id,
                reason_codes, evidence_references, input_provenance, correlation_id
              )
-             SELECT UUID(), tenant_id, claim_id, claim_version, detection_strategy_id,
+             SELECT UUID(), tenant_id, assessment_id, claim_id, claim_version, detection_strategy_id,
                     strategy_type, model_deployment_id, source_job_id, CONCAT(request_id, '-duplicate'),
                     reason_codes, evidence_references, input_provenance, CONCAT(correlation_id, '-duplicate')
                FROM detection_signals WHERE tenant_id = 'tenant_default' AND signal_id = ?`,
@@ -188,8 +194,8 @@ test(
         );
         assert.equal(await countRows(
           pool,
-          "SELECT COUNT(*) AS total FROM detection_signals WHERE tenant_id = 'tenant_default' AND claim_id = ? AND claim_version = 1",
-          [signal.claimId],
+          "SELECT COUNT(*) AS total FROM detection_signals WHERE tenant_id = 'tenant_default' AND assessment_id = ?",
+          [assessmentId],
         ), 1);
       }
 

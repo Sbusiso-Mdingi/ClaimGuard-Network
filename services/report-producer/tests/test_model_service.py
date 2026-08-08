@@ -214,6 +214,7 @@ def snapshot(
     ]
 
     return ProspectiveScoringSnapshot(
+        assessment_id="test-assessment-id",
         tenant_id="tenant-raw-alpha",
         tenant_slug="alpha",
         tenant_display_name="Alpha",

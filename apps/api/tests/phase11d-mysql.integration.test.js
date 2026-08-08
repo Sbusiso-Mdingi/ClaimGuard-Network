@@ -8,9 +8,8 @@ import {
   applyMigrations,
   CANONICAL_OPERATIONAL_MIGRATION_VERSION,
   CANONICAL_OPERATIONAL_SCHEMA_VERSION,
-  CLAIM_PROCESSING_DATASET_SCOPE,
   CLAIM_PROCESSING_JOB_TYPE,
-  CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+  createDataPlaneContext,
   createLegacySharedAdapter,
   createMysqlConnection,
   createTenantConnectionManager,
@@ -27,6 +26,11 @@ import {
   getControlPlaneMigrationStatus,
   readLegacyTenantInventory,
 } from "@claimguard/control-plane-database";
+
+import {
+  persistMemberVersion,
+  persistProviderVersion,
+} from "../../../packages/database/src/assessment-context-repository.js";
 
 import {
   provisionPhase11dFixtures,
@@ -68,6 +72,10 @@ const TEST_TENANTS = [
   "tenant_alpha",
   "tenant_beta",
 ];
+
+const ASSESSMENT_PROCESSING_PAYLOAD_SCHEMA_VERSION = 3;
+const ASSESSMENT_PROCESSING_DATASET_SCOPE =
+  "assessment_version";
 
 const ALPHA_NEW_CLAIM_ID =
   (
@@ -478,6 +486,310 @@ async function insertBaselineClaim(
 }
 
 
+function phase11dReferenceContext(
+  tenantId,
+  tenantSlug,
+) {
+  return createDataPlaneContext({
+    organisationId:
+      `phase11d-${tenantSlug}`,
+
+    organisationType:
+      "medical_scheme",
+
+    organisationStatus:
+      "active",
+
+    operationalTenantId:
+      tenantId,
+
+    operationalTenantSlug:
+      tenantSlug,
+
+    routeId:
+      `phase11d-route-${tenantSlug}`,
+
+    routeType:
+      "legacy_shared",
+
+    routeGeneration: 1,
+
+    logicalDatabaseIdentifier:
+      "legacy-operational-shared",
+
+    schemaVersion:
+      CANONICAL_OPERATIONAL_SCHEMA_VERSION,
+
+    deploymentClass:
+      "test",
+
+    region:
+      "test",
+
+    correlationId:
+      `phase11d-reference-seed-${tenantSlug}`,
+
+    actorId:
+      "integration:phase11d",
+  });
+}
+
+
+async function seedVersionedReferenceFixture(
+  pool,
+  context,
+  {
+    member,
+    provider,
+  },
+) {
+  assert.equal(
+    member.scheme_id,
+    provider.scheme_id,
+  );
+
+  const connection =
+    await pool.getConnection();
+
+  try {
+    await connection
+      .beginTransaction();
+
+    const [
+      schemeRows,
+    ] =
+      await connection.execute(
+        `
+          SELECT tenant_id
+          FROM schemes
+          WHERE scheme_id = ?
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [
+          member.scheme_id,
+        ],
+      );
+
+    assert.equal(
+      schemeRows.length,
+      1,
+    );
+
+    assert.equal(
+      schemeRows[0]
+        .tenant_id,
+      context
+        .operationalTenantId,
+    );
+
+    const memberResult =
+      await persistMemberVersion(
+        connection,
+        {
+          tenantId:
+            context
+              .operationalTenantId,
+
+          member,
+
+          actorId:
+            "integration:phase11d",
+
+          sourceReference:
+            "phase11d-fixture",
+
+          correlationId:
+            `phase11d-member-${member.member_id}`,
+        },
+      );
+
+    const providerResult =
+      await persistProviderVersion(
+        connection,
+        {
+          tenantId:
+            context
+              .operationalTenantId,
+
+          provider,
+
+          actorId:
+            "integration:phase11d",
+
+          sourceReference:
+            "phase11d-fixture",
+
+          correlationId:
+            `phase11d-provider-${provider.provider_id}`,
+        },
+      );
+
+    assert.equal(
+      Number(
+        memberResult.version,
+      ),
+      1,
+    );
+
+    assert.equal(
+      Number(
+        providerResult.version,
+      ),
+      1,
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+
+async function assertVersionedReferenceFixture(
+  pool,
+  context,
+  {
+    member,
+    provider,
+  },
+) {
+  const tenantId =
+    context.operationalTenantId;
+
+  const [
+    memberRows,
+  ] =
+    await pool.execute(
+      `
+        SELECT
+          scheme_id,
+          current_member_version
+        FROM members
+        WHERE tenant_id = ?
+          AND member_id = ?
+      `,
+      [
+        tenantId,
+        member.member_id,
+      ],
+    );
+
+  assert.equal(
+    memberRows.length,
+    1,
+  );
+
+  assert.equal(
+    memberRows[0].scheme_id,
+    member.scheme_id,
+  );
+
+  assert.equal(
+    Number(
+      memberRows[0]
+        .current_member_version,
+    ),
+    1,
+  );
+
+  const [
+    memberVersionRows,
+  ] =
+    await pool.execute(
+      `
+        SELECT scheme_id
+        FROM member_versions
+        WHERE tenant_id = ?
+          AND member_id = ?
+          AND member_version = 1
+      `,
+      [
+        tenantId,
+        member.member_id,
+      ],
+    );
+
+  assert.equal(
+    memberVersionRows.length,
+    1,
+  );
+
+  assert.equal(
+    memberVersionRows[0]
+      .scheme_id,
+    member.scheme_id,
+  );
+
+  const [
+    providerRows,
+  ] =
+    await pool.execute(
+      `
+        SELECT
+          scheme_id,
+          current_provider_version
+        FROM providers
+        WHERE tenant_id = ?
+          AND provider_id = ?
+      `,
+      [
+        tenantId,
+        provider.provider_id,
+      ],
+    );
+
+  assert.equal(
+    providerRows.length,
+    1,
+  );
+
+  assert.equal(
+    providerRows[0].scheme_id,
+    provider.scheme_id,
+  );
+
+  assert.equal(
+    Number(
+      providerRows[0]
+        .current_provider_version,
+    ),
+    1,
+  );
+
+  const [
+    providerVersionRows,
+  ] =
+    await pool.execute(
+      `
+        SELECT scheme_id
+        FROM provider_versions
+        WHERE tenant_id = ?
+          AND provider_id = ?
+          AND provider_version = 1
+      `,
+      [
+        tenantId,
+        provider.provider_id,
+      ],
+    );
+
+  assert.equal(
+    providerVersionRows.length,
+    1,
+  );
+
+  assert.equal(
+    providerVersionRows[0]
+      .scheme_id,
+    provider.scheme_id,
+  );
+}
+
+
 async function seedOperationalFixtures(
   pool,
 ) {
@@ -584,125 +896,11 @@ async function seedOperationalFixtures(
     `,
   );
 
-  await pool.execute(
-    `
-      INSERT INTO members (
-        member_id,
-        scheme_id,
-        first_name,
-        last_name,
-        date_of_birth,
-        gender,
-        identity_number,
-        banking_detail,
-        home_region,
-        home_lat,
-        home_lon,
-        join_date,
-        tenant_id
-      )
-      VALUES
-        (
-          'ALPHA-MEMBER-1',
-          'ALPHA01',
-          'Alpha',
-          'Member',
-          '1980-01-01',
-          'F',
-          'ALPHA-ID',
-          'ALPHA-BANK',
-          'Alpha Region',
-          -26.1,
-          28.0,
-          '2020-01-01',
-          'tenant_alpha'
-        ),
-        (
-          'BETA-MEMBER-1',
-          'BETA01',
-          'Beta',
-          'Member',
-          '1981-01-01',
-          'M',
-          'BETA-ID',
-          'BETA-BANK',
-          'Beta Region',
-          -33.9,
-          18.4,
-          '2020-01-01',
-          'tenant_beta'
-        )
-      ON DUPLICATE KEY UPDATE
-        scheme_id =
-          VALUES(scheme_id),
-        first_name =
-          VALUES(first_name),
-        last_name =
-          VALUES(last_name),
-        tenant_id =
-          VALUES(tenant_id)
-    `,
-  );
-
-  await pool.execute(
-    `
-      INSERT INTO providers (
-        provider_id,
-        scheme_id,
-        practice_number,
-        specialty,
-        practice_name,
-        banking_detail,
-        practice_region,
-        practice_lat,
-        practice_lon,
-        provider_kind,
-        provider_category,
-        tenant_id
-      )
-      VALUES
-        (
-          'ALPHA-PROVIDER-1',
-          'ALPHA01',
-          'ALPHA-PRACTICE',
-          'GP',
-          'Alpha Practice',
-          'ALPHA-PBANK',
-          'Alpha Region',
-          -26.1,
-          28.0,
-          'INDIVIDUAL',
-          'GENERAL_PRACTITIONER',
-          'tenant_alpha'
-        ),
-        (
-          'BETA-PROVIDER-1',
-          'BETA01',
-          'BETA-PRACTICE',
-          'GP',
-          'Beta Practice',
-          'BETA-PBANK',
-          'Beta Region',
-          -33.9,
-          18.4,
-          'INDIVIDUAL',
-          'GENERAL_PRACTITIONER',
-          'tenant_beta'
-        )
-      ON DUPLICATE KEY UPDATE
-        scheme_id =
-          VALUES(scheme_id),
-        practice_name =
-          VALUES(practice_name),
-        tenant_id =
-          VALUES(tenant_id)
-    `,
-  );
-
   /*
    * The tenants above may be created after migration
    * 0014, so give each tenant an explicit active
-   * prospective detection strategy.
+   * prospective detection strategy before reference
+   * data is initialized through the schema-18 path.
    */
   await pool.execute(
     `
@@ -753,6 +951,201 @@ async function seedOperationalFixtures(
           'Activate deterministic prospective integration strategy'
         )
     `,
+  );
+
+  const alphaContext =
+    phase11dReferenceContext(
+      "tenant_alpha",
+      "alpha",
+    );
+
+  const betaContext =
+    phase11dReferenceContext(
+      "tenant_beta",
+      "beta",
+    );
+
+  assert.notEqual(
+    dataPlanePoolKey(
+      alphaContext,
+    ),
+    dataPlanePoolKey(
+      betaContext,
+    ),
+  );
+
+  const alphaReferences = {
+    member: {
+      member_id:
+        "ALPHA-MEMBER-1",
+
+      scheme_id:
+        "ALPHA01",
+
+      first_name:
+        "Alpha",
+
+      last_name:
+        "Member",
+
+      date_of_birth:
+        "1980-01-01",
+
+      gender:
+        "F",
+
+      identity_number:
+        "ALPHA-ID",
+
+      banking_detail:
+        "ALPHA-BANK",
+
+      home_region:
+        "Alpha Region",
+
+      home_lat:
+        -26.1,
+
+      home_lon:
+        28.0,
+
+      join_date:
+        "2020-01-01",
+    },
+
+    provider: {
+      provider_id:
+        "ALPHA-PROVIDER-1",
+
+      scheme_id:
+        "ALPHA01",
+
+      practice_number:
+        "ALPHA-PRACTICE",
+
+      specialty:
+        "GP",
+
+      practice_name:
+        "Alpha Practice",
+
+      banking_detail:
+        "ALPHA-PBANK",
+
+      practice_region:
+        "Alpha Region",
+
+      practice_lat:
+        -26.1,
+
+      practice_lon:
+        28.0,
+
+      provider_kind:
+        "INDIVIDUAL",
+
+      provider_category:
+        "GENERAL_PRACTITIONER",
+    },
+  };
+
+  const betaReferences = {
+    member: {
+      member_id:
+        "BETA-MEMBER-1",
+
+      scheme_id:
+        "BETA01",
+
+      first_name:
+        "Beta",
+
+      last_name:
+        "Member",
+
+      date_of_birth:
+        "1981-01-01",
+
+      gender:
+        "M",
+
+      identity_number:
+        "BETA-ID",
+
+      banking_detail:
+        "BETA-BANK",
+
+      home_region:
+        "Beta Region",
+
+      home_lat:
+        -33.9,
+
+      home_lon:
+        18.4,
+
+      join_date:
+        "2020-01-01",
+    },
+
+    provider: {
+      provider_id:
+        "BETA-PROVIDER-1",
+
+      scheme_id:
+        "BETA01",
+
+      practice_number:
+        "BETA-PRACTICE",
+
+      specialty:
+        "GP",
+
+      practice_name:
+        "Beta Practice",
+
+      banking_detail:
+        "BETA-PBANK",
+
+      practice_region:
+        "Beta Region",
+
+      practice_lat:
+        -33.9,
+
+      practice_lon:
+        18.4,
+
+      provider_kind:
+        "INDIVIDUAL",
+
+      provider_category:
+        "GENERAL_PRACTITIONER",
+    },
+  };
+
+  await seedVersionedReferenceFixture(
+    pool,
+    alphaContext,
+    alphaReferences,
+  );
+
+  await seedVersionedReferenceFixture(
+    pool,
+    betaContext,
+    betaReferences,
+  );
+
+  await assertVersionedReferenceFixture(
+    pool,
+    alphaContext,
+    alphaReferences,
+  );
+
+  await assertVersionedReferenceFixture(
+    pool,
+    betaContext,
+    betaReferences,
   );
 
   const claims = [
@@ -2040,23 +2433,17 @@ test(
 
       assert.equal(
         firstPayload.schema_version,
-        CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+        ASSESSMENT_PROCESSING_PAYLOAD_SCHEMA_VERSION,
       );
 
       assert.equal(
         firstPayload.dataset_scope,
-        CLAIM_PROCESSING_DATASET_SCOPE,
+        ASSESSMENT_PROCESSING_DATASET_SCOPE,
       );
 
       assert.equal(
         firstPayload.source,
         "api",
-      );
-
-      assert.equal(
-        typeof firstPayload
-          .context_cutoff_at,
-        "string",
       );
 
       assert.equal(
@@ -2462,12 +2849,12 @@ test(
       ) {
         assert.equal(
           payload.schema_version,
-          CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+          ASSESSMENT_PROCESSING_PAYLOAD_SCHEMA_VERSION,
         );
 
         assert.equal(
           payload.dataset_scope,
-          CLAIM_PROCESSING_DATASET_SCOPE,
+          ASSESSMENT_PROCESSING_DATASET_SCOPE,
         );
 
         assert.deepEqual(

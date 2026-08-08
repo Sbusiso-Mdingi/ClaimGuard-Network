@@ -134,10 +134,15 @@ def deterministic_payload(
     }
 
 
+def assessment_uuid(n: int) -> str:
+    return f"00000000-0000-0000-0000-{n:012d}"
+
+
 def deterministic_record(
     *,
     claim_id: str = "CLAIM-1",
     claim_version: int = 1,
+    assessment_id: str = "00000000-0000-0000-0000-000000000001",
     tenant_id: str = TENANT_ID,
     source_job_id: str = (
         "job-deterministic-1"
@@ -153,6 +158,9 @@ def deterministic_record(
     return {
         "tenant_id":
             tenant_id,
+
+        "assessment_id":
+            assessment_id,
 
         "claim_id":
             claim_id,
@@ -267,9 +275,11 @@ def target_claim(
 
 
 def model_snapshot(
+    assessment_id: str = "00000000-0000-0000-0000-000000000001",
 ) -> ProspectiveScoringSnapshot:
     return ProspectiveScoringSnapshot(
         tenant_id=TENANT_ID,
+        assessment_id=assessment_id,
         tenant_slug="alpha",
         tenant_display_name="Alpha",
         detection_strategy_id=29,
@@ -291,13 +301,6 @@ def model_snapshot(
         members=[],
         providers=[],
         target_claims=[
-            target_claim(
-                claim_id="CLAIM-B",
-                claim_version=1,
-                member_id="MEMBER-B",
-                provider_id="PROVIDER-B",
-                amount=200,
-            ),
             target_claim(
                 claim_id="CLAIM-A",
                 claim_version=2,
@@ -370,11 +373,6 @@ def model_review(
                 claim_version=2,
                 recommended=False,
             ),
-            model_score(
-                claim_id="CLAIM-B",
-                claim_version=1,
-                recommended=True,
-            ),
         ),
     )
 
@@ -384,7 +382,7 @@ class FakeDatabase:
         self,
     ) -> None:
         self.rows: dict[
-            tuple[str, str, int],
+            tuple[str, str],
             dict[str, object],
         ] = {}
 
@@ -400,7 +398,7 @@ class FakeDatabase:
         )
 
         self.race_target: (
-            tuple[str, str, int]
+            tuple[str, str]
             | None
         ) = None
 
@@ -461,49 +459,52 @@ class FakeCursor:
             "tenant_id":
                 params[0],
 
-            "claim_id":
+            "assessment_id":
                 params[1],
 
-            "claim_version":
+            "claim_id":
                 params[2],
 
-            "detection_strategy_id":
+            "claim_version":
                 params[3],
 
-            "strategy_type":
+            "detection_strategy_id":
                 params[4],
 
-            "model_deployment_id":
+            "strategy_type":
                 params[5],
 
-            "source_job_id":
+            "model_deployment_id":
                 params[6],
 
-            "request_id":
+            "source_job_id":
                 params[7],
 
-            "analysis_mode":
+            "request_id":
                 params[8],
 
-            "ensemble_id":
+            "analysis_mode":
                 params[9],
 
-            "ensemble_version":
+            "ensemble_id":
                 params[10],
 
-            "feature_schema_version":
+            "ensemble_version":
                 params[11],
+
+            "feature_schema_version":
+                params[12],
 
             "scored_at":
                 SCORED_AT,
 
             "result_payload":
                 json.loads(
-                    params[12]
+                    params[13]
                 ),
 
             "result_hash":
-                params[13],
+                params[14],
         }
 
     def execute(
@@ -536,6 +537,13 @@ class FakeCursor:
                     canonical_params,
             }
         )
+
+        if normalized.startswith(
+            "INSERT INTO "
+            "detection_signal_supersessions"
+        ):
+            self.result = []
+            return 0
 
         if normalized.startswith(
             "SELECT CAST(%s AS JSON)"
@@ -574,11 +582,16 @@ class FakeCursor:
                     row["tenant_id"]
                 ),
                 str(
-                    row["claim_id"]
+                    row["assessment_id"]
+                    or ""
                 ),
-                int(
-                    row["claim_version"]
-                ),
+            )
+
+            # Also maintain a claim-based index for _SELECT_BY_CLAIM lookups.
+            claim_key = (
+                str(row["tenant_id"]),
+                str(row["claim_id"]),
+                int(row["claim_version"]),
             )
 
             if (
@@ -627,11 +640,12 @@ class FakeCursor:
             if key in database.rows:
                 raise DuplicateEntryError()
 
-            database.rows[key] = (
-                copy.deepcopy(
-                    row
-                )
-            )
+            stored = copy.deepcopy(row)
+            database.rows[key] = stored
+            # Keep claim-based secondary index.
+            if not hasattr(database, "_claim_index"):
+                database._claim_index = {}
+            database._claim_index[claim_key] = key
 
             self.result = []
 
@@ -647,26 +661,18 @@ class FakeCursor:
                 in normalized
             )
         ):
-            key = (
-                str(
-                    canonical_params[0]
-                ),
-                str(
-                    canonical_params[1]
-                ),
-                int(
-                    canonical_params[2]
-                ),
+            # results_exist queries by (tenant_id, claim_id, claim_version)
+            claim_key = (
+                str(canonical_params[0]),
+                str(canonical_params[1]),
+                int(canonical_params[2]),
             )
+            claim_index = getattr(database, "_claim_index", {})
+            pk = claim_index.get(claim_key)
 
             self.result = (
-                [
-                    {
-                        "1": 1,
-                    }
-                ]
-                if key
-                in database.rows
+                [{"1": 1}]
+                if pk is not None and pk in database.rows
                 else []
             )
 
@@ -685,17 +691,13 @@ class FakeCursor:
             )
             and "LIMIT 1"
             in normalized
+            and "AND assessment_id"
+            in normalized
         ):
+            # _SELECT_ONE by (tenant_id, assessment_id)
             key = (
-                str(
-                    canonical_params[0]
-                ),
-                str(
-                    canonical_params[1]
-                ),
-                int(
-                    canonical_params[2]
-                ),
+                str(canonical_params[0]),
+                str(canonical_params[1]),
             )
 
             if (
@@ -746,6 +748,40 @@ class FakeCursor:
                 "claim_detection_results"
                 in normalized
             )
+            and "LIMIT 1"
+            in normalized
+            and "AND claim_id"
+            in normalized
+        ):
+            # _SELECT_BY_CLAIM by (tenant_id, claim_id, claim_version)
+            claim_key = (
+                str(canonical_params[0]),
+                str(canonical_params[1]),
+                int(canonical_params[2]),
+            )
+            claim_index = getattr(database, "_claim_index", {})
+            pk = claim_index.get(claim_key)
+            row = database.rows.get(pk) if pk else None
+
+            self.result = (
+                [copy.deepcopy(row)]
+                if row is not None
+                else []
+            )
+
+            return len(
+                self.result
+            )
+
+        if (
+            normalized.startswith(
+                "SELECT"
+            )
+            and (
+                "FROM "
+                "claim_detection_results"
+                in normalized
+            )
             and (
                 "( claim_id, "
                 "claim_version ) IN"
@@ -780,18 +816,19 @@ class FakeCursor:
             ]
 
             rows = []
+            claim_index = getattr(database, "_claim_index", {})
 
             for (
                 claim_id,
                 claim_version,
             ) in references:
-                row = database.rows.get(
-                    (
-                        tenant_id,
-                        claim_id,
-                        claim_version,
-                    )
+                claim_key = (
+                    tenant_id,
+                    claim_id,
+                    claim_version,
                 )
+                pk = claim_index.get(claim_key)
+                row = database.rows.get(pk) if pk else None
 
                 if row is not None:
                     rows.append(
@@ -934,10 +971,12 @@ class DetectionResultsTests(
             deterministic_record(
                 claim_id="CLAIM-1",
                 claim_version=1,
+                assessment_id=assessment_uuid(1),
             ),
             deterministic_record(
                 claim_id="CLAIM-2",
                 claim_version=3,
+                assessment_id=assessment_uuid(2),
                 payload=(
                     deterministic_payload(
                         claim_id="CLAIM-2",
@@ -1081,7 +1120,7 @@ class DetectionResultsTests(
 
         insert_count_before = sum(
             entry["sql"].startswith(
-                "INSERT INTO "
+                "INSERT INTO claim_detection_results"
             )
             for entry
             in database.sql_history
@@ -1098,7 +1137,7 @@ class DetectionResultsTests(
 
         insert_count_after = sum(
             entry["sql"].startswith(
-                "INSERT INTO "
+                "INSERT INTO claim_detection_results"
             )
             for entry
             in database.sql_history
@@ -1207,6 +1246,7 @@ class DetectionResultsTests(
             deterministic_record(
                 claim_id="CLAIM-2",
                 claim_version=1,
+                assessment_id=assessment_uuid(2),
             )
         )
 
@@ -1230,6 +1270,7 @@ class DetectionResultsTests(
                     deterministic_record(
                         claim_id="CLAIM-1",
                         claim_version=1,
+                        assessment_id=assessment_uuid(1),
                     ),
                     conflicting_existing,
                 ]
@@ -1238,8 +1279,7 @@ class DetectionResultsTests(
         self.assertNotIn(
             (
                 TENANT_ID,
-                "CLAIM-1",
-                1,
+                assessment_uuid(1),
             ),
             database.rows,
         )
@@ -1247,8 +1287,7 @@ class DetectionResultsTests(
         self.assertIn(
             (
                 TENANT_ID,
-                "CLAIM-2",
-                1,
+                assessment_uuid(2),
             ),
             database.rows,
         )
@@ -1422,6 +1461,48 @@ class DetectionResultsTests(
                     [],
                 )
 
+    def test_new_result_write_requires_assessment_identity_before_connecting(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        repository = repository_for(database)
+        record = deterministic_record()
+        record.pop("assessment_id")
+
+        with self.assertRaisesRegex(
+            DetectionResultContractError,
+            "assessment_id is required",
+        ):
+            repository.save_result_records([record])
+
+        self.assertEqual(database.connections, [])
+
+    def test_supersession_append_is_attempted_for_insert_and_exact_replay(
+        self,
+    ) -> None:
+        database = FakeDatabase()
+        repository = repository_for(database)
+        record = deterministic_record()
+
+        repository.save_result_records([record])
+        repository.save_result_records([record])
+
+        supersession_writes = [
+            entry
+            for entry in database.sql_history
+            if entry["sql"].startswith(
+                "INSERT INTO detection_signal_supersessions"
+            )
+        ]
+        self.assertEqual(len(supersession_writes), 2)
+        self.assertTrue(
+            all(
+                entry["params"]
+                == [TENANT_ID, assessment_uuid(1), assessment_uuid(1)]
+                for entry in supersession_writes
+            )
+        )
+
     def test_verified_tenant_scope_is_enforced_before_connecting(
         self,
     ) -> None:
@@ -1581,10 +1662,6 @@ class DetectionResultsTests(
             ],
             [
                 (
-                    "CLAIM-B",
-                    1,
-                ),
-                (
                     "CLAIM-A",
                     2,
                 ),
@@ -1658,14 +1735,14 @@ class DetectionResultsTests(
             payload[
                 "claimId"
             ],
-            "CLAIM-B",
+            "CLAIM-A",
         )
 
         self.assertEqual(
             payload[
                 "claimVersion"
             ],
-            1,
+            2,
         )
 
         self.assertEqual(
@@ -1704,7 +1781,7 @@ class DetectionResultsTests(
             ][
                 "compositeReviewRecommended"
             ],
-            True,
+            False,
         )
 
     def test_model_save_rejects_identity_and_coverage_mismatches_before_write(
@@ -1716,6 +1793,31 @@ class DetectionResultsTests(
 
         base_review = (
             model_review()
+        )
+
+        multi_snapshot = replace(
+            base_snapshot,
+            target_claims=[
+                base_snapshot.target_claims[0],
+                target_claim(
+                    claim_id="CLAIM-B",
+                    claim_version=1,
+                    member_id="MEMBER-B",
+                    provider_id="PROVIDER-B",
+                    amount=200,
+                ),
+            ]
+        )
+        multi_review = replace(
+            base_review,
+            scores=(
+                base_review.scores[0],
+                model_score(
+                    claim_id="CLAIM-B",
+                    claim_version=1,
+                    recommended=True,
+                ),
+            )
         )
 
         cases = [
@@ -1738,12 +1840,11 @@ class DetectionResultsTests(
                 ),
             ),
             (
-                base_snapshot,
+                multi_snapshot,
                 replace(
-                    base_review,
+                    multi_review,
                     scores=(
-                        base_review
-                        .scores[0],
+                        multi_review.scores[0],
                     ),
                 ),
             ),
@@ -1862,10 +1963,12 @@ class DetectionResultsTests(
                 deterministic_record(
                     claim_id="CLAIM-1",
                     claim_version=1,
+                    assessment_id=assessment_uuid(1),
                 ),
                 deterministic_record(
                     claim_id="CLAIM-2",
                     claim_version=4,
+                    assessment_id=assessment_uuid(2),
                 ),
             ]
         )
@@ -1928,6 +2031,7 @@ class DetectionResultsTests(
                 deterministic_record(
                     claim_id="CLAIM-1",
                     claim_version=1,
+                    assessment_id=assessment_uuid(1),
                 ),
             ]
         )
@@ -1974,8 +2078,7 @@ class DetectionResultsTests(
 
         key = (
             TENANT_ID,
-            "CLAIM-1",
-            1,
+            assessment_uuid(1),
         )
 
         database.rows[key][

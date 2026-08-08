@@ -1,10 +1,10 @@
-export const CANONICAL_OPERATIONAL_SCHEMA_VERSION = "17";
+export const CANONICAL_OPERATIONAL_SCHEMA_VERSION = "18";
 
 export const CANONICAL_OPERATIONAL_MIGRATION_VERSION =
   Number(CANONICAL_OPERATIONAL_SCHEMA_VERSION);
 
 export const CANONICAL_OPERATIONAL_MIGRATION_ID =
-  "0017_case_state_machine";
+  "0018_versioned_assessment_context";
 
 export const CANONICAL_OPERATIONAL_SCHEMA_VERSIONS =
   Object.freeze([

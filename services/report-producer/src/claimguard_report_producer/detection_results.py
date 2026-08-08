@@ -49,6 +49,7 @@ class DetectionResultIntegrityError(
 @dataclass(frozen=True)
 class StoredDetectionResult:
     tenant_id: str
+    assessment_id: str
     claim_id: str
     claim_version: int
 
@@ -509,6 +510,14 @@ def _normalise_record(
             64,
         ),
 
+        "assessment_id": _text(
+            raw.get(
+                "assessment_id"
+            ),
+            f"results[{index}].assessment_id",
+            64,
+        ),
+
         "claim_id": _text(
             raw.get(
                 "claim_id"
@@ -798,6 +807,14 @@ def _stored(
             64,
         ),
 
+        assessment_id=_text(
+            row.get(
+                "assessment_id"
+            ),
+            "stored assessment_id",
+            64,
+        ),
+
         claim_id=_text(
             row.get(
                 "claim_id"
@@ -880,6 +897,11 @@ def _assert_same(
             "tenant_id",
             existing.tenant_id,
             record["tenant_id"],
+        ),
+        (
+            "assessment_id",
+            existing.assessment_id,
+            record["assessment_id"],
         ),
         (
             "claim_id",
@@ -1110,6 +1132,7 @@ class PyMySqlDetectionResultsRepository:
     _SELECT_ONE = """
         SELECT
           tenant_id,
+          assessment_id,
           claim_id,
           claim_version,
           detection_strategy_id,
@@ -1126,8 +1149,7 @@ class PyMySqlDetectionResultsRepository:
           result_hash
         FROM claim_detection_results
         WHERE tenant_id = %s
-          AND claim_id = %s
-          AND claim_version = %s
+          AND assessment_id = %s
         LIMIT 1
     """
 
@@ -1194,8 +1216,7 @@ class PyMySqlDetectionResultsRepository:
         cls,
         cursor,
         tenant_id: str,
-        claim_id: str,
-        claim_version: int,
+        assessment_id: str,
         *,
         for_update: bool,
     ) -> StoredDetectionResult | None:
@@ -1208,8 +1229,7 @@ class PyMySqlDetectionResultsRepository:
             ),
             [
                 tenant_id,
-                claim_id,
-                claim_version,
+                assessment_id,
             ],
         )
 
@@ -1280,6 +1300,7 @@ class PyMySqlDetectionResultsRepository:
             """
                 INSERT INTO claim_detection_results (
                   tenant_id,
+                  assessment_id,
                   claim_id,
                   claim_version,
                   detection_strategy_id,
@@ -1298,12 +1319,13 @@ class PyMySqlDetectionResultsRepository:
                 VALUES (
                   %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s,
-                  %s, %s, UTC_TIMESTAMP(3),
+                  %s, %s, %s, UTC_TIMESTAMP(3),
                   %s, %s
                 )
             """,
             [
                 record["tenant_id"],
+                record.get("assessment_id"),
                 record["claim_id"],
                 record["claim_version"],
                 record[
@@ -1323,6 +1345,81 @@ class PyMySqlDetectionResultsRepository:
                 ],
                 payload_json,
                 result_hash,
+            ],
+        )
+
+    @staticmethod
+    def _append_signal_supersessions(
+        cursor,
+        *,
+        tenant_id: str,
+        assessment_id: str,
+    ) -> None:
+        """Append lineage links once both immutable signals exist."""
+        cursor.execute(
+            """
+                INSERT INTO detection_signal_supersessions (
+                  supersession_id,
+                  tenant_id,
+                  superseded_signal_id,
+                  replacement_signal_id,
+                  previous_assessment_id,
+                  replacement_assessment_id,
+                  correction_event_id,
+                  reason_code,
+                  reason_summary,
+                  correlation_id,
+                  created_by
+                )
+                SELECT
+                  UUID(),
+                  replacement.tenant_id,
+                  superseded_signal.signal_id,
+                  replacement_signal.signal_id,
+                  previous.assessment_id,
+                  replacement.assessment_id,
+                  replacement.source_correction_event_id,
+                  COALESCE(
+                    correction.reason_code,
+                    replacement.assessment_reason
+                  ),
+                  COALESCE(
+                    correction.reason_summary,
+                    CONCAT(
+                      'Replacement assessment ',
+                      replacement.assessment_id,
+                      ' supersedes assessment ',
+                      previous.assessment_id,
+                      '.'
+                    )
+                  ),
+                  replacement_signal.correlation_id,
+                  replacement.created_by
+                FROM assessment_versions replacement
+                JOIN assessment_versions previous
+                  ON previous.tenant_id = replacement.tenant_id
+                 AND previous.assessment_id = replacement.supersedes_assessment_id
+                JOIN detection_signals superseded_signal
+                  ON superseded_signal.tenant_id = previous.tenant_id
+                 AND superseded_signal.assessment_id = previous.assessment_id
+                JOIN detection_signals replacement_signal
+                  ON replacement_signal.tenant_id = replacement.tenant_id
+                 AND replacement_signal.assessment_id = replacement.assessment_id
+                LEFT JOIN correction_events correction
+                  ON correction.tenant_id = replacement.tenant_id
+                 AND correction.correction_event_id = replacement.source_correction_event_id
+                WHERE replacement.tenant_id = %s
+                  AND (
+                    replacement.assessment_id = %s
+                    OR previous.assessment_id = %s
+                  )
+                ON DUPLICATE KEY UPDATE
+                  supersession_id = supersession_id
+            """,
+            [
+                tenant_id,
+                assessment_id,
+                assessment_id,
             ],
         )
 
@@ -1377,10 +1474,7 @@ class PyMySqlDetectionResultsRepository:
         }
 
         references = [
-            (
-                record["claim_id"],
-                record["claim_version"],
-            )
+            record["assessment_id"]
             for (
                 record,
                 _,
@@ -1406,7 +1500,7 @@ class PyMySqlDetectionResultsRepository:
         ):
             raise DetectionResultContractError(
                 "A result write contains duplicate "
-                "claim-version references."
+                "assessment references."
             )
 
         connection = (
@@ -1441,16 +1535,7 @@ class PyMySqlDetectionResultsRepository:
                                 "tenant_id"
                             ]
                         ),
-                        str(
-                            record[
-                                "claim_id"
-                            ]
-                        ),
-                        int(
-                            record[
-                                "claim_version"
-                            ]
-                        ),
+                        str(record["assessment_id"]),
                         for_update=True,
                     )
 
@@ -1463,6 +1548,12 @@ class PyMySqlDetectionResultsRepository:
 
                         stored_results.append(
                             existing
+                        )
+
+                        self._append_signal_supersessions(
+                            cursor,
+                            tenant_id=str(record["tenant_id"]),
+                            assessment_id=str(record["assessment_id"]),
                         )
 
                         continue
@@ -1488,16 +1579,7 @@ class PyMySqlDetectionResultsRepository:
                                     "tenant_id"
                                 ]
                             ),
-                            str(
-                                record[
-                                    "claim_id"
-                                ]
-                            ),
-                            int(
-                                record[
-                                    "claim_version"
-                                ]
-                            ),
+                            str(record["assessment_id"]),
                             for_update=True,
                         )
 
@@ -1519,6 +1601,12 @@ class PyMySqlDetectionResultsRepository:
                             existing
                         )
 
+                        self._append_signal_supersessions(
+                            cursor,
+                            tenant_id=str(record["tenant_id"]),
+                            assessment_id=str(record["assessment_id"]),
+                        )
+
                         continue
 
                     inserted = self._select_one(
@@ -1528,16 +1616,7 @@ class PyMySqlDetectionResultsRepository:
                                 "tenant_id"
                             ]
                         ),
-                        str(
-                            record[
-                                "claim_id"
-                            ]
-                        ),
-                        int(
-                            record[
-                                "claim_version"
-                            ]
-                        ),
+                        str(record["assessment_id"]),
                         for_update=True,
                     )
 
@@ -1555,6 +1634,12 @@ class PyMySqlDetectionResultsRepository:
 
                     stored_results.append(
                         inserted
+                    )
+
+                    self._append_signal_supersessions(
+                        cursor,
+                        tenant_id=str(record["tenant_id"]),
+                        assessment_id=str(record["assessment_id"]),
                     )
 
             connection.commit()
@@ -1857,6 +1942,16 @@ class PyMySqlDetectionResultsRepository:
             ]
         ] = []
 
+        snapshot_assessment_id = _text(
+            getattr(
+                snapshot,
+                "assessment_id",
+                None,
+            ),
+            "snapshot.assessment_id",
+            64,
+        )
+
         for (
             claim_id,
             claim_version,
@@ -1926,6 +2021,9 @@ class PyMySqlDetectionResultsRepository:
                 {
                     "tenant_id":
                         tenant_id,
+
+                    "assessment_id":
+                        snapshot_assessment_id,
 
                     "claim_id":
                         claim_id,

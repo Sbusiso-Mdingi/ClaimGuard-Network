@@ -86,6 +86,7 @@ def claim(
 
 def snapshot() -> ProspectiveScoringSnapshot:
     return ProspectiveScoringSnapshot(
+        assessment_id="test-assessment-id",
         tenant_id=TENANT_ID,
         tenant_slug="alpha",
         tenant_display_name="Tenant Alpha",

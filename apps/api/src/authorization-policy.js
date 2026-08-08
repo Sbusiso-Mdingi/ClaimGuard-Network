@@ -42,6 +42,13 @@ export const CLAIMGUARD_PERMISSIONS = Object.freeze({
   PLATFORM_ADMINISTRATORS_MANAGE: "platform_administrators.manage",
   DESKTOP_DEVICES_MANAGE: "desktop.devices.manage",
   DESKTOP_FLEET_POLICY_MANAGE: "desktop.fleet_policy.manage",
+  MEMBER_READ: "member.read",
+  PROVIDER_READ: "provider.read",
+  ASSESSMENT_READ: "assessment.read",
+  MEMBER_CORRECT: "member.correct",
+  PROVIDER_CORRECT: "provider.correct",
+  ASSESSMENT_REQUEST_REASSESSMENT: "assessment.request_reassessment",
+  CORRECTION_REVIEW_IMPACT: "correction.review_impact",
 });
 
 const rolePermissionMap = Object.freeze({
@@ -73,6 +80,9 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
+    CLAIMGUARD_PERMISSIONS.MEMBER_READ,
+    CLAIMGUARD_PERMISSIONS.PROVIDER_READ,
+    CLAIMGUARD_PERMISSIONS.ASSESSMENT_READ,
   ]),
   [CLAIMGUARD_ROLES.INVESTIGATOR]: Object.freeze([
     CLAIMGUARD_PERMISSIONS.CLAIMS_VIEW_OWN,
@@ -91,11 +101,16 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
+    CLAIMGUARD_PERMISSIONS.MEMBER_READ,
+    CLAIMGUARD_PERMISSIONS.PROVIDER_READ,
+    CLAIMGUARD_PERMISSIONS.ASSESSMENT_READ,
   ]),
   [CLAIMGUARD_ROLES.APPLICATIONS_COMMITTEE_MEMBER]: Object.freeze([
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_VIEW,
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_REVIEW_HISTORY,
+    CLAIMGUARD_PERMISSIONS.ASSESSMENT_READ,
+    CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT,
   ]),
   [CLAIMGUARD_ROLES.NEW_APPLICATIONS_OFFICER]: Object.freeze([
     CLAIMGUARD_PERMISSIONS.FRAUD_REGISTRY_SEARCH,
@@ -110,6 +125,13 @@ const rolePermissionMap = Object.freeze({
     CLAIMGUARD_PERMISSIONS.USERS_MANAGE_TENANT,
     CLAIMGUARD_PERMISSIONS.TENANT_STATUS_VIEW,
     CLAIMGUARD_PERMISSIONS.DESKTOP_DEVICES_MANAGE,
+    CLAIMGUARD_PERMISSIONS.MEMBER_READ,
+    CLAIMGUARD_PERMISSIONS.MEMBER_CORRECT,
+    CLAIMGUARD_PERMISSIONS.PROVIDER_READ,
+    CLAIMGUARD_PERMISSIONS.PROVIDER_CORRECT,
+    CLAIMGUARD_PERMISSIONS.ASSESSMENT_READ,
+    CLAIMGUARD_PERMISSIONS.ASSESSMENT_REQUEST_REASSESSMENT,
+    CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT,
   ]),
   [CLAIMGUARD_ROLES.PLATFORM_ADMINISTRATOR]: Object.freeze([
     CLAIMGUARD_PERMISSIONS.TENANTS_MANAGE,
@@ -232,11 +254,22 @@ export const OPERATIONAL_ROUTE_IDS = Object.freeze({
   DESKTOP_INVESTIGATION_PATCH: "desktop.investigation.patch",
   DESKTOP_INVESTIGATION_ADD_NOTE: "desktop.investigation.add_note",
   DESKTOP_INVESTIGATION_UPLOAD_EVIDENCE: "desktop.investigation.upload_evidence",
+  ASSESSMENT_PROVENANCE: "assessment.provenance",
+  MEMBER_VERSION_HISTORY: "assessment.member.version_history",
+  PROVIDER_VERSION_HISTORY: "assessment.provider.version_history",
+  MEMBER_CORRECTION: "assessment.member.correction",
+  PROVIDER_CORRECTION: "assessment.provider.correction",
+  ASSESSMENT_REQUEST_REASSESSMENT: "assessment.request_reassessment",
+  CORRECTION_IMPACT_REVIEWS_LIST: "assessment.correction_impact_reviews.list",
+  CORRECTION_IMPACT_REVIEW_READ: "assessment.correction_impact_review.read",
+  CORRECTION_IMPACT_REVIEW_CLAIM: "assessment.correction_impact_review.claim",
+  CORRECTION_IMPACT_REVIEW_COMPLETE: "assessment.correction_impact_review.complete",
 });
 
 export const OPERATIONAL_ROUTE_PREFIXES = Object.freeze([
   "/claims", "/investigations", "/detection", "/ledger", "/registry", "/internal/data-plane",
   "/desktop/sync", "/desktop/claims", "/desktop/investigators", "/desktop/investigations",
+  "/assessment",
 ]);
 
 function normalizeRequestPath(path) {
@@ -363,6 +396,16 @@ const operationalRoutePolicyEntries = [
   },
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_ADD_NOTE, method: "POST", pathPattern: "/desktop/investigations/:id/notes", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_ADD_NOTE], permissionMode: "all", requiresOperationalDataPlane: true },
   { id: OPERATIONAL_ROUTE_IDS.DESKTOP_INVESTIGATION_UPLOAD_EVIDENCE, method: "POST", pathPattern: "/desktop/investigations/:id/evidence", permissions: [CLAIMGUARD_PERMISSIONS.INVESTIGATIONS_UPLOAD_EVIDENCE], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.ASSESSMENT_PROVENANCE, method: "GET", pathPattern: "/assessment/versions/:assessmentId", permissions: [CLAIMGUARD_PERMISSIONS.ASSESSMENT_READ], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.MEMBER_VERSION_HISTORY, method: "GET", pathPattern: "/assessment/members/:memberId/versions", permissions: [CLAIMGUARD_PERMISSIONS.MEMBER_READ], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.PROVIDER_VERSION_HISTORY, method: "GET", pathPattern: "/assessment/providers/:providerId/versions", permissions: [CLAIMGUARD_PERMISSIONS.PROVIDER_READ], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.MEMBER_CORRECTION, method: "POST", pathPattern: "/assessment/members/:memberId/correction", permissions: [CLAIMGUARD_PERMISSIONS.MEMBER_CORRECT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.PROVIDER_CORRECTION, method: "POST", pathPattern: "/assessment/providers/:providerId/correction", permissions: [CLAIMGUARD_PERMISSIONS.PROVIDER_CORRECT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.ASSESSMENT_REQUEST_REASSESSMENT, method: "POST", pathPattern: "/assessment/versions/:assessmentId/reassess", permissions: [CLAIMGUARD_PERMISSIONS.ASSESSMENT_REQUEST_REASSESSMENT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEWS_LIST, method: "GET", pathPattern: "/assessment/correction-impact-reviews", permissions: [CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEW_READ, method: "GET", pathPattern: "/assessment/correction-impact-reviews/:reviewId", permissions: [CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEW_CLAIM, method: "POST", pathPattern: "/assessment/correction-impact-reviews/:reviewId/claim", permissions: [CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT], permissionMode: "all", requiresOperationalDataPlane: true },
+  { id: OPERATIONAL_ROUTE_IDS.CORRECTION_IMPACT_REVIEW_COMPLETE, method: "POST", pathPattern: "/assessment/correction-impact-reviews/:reviewId/complete", permissions: [CLAIMGUARD_PERMISSIONS.CORRECTION_REVIEW_IMPACT], permissionMode: "all", requiresOperationalDataPlane: true },
 ];
 
 export const OPERATIONAL_ROUTE_POLICIES = Object.freeze(operationalRoutePolicyEntries.map((entry) => Object.freeze(entry)));

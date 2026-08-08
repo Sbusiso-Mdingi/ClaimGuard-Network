@@ -407,7 +407,12 @@ test(
       );
       const before = new Map(beforeRows.map((row) => [row.membership_id, Number(row.authorization_version)]));
 
+      const effectiveFrom = new Date("2026-08-07T11:00:00.000Z");
+      const asOf = new Date("2026-08-07T12:00:00.000Z");
       const expiresAt = new Date("2026-08-08T12:00:00.000Z");
+      assert.equal(effectiveFrom < asOf, true);
+      assert.equal(asOf < expiresAt, true);
+
       await assert.rejects(
         () => repositories.runInTransaction(async (tx) => {
           await tx.access.createDelegation({
@@ -415,6 +420,7 @@ test(
             grantorUserId: ids.grantor,
             granteeUserId: ids.grantee,
             permissionKeys: ["case.review_evidence"],
+            effectiveFrom,
             expiresAt,
             reason: "Runtime rollback coverage",
             actorId: ids.grantor,
@@ -458,6 +464,7 @@ test(
         grantorUserId: ids.grantor,
         granteeUserId: ids.grantee,
         permissionKeys: ["case.review_evidence"],
+        effectiveFrom,
         expiresAt,
         reason: "Runtime delegation create",
         actorId: ids.grantor,
@@ -473,7 +480,7 @@ test(
         organisationId: ids.organisation,
         userId: ids.grantee,
         membershipId: ids.granteeMembership,
-        asOf: new Date("2026-08-07T12:00:00.000Z"),
+        asOf,
       });
       assert.equal(authority.permissionKeys.includes("case.review_evidence"), true);
 
@@ -490,7 +497,7 @@ test(
         organisationId: ids.organisation,
         userId: ids.grantee,
         membershipId: ids.granteeMembership,
-        asOf: new Date("2026-08-07T12:00:00.000Z"),
+        asOf,
       });
       assert.equal(revokedAuthority.permissionKeys.includes("case.review_evidence"), false);
     } finally {

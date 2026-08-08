@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from unittest import TestCase
@@ -35,6 +36,8 @@ APPROVED_MODEL_STRATEGY_ID = 29
 APPROVED_DEPLOYMENT_ID = (
     "claimguard-claim-fraud-ensemble:1.1.0"
 )
+
+ASSESSMENT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 def claim_payload(
@@ -161,10 +164,10 @@ def outbox_job(
         ),
         payload={
             "schema_version":
-                CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+                2,
 
             "dataset_scope":
-                CLAIM_PROCESSING_DATASET_SCOPE,
+                "triggering_claim_versions",
 
             "source":
                 "api:test",
@@ -197,6 +200,114 @@ def outbox_job(
             model_deployment_id
         ),
     )
+
+
+def assessment_outbox_job() -> OutboxJob:
+    return OutboxJob(
+        id="job-assessment-1",
+        tenant_id="tenant_alpha",
+        job_type=CLAIM_PROCESSING_JOB_TYPE,
+        aggregate_type=CLAIM_PROCESSING_AGGREGATE_TYPE,
+        aggregate_id="aggregate-assessment-1",
+        correlation_id="correlation-assessment-1",
+        payload={
+            "schema_version": CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
+            "dataset_scope": CLAIM_PROCESSING_DATASET_SCOPE,
+            "assessment_id": ASSESSMENT_ID,
+            "source": "api:test",
+            "targets": [{"claim_id": "CLAIM-1", "claim_version": 1}],
+        },
+        status="processing",
+        attempt_count=1,
+        max_attempts=3,
+        detection_strategy_id=DETERMINISTIC_STRATEGY_ID,
+        strategy_type="deterministic_rules",
+        model_deployment_id=None,
+    )
+
+
+def complete_assessment_row() -> dict[str, object]:
+    model_or_rule_version = "claimguard.deterministic-request.v1"
+    feature_schema_version = f"sha256:{'a' * 64}"
+    reference_data_version = f"sha256:{'b' * 64}"
+    snapshot = {
+        "schema": "sequrin.assessment-input.v1",
+        "tenant_id": "tenant_alpha",
+        "claim": {
+            "claim_id": "CLAIM-1",
+            "claim_version": 1,
+            "payload": {
+                "claim_id": "CLAIM-1",
+                "member_id": "MEMBER-1",
+                "provider_id": "PROVIDER-1",
+                "billing_code": "0190",
+                "service_date": "2026-07-22",
+                "received_date": "2026-07-23",
+                "amount": 100,
+            },
+        },
+        "member": {
+            "member_id": "MEMBER-1",
+            "member_version": 3,
+            "scheme_id": "ALPHA01",
+            "first_name": "Test",
+            "last_name": "Member",
+            "date_of_birth": "1990-01-01",
+            "gender": "X",
+            "identity_number": "ID-1",
+            "home_region": "Gauteng",
+            "home_lat": -26.2,
+            "home_lon": 28.0,
+            "join_date": "2020-01-01",
+        },
+        "provider": {
+            "provider_id": "PROVIDER-1",
+            "provider_version": 4,
+            "scheme_id": "ALPHA01",
+            "practice_number": "P-1",
+            "specialty": "General",
+            "practice_name": "Provider One",
+            "practice_region": "Gauteng",
+            "practice_lat": -26.2,
+            "practice_lon": 28.0,
+            "provider_kind": "PRACTICE",
+            "provider_category": "GENERAL",
+        },
+        "strategy": {
+            "detection_strategy_id": DETERMINISTIC_STRATEGY_ID,
+            "strategy_type": "deterministic_rules",
+            "model_deployment_id": None,
+            "model_or_rule_version": model_or_rule_version,
+            "feature_schema_version": feature_schema_version,
+            "reference_data_version": reference_data_version,
+        },
+    }
+    canonical = json.dumps(
+        snapshot,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return {
+        "assessment_id": ASSESSMENT_ID,
+        "tenant_id": "tenant_alpha",
+        "claim_id": "CLAIM-1",
+        "claim_version": 1,
+        "member_id": "MEMBER-1",
+        "member_version": 3,
+        "provider_id": "PROVIDER-1",
+        "provider_version": 4,
+        "detection_strategy_id": DETERMINISTIC_STRATEGY_ID,
+        "strategy_type": "deterministic_rules",
+        "model_deployment_id": None,
+        "model_or_rule_version": model_or_rule_version,
+        "feature_schema_version": feature_schema_version,
+        "reference_data_version": reference_data_version,
+        "input_snapshot": snapshot,
+        "input_hash": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "provenance_status": "COMPLETE",
+        "created_at": CUTOFF,
+    }
 
 
 class FakeCursor:
@@ -270,6 +381,13 @@ class FakeCursor:
                 if self.connection
                 .tenant
                 is not None
+                else []
+            )
+
+        elif "FROM assessment_versions" in normalized:
+            self.result = (
+                [dict(self.connection.assessment)]
+                if self.connection.assessment is not None
                 else []
             )
 
@@ -353,6 +471,7 @@ class FakeConnection:
         providers=None,
         target_rows=None,
         history_rows=None,
+        assessment=None,
         fail_pattern: str | None = None,
     ) -> None:
         self.tenant = (
@@ -402,6 +521,8 @@ class FakeConnection:
             history_rows
             or []
         )
+
+        self.assessment = assessment
 
         self.fail_pattern = (
             fail_pattern
@@ -504,6 +625,98 @@ def history_query(
 class SnapshotTests(
     TestCase,
 ):
+    def test_schema3_snapshot_cross_checks_complete_pinned_provenance(
+        self,
+    ) -> None:
+        connection = FakeConnection(
+            assessment=complete_assessment_row(),
+            history_rows=[],
+        )
+        repository = PyMySqlTenantSnapshotRepository(
+            lambda: connection,
+            allowed_tenant_ids=frozenset({"tenant_alpha"}),
+        )
+
+        snapshot = repository.load_tenant_snapshot(
+            tenant_id="tenant_alpha",
+            jobs=[assessment_outbox_job()],
+        )
+
+        self.assertEqual(snapshot.assessment_id, ASSESSMENT_ID)
+        self.assertEqual(snapshot.members[0]["member_version"], 3)
+        self.assertEqual(snapshot.providers[0]["provider_version"], 4)
+        self.assertFalse(
+            any(
+                "FROM members" in query
+                or "FROM providers" in query
+                or "FROM tenants" in query
+                for query, _ in connection.queries
+            )
+        )
+
+    def test_schema3_snapshot_accepts_javascript_unicode_hashes(
+        self,
+    ) -> None:
+        row = complete_assessment_row()
+        row["input_snapshot"]["member"]["first_name"] = "René"
+        canonical = json.dumps(
+            row["input_snapshot"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        row["input_hash"] = hashlib.sha256(
+            canonical.encode("utf-8")
+        ).hexdigest()
+        connection = FakeConnection(assessment=row, history_rows=[])
+        repository = PyMySqlTenantSnapshotRepository(
+            lambda: connection,
+            allowed_tenant_ids=frozenset({"tenant_alpha"}),
+        )
+
+        snapshot = repository.load_tenant_snapshot(
+            tenant_id="tenant_alpha",
+            jobs=[assessment_outbox_job()],
+        )
+
+        self.assertEqual(snapshot.members[0]["first_name"], "René")
+
+    def test_schema3_snapshot_rejects_row_snapshot_provenance_mismatches(
+        self,
+    ) -> None:
+        cases = [
+            ("member_version", lambda row: row["input_snapshot"]["member"].update(member_version=99)),
+            ("provider_version", lambda row: row["input_snapshot"]["provider"].update(provider_version=99)),
+            ("strategy_type", lambda row: row["input_snapshot"]["strategy"].update(strategy_type="approved_model")),
+            ("model_deployment_id", lambda row: row["input_snapshot"]["strategy"].update(model_deployment_id="unexpected")),
+            ("model_or_rule_version", lambda row: row["input_snapshot"]["strategy"].update(model_or_rule_version="unexpected")),
+            ("feature_schema_version", lambda row: row["input_snapshot"]["strategy"].update(feature_schema_version="unexpected")),
+            ("reference_data_version", lambda row: row["input_snapshot"]["strategy"].update(reference_data_version="unexpected")),
+        ]
+
+        for label, mutate in cases:
+            with self.subTest(field=label):
+                row = complete_assessment_row()
+                mutate(row)
+                canonical = json.dumps(
+                    row["input_snapshot"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                row["input_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                connection = FakeConnection(assessment=row, history_rows=[])
+                repository = PyMySqlTenantSnapshotRepository(
+                    lambda: connection,
+                    allowed_tenant_ids=frozenset({"tenant_alpha"}),
+                )
+
+                with self.assertRaisesRegex(ValueError, label):
+                    repository.load_tenant_snapshot(
+                        tenant_id="tenant_alpha",
+                        jobs=[assessment_outbox_job()],
+                    )
+
     def test_snapshot_loads_exact_versions_and_bounded_historical_context(
         self,
     ) -> None:
@@ -1321,7 +1534,7 @@ class SnapshotTests(
             connection.events,
             [
                 "begin",
-                "commit",
+                "rollback",
                 "close",
             ],
         )

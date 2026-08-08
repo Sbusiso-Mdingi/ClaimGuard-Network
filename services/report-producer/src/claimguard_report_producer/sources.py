@@ -1423,6 +1423,9 @@ def _save_deterministic(
                 "tenant_id":
                     snapshot.tenant_id,
 
+                "assessment_id":
+                    snapshot.assessment_id,
+
                 "claim_id":
                     claim_id,
 

@@ -26,3 +26,8 @@ where = ["src"]
 
 [tool.uv.sources]
 claimguard-detection-engine = { path = "../detection-engine", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

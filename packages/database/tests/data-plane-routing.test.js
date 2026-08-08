@@ -1068,11 +1068,17 @@ test(
       /required/,
     );
 
-    assert.throws(
+    const claimIngestionRepository =
+      createClaimIngestionRepository(
+        pool,
+      );
+
+    await assert.rejects(
       () =>
-        createClaimIngestionRepository(
-          pool,
-        ),
+        claimIngestionRepository
+          .ingestClaims({
+            claims: [],
+          }),
       (error) =>
         error.code
         === "DATA_PLANE_CONTEXT_REQUIRED",

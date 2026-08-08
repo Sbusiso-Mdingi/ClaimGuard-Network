@@ -1,4 +1,4 @@
-import { createClaimIngestionRepository } from "./claim-ingestion-repository.js";
+import { createClaimIngestionRepository } from "./versioned-claim-ingestion-repository.js";
 import { createClaimsReadRepository } from "./prospective-claims-read-repository.js";
 import { createClaimProcessingOutboxRepository } from "./claim-processing-outbox-repository.js";
 import { createDatabaseFromPool } from "./client.js";

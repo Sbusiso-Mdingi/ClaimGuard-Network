@@ -72,6 +72,7 @@ class MemoryResultsRepository:
 
 def snapshot() -> ProspectiveScoringSnapshot:
     return ProspectiveScoringSnapshot(
+        assessment_id="test-assessment-id",
         tenant_id="tenant-1",
         tenant_slug="ubuntu",
         tenant_display_name="Ubuntu Medical Aid",

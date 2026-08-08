@@ -35,6 +35,8 @@ APPROVED_MODEL_STRATEGY_ID = 29
 APPROVED_DEPLOYMENT_ID = (
     "claimguard-claim-fraud-ensemble:1.1.0"
 )
+def assessment_uuid(n: int) -> str:
+    return f"00000000-0000-0000-0000-{n:012d}"
 
 
 def prospective_payload(
@@ -42,16 +44,17 @@ def prospective_payload(
     targets: list[dict[str, object]] | None = None,
     source: str = "api:test",
     cutoff: str = CUTOFF,
+    assessment_id: str = "00000000-0000-0000-0000-000000000001",
 ) -> dict[str, object]:
     return {
         "schema_version":
             CLAIM_PROCESSING_PAYLOAD_SCHEMA_VERSION,
         "dataset_scope":
             CLAIM_PROCESSING_DATASET_SCOPE,
+        "assessment_id":
+            assessment_id,
         "source":
             source,
-        "context_cutoff_at":
-            cutoff,
         "targets":
             targets
             or [
@@ -140,6 +143,7 @@ def snapshot_for(
 
     value = ProspectiveScoringSnapshot(
         tenant_id=queued_job.tenant_id,
+        assessment_id=queued_job.payload.get("assessment_id", "00000000-0000-0000-0000-000000000001"),
         tenant_slug=None,
         tenant_display_name=None,
         detection_strategy_id=(
@@ -151,16 +155,8 @@ def snapshot_for(
         model_deployment_id=(
             queued_job.model_deployment_id
         ),
-        captured_at=str(
-            queued_job.payload[
-                "context_cutoff_at"
-            ]
-        ),
-        context_cutoff_at=str(
-            queued_job.payload[
-                "context_cutoff_at"
-            ]
-        ),
+        captured_at=CUTOFF,
+        context_cutoff_at=CUTOFF,
         watermark=f"watermark-{queued_job.id}",
         source_job_ids=(
             queued_job.id,
@@ -658,10 +654,6 @@ class WorkerTests(
                         "claim_id": "CLAIM-A",
                         "claim_version": 2,
                     },
-                    {
-                        "claim_id": "CLAIM-B",
-                        "claim_version": 7,
-                    },
                 ],
                 source="service:claims-api",
             )
@@ -712,10 +704,6 @@ class WorkerTests(
                 (
                     "CLAIM-A",
                     2,
-                ),
-                (
-                    "CLAIM-B",
-                    7,
                 ),
             ],
         )

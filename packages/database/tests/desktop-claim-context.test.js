@@ -123,10 +123,19 @@ test("desktop sync carries human identities and raw model inputs without changin
   assert.match(query, /p\.provider_category/);
 });
 
-test("reference-data ingestion advances linked claim cursors only after a real reference change", async () => {
+test("reference-data ingestion versions reference entities without mutating claim timestamps", async () => {
   const source = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../src/claim-ingestion-repository.js", import.meta.url), "utf8"));
-  assert.match(source, /changedRows \?\? result\?\.affectedRows/);
-  assert.match(source, /if \(result\.changed\)[\s\S]*referenceType: "member"/);
-  assert.match(source, /if \(result\.changed\)[\s\S]*referenceType: "provider"/);
-  assert.match(source, /UPDATE claims[\s\S]*SET updated_at = UTC_TIMESTAMP\(3\)[\s\S]*tenant_id = \?[\s\S]*scheme_id = \?/);
+  const referenceIngestion = source.match(
+    /async function ingestReferenceData\([\s\S]*?\n}\n\nasync function readActiveStrategy\(/,
+  )?.[0];
+
+  assert.ok(referenceIngestion, "reference-data ingestion source contract must remain discoverable");
+  assert.match(referenceIngestion, /persistMemberVersion\(\s*connection,\s*\{/);
+  assert.match(referenceIngestion, /persistProviderVersion\(\s*connection,\s*\{/);
+  assert.match(referenceIngestion, /recordWrite\(summary\.members,\s*result\)/);
+  assert.match(referenceIngestion, /recordWrite\(summary\.providers,\s*result\)/);
+  assert.doesNotMatch(
+    referenceIngestion,
+    /UPDATE\s+claims[\s\S]*?SET[\s\S]*?updated_at\s*=\s*UTC_TIMESTAMP\(3\)/,
+  );
 });

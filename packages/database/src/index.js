@@ -62,9 +62,12 @@ export {
   ClaimOwnershipConflictError,
   ClaimReferenceValidationError,
   ClaimVersionIntegrityError,
-  createClaimIngestionRepository,
   ReferenceOwnershipConflictError,
 } from "./claim-ingestion-repository.js";
+
+export {
+  createClaimIngestionRepository,
+} from "./versioned-claim-ingestion-repository.js";
 
 export {
   createClaimsReadRepository,
@@ -174,6 +177,31 @@ export {
   getLegacyDefaultTenantContext,
   runWithTenantContext,
 } from "./tenant-context-store.js";
+
+export {
+  AssessmentContextRepositoryError,
+  claimCorrectionImpactReview,
+  completeCorrectionImpactReview,
+  createAssessmentVersion,
+  createReplacementAssessmentsForCorrection,
+  enqueueAssessmentProcessingJob,
+  executeMemberCorrection,
+  executeProviderCorrection,
+  getCorrectionImpactReview,
+  listCorrectionImpactReviewEvents,
+  listCorrectionImpactReviews,
+  listMemberVersions,
+  listProviderVersions,
+  persistMemberVersion,
+  persistProviderVersion,
+  requestAssessmentReassessment,
+} from "./assessment-context-repository.js";
+
+export {
+  CORRECTION_IMPACT_CLASS,
+  ASSESSMENT_IMPACT,
+  classifyCorrectionFields,
+} from "./assessment-context-policy.js";
 
 export {
   applyMigrations,
