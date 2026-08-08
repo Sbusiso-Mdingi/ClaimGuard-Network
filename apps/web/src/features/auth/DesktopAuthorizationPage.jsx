@@ -21,20 +21,41 @@ export function DesktopAuthorizationPage() {
   const workforce = useWorkforceIdentity();
   const reverifiedApiJson = useReverifiedApiJson();
   const browserSecret = useMemo(requestSecret, []);
+  const [claimStatus, setClaimStatus] = useState(browserSecret ? "claiming" : "available");
   const [state, setState] = useState({ status: "loading", request: null, error: null });
 
   useEffect(() => {
     let active = true;
-    if (!workforce.isLoaded || !workforce.isSignedIn || !workforce.organisationId || !browserSecret) {
-      if (!browserSecret) {
-        setState({ status: "error", request: null, error: "This desktop sign-in link is invalid." });
+    if (!browserSecret) return () => { active = false; };
+    apiJson("/auth/desktop/authorizations/claim", {
+      method: "POST",
+      body: JSON.stringify({ browserSecret }),
+      skipUnauthorizedHandler: true,
+    }).then(() => {
+      clearDesktopAuthorizationSecret();
+      if (active) setClaimStatus("available");
+    }).catch((error) => {
+      clearDesktopAuthorizationSecret();
+      if (active) {
+        setClaimStatus("error");
+        setState({
+          status: "error",
+          request: null,
+          error: safeApiErrorMessage(error, "This desktop sign-in request is unavailable."),
+        });
       }
+    });
+    return () => { active = false; };
+  }, [browserSecret]);
+
+  useEffect(() => {
+    let active = true;
+    if (claimStatus !== "available" || !workforce.isLoaded || !workforce.isSignedIn || !workforce.organisationId) {
       return () => { active = false; };
     }
     setState({ status: "loading", request: null, error: null });
     apiJson("/auth/desktop/authorizations/inspect", {
       method: "POST",
-      body: JSON.stringify({ browserSecret }),
       skipUnauthorizedHandler: true,
     }).then((request) => {
       if (active) setState({ status: "ready", request, error: null });
@@ -46,16 +67,14 @@ export function DesktopAuthorizationPage() {
       });
     });
     return () => { active = false; };
-  }, [browserSecret, workforce.isLoaded, workforce.isSignedIn, workforce.organisationId]);
+  }, [claimStatus, workforce.isLoaded, workforce.isSignedIn, workforce.organisationId]);
 
   async function approve() {
     setState((previous) => ({ ...previous, status: "approving", error: null }));
     try {
       await reverifiedApiJson("/auth/desktop/authorizations/approve", {
         method: "POST",
-        body: JSON.stringify({ browserSecret }),
       });
-      clearDesktopAuthorizationSecret();
       setState((previous) => ({ ...previous, status: "approved" }));
     } catch (error) {
       setState((previous) => ({
@@ -71,6 +90,12 @@ export function DesktopAuthorizationPage() {
   }
   if (!workforce.isLoaded) {
     return <main className="grid min-h-screen place-items-center bg-background p-5 text-muted-foreground">Opening Clerk sign-in…</main>;
+  }
+  if (claimStatus === "claiming") {
+    return <main className="grid min-h-screen place-items-center bg-background p-5 text-muted-foreground">Securing the one-time workstation request…</main>;
+  }
+  if (claimStatus === "error") {
+    return <main className="grid min-h-screen place-items-center bg-background p-5"><Card className="w-full max-w-lg"><CardHeader><CardTitle>Desktop sign-in unavailable</CardTitle><CardDescription role="alert">{state.error}</CardDescription></CardHeader></Card></main>;
   }
   if (!workforce.isSignedIn) {
     return <main className="grid min-h-screen place-items-center bg-background p-5"><SignIn routing="virtual" fallbackRedirectUrl="/desktop/authorize" signUpUrl="/sign-up" /></main>;

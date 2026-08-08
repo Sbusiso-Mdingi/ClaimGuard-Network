@@ -32,7 +32,7 @@ The Windows application never receives a Clerk password or browser session token
 
 1. A device with a valid signed enrollment and DPoP-style proof asks the API to start sign-in.
 2. The API creates independent browser and polling secrets, persists only their SHA-256 hashes, binds the request to the enrolled device and organisation, and expires prior pending requests.
-3. Tauri opens the system browser on the configured Sequrin web origin.
+3. Tauri opens the system browser on the configured Sequrin web origin. The browser secret is carried in a URL fragment, removed before telemetry starts, atomically rotated once into a distinct short-lived `HttpOnly`, `Secure`, host-only cookie, and never stored in JavaScript-accessible browser storage.
 4. Clerk authenticates the invited workforce user. The API requires the selected internal organisation to match the device licence and rejects platform identities.
 5. Clerk strict re-verification is required before the user approves the workstation.
 6. The device polls with its separate secret and device proof. A compare-and-set transition permits a single exchange.

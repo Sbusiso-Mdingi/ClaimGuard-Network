@@ -167,6 +167,14 @@ test("Clerk desktop routes start, inspect, approve, and exchange a device-bound 
           licensedOrganisation: { organisationId: "org-alpha", displayName: "Alpha Medical" },
         };
       },
+      async claim(secret) {
+        calls.push(["claim", secret]);
+        return {
+          requestId: "request-1",
+          cookieSecret: "c".repeat(43),
+          expiresAt: "2099-08-08T10:10:00.000Z",
+        };
+      },
       async approve(secret, resolved, metadata) {
         calls.push(["approve", secret, resolved, metadata]);
         return { approved: true, requestId: "request-1" };
@@ -199,21 +207,36 @@ test("Clerk desktop routes start, inspect, approve, and exchange a device-bound 
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ browserSecret: "invalid" }),
   })).status, 400);
-  const inspected = await app.request("/auth/desktop/authorizations/inspect", {
+  const claimed = await app.request("/auth/desktop/authorizations/claim", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ browserSecret }),
+  });
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.headers.get("cache-control"), "no-store");
+  assert.match(
+    claimed.headers.get("set-cookie"),
+    /^__Host-sequrin_desktop_authorization=.+; Path=\/; SameSite=Lax; HttpOnly; Secure;/,
+  );
+  const approvalCookie = claimed.headers.get("set-cookie").split(";", 1)[0];
+  assert.equal(approvalCookie.includes(browserSecret), false);
+  assert.equal(JSON.stringify(await claimed.clone().json()).includes("c".repeat(43)), false);
+  const inspected = await app.request("/auth/desktop/authorizations/inspect", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: approvalCookie },
+    body: "{}",
   });
   assert.equal(inspected.status, 200);
   assert.equal((await inspected.json()).licensedOrganisation.organisationId, "org-alpha");
 
   const approved = await app.request("/auth/desktop/authorizations/approve", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ browserSecret }),
+    headers: { "content-type": "application/json", cookie: approvalCookie },
+    body: "{}",
   });
   assert.equal(approved.status, 200);
   assert.equal((await approved.json()).approved, true);
+  assert.match(approved.headers.get("set-cookie"), /Max-Age=0/);
   assert.equal(calls.filter(([kind]) => kind === "reverify").length, 1);
 
   const pollingSecret = "p".repeat(43);

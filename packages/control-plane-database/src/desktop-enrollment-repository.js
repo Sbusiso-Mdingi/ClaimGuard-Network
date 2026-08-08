@@ -425,6 +425,24 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
       return mapAuthenticationRequest(rows?.[0]);
     },
 
+    async rotateAuthenticationBrowserSecret(input, { executor } = {}) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE desktop_authentication_requests
+         SET browser_secret_hash = ?
+         WHERE request_id = ?
+           AND browser_secret_hash = ?
+           AND status IN ('pending', 'approved')
+           AND expires_at > ?`,
+        [
+          assertDigest(input.replacementSecretHash, "replacementSecretHash"),
+          input.requestId,
+          assertDigest(input.currentSecretHash, "currentSecretHash"),
+          input.claimedAt,
+        ],
+      );
+      return Number(result.affectedRows || 0) === 1;
+    },
+
     async approveAuthenticationRequest(input, { executor } = {}) {
       const [result] = await executorOr(defaultExecutor, executor).execute(
         `UPDATE desktop_authentication_requests

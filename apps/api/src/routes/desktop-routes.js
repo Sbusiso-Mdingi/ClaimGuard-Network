@@ -4,11 +4,41 @@ import {
   createRequireOperationalRouteAuthorizationMiddleware,
   createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
+import { parseCookieHeader } from "../middleware/auth-context.js";
 import { safeSessionResponse, serializeCookie } from "./auth-routes.js";
 import {
   clerkReverificationResponse,
   isClerkReverificationRequired,
 } from "../clerk-reverification.js";
+
+const DESKTOP_AUTHORIZATION_COOKIE_PATH = "/";
+
+function desktopAuthorizationCookieName(configuration) {
+  return configuration?.cookie?.secure
+    ? "__Host-sequrin_desktop_authorization"
+    : "sequrin_desktop_authorization_local";
+}
+
+function serializeDesktopAuthorizationCookie(configuration, value, {
+  maxAgeSeconds = null,
+  expires = null,
+} = {}) {
+  const parts = [
+    `${desktopAuthorizationCookieName(configuration)}=${encodeURIComponent(value)}`,
+    `Path=${DESKTOP_AUTHORIZATION_COOKIE_PATH}`,
+    "SameSite=Lax",
+    "HttpOnly",
+  ];
+  if (configuration?.cookie?.secure) parts.push("Secure");
+  if (maxAgeSeconds != null) parts.push(`Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`);
+  if (expires) parts.push(`Expires=${expires.toUTCString()}`);
+  return parts.join("; ");
+}
+
+function desktopAuthorizationSecret(c, configuration) {
+  return parseCookieHeader(c.req.header("cookie"))
+    .get(desktopAuthorizationCookieName(configuration)) || null;
+}
 
 function desktopError(c, error, fallbackMessage, fallbackCode = "DESKTOP_REQUEST_FAILED") {
   if (isClerkReverificationRequired(error)) return clerkReverificationResponse(c);
@@ -218,8 +248,8 @@ export function registerDesktopRoutes(app, {
       }, 401);
     }
     const payload = await c.req.json().catch(() => ({}));
-    const browserSecret = clerkSecret(payload.browserSecret);
-    if (!browserSecret || Object.keys(payload).some((key) => key !== "browserSecret")) {
+    const browserSecret = clerkSecret(desktopAuthorizationSecret(c, authenticationConfiguration));
+    if (!browserSecret || Object.keys(payload).length > 0) {
       return c.json({
         available: false,
         code: "DESKTOP_AUTHORIZATION_INPUT_INVALID",
@@ -242,6 +272,49 @@ export function registerDesktopRoutes(app, {
     }
   });
 
+  app.post("/auth/desktop/authorizations/claim", async (c) => {
+    if (
+      authenticationConfiguration?.mode !== "clerk"
+      || !clerkDesktopAuthorizationService?.claim
+    ) {
+      return c.json({
+        available: false,
+        code: "CLERK_DESKTOP_AUTHENTICATION_UNAVAILABLE",
+        message: "Clerk desktop sign-in is not configured.",
+      }, 503);
+    }
+    const payload = await c.req.json().catch(() => ({}));
+    const browserSecret = clerkSecret(payload.browserSecret);
+    if (!browserSecret || Object.keys(payload).some((key) => key !== "browserSecret")) {
+      return c.json({
+        available: false,
+        code: "DESKTOP_AUTHORIZATION_INPUT_INVALID",
+        message: "The desktop sign-in request is invalid.",
+      }, 400);
+    }
+    try {
+      const { cookieSecret, ...result } = await clerkDesktopAuthorizationService.claim(browserSecret);
+      const maxAgeSeconds = Math.max(
+        0,
+        (new Date(result.expiresAt).getTime() - Date.now()) / 1000,
+      );
+      c.header("Cache-Control", "no-store");
+      c.header("Set-Cookie", serializeDesktopAuthorizationCookie(
+        authenticationConfiguration,
+        cookieSecret,
+        { maxAgeSeconds },
+      ));
+      return c.json({ available: true, ...result });
+    } catch (error) {
+      return desktopError(
+        c,
+        error,
+        "The desktop sign-in request could not be claimed.",
+        "DESKTOP_AUTHORIZATION_CLAIM_FAILED",
+      );
+    }
+  });
+
   app.post("/auth/desktop/authorizations/approve", async (c) => {
     const resolvedIdentity = c.get("resolvedSession") || null;
     if (!resolvedIdentity?.externalIdentity || !clerkDesktopAuthorizationService?.approve) {
@@ -252,8 +325,8 @@ export function registerDesktopRoutes(app, {
       }, 401);
     }
     const payload = await c.req.json().catch(() => ({}));
-    const browserSecret = clerkSecret(payload.browserSecret);
-    if (!browserSecret || Object.keys(payload).some((key) => key !== "browserSecret")) {
+    const browserSecret = clerkSecret(desktopAuthorizationSecret(c, authenticationConfiguration));
+    if (!browserSecret || Object.keys(payload).length > 0) {
       return c.json({
         available: false,
         code: "DESKTOP_AUTHORIZATION_INPUT_INVALID",
@@ -270,6 +343,11 @@ export function registerDesktopRoutes(app, {
         resolvedIdentity,
         c.get("authenticationMetadata") || {},
       );
+      c.header("Set-Cookie", serializeDesktopAuthorizationCookie(
+        authenticationConfiguration,
+        "",
+        { maxAgeSeconds: 0, expires: new Date(0) },
+      ));
       return c.json({ available: true, ...result });
     } catch (error) {
       return desktopError(

@@ -35,9 +35,14 @@ describe("DesktopAuthorizationPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.readSecret.mockReturnValue("b".repeat(43));
-    mocks.apiJson.mockResolvedValue({
-      requestId: "request-1",
-      licensedOrganisation: { organisationId: "org-1", displayName: "Alpha Health" },
+    mocks.apiJson.mockImplementation(async (path) => {
+      if (path === "/auth/desktop/authorizations/claim") {
+        return { requestId: "request-1" };
+      }
+      return {
+        requestId: "request-1",
+        licensedOrganisation: { organisationId: "org-1", displayName: "Alpha Health" },
+      };
     });
     mocks.reverifiedApiJson.mockResolvedValue({ approved: true });
     mocks.workforce = {
@@ -54,15 +59,19 @@ describe("DesktopAuthorizationPage", () => {
 
     expect(await screen.findByText("Alpha Health")).toBeInTheDocument();
     expect(mocks.apiJson).toHaveBeenCalledWith(
-      "/auth/desktop/authorizations/inspect",
+      "/auth/desktop/authorizations/claim",
       expect.objectContaining({ body: JSON.stringify({ browserSecret: "b".repeat(43) }) }),
+    );
+    expect(mocks.apiJson).toHaveBeenCalledWith(
+      "/auth/desktop/authorizations/inspect",
+      expect.not.objectContaining({ body: expect.anything() }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Authorise this workstation" }));
     expect(await screen.findByText("Workstation authorised")).toBeInTheDocument();
     expect(mocks.reverifiedApiJson).toHaveBeenCalledWith(
       "/auth/desktop/authorizations/approve",
-      expect.objectContaining({ body: JSON.stringify({ browserSecret: "b".repeat(43) }) }),
+      expect.not.objectContaining({ body: expect.anything() }),
     );
     expect(mocks.clearSecret).toHaveBeenCalledOnce();
   });
@@ -74,11 +83,12 @@ describe("DesktopAuthorizationPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Authorise this workstation" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Clerk verification was cancelled.");
     expect(screen.getByRole("button", { name: "Authorise this workstation" })).toBeEnabled();
-    expect(mocks.clearSecret).not.toHaveBeenCalled();
+    expect(mocks.clearSecret).toHaveBeenCalledOnce();
   });
 
   it("fails closed for invalid links and organisations that are not selected", async () => {
     mocks.readSecret.mockReturnValue(null);
+    mocks.apiJson.mockRejectedValueOnce(new Error("This desktop sign-in link is invalid."));
     const invalid = render(<DesktopAuthorizationPage />);
     expect(await screen.findByRole("alert")).toHaveTextContent("invalid");
     invalid.unmount();
@@ -86,7 +96,7 @@ describe("DesktopAuthorizationPage", () => {
     mocks.readSecret.mockReturnValue("b".repeat(43));
     mocks.workforce = { ...mocks.workforce, organisationId: null };
     render(<DesktopAuthorizationPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(mocks.signOut).toHaveBeenCalledWith({ redirectUrl: "/desktop/authorize" });
   });
 

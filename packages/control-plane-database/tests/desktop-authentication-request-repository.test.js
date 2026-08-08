@@ -53,6 +53,13 @@ test("desktop authentication requests store hashes and transition append-only ex
   assert.equal(browserRequest.approvedUserId, "user-1");
   assert.equal(pollingRequest.approvedCredentialId, "credential-1");
 
+  assert.equal(await repository.rotateAuthenticationBrowserSecret({
+    requestId: "request-1",
+    currentSecretHash: digest,
+    replacementSecretHash: "b".repeat(64),
+    claimedAt: timestamp,
+  }), true);
+
   assert.equal(await repository.approveAuthenticationRequest({
     requestId: "request-1",
     organisationId: "org-1",
@@ -68,6 +75,7 @@ test("desktop authentication requests store hashes and transition append-only ex
   assert.equal(calls[0].sql.includes("SET status = 'expired'"), true);
   assert.equal(calls[1].parameters.includes(digest), true);
   assert.equal(calls.some(({ sql }) => sql.includes("SET status = 'exchanging'")), true);
+  assert.equal(calls.some(({ sql }) => sql.includes("SET browser_secret_hash = ?")), true);
   assert.equal(calls.some(({ parameters }) => parameters?.[0] === "failed"), true);
 });
 

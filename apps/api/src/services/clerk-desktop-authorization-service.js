@@ -77,6 +77,51 @@ export function createClerkDesktopAuthorizationService({
       };
     },
 
+    async claim(browserSecret) {
+      const timestamp = now();
+      const currentSecretHash = sha256(browserSecret);
+      return controlPlaneRepositories.runInTransaction(async (repositories) => {
+        const request = await repositories.desktopEnrollment
+          .getAuthenticationRequestByBrowserHash(currentSecretHash, { forUpdate: true });
+        if (!request) {
+          throw new ControlPlaneNotFoundError(
+            "The desktop sign-in request was not found.",
+            "DESKTOP_AUTHORIZATION_NOT_FOUND",
+          );
+        }
+        if (expired(request, timestamp)) {
+          throw new ControlPlaneConflictError(
+            "The desktop sign-in request has expired.",
+            "DESKTOP_AUTHORIZATION_EXPIRED",
+          );
+        }
+        if (!["pending", "approved"].includes(request.status)) {
+          throw new ControlPlaneConflictError(
+            "The desktop sign-in request is no longer available.",
+            "DESKTOP_AUTHORIZATION_UNAVAILABLE",
+          );
+        }
+        const cookieSecret = secret(randomBytes);
+        const claimed = await repositories.desktopEnrollment.rotateAuthenticationBrowserSecret({
+          requestId: request.requestId,
+          currentSecretHash,
+          replacementSecretHash: sha256(cookieSecret),
+          claimedAt: timestamp,
+        });
+        if (!claimed) {
+          throw new ControlPlaneConflictError(
+            "The desktop sign-in request has already been claimed.",
+            "DESKTOP_AUTHORIZATION_CLAIM_CONFLICT",
+          );
+        }
+        return {
+          requestId: request.requestId,
+          cookieSecret,
+          expiresAt: new Date(request.expiresAt).toISOString(),
+        };
+      });
+    },
+
     async inspect(browserSecret, resolvedIdentity) {
       const timestamp = now();
       const request = await controlPlaneRepositories.desktopEnrollment

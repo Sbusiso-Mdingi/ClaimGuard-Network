@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   captureDesktopAuthorizationSecret,
@@ -11,6 +11,8 @@ const SECRET = "a".repeat(43);
 describe("desktop authorization URL secrets", () => {
   beforeEach(() => {
     clearDesktopAuthorizationSecret();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
     window.history.replaceState({}, "", "/");
   });
 
@@ -36,12 +38,15 @@ describe("desktop authorization URL secrets", () => {
     expect(readDesktopAuthorizationSecret()).toBeNull();
   });
 
-  it("retains the captured secret across Clerk's fragment-free redirect", () => {
+  it("keeps the secret only in memory and never writes browser storage", () => {
+    const storageSpy = vi.spyOn(Storage.prototype, "setItem");
     window.history.pushState({}, "", `/desktop/authorize#request=${SECRET}`);
     captureDesktopAuthorizationSecret();
-    window.history.replaceState({}, "", "/desktop/authorize");
 
-    expect(captureDesktopAuthorizationSecret()).toBeNull();
     expect(readDesktopAuthorizationSecret()).toBe(SECRET);
+    expect(storageSpy).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    storageSpy.mockRestore();
   });
 });

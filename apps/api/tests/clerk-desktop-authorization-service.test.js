@@ -112,6 +112,31 @@ test("desktop inspection exposes only the licensed organisation and effective st
   );
 });
 
+test("desktop browser claims validate the one-time request before HttpOnly handoff", async () => {
+  const { service } = serviceHarness({
+    desktopEnrollment: {
+      async getAuthenticationRequestByBrowserHash() {
+        return {
+          requestId: "request-1",
+          organisationId: "org-1",
+          expiresAt: "2026-08-08T10:10:00.000Z",
+          status: "pending",
+        };
+      },
+      async rotateAuthenticationBrowserSecret(input) {
+        assert.notEqual(input.replacementSecretHash, input.currentSecretHash);
+        return true;
+      },
+    },
+  });
+
+  assert.deepEqual(await service.claim("browser-secret"), {
+    requestId: "request-1",
+    cookieSecret: Buffer.alloc(32, 1).toString("base64url"),
+    expiresAt: "2026-08-08T10:10:00.000Z",
+  });
+});
+
 test("desktop approval atomically records the Clerk workforce identity and audit", async () => {
   let approved = false;
   const { service, calls } = serviceHarness({

@@ -1,4 +1,3 @@
-const STORAGE_KEY = "sequrin.desktopAuthorizationRequest";
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 let capturedSecret = null;
@@ -28,7 +27,6 @@ export function captureDesktopAuthorizationSecret(windowObject = window) {
   }
 
   capturedSecret = secret;
-  try { windowObject.sessionStorage.setItem(STORAGE_KEY, secret); } catch { /* memory fallback */ }
   windowObject.history.replaceState(
     windowObject.history.state,
     "",
@@ -38,16 +36,11 @@ export function captureDesktopAuthorizationSecret(windowObject = window) {
 }
 
 export function readDesktopAuthorizationSecret(windowObject = window) {
-  if (capturedSecret) return capturedSecret;
-  try {
-    capturedSecret = validSecret(windowObject.sessionStorage.getItem(STORAGE_KEY));
-  } catch {
-    capturedSecret = null;
-  }
+  void windowObject;
   return capturedSecret;
 }
 
 export function clearDesktopAuthorizationSecret(windowObject = window) {
+  void windowObject;
   capturedSecret = null;
-  try { windowObject.sessionStorage.removeItem(STORAGE_KEY); } catch { /* already cleared */ }
 }
