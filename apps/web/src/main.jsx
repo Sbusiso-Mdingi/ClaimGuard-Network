@@ -4,9 +4,12 @@ import * as Sentry from "@sentry/react";
 import { ClerkProvider } from "@clerk/react";
 import App from "./AppRoot";
 import { ClerkWorkforceIdentityBridge } from "./context/WorkforceIdentityContext";
+import { captureDesktopAuthorizationSecret } from "./lib/desktopAuthorizationSecret";
 import { scrubSentryBreadcrumb, scrubSentryEvent } from "./lib/sentryScrub";
 import "./styles.css";
 import "./workspace-polish.css";
+
+captureDesktopAuthorizationSecret();
 
 if (window.__CLAIMGUARD_WEB_SENTRY_READY__ !== true) {
   window.__CLAIMGUARD_WEB_SENTRY_READY__ = true;

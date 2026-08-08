@@ -116,6 +116,123 @@ test("desktop activation and session routes preserve one fixed licensed organisa
   assert.deepEqual(loggedOut, [resolved]);
 });
 
+test("Clerk desktop routes start, inspect, approve, and exchange a device-bound session", async () => {
+  const calls = [];
+  let pending = true;
+  const result = sessionResult();
+  result.actor.credential.authenticationProvider = "oidc";
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("desktopDevice", deviceContext());
+    c.set("resolvedSession", {
+      ...result,
+      externalIdentity: { clerkUserId: "clerk-user-1", reverified: true },
+    });
+    c.set("authenticationMetadata", { correlationId: "request-1" });
+    await next();
+  });
+  registerDesktopRoutes(app, {
+    authenticationConfiguration: {
+      ...authenticationConfiguration,
+      mode: "clerk",
+    },
+    authenticationService: {
+      async requireRecentVerification(resolved, metadata) {
+        calls.push(["reverify", resolved, metadata]);
+      },
+      async logout(resolved) { calls.push(["logout", resolved]); },
+    },
+    desktopEnrollmentService: {
+      async renewEnrollment(device) {
+        calls.push(["renew", device]);
+        return { signedEnrollment: "renewed" };
+      },
+    },
+    clerkDesktopAuthorizationService: {
+      async start(device, metadata) {
+        calls.push(["start", device, metadata]);
+        return {
+          requestId: "request-1",
+          pollingSecret: "p".repeat(43),
+          verificationUrl: "https://work.sequrin.example/desktop/authorize#request=secret",
+          expiresAt: "2026-08-08T10:10:00.000Z",
+          pollingIntervalSeconds: 2,
+        };
+      },
+      async inspect(secret, resolved) {
+        calls.push(["inspect", secret, resolved]);
+        return {
+          requestId: "request-1",
+          status: "pending",
+          licensedOrganisation: { organisationId: "org-alpha", displayName: "Alpha Medical" },
+        };
+      },
+      async approve(secret, resolved, metadata) {
+        calls.push(["approve", secret, resolved, metadata]);
+        return { approved: true, requestId: "request-1" };
+      },
+      async poll(secret, device, metadata) {
+        calls.push(["poll", secret, device, metadata]);
+        if (pending) return { pending: true, expiresAt: "2026-08-08T10:10:00.000Z" };
+        return { pending: false, result };
+      },
+    },
+  });
+
+  assert.equal((await app.request("/desktop/auth/login", { method: "POST" })).status, 410);
+  assert.equal((await app.request("/desktop/auth/clerk/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ organisationId: "org-beta" }),
+  })).status, 400);
+  const started = await app.request("/desktop/auth/clerk/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(started.status, 201);
+  assert.equal((await started.json()).requestId, "request-1");
+
+  const browserSecret = "b".repeat(43);
+  assert.equal((await app.request("/auth/desktop/authorizations/inspect", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ browserSecret: "invalid" }),
+  })).status, 400);
+  const inspected = await app.request("/auth/desktop/authorizations/inspect", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ browserSecret }),
+  });
+  assert.equal(inspected.status, 200);
+  assert.equal((await inspected.json()).licensedOrganisation.organisationId, "org-alpha");
+
+  const approved = await app.request("/auth/desktop/authorizations/approve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ browserSecret }),
+  });
+  assert.equal(approved.status, 200);
+  assert.equal((await approved.json()).approved, true);
+  assert.equal(calls.filter(([kind]) => kind === "reverify").length, 1);
+
+  const pollingSecret = "p".repeat(43);
+  const pollRequest = () => app.request("/desktop/auth/clerk/poll", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pollingSecret }),
+  });
+  const pendingResponse = await pollRequest();
+  assert.equal(pendingResponse.status, 202);
+  assert.equal((await pendingResponse.json()).status, "pending");
+
+  pending = false;
+  const exchanged = await pollRequest();
+  assert.equal(exchanged.status, 200);
+  assert.match(exchanged.headers.get("set-cookie"), /claim_guard_session=session-secret/);
+  assert.equal((await exchanged.json()).enrollment.signedEnrollment, "renewed");
+});
+
 test("desktop data routes cover bounded sync, cached detail, and optimistic concurrency", async () => {
   const syncInputs = [];
   const updateInputs = [];

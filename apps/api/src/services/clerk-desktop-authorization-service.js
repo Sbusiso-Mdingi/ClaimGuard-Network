@@ -67,7 +67,7 @@ export function createClerkDesktopAuthorizationService({
         return result;
       });
       const verificationUrl = new URL("/desktop/authorize", authorizationOrigin);
-      verificationUrl.searchParams.set("request", browserSecret);
+      verificationUrl.hash = new URLSearchParams({ request: browserSecret }).toString();
       return {
         requestId: created.requestId,
         pollingSecret,
