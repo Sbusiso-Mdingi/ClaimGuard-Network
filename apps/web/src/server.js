@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { proxyApiRequest, proxyClerkFrontendApiRequest } from "./proxy.js";
+import { injectRuntimeConfiguration } from "./runtime-configuration.js";
 
 const port = Number(process.env.PORT || 3002);
 const srcRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -32,19 +33,6 @@ const mimeTypes = {
   ".svg": "image/svg+xml",
   ".json": "application/json",
 };
-
-function injectRuntimeConfiguration(content) {
-  const scriptString = (value) => JSON.stringify(String(value || "")).slice(1, -1);
-  return content
-    .replaceAll("__SENTRY_DSN_WEB__", scriptString(process.env.SENTRY_DSN_WEB || ""))
-    .replaceAll("__NODE_ENV__", scriptString(process.env.NODE_ENV || "development"))
-    .replaceAll("__CLAIMGUARD_RELEASE__", scriptString(process.env.CLAIMGUARD_RELEASE || ""))
-    .replaceAll("__CLAIMGUARD_API_BASE_URL__", scriptString(apiBaseUrl))
-    .replaceAll("__PUBLIC_ORGANISATION_URL_SCHEME__", scriptString(process.env.PUBLIC_ORGANISATION_URL_SCHEME || "https"))
-    .replaceAll("__PUBLIC_ORGANISATION_HOST__", scriptString(process.env.PUBLIC_ORGANISATION_HOST || "localhost:3002"))
-    .replaceAll("__CLERK_PUBLISHABLE_KEY__", scriptString(process.env.CLERK_PUBLISHABLE_KEY || ""))
-    .replaceAll("__CLERK_PROXY_URL__", scriptString(clerkProxyUrl));
-}
 
 const server = http.createServer(async (req, res) => {
   if (req.url === "/__clerk" || req.url?.startsWith("/__clerk/")) {
@@ -84,7 +72,7 @@ const server = http.createServer(async (req, res) => {
   try {
     let content = await readFile(filePath, "utf8");
     const isHtml = extname(filePath) === ".html";
-    if (isHtml) content = injectRuntimeConfiguration(content);
+    if (isHtml) content = injectRuntimeConfiguration(content, { apiBaseUrl, clerkProxyUrl });
     const contentType = mimeTypes[extname(filePath)] || "application/octet-stream";
     const cacheControl = isHtml ? "no-cache, no-store, must-revalidate" : "public, max-age=31536000, immutable";
     res.writeHead(200, { "content-type": contentType, "cache-control": cacheControl });
@@ -92,7 +80,10 @@ const server = http.createServer(async (req, res) => {
   } catch {
     try {
       const indexPath = join(root, "index.html");
-      const indexContent = injectRuntimeConfiguration(await readFile(indexPath, "utf8"));
+      const indexContent = injectRuntimeConfiguration(
+        await readFile(indexPath, "utf8"),
+        { apiBaseUrl, clerkProxyUrl },
+      );
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache, no-store, must-revalidate" });
       res.end(indexContent);
     } catch {
