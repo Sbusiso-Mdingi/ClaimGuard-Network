@@ -431,14 +431,8 @@ function createControlPlaneHarness({
   };
 
   const authenticationService = {
-    async reauthenticate(_resolvedSession, password) {
-      reauthenticationAttempts.push(password);
-      if (password !== "correct-password") {
-        const error = new Error("The credentials could not be verified.");
-        error.status = 401;
-        error.code = "AUTHENTICATION_FAILED";
-        throw error;
-      }
+    async requireRecentVerification(resolvedIdentity) {
+      reauthenticationAttempts.push(resolvedIdentity);
       return {
         reauthenticatedAt: new Date("2026-07-29T12:00:00.000Z"),
       };
@@ -593,7 +587,6 @@ test("release governance exposes verified provenance and enforces reauthenticate
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        password: "correct-password",
         confirmation: "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
         reason: "Promote the release after CI and security review.",
       }),
@@ -616,7 +609,6 @@ test("release governance exposes verified provenance and enforces reauthenticate
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        password: "correct-password",
         confirmation: "APPROVE 44444444",
       }),
     },
@@ -634,7 +626,6 @@ test("release governance exposes verified provenance and enforces reauthenticate
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        password: "correct-password",
         confirmation: "APPROVE 44444444",
       }),
     },
@@ -665,7 +656,6 @@ test("release promotion rolls back when its permanent audit cannot be stored", a
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        password: "correct-password",
         confirmation: "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
         reason: "Promote the release after CI and security review.",
       }),

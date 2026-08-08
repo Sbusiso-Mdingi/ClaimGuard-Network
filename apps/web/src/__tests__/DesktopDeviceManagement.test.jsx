@@ -3,7 +3,14 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("../lib/apiClient", () => ({ apiJson: vi.fn() }));
+vi.mock("../lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal()),
+  apiJson: vi.fn(),
+}));
+vi.mock("../hooks/useReverifiedApiJson", async () => {
+  const { apiJson } = await import("../lib/apiClient");
+  return { useReverifiedApiJson: () => apiJson };
+});
 vi.mock("../context/RoleContext", () => ({
   useRole: () => ({ identity: { organisationId: "org-alpha" } }),
 }));
@@ -70,7 +77,7 @@ describe("DesktopDeviceManagement", () => {
     await waitFor(() => expect(apiJson).toHaveBeenCalledTimes(2));
   });
 
-  test("issues a one-time key with step-up credentials and copies it", async () => {
+  test("issues a one-time key with Clerk re-verification and copies it", async () => {
     apiJson.mockImplementation((path, options) => {
       if (options?.method === "POST") {
         return Promise.resolve({
@@ -97,7 +104,6 @@ describe("DesktopDeviceManagement", () => {
     await user.type(screen.getByLabelText("Expires in hours"), "48");
     await user.clear(screen.getByLabelText("Maximum uses"));
     await user.type(screen.getByLabelText("Maximum uses"), "2");
-    await user.type(screen.getByLabelText("Current password"), "StrongPass123!");
     await user.type(screen.getByLabelText("Confirmation"), "ISSUE DESKTOP KEY");
     await user.click(screen.getByRole("button", { name: "Issue activation key" }));
 
@@ -108,13 +114,12 @@ describe("DesktopDeviceManagement", () => {
         body: JSON.stringify({
           expiresInHours: 48,
           maximumUses: 2,
-          password: "StrongPass123!",
           confirmation: "ISSUE DESKTOP KEY",
         }),
       },
     ));
     expect(await screen.findByTestId("one-time-activation-key")).toHaveTextContent("CG-ACTIVATION-ONE-TIME");
-    expect(screen.getByLabelText("Current password")).toHaveValue("");
+    expect(screen.queryByLabelText("Current password")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Copy key/i }));
     expect(writeText).toHaveBeenCalledWith("CG-ACTIVATION-ONE-TIME");
   });
@@ -129,27 +134,27 @@ describe("DesktopDeviceManagement", () => {
     await user.click(screen.getByRole("button", { name: "Revoke device" }));
     expect(apiJson).not.toHaveBeenCalledWith(expect.stringContaining("/revoke"), expect.anything());
 
-    window.prompt.mockReturnValueOnce("StrongPass123!").mockReturnValueOnce("wrong confirmation");
+    window.prompt.mockReturnValueOnce("wrong confirmation");
     await user.click(screen.getByRole("button", { name: "Revoke unused key" }));
     expect(apiJson).not.toHaveBeenCalledWith(expect.stringContaining("/revoke"), expect.anything());
 
-    window.prompt.mockReturnValueOnce("StrongPass123!").mockReturnValueOnce("REVOKE DEVICE device-1");
+    window.prompt.mockReturnValueOnce("REVOKE DEVICE device-1");
     await user.click(screen.getByRole("button", { name: "Revoke device" }));
     await waitFor(() => expect(apiJson).toHaveBeenCalledWith(
       "/admin/desktop/organisations/org-alpha/devices/device-1/revoke",
       {
         method: "POST",
-        body: JSON.stringify({ password: "StrongPass123!", confirmation: "REVOKE DEVICE device-1" }),
+        body: JSON.stringify({ confirmation: "REVOKE DEVICE device-1" }),
       },
     ));
 
-    window.prompt.mockReturnValueOnce("StrongPass123!").mockReturnValueOnce("REVOKE KEY key-1");
+    window.prompt.mockReturnValueOnce("REVOKE KEY key-1");
     await user.click(screen.getByRole("button", { name: "Revoke unused key" }));
     await waitFor(() => expect(apiJson).toHaveBeenCalledWith(
       "/admin/desktop/organisations/org-alpha/activation-keys/key-1/revoke",
       {
         method: "POST",
-        body: JSON.stringify({ password: "StrongPass123!", confirmation: "REVOKE KEY key-1" }),
+        body: JSON.stringify({ confirmation: "REVOKE KEY key-1" }),
       },
     ));
   });
@@ -169,7 +174,6 @@ describe("DesktopDeviceManagement", () => {
     render(<DesktopDeviceManagement />);
     const user = userEvent.setup();
     await screen.findByText("WINDOWS-ALPHA");
-    await user.type(screen.getByLabelText("Current password"), "StrongPass123!");
     await user.type(screen.getByLabelText("Confirmation"), "ISSUE DESKTOP KEY");
     await user.click(screen.getByRole("button", { name: "Issue activation key" }));
     expect(await screen.findByText("Activation key rejected")).toBeInTheDocument();
@@ -223,7 +227,6 @@ describe("DesktopDeviceManagement", () => {
     await user.clear(screen.getByLabelText("Licensed computers"));
     await user.type(screen.getByLabelText("Licensed computers"), "4");
     expect(screen.getByText("This will put the scheme over its allowance")).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Current password"), "StrongPass123!");
     await user.type(screen.getByLabelText("Confirmation"), "SET DESKTOP LIMIT 4");
     await user.click(screen.getByRole("button", { name: "Update licensed allowance" }));
 
@@ -233,7 +236,6 @@ describe("DesktopDeviceManagement", () => {
         method: "PUT",
         body: JSON.stringify({
           deviceLimit: 4,
-          password: "StrongPass123!",
           confirmation: "SET DESKTOP LIMIT 4",
         }),
       },
@@ -241,6 +243,6 @@ describe("DesktopDeviceManagement", () => {
     expect(await screen.findByText("Licensed desktop allowance updated and audited.")).toBeInTheDocument();
     expect(screen.getByText("Scheme is over its licensed allowance")).toBeInTheDocument();
     expect(screen.getByText(/7 → 4 licensed computers/i)).toBeInTheDocument();
-    expect(screen.getByLabelText("Current password")).toHaveValue("");
+    expect(screen.queryByLabelText("Current password")).not.toBeInTheDocument();
   });
 });

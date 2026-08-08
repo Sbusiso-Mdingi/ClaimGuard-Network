@@ -140,6 +140,109 @@ test("integration credentials are resolved by hash and raw bearer material is ne
   assert.equal(calls.some((entry) => entry.includes(token)), false);
 });
 
+function clerkFixture(options = {}) {
+  const f = fixture(options);
+  Object.assign(f.credential, {
+    authenticationProvider: "oidc",
+    externalSubject: "clerk-user-1",
+  });
+  f.repository.getOrganisationByClerkId = async (clerkOrganisationId) => (
+    clerkOrganisationId === "clerk-org-1"
+      ? { ...f.organisation, mappingStatus: "active" }
+      : null
+  );
+  f.repository.getExternalCredential = async ({ organisationId, externalSubject }) => (
+    organisationId === "org-1" && externalSubject === "clerk-user-1"
+      ? f.credential
+      : null
+  );
+  return f;
+}
+
+test("Clerk identities resolve internal authority and issue opaque desktop sessions", async () => {
+  const f = clerkFixture();
+
+  const resolved = await f.service.resolveExternalIdentity({
+    externalOrganisationId: "clerk-org-1",
+    externalSubject: "clerk-user-1",
+  }, metadata);
+  assert.equal(resolved.actor.user.userId, "user-1");
+  assert.equal(resolved.actor.organisation.organisationId, "org-1");
+  assert.deepEqual(resolved.actor.permissions, ["investigations.manage", "case.review_evidence"]);
+
+  const session = await f.service.createExternalSession({
+    organisationId: "org-1",
+    userId: "user-1",
+    credentialId: "credential-1",
+  }, metadata);
+  const stored = f.sessions.get(session.session.sessionId);
+  assert.equal(stored.clientMetadata.source, "clerk_desktop_authorization");
+  assert.equal(stored.hashedBearerSecret, sha256(session.bearerSecret));
+  assert.equal(JSON.stringify(stored).includes(session.bearerSecret), false);
+  assert.equal(session.actor.credential.authenticationProvider, "oidc");
+  assert.deepEqual(
+    f.events.slice(-2).map((event) => [event.eventType, event.result]),
+    [
+      ["external_authentication_success", "success"],
+    ],
+  );
+});
+
+test("Clerk identity and desktop session resolution fail closed for unlinked authority", async () => {
+  const unlinked = clerkFixture();
+  unlinked.repository.getExternalCredential = async () => null;
+  await assert.rejects(
+    unlinked.service.resolveExternalIdentity({
+      externalOrganisationId: "clerk-org-1",
+      externalSubject: "unlinked",
+    }, metadata),
+    (error) => error.code === "AUTHENTICATION_FAILED",
+  );
+  assert.equal(unlinked.events.at(-1).failureCategory, "external_identity_unlinked");
+
+  const wrongCredential = clerkFixture();
+  wrongCredential.credential.organisationId = "org-2";
+  await assert.rejects(
+    wrongCredential.service.createExternalSession({
+      organisationId: "org-1",
+      userId: "user-1",
+      credentialId: "credential-1",
+    }, metadata),
+    (error) => error.code === "AUTHENTICATION_FAILED",
+  );
+  assert.equal(wrongCredential.events.at(-1).failureCategory, "external_credential_inactive");
+});
+
+test("Clerk strict reverification is audited before privileged actions", async () => {
+  const f = clerkFixture();
+  const resolvedIdentity = {
+    actor: {
+      organisation: { organisationId: "org-1" },
+      user: { userId: "user-1" },
+      credential: { credentialId: "credential-1" },
+    },
+    externalIdentity: { reverified: true },
+  };
+
+  const verified = await f.service.requireRecentVerification(resolvedIdentity, metadata);
+  assert.equal(verified.userId, "user-1");
+  assert.equal(verified.credentialId, "credential-1");
+  assert.equal(verified.reauthenticatedAt.toISOString(), "2026-07-16T08:00:00.000Z");
+
+  await assert.rejects(
+    f.service.requireRecentVerification({ ...resolvedIdentity, externalIdentity: { reverified: false } }, metadata),
+    (error) => error.code === "RECENT_CLERK_VERIFICATION_REQUIRED"
+      && error.clerkReverification === "strict",
+  );
+  assert.deepEqual(
+    f.events.slice(-2).map((event) => [event.eventType, event.result]),
+    [
+      ["reauthentication_success", "success"],
+      ["reauthentication_failure", "failure"],
+    ],
+  );
+});
+
 test("Argon2id hashes verify correctly, use unique salts, and support rehash detection", async () => {
   const first = await hashPassword("correct horse battery staple");
   const second = await hashPassword("correct horse battery staple");

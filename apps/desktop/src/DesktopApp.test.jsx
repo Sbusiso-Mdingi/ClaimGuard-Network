@@ -55,27 +55,25 @@ describe("Sequrin desktop organisation lock", () => {
     render(<DesktopApp />);
     expect(await screen.findByTestId("licensed-organisation")).toHaveTextContent("Alpha Medical");
     expect(screen.queryByLabelText(/^Organisation$/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Username")).toBeInTheDocument();
-    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with Clerk" })).toBeInTheDocument();
   });
 
-  it("login sends only user credentials and never an organisation value", async () => {
+  it("login invokes only the Clerk system-browser command and sends no credentials", async () => {
     const calls = [];
     setDesktopInvokeForTests(async (command, args) => {
       calls.push([command, args]);
       if (command === "desktop_status") return baseStatus();
-      if (command === "desktop_login") return baseStatus({ authenticated: true, cache: { freshness: "Fresh", claims: [], dashboard: null } });
+      if (command === "desktop_clerk_login") return baseStatus({ authenticated: true, cache: { freshness: "Fresh", claims: [], dashboard: null } });
       if (command === "synchronize_desktop") return baseStatus({ authenticated: true, cache: { freshness: "Fresh", claims: [], dashboard: null } });
       throw new Error(`unexpected ${command}`);
     });
     render(<DesktopApp />);
-    await userEvent.type(await screen.findByLabelText("Username"), "analyst");
-    await userEvent.type(screen.getByLabelText("Password"), "secret-password");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    await waitFor(() => expect(calls.some(([command]) => command === "desktop_login")).toBe(true));
-    const loginCall = calls.find(([command]) => command === "desktop_login");
-    expect(loginCall[1]).toEqual({ username: "analyst", password: "secret-password" });
-    expect(JSON.stringify(loginCall[1])).not.toMatch(/organisation|tenant|origin/i);
+    await userEvent.click(await screen.findByRole("button", { name: "Continue with Clerk" }));
+    await waitFor(() => expect(calls.some(([command]) => command === "desktop_clerk_login")).toBe(true));
+    const loginCall = calls.find(([command]) => command === "desktop_clerk_login");
+    expect(loginCall[1]).toBeUndefined();
   });
 
   it("shows a stale-authority reauthentication message when initial status resolution is stale", async () => {
@@ -88,8 +86,8 @@ describe("Sequrin desktop organisation lock", () => {
       throw new Error(`unexpected ${command}`);
     });
     render(<DesktopApp />);
-    expect(await screen.findByText(/your server-side access changed\. sign in again to refresh this workstation's authority\./i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByText(/your server-side access changed\. sign in again to continue with refreshed authority\./i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with Clerk" })).toBeInTheDocument();
   });
 
   it("locks to reauthentication with a stale-authority message when login authority is stale", async () => {
@@ -97,7 +95,7 @@ describe("Sequrin desktop organisation lock", () => {
     setDesktopInvokeForTests(async (command, args) => {
       calls.push([command, args]);
       if (command === "desktop_status") return baseStatus();
-      if (command === "desktop_login") {
+      if (command === "desktop_clerk_login") {
         const error = new Error("The session authorization version is stale.");
         error.code = "ACCESS_AUTHORIZATION_VERSION_STALE";
         throw error;
@@ -105,11 +103,9 @@ describe("Sequrin desktop organisation lock", () => {
       throw new Error(`unexpected ${command}`);
     });
     render(<DesktopApp />);
-    await userEvent.type(await screen.findByLabelText("Username"), "analyst");
-    await userEvent.type(screen.getByLabelText("Password"), "secret-password");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByText(/your server-side access changed\. sign in again to refresh this workstation's authority\./i)).toBeInTheDocument();
-    expect(calls.some(([command]) => command === "desktop_login")).toBe(true);
+    await userEvent.click(await screen.findByRole("button", { name: "Continue with Clerk" }));
+    expect(await screen.findByText(/your server-side access changed\. sign in again to continue with refreshed authority\./i)).toBeInTheDocument();
+    expect(calls.some(([command]) => command === "desktop_clerk_login")).toBe(true);
   });
 });
 

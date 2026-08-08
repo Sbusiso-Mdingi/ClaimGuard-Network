@@ -70,17 +70,13 @@ function ActivationScreen({ onActivated }) {
 }
 
 function LoginScreen({ status, onLogin, resetError }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit(event) {
-    event.preventDefault();
+  async function submit() {
     setSubmitting(true);
     resetError();
     try {
-      await onLogin(username, password);
-      setPassword("");
+      await onLogin();
     } finally {
       setSubmitting(false);
     }
@@ -88,7 +84,7 @@ function LoginScreen({ status, onLogin, resetError }) {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-5 text-foreground">
-      <Card className="w-full max-w-md"><CardHeader><Brand /><CardTitle className="pt-6 font-display text-2xl">Sign in to the licensed organisation</CardTitle><CardDescription>User authentication remains separate from device enrollment.</CardDescription></CardHeader><CardContent><div className="mb-5 rounded-xl border border-primary/20 bg-primary/5 p-4"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Licensed to</p><p className="mt-1 font-display text-lg font-semibold" data-testid="licensed-organisation">{status.enrollment?.organisationDisplayName}</p></div><form className="space-y-4" onSubmit={submit}><label className="grid gap-2 text-sm font-medium">Username<Input aria-label="Username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label><label className="grid gap-2 text-sm font-medium">Password<Input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>{status.error ? <p role="alert" className="text-sm text-destructive">{status.error}</p> : null}{status.lockReason === "authorization_version_stale" ? <p role="alert" className="flex gap-2 text-sm text-destructive"><WifiOff className="h-4 w-4 shrink-0" />Your server-side access changed. Sign in again to refresh this workstation&apos;s authority.</p> : null}{status.lockReason === "offline_grace_expired" ? <p role="alert" className="flex gap-2 text-sm text-destructive"><WifiOff className="h-4 w-4 shrink-0" />Cached scheme data is locked until this device reconnects and validates its enrollment.</p> : null}<Button type="submit" className="w-full" disabled={submitting}>{submitting ? "Signing in…" : "Sign in"}</Button></form></CardContent></Card>
+      <Card className="w-full max-w-md"><CardHeader><Brand /><CardTitle className="pt-6 font-display text-2xl">Sign in to the licensed organisation</CardTitle><CardDescription>Sequrin opens your system browser for Clerk workforce authentication. No account password is entered or stored in the desktop app.</CardDescription></CardHeader><CardContent><div className="mb-5 rounded-xl border border-primary/20 bg-primary/5 p-4"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Licensed to</p><p className="mt-1 font-display text-lg font-semibold" data-testid="licensed-organisation">{status.enrollment?.organisationDisplayName}</p></div><div className="space-y-4">{status.error ? <p role="alert" className="text-sm text-destructive">{status.error}</p> : null}{status.lockReason === "authorization_version_stale" ? <p role="alert" className="flex gap-2 text-sm text-destructive"><WifiOff className="h-4 w-4 shrink-0" />Your server-side access changed. Sign in again to continue with refreshed authority.</p> : null}{status.lockReason === "offline_grace_expired" ? <p role="alert" className="flex gap-2 text-sm text-destructive"><WifiOff className="h-4 w-4 shrink-0" />Cached scheme data is locked until this device reconnects and validates its enrollment.</p> : null}<Button type="button" className="w-full" disabled={submitting} onClick={submit}>{submitting ? "Waiting for browser approval…" : "Continue with Clerk"}</Button><p className="text-center text-xs leading-5 text-muted-foreground">Use the invited work account for this organisation. Google, GitHub, and other consumer sign-in methods are not accepted.</p></div></CardContent></Card>
     </main>
   );
 }
@@ -119,9 +115,9 @@ export function DesktopApp() {
     }));
   }, []);
 
-  const login = useCallback(async (username, password) => {
+  const login = useCallback(async () => {
     try {
-      setStatus(await desktopBridge.login(username, password));
+      setStatus(await desktopBridge.login());
     } catch (error) {
       if (error?.code === "ACCESS_AUTHORIZATION_VERSION_STALE") {
         setStatus((previous) => staleAuthorityStatus(previous));

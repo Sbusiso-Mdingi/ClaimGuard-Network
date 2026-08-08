@@ -99,7 +99,7 @@ Mitigations:
 
 - unbounded query/page sizes;
 - heap exhaustion from large transforms;
-- login throttling bypass;
+- authentication or invitation throttling bypass;
 - repeated expensive requests;
 - worker saturation.
 

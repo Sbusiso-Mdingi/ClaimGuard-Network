@@ -51,6 +51,7 @@ function mapCredential(row) {
   return {
     credentialId: row.credential_id, userId: row.user_id, organisationId: row.organisation_id,
     authenticationProvider: row.authentication_provider, normalizedUsername: row.normalized_username,
+    externalSubject: row.external_subject || null,
     passwordHash: row.password_hash || null, passwordAlgorithm: row.password_algorithm || null,
     passwordParameters: jsonValue(row.password_parameters), passwordVersion: Number(row.password_version || 0),
     status: row.status, failedAttemptCount: Number(row.failed_attempt_count || 0), lockedUntil: row.locked_until || null,
@@ -110,6 +111,48 @@ export function createAuthenticationRepository(defaultExecutor) {
         [organisationId, normalizeUsername(username)],
       );
       return mapCredential(rows?.[0]);
+    },
+
+    async getExternalCredential(
+      { organisationId, authenticationProvider = "oidc", externalSubject },
+      { executor } = {},
+    ) {
+      if (typeof externalSubject !== "string" || !externalSubject.trim()) return null;
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT * FROM credential_identities
+         WHERE organisation_id = ?
+           AND authentication_provider = ?
+           AND external_subject = ?
+         LIMIT 1`,
+        [organisationId, authenticationProvider, externalSubject.trim()],
+      );
+      return mapCredential(rows?.[0]);
+    },
+
+    async getOrganisationByClerkId(clerkOrganisationId, { executor } = {}) {
+      if (typeof clerkOrganisationId !== "string" || !clerkOrganisationId.trim()) return null;
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT o.organisation_id, o.display_name, o.canonical_slug, o.organisation_type,
+                o.deployment_class, o.status AS organisation_status, o.activation_state,
+                m.clerk_organisation_id, m.status AS mapping_status
+         FROM clerk_organisation_mappings m
+         JOIN organisations o ON o.organisation_id = m.organisation_id
+         WHERE m.clerk_organisation_id = ?
+         LIMIT 1`,
+        [clerkOrganisationId.trim()],
+      );
+      const row = rows?.[0];
+      if (!row) return null;
+      return {
+        ...mapOrganisation({
+          ...row,
+          matched_slug: row.canonical_slug,
+          slug_type: "canonical",
+          slug_status: "active",
+        }),
+        clerkOrganisationId: row.clerk_organisation_id,
+        mappingStatus: row.mapping_status,
+      };
     },
 
     async getCredentialById(credentialId, { executor } = {}) {

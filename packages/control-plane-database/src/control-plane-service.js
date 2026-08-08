@@ -51,9 +51,9 @@ function invitationType(row) {
 }
 
 function invitationRoleKey(row) {
-  return invitationType(row) === ADMIN_INVITATION_TYPES.PLATFORM
+  return row?.role_key || (invitationType(row) === ADMIN_INVITATION_TYPES.PLATFORM
     ? "platform_administrator"
-    : "scheme_administrator";
+    : "scheme_administrator");
 }
 
 function mapSafeInvitation(row) {
@@ -67,6 +67,7 @@ function mapSafeInvitation(row) {
     invitationId: row.invitation_id,
     organisationId: row.organisation_id,
     invitationType: invitationType(row),
+    roleKey: invitationRoleKey(row),
     email: row.email,
     status: effectiveStatus,
     invitedBy: row.invited_by || null,
@@ -76,6 +77,8 @@ function mapSafeInvitation(row) {
     consumedByUserId: row.consumed_by_user_id || null,
     revokedAt: row.revoked_at || null,
     revokedBy: row.revoked_by || null,
+    externalIdentityProvider: row.external_identity_provider || null,
+    externalInvitationId: row.external_invitation_id || null,
   };
 }
 
@@ -532,7 +535,13 @@ export function createControlPlaneService({ pool, repositories }) {
       });
     },
 
-    async createAdminInvitation({ organisationId, email, invitedBy = null, expiresInHours = 72 }, actor) {
+    async createAdminInvitation({
+      organisationId,
+      email,
+      roleKey = "scheme_administrator",
+      invitedBy = null,
+      expiresInHours = 72,
+    }, actor) {
       return withControlPlaneTransaction(pool, async (executor) => {
         const organisation = await repositories.organisations.getById(organisationId, { executor });
         if (!organisation || organisation.organisationType !== "medical_scheme") {
@@ -543,6 +552,13 @@ export function createControlPlaneService({ pool, repositories }) {
         }
 
         const normalizedEmail = normalizeInvitationEmail(email);
+        const role = await repositories.identity.resolveRole(roleKey, { executor });
+        if (!role || role.organisationScope !== "medical_scheme") {
+          throw new ControlPlaneValidationError(
+            "The invited workforce role is not assignable to a medical scheme.",
+            "WORKFORCE_INVITATION_ROLE_INVALID",
+          );
+        }
         const rawToken = crypto.randomBytes(32).toString("base64url");
         const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
         const invitationId = crypto.randomUUID();
@@ -550,10 +566,10 @@ export function createControlPlaneService({ pool, repositories }) {
 
         await executor.execute(
           `INSERT INTO admin_invitations
-            (invitation_id, organisation_id, email, token_hash, invitation_type,
+            (invitation_id, organisation_id, email, token_hash, invitation_type, role_key,
              status, invited_by, expires_at)
-           VALUES (?, ?, ?, ?, 'scheme_administrator', 'pending', ?, ?)`,
-          [invitationId, organisationId, normalizedEmail, tokenHash, invitedBy, expiresAt],
+           VALUES (?, ?, ?, ?, 'scheme_administrator', ?, 'pending', ?, ?)`,
+          [invitationId, organisationId, normalizedEmail, tokenHash, role.roleKey, invitedBy, expiresAt],
         );
 
         await audit(executor, {
@@ -563,6 +579,7 @@ export function createControlPlaneService({ pool, repositories }) {
           afterSummary: {
             email: normalizedEmail,
             invitationType: ADMIN_INVITATION_TYPES.SCHEME,
+            roleKey: role.roleKey,
             expiresAt: expiresAt.toISOString(),
           },
           correlationId: actor?.correlationId || null, outcome: "success",
@@ -574,6 +591,7 @@ export function createControlPlaneService({ pool, repositories }) {
           token: rawToken,
           email: normalizedEmail,
           invitationType: ADMIN_INVITATION_TYPES.SCHEME,
+          roleKey: role.roleKey,
           expiresAt,
         };
       });
@@ -690,9 +708,9 @@ export function createControlPlaneService({ pool, repositories }) {
         const expiresAt = new Date(Date.now() + lifetimeHours * 3600_000);
         await executor.execute(
           `INSERT INTO admin_invitations
-            (invitation_id, organisation_id, email, token_hash, invitation_type,
+            (invitation_id, organisation_id, email, token_hash, invitation_type, role_key,
              status, invited_by, expires_at)
-           VALUES (?, ?, ?, ?, 'platform_administrator', 'pending', ?, ?)`,
+           VALUES (?, ?, ?, ?, 'platform_administrator', 'platform_administrator', 'pending', ?, ?)`,
           [
             invitationId,
             organisation.organisationId,
@@ -750,9 +768,10 @@ export function createControlPlaneService({ pool, repositories }) {
         && candidate.membershipStatus === "active"
         && candidate.roles.includes("platform_administrator"));
       const [rows] = await pool.execute(
-        `SELECT invitation_id, organisation_id, invitation_type, email, status,
+        `SELECT invitation_id, organisation_id, invitation_type, role_key, email, status,
                 invited_by, created_at, expires_at, consumed_at,
-                consumed_by_user_id, revoked_at, revoked_by
+                consumed_by_user_id, revoked_at, revoked_by,
+                external_identity_provider, external_invitation_id
          FROM admin_invitations
          WHERE organisation_id = ?
            AND invitation_type = 'platform_administrator'
@@ -870,11 +889,116 @@ export function createControlPlaneService({ pool, repositories }) {
       };
     },
 
+    async attachClerkInvitation(
+      { invitationId, externalInvitationId },
+      actor,
+    ) {
+      if (!externalInvitationId || typeof externalInvitationId !== "string") {
+        throw new ControlPlaneValidationError(
+          "A Clerk invitation identifier is required.",
+          "CLERK_INVITATION_ID_REQUIRED",
+        );
+      }
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const [rows] = await executor.execute(
+          `SELECT invitation_id, organisation_id, status, external_invitation_id
+           FROM admin_invitations
+           WHERE invitation_id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [invitationId],
+        );
+        const invitation = rows?.[0];
+        if (!invitation || invitation.status !== "pending") {
+          throw new ControlPlaneConflictError(
+            "The internal invitation is no longer pending.",
+            "INVITATION_NOT_PENDING",
+          );
+        }
+        if (
+          invitation.external_invitation_id
+          && invitation.external_invitation_id !== externalInvitationId
+        ) {
+          throw new ControlPlaneConflictError(
+            "The internal invitation is already bound to another identity-provider invitation.",
+            "CLERK_INVITATION_BINDING_CONFLICT",
+          );
+        }
+        await executor.execute(
+          `UPDATE admin_invitations
+           SET external_identity_provider = 'clerk', external_invitation_id = ?
+           WHERE invitation_id = ? AND status = 'pending'`,
+          [externalInvitationId, invitationId],
+        );
+        await audit(executor, {
+          actorType: actor?.type || "system",
+          actorId: actor?.id || null,
+          organisationScopeId: invitation.organisation_id,
+          action: "workforce_invitation.clerk_bound",
+          targetType: "admin_invitation",
+          targetId: invitationId,
+          beforeSummary: null,
+          afterSummary: { provider: "clerk" },
+          correlationId: actor?.correlationId || null,
+          outcome: "success",
+          source: actor?.source || "clerk-workforce-service",
+        });
+        return { invitationId, externalInvitationId };
+      });
+    },
+
+    async cancelUndeliveredClerkInvitation(
+      { invitationId, reason = "clerk_delivery_failed" },
+      actor,
+    ) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const [rows] = await executor.execute(
+          `SELECT invitation_id, organisation_id, status
+           FROM admin_invitations
+           WHERE invitation_id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [invitationId],
+        );
+        const invitation = rows?.[0] || null;
+        if (!invitation || invitation.status !== "pending") return false;
+
+        await executor.execute(
+          `UPDATE admin_invitations
+           SET status = 'revoked',
+               revoked_at = UTC_TIMESTAMP(3),
+               revoked_by = ?
+           WHERE invitation_id = ?
+             AND status = 'pending'`,
+          [actor?.id || null, invitationId],
+        );
+        await audit(executor, {
+          actorType: actor?.type || "system",
+          actorId: actor?.id || null,
+          organisationScopeId: invitation.organisation_id,
+          action: "workforce_invitation.delivery_failed",
+          targetType: "admin_invitation",
+          targetId: invitationId,
+          beforeSummary: { status: "pending" },
+          afterSummary: {
+            status: "revoked",
+            provider: "clerk",
+            reason: String(reason || "clerk_delivery_failed").slice(0, 64),
+          },
+          correlationId: actor?.correlationId || null,
+          outcome: "failure",
+          source: actor?.source || "clerk-workforce-service",
+        });
+        return true;
+      });
+    },
+
     async listInvitations(organisationId) {
       const [rows] = await pool.execute(
-        `SELECT invitation_id, organisation_id, invitation_type, email, status,
+        `SELECT invitation_id, organisation_id, invitation_type, role_key, email, status,
                 invited_by, created_at, expires_at, consumed_at,
-                consumed_by_user_id, revoked_at, revoked_by
+                consumed_by_user_id, revoked_at, revoked_by,
+                external_identity_provider, external_invitation_id
          FROM admin_invitations WHERE organisation_id = ? ORDER BY created_at DESC`,
         [organisationId],
       );

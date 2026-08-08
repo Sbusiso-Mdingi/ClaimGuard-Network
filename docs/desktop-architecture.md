@@ -16,7 +16,9 @@ flowchart LR
   K -->|one use, rate limited| R[Desktop activation API]
   D[Windows desktop / Rust core] -->|Ed25519 public JWK + installation ID + activation key| R
   R -->|signed organisation/device enrollment| D
-  D -->|DPoP-style proof + session cookie| API[ClaimGuard API]
+  D -->|DPoP-style proof + opaque session cookie| API[ClaimGuard API]
+  D -->|open one-time approval URL| B[System browser + Clerk]
+  B -->|verified workforce approval| API
   API -->|verified organisation ID| CP[(Control-plane DB)]
   API -->|server-resolved tenant route only| OP[(Operational data plane)]
   API -->|bounded changes + signed cursor| D
@@ -29,7 +31,7 @@ The WebView has `connect-src 'none'` and no Tauri HTTP, filesystem, shell, proce
 
 - `desktop_status`
 - `activate_desktop`
-- `desktop_login`
+- `desktop_clerk_login`
 - `desktop_logout`
 - `lock_desktop`
 - `synchronize_desktop`
@@ -108,7 +110,7 @@ The corresponding private keys are never compiled into the application.
 
 ## Permission Model
 
-`desktop.devices.manage` is used only by the browser application and its API boundary; it is never exposed as a Tauri command. Scheme administrators can use the Windows client for their enrolled medical scheme and remain hard-bound to that organisation. Platform administrators manage platform/enrollment metadata on the web, are rejected as desktop users, and do not gain operational claim access. Issuance and revocation require recent password reauthentication plus an exact typed confirmation; raw keys are shown once and never returned by list APIs.
+`desktop.devices.manage` is used only by the browser application and its API boundary; it is never exposed as a Tauri command. Scheme administrators can use the Windows client for their enrolled medical scheme and remain hard-bound to that organisation. Platform administrators manage platform/enrollment metadata on the web, are rejected as desktop users, and do not gain operational claim access. Issuance and revocation require Clerk strict re-verification plus an exact typed confirmation; raw keys are shown once and never returned by list APIs.
 
 Desktop navigation and controls are capability driven. `investigations.view` enables the investigation queue and encrypted on-demand case detail. `investigations.create`, `investigations.assign`, `investigations.update_status`, `investigations.change_priority`, `investigations.add_note`, and `investigations.upload_evidence` independently enable their corresponding connected-only controls. Each write has an explicit integer-version optimistic-concurrency contract, and assignment is limited to active investigators in the enrolled organisation. Rust rechecks capabilities before returning records or issuing mutations through IPC, which prevents a lower-privileged scheme account using the same Windows profile from inheriting prior authority. Final fraud confirmation and reversal remain web-only workflows.
 

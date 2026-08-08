@@ -24,6 +24,7 @@ See:
 - [`docs/production-data-boundary.md`](docs/production-data-boundary.md) for environment separation and safe go-live rules;
 - [`docs/environment-matrix.md`](docs/environment-matrix.md) for the approved environment structure;
 - [`docs/versioned-assessment-context.md`](docs/versioned-assessment-context.md) for immutable reference versions, assessment provenance, correction review, and signal supersession;
+- [`docs/clerk-workforce-authentication.md`](docs/clerk-workforce-authentication.md) for invitation-only, passwordless workforce and desktop authentication;
 - [`docs/production-readiness-qualification-plan.md`](docs/production-readiness-qualification-plan.md) for the evidence required before live use.
 
 ---

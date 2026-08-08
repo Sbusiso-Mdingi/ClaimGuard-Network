@@ -2,7 +2,7 @@
 
 This package owns the control-plane schema, migration history, repositories, authentication/session service, identity management, model deployments, release governance, provisioning, security, and diagnostics.
 
-The control-plane's identity and session records are authoritative only when the API is started with `AUTHENTICATION_MODE=session`. Operational claims data and database routing remain owned by `@claimguard/database`.
+Clerk is authoritative for workforce authentication, verified email, MFA, recovery, and external session state. This package remains authoritative for internal organisations, users, memberships, roles, permissions, identity bindings, opaque desktop sessions, and audit history. Operational claims data and database routing remain owned by `@claimguard/database`.
 
 ## Configuration
 
@@ -12,7 +12,7 @@ The control-plane's identity and session records are authoritative only when the
 | `CONTROL_PLANE_SHADOW_ENABLED` | No | Defaults to `false`. Must be exactly `true` for inventory `--apply`. |
 | `MYSQL_URL` | Conditional | Read only by the legacy-tenant inventory command as the current operational source. |
 | `CLAIMGUARD_APP_VERSION` | No | Optional migration-history application version. |
-| `AUTHENTICATION_MODE` | Yes | API authority mode: exactly `session`. |
+| `AUTHENTICATION_MODE` | Yes | Runtime authority mode: exactly `clerk`; `session` is accepted only under `NODE_ENV=test`. |
 
 The control-plane database may be a separate database on the same local MySQL server, but must have a distinct URL and database name.
 
@@ -33,8 +33,8 @@ Inventory never modifies operational tenant rows. Apply mode writes only unambig
 
 | Module | Description |
 |--------|-------------|
-| `authentication-repository.js` | Session and password storage |
-| `authentication-service.js` | Login, session validation, throttling, and lockout |
+| `authentication-repository.js` | Clerk identity resolution and opaque internal/desktop session records; legacy password records are test compatibility only |
+| `authentication-service.js` | External-identity resolution, current-authority validation, and opaque session lifecycle |
 | `identity-repository.js` | Users, roles, and organisation membership |
 | `organisations-repository.js` | Organisation CRUD and lifecycle |
 | `routes-repository.js` | Data-plane route management |
@@ -57,7 +57,7 @@ Inventory never modifies operational tenant rows. Apply mode writes only unambig
 
 ## Authority Boundary
 
-Session mode authenticates local passwords and server-side sessions through this package. Authentication bridges an authenticated medical-scheme organisation only through a verified `legacy_tenant_mappings` record; operational request admission then separately resolves authoritative `data_plane_routes` metadata.
+Clerk authenticates the person and active Clerk organisation. This package resolves the immutable Clerk subject and organisation mapping to an active internal user, membership, role set, and current authorization version. Operational request admission then separately resolves authoritative `data_plane_routes` metadata.
 
 At runtime, exactly one active `data_plane_routes` record is resolved for the authenticated immutable organisation ID before operational access. Non-production provisioning creates active `legacy_shared` routes and links verified mappings; the platform organisation receives `platform_none`. Database credentials remain outside route projections and control-plane responses.
 

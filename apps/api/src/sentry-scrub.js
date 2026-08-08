@@ -1,6 +1,6 @@
 const REDACTED = "[REDACTED]";
 const SENSITIVE_KEY_PATTERN = /(authorization|cookie|set-cookie|password|secret|token|csrf)/i;
-const TOKEN_QUERY_PATTERN = /([?&](?:token|invitationToken|invite|code)=)[^&#\s]*/gi;
+const TOKEN_QUERY_PATTERN = /([?#&](?:token|invitationToken|invite|code|request)=)[^&#\s]*/gi;
 const INVITATION_PATH_PATTERN = /(\/auth\/invitation\/)[^/?#\s]+/gi;
 const BEARER_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 

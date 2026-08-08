@@ -3,11 +3,14 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("../lib/apiClient", () => ({
+vi.mock("../lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal()),
   apiJson: vi.fn(),
-  ApiError: class ApiError extends Error {},
-  safeApiErrorMessage: (error, fallback) => error?.message || fallback,
 }));
+vi.mock("../hooks/useReverifiedApiJson", async () => {
+  const { apiJson } = await import("../lib/apiClient");
+  return { useReverifiedApiJson: () => apiJson };
+});
 
 import { apiJson } from "../lib/apiClient";
 import {
@@ -391,7 +394,6 @@ describe("Platform operations workspaces", () => {
       screen.getByLabelText("Change reason"),
       "Promote the verified release after release review.",
     );
-    await user.type(screen.getByLabelText("Current password"), "current-password");
     await user.type(
       screen.getByLabelText("Confirmation"),
       "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
@@ -405,7 +407,6 @@ describe("Platform operations workspaces", () => {
           method: "POST",
           skipUnauthorizedHandler: true,
           body: JSON.stringify({
-            password: "current-password",
             confirmation: "PROMOTE aaaaaaaaaaaa TO PRODUCTION",
             reason: "Promote the verified release after release review.",
           }),

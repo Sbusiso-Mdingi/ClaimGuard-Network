@@ -9,6 +9,7 @@ import { InvestigatorLayout } from "./features/investigator/InvestigatorLayout";
 import { RoleProvider, useRole } from "./context/RoleContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { SignupPage } from "./features/auth/SignupPage";
+import { DesktopAuthorizationPage } from "./features/auth/DesktopAuthorizationPage";
 import { RequireRoleAccess } from "./features/investigator/RequireRoleAccess";
 import { PRODUCT_NAME } from "./lib/productBrand";
 import {
@@ -138,7 +139,10 @@ export default function AppRoot() {
       <RoleProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/sign-in/*" element={<LoginPage />} />
+            <Route path="/sign-up/*" element={<SignupPage />} />
             <Route path="/auth/signup" element={<SignupPage />} />
+            <Route path="/desktop/authorize" element={<DesktopAuthorizationPage />} />
             <Route path="*" element={<AuthenticationBoundary />} />
           </Routes>
         </BrowserRouter>

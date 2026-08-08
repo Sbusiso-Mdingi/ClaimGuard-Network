@@ -7,6 +7,7 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ApiError, apiJson, safeApiErrorMessage } from "../../lib/apiClient";
+import { useReverifiedApiJson } from "../../hooks/useReverifiedApiJson";
 import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
   DataTableShell,
@@ -51,18 +52,13 @@ function AdministratorStepUpDialog({
   onClose,
   onSubmit,
 }) {
-  const [password, setPassword] = useState("");
   const [enteredConfirmation, setEnteredConfirmation] = useState("");
-  const ready = Boolean(
-    password
-    && enteredConfirmation === confirmation,
-  );
+  const ready = enteredConfirmation === confirmation;
 
   function submit(event) {
     event.preventDefault();
     if (!ready) return;
     onSubmit({
-      password,
       confirmation: enteredConfirmation,
     });
   }
@@ -105,18 +101,9 @@ function AdministratorStepUpDialog({
           </Button>
         </header>
         <form className="grid gap-4 p-5" onSubmit={submit}>
-          <FormField
-            label="Current password"
-            hint={`${PRODUCT_NAME} verifies your current credential for this action. It is never written to an invitation or audit record.`}
-          >
-            <Input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </FormField>
+          <WorkspaceNotice title="Fresh Clerk verification required" tone="info">
+            Clerk will prompt for your configured workforce factors when this session needs reverification.
+          </WorkspaceNotice>
           <FormField
             label="Confirmation"
             hint={(
@@ -154,6 +141,7 @@ function AdministratorStepUpDialog({
 }
 
 export function PlatformAdministratorAccessPanel() {
+  const reverifiedApiJson = useReverifiedApiJson();
   const [access, setAccess] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -203,21 +191,18 @@ export function PlatformAdministratorAccessPanel() {
     setMessage("");
     setInvitationUrl("");
     try {
-      const payload = await apiJson(
+      const payload = await reverifiedApiJson(
         "/admin/platform/administrators/invitations",
         {
           method: "POST",
           skipUnauthorizedHandler: true,
           body: JSON.stringify({
             email: reviewedEmail,
-            password: values.password,
             confirmation: values.confirmation,
           }),
         },
       );
-      setInvitationUrl(
-        `${window.location.origin}/auth/signup?token=${payload.token}`,
-      );
+      setInvitationUrl(payload.invitationUrl || "");
       setReviewedEmail("");
       setInviteEmail("");
       setMessage(`${payload.message} Audit event ${payload.auditEventId}.`);
@@ -240,13 +225,12 @@ export function PlatformAdministratorAccessPanel() {
     setError("");
     setMessage("");
     try {
-      const payload = await apiJson(
+      const payload = await reverifiedApiJson(
         `/admin/platform/administrators/invitations/${encodeURIComponent(revocation.invitationId)}/revoke`,
         {
           method: "POST",
           skipUnauthorizedHandler: true,
           body: JSON.stringify({
-            password: values.password,
             confirmation: values.confirmation,
           }),
         },
@@ -329,10 +313,9 @@ export function PlatformAdministratorAccessPanel() {
           </WorkspaceNotice>
         ) : null}
         {invitationUrl ? (
-          <WorkspaceNotice title="Copy this one-time invitation URL now" tone="warning">
+          <WorkspaceNotice title="Clerk invitation sent" tone="info">
             <p className="mb-2">
-              {PRODUCT_NAME} stores only the token hash. This URL cannot be recovered
-              after you leave or refresh this page.
+              Clerk emailed the invitation. This acceptance URL is shown only as an administrative delivery aid.
             </p>
             <code className="break-all font-data text-xs">{invitationUrl}</code>
           </WorkspaceNotice>
@@ -352,8 +335,7 @@ export function PlatformAdministratorAccessPanel() {
                 <h3 className="font-semibold">Invite another administrator</h3>
               </div>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                The recipient chooses their own username and password. The link
-                expires after 24 hours and can be used once.
+                Clerk sends the invitation to a verified work email. Sequrin never receives a password or exposes a local sign-up form.
               </p>
             </div>
             <FormField label="Administrator email">

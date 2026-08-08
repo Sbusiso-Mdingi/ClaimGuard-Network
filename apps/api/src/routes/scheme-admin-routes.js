@@ -102,6 +102,7 @@ async function buildOperationalOverview({ claimsReadRepository, detectionStrateg
 
 export function registerSchemeAdminRoutes(app, {
   controlPlaneService,
+  clerkWorkforceService = null,
   claimsReadRepository = null,
   detectionStrategyRepository = null,
 } = {}) {
@@ -147,37 +148,47 @@ export function registerSchemeAdminRoutes(app, {
   });
 
   app.post("/admin/scheme/users", requireSchemeUsersManage, async (c) => {
-    if (!controlPlaneService?.createSchemeUser) {
-      return c.json({ available: false, code: "NOT_CONFIGURED", message: "User management is not configured." }, 404);
+    if (!controlPlaneService?.createAdminInvitation || !clerkWorkforceService?.createInvitation) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Clerk workforce invitations are not configured." }, 503);
     }
     const actor = actorFromContext(c);
     const payload = await c.req.json().catch(() => ({}));
-    const { displayName, username, password, roleKey } = payload;
+    const { email, roleKey } = payload;
 
-    if (!displayName || !username || !password || !roleKey) {
-      return c.json({ available: false, code: "INVALID_INPUT", message: "displayName, username, password, and roleKey are required." }, 400);
-    }
-    if (password.length < 8) {
-      return c.json({ available: false, code: "WEAK_PASSWORD", message: "Password must be at least 8 characters." }, 400);
+    if (!email || !roleKey || Object.keys(payload).some((key) => !["email", "roleKey"].includes(key))) {
+      return c.json({ available: false, code: "INVALID_INPUT", message: "email and roleKey are required." }, 400);
     }
 
     try {
-      const result = await controlPlaneService.createSchemeUser({
+      const internalInvitation = await controlPlaneService.createAdminInvitation({
         organisationId: actor.organisationId,
-        displayName,
-        username,
-        password,
+        email,
         roleKey,
+        invitedBy: actor.id,
+        expiresInHours: 72,
       }, actor);
+      const result = await clerkWorkforceService.createInvitation({
+        internalInvitation,
+        actor,
+        inviterClerkUserId: c.get("resolvedSession")?.externalIdentity?.subject || null,
+      });
 
       return c.json({
         available: true,
-        user: { userId: result.user.userId, displayName: result.user.displayName },
+        invitation: {
+          invitationId: result.invitationId,
+          email: result.email,
+          roleKey: result.roleKey,
+          expiresAt: result.expiresAt,
+          clerkInvitationId: result.clerkInvitationId,
+        },
+        invitationUrl: result.invitationUrl,
+        delivery: result.delivery,
       }, 201);
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 400;
-      const code = error?.code || "USER_CREATE_FAILED";
-      return c.json({ available: false, code, message: error?.message || "Failed to create user." }, status);
+      const code = error?.code || "WORKFORCE_INVITATION_FAILED";
+      return c.json({ available: false, code, message: error?.message || "Failed to create workforce invitation." }, status);
     }
   });
 

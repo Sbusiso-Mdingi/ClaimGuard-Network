@@ -9,6 +9,7 @@ import X from "lucide-react/dist/esm/icons/x.mjs";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ApiError, apiJson, safeApiErrorMessage } from "../../lib/apiClient";
+import { useReverifiedApiJson } from "../../hooks/useReverifiedApiJson";
 import { PRODUCT_NAME } from "../../lib/productBrand";
 import {
   DataTableShell,
@@ -66,18 +67,15 @@ function StepUpDialog({
   onClose,
   onSubmit,
 }) {
-  const [password, setPassword] = useState("");
   const [enteredConfirmation, setEnteredConfirmation] = useState("");
   const [reason, setReason] = useState("");
-  const ready = password
-    && enteredConfirmation === confirmation
+  const ready = enteredConfirmation === confirmation
     && (!reasonRequired || reason.trim().length >= 12);
 
   function submit(event) {
     event.preventDefault();
     if (!ready) return;
     onSubmit({
-      password,
       confirmation: enteredConfirmation,
       reason: reason.trim(),
     });
@@ -128,18 +126,9 @@ function StepUpDialog({
               />
             </FormField>
           ) : null}
-          <FormField
-            label="Current password"
-            hint="Your password is verified for this action and is never stored in the promotion record."
-          >
-            <Input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </FormField>
+          <WorkspaceNotice title="Fresh Clerk verification required" tone="info">
+            Clerk will prompt for your configured workforce factors if this session is not recent enough.
+          </WorkspaceNotice>
           <FormField
             label="Confirmation"
             hint={<>Type <code className="font-data">{confirmation}</code> exactly.</>}
@@ -166,6 +155,7 @@ function StepUpDialog({
 }
 
 export function ReleaseGovernancePanel() {
+  const reverifiedApiJson = useReverifiedApiJson();
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -212,7 +202,7 @@ export function ReleaseGovernancePanel() {
     setError("");
     setMessage("");
     try {
-      const payload = await apiJson(
+      const payload = await reverifiedApiJson(
         `/admin/platform/releases/${encodeURIComponent(requestRelease.releaseId)}/promotion-requests`,
         {
           method: "POST",
@@ -241,15 +231,12 @@ export function ReleaseGovernancePanel() {
     setError("");
     setMessage("");
     try {
-      const payload = await apiJson(
+      const payload = await reverifiedApiJson(
         `/admin/platform/promotion-requests/${encodeURIComponent(approvalRequest.promotionRequestId)}/approve`,
         {
           method: "POST",
           skipUnauthorizedHandler: true,
-          body: JSON.stringify({
-            password: values.password,
-            confirmation: values.confirmation,
-          }),
+          body: JSON.stringify({ confirmation: values.confirmation }),
         },
       );
       setApprovalRequest(null);

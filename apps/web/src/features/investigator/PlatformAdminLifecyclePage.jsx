@@ -143,7 +143,7 @@ export function PlatformAdminLifecyclePage() {
                   <Input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required />
                 </FormField>
                 <Button type="submit" className="w-fit" disabled={busy || !inviteEmail}>Generate invitation</Button>
-                {invitationUrl ? <WorkspaceNotice title="Copy this invitation URL" tone="warning"><code className="break-all font-data text-xs">{invitationUrl}</code></WorkspaceNotice> : null}
+                {invitationUrl ? <WorkspaceNotice title="Clerk invitation sent" tone="info"><code className="break-all font-data text-xs">{invitationUrl}</code></WorkspaceNotice> : null}
               </form>
             </SectionCard>
 

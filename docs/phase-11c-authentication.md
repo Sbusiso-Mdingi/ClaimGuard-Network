@@ -1,52 +1,11 @@
-# Phase 11C authentication operations
+# Phase 11C authentication history
 
-Phase 11C replaces browser-controlled identity headers with organisation-aware local-password login and opaque server-side sessions. It does not implement tenant connection routing: the shared operational database remains authoritative and the session organisation is bridged to one verified legacy tenant ID.
+Phase 11C originally introduced local-password sessions. That production model has been superseded by the governed Clerk workforce boundary in [`clerk-workforce-authentication.md`](clerk-workforce-authentication.md).
 
-## Session mode
+Local-password routes and services remain only as isolated compatibility fixtures for automated tests. Runtime configuration rejects `AUTHENTICATION_MODE=session` unless `NODE_ENV=test`. Production and developer runtime start in Clerk mode, never display demo credentials, and never accept browser-controlled identity headers.
 
-Configure the API and web shell consistently:
+Operational database routing remains server authoritative. A verified Clerk user and active Clerk organisation are mapped to one active internal user, membership, organisation, role set, and data-plane route before any request receives authority.
 
-```text
-AUTHENTICATION_MODE=session
-CONTROL_PLANE_MYSQL_URL=mysql://.../claimguard_control
-MYSQL_URL=mysql://.../claimguard_operational
-AUTH_ALLOWED_ORIGINS=https://claimguard-web.example
-TRUST_PROXY=false
-DEPLOYMENT_CLASS=demo|pilot|production
-SESSION_IDLE_TIMEOUT_MINUTES=30
-SESSION_ABSOLUTE_TIMEOUT_HOURS=8
-LOGIN_THROTTLE_WINDOW_MINUTES=15
-LOGIN_THROTTLE_MAX_ATTEMPTS=8
-LOGIN_THROTTLE_BASE_DELAY_MS=500
-LOGIN_THROTTLE_MAX_DELAY_MS=30000
-LOGIN_THROTTLE_LOCKOUT_MINUTES=15
-SESSION_COOKIE_SECURE=true
-PUBLIC_ORGANISATION_URL_SCHEME=https
-PUBLIC_ORGANISATION_HOST=claimguard-web.example
-```
+External claim producers continue to use separately scoped integration credentials documented in [`claim-ingestion.md`](claim-ingestion.md); they never authenticate as workforce users.
 
-Production requires session mode, Secure cookies, and an explicit allowed-origin list. The browser receives `__Host-cg_session` with `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and no `Domain`. JavaScript receives only a rotating synchronizer CSRF token.
-
-Login throttling is shared through control-plane `login_throttle_buckets`, keyed only by hashes of source network, organisation slug, and username. The window, attempt bound, progressive-delay ceiling, and temporary-lock duration are configurable with the values above; client failures remain generic.
-
-`TRUST_PROXY` is explicit and defaults to `false`. Set it to `true` only when the web/API services are behind a proxy that overwrites forwarding headers; otherwise the web proxy replaces caller-supplied source headers with its socket address before forwarding.
-
-For explicit HTTP localhost development only, use `DEPLOYMENT_CLASS=local` and `SESSION_COOKIE_SECURE=false`. The cookie is then named `cg_session_local`, because browsers reject an insecure cookie with the reserved `__Host-` prefix. Never use this setting in production.
-
-Apply migrations before cutover, verify inventory, and provision demo accounts when applicable:
-
-```bash
-pnpm --filter @claimguard/control-plane-database migrate
-pnpm --filter @claimguard/control-plane-database inventory -- --dry-run
-DEPLOYMENT_CLASS=demo pnpm --filter @claimguard/control-plane-database provision-demo -- --confirm=PROVISION_DEMO_ACCOUNTS
-```
-
-The provisioner prints generated passwords once. Put only approved ephemeral demo values in the deployment secret `DEMO_CREDENTIALS_JSON`. Demo display additionally requires both `DEPLOYMENT_CLASS=demo` and `DEMO_CREDENTIALS_VISIBLE=true`; visibility is off by default and refused in production.
-
-External claim producers use the separate internal-service bearer mechanism documented in `claim-ingestion.md`; they never use browser identity headers.
-
-## Incident fallback
-
-Authentication mode is session-only. There is no supported fallback mode that re-enables browser-controlled identity headers.
-
-If login or session flows fail in non-production, keep `AUTHENTICATION_MODE=session`, remediate the failing dependency (control-plane database, configuration, or origin policy), and re-run login, CSRF, logout, and platform private-route denial verification.
+There is no password-mode incident fallback. Restore the Clerk, control-plane database, origin, or organisation-mapping dependency and keep the application fail closed.

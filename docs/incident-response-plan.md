@@ -24,10 +24,10 @@ This plan covers API outages, authentication issues, tenant-isolation concerns, 
 
 ### Authentication or session failure
 
-- Confirm auth mode.
-- Check cookie and CSRF settings.
+- Confirm Clerk mode, instance health, and secret-reference resolution.
+- Check Clerk session verification, cookie, and re-verification behavior.
 - Validate origin allow-listing.
-- Confirm login throttling and session storage behavior.
+- Confirm invitation throttling, identity binding, and internal session storage behavior.
 
 ### Tenant isolation concern
 

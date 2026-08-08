@@ -87,7 +87,7 @@ test("platform invitation validation exposes role-aware signup constraints witho
 test("API telemetry redaction removes invitation and authentication secrets", () => {
   const event = scrubSentryEvent({
     request: {
-      url: `https://api.example/auth/invitation/${SECRET}?token=${SECRET}`,
+      url: `https://api.example/auth/invitation/${SECRET}?token=${SECRET}#request=${SECRET}`,
       headers: {
         authorization: `Bearer ${SECRET}`,
         cookie: `session=${SECRET}`,

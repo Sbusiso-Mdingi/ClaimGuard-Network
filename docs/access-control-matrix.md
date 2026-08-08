@@ -6,7 +6,7 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 
 | Identity | Scope | May do | Must not do |
 | --- | --- | --- | --- |
-| Browser user | authenticated session | read authorized tenant-scoped data | choose tenant database, route, or secret source |
+| Browser user | verified Clerk workforce session plus internal membership | read authorised tenant-scoped data | self-enrol, choose tenant database, route, role, or secret source |
 | Platform Administrator | platform operations | manage platform metadata and supported ops | read private scheme claims by virtue of admin role |
 | Scheme Administrator | scheme operations | manage scheme-scoped records | gain access to other schemes or platform-only data |
 | Worker identity | service runtime | perform bounded machine tasks | act as an interactive user |
@@ -24,15 +24,15 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 
 ## Current Application Controls
 
-- Session mode is supported in code.
-- CSRF middleware is present in code.
+- Clerk invitation-only workforce authentication is the runtime mode; local-password session mode is test-only.
+- Origin validation and Clerk session-token verification are present in code.
 - Tenant routing and data-plane scoping are present in code.
 - Authorization roles and permissions are evaluated in code.
-- Header-based authentication remains available only for isolated local rollback; production startup rejects it.
+- Browser-controlled identity headers and consumer social identities are rejected.
 - Scheme/platform administrators have `desktop.devices.manage`; scheme administrators are restricted to their own organisation. Only platform administrators have `desktop.fleet_policy.manage`, which sets the licensed allowance without granting private-claims access.
 - Medical-scheme users, including scheme administrators, may use an organisation-enrolled Windows client branded as Sequrin. ClaimGuard platform administrators are web-only and are rejected by desktop authentication.
 - Scheme device/fleet management remains web-only. The Windows desktop exposes no activation-key, device-policy, revocation, or platform-governance commands; its reset is a local destructive recovery action.
-- Fleet-policy changes, activation-key issuance, and key/device revocation require password step-up, exact typed confirmation, and audit history.
+- Fleet-policy changes, activation-key issuance, and key/device revocation require Clerk strict re-verification, exact typed confirmation, and audit history.
 
 ## Required Constraints
 
@@ -40,7 +40,7 @@ This matrix captures the current and intended least-privilege model for ClaimGua
 - Platform Administrator must remain unable to read private scheme claims.
 - Scheme Administrator must not gain claims access from admin privileges alone.
 - Worker identities must not gain interactive user privileges.
-- Rate limits are required for login, session, ingestion, and high-cost endpoints.
+- Rate limits are required for authentication, invitation, session, ingestion, and high-cost endpoints.
 - Safe 401, 403, and 404 responses must avoid cross-tenant existence disclosure.
 
 ## Current Gaps

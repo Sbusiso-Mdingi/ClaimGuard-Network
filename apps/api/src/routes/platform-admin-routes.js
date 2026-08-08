@@ -10,6 +10,10 @@ import {
   createRequirePermissionMiddleware,
 } from "../middleware/authorization-middleware.js";
 import { CLAIMGUARD_PERMISSIONS } from "../authorization-policy.js";
+import {
+  clerkReverificationResponse,
+  isClerkReverificationRequired,
+} from "../clerk-reverification.js";
 
 function actorFromContext(c) {
   const auth = c.get("authContext") || {};
@@ -42,6 +46,7 @@ function platformAdministratorRevocationConfirmation(invitationId) {
 }
 
 function platformAdministratorAccessError(c, error, fallback) {
+  if (isClerkReverificationRequired(error)) return clerkReverificationResponse(c);
   const duplicate = error?.code === "ER_DUP_ENTRY";
   const status = duplicate
     ? 409
@@ -62,6 +67,7 @@ function platformAdministratorAccessError(c, error, fallback) {
 }
 
 function releaseGovernanceError(c, error, fallback) {
+  if (isClerkReverificationRequired(error)) return clerkReverificationResponse(c);
   const duplicate = error?.code === "ER_DUP_ENTRY";
   return c.json({
     available: false,
@@ -282,6 +288,7 @@ export function registerPlatformAdminRoutes(
     controlPlaneRepositories,
     controlPlaneService,
     authenticationService = null,
+    clerkWorkforceService = null,
     deploymentClass = "production",
     startProvisioningJob =
       triggerProvisioningJob,
@@ -374,7 +381,7 @@ export function registerPlatformAdminRoutes(
       if (
         !repository?.getReleaseById
         || typeof runInTransaction !== "function"
-        || typeof authenticationService?.reauthenticate !== "function"
+        || typeof authenticationService?.requireRecentVerification !== "function"
       ) {
         return c.json({
           available: false,
@@ -383,7 +390,7 @@ export function registerPlatformAdminRoutes(
         }, 503);
       }
       const payload = await c.req.json().catch(() => ({}));
-      const permittedKeys = new Set(["password", "confirmation", "reason"]);
+      const permittedKeys = new Set(["confirmation", "reason"]);
       if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
         return c.json({
           available: false,
@@ -408,9 +415,8 @@ export function registerPlatformAdminRoutes(
           }, 400);
         }
         const actor = actorFromContext(c);
-        const stepUp = await authenticationService.reauthenticate(
+        const stepUp = await authenticationService.requireRecentVerification(
           c.get("resolvedSession"),
-          payload.password,
           c.get("authenticationMetadata") || {},
         );
         const result = await runInTransaction(async (repositories) => {
@@ -474,7 +480,7 @@ export function registerPlatformAdminRoutes(
       if (
         !repository?.getPromotionRequest
         || typeof runInTransaction !== "function"
-        || typeof authenticationService?.reauthenticate !== "function"
+        || typeof authenticationService?.requireRecentVerification !== "function"
       ) {
         return c.json({
           available: false,
@@ -483,7 +489,7 @@ export function registerPlatformAdminRoutes(
         }, 503);
       }
       const payload = await c.req.json().catch(() => ({}));
-      const permittedKeys = new Set(["password", "confirmation"]);
+      const permittedKeys = new Set(["confirmation"]);
       if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
         return c.json({
           available: false,
@@ -516,9 +522,8 @@ export function registerPlatformAdminRoutes(
             message: "The approval confirmation does not match this request.",
           }, 400);
         }
-        const stepUp = await authenticationService.reauthenticate(
+        const stepUp = await authenticationService.requireRecentVerification(
           c.get("resolvedSession"),
-          payload.password,
           c.get("authenticationMetadata") || {},
         );
         const result = await runInTransaction(async (repositories) => {
@@ -625,7 +630,8 @@ export function registerPlatformAdminRoutes(
       if (
         typeof controlPlaneService?.createPlatformAdministratorInvitation
           !== "function"
-        || typeof authenticationService?.reauthenticate !== "function"
+        || typeof authenticationService?.requireRecentVerification !== "function"
+        || typeof clerkWorkforceService?.createInvitation !== "function"
       ) {
         return c.json({
           available: false,
@@ -634,7 +640,7 @@ export function registerPlatformAdminRoutes(
         }, 503);
       }
       const payload = await c.req.json().catch(() => ({}));
-      const permittedKeys = new Set(["email", "password", "confirmation"]);
+      const permittedKeys = new Set(["email", "confirmation"]);
       if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
         return c.json({
           available: false,
@@ -666,12 +672,11 @@ export function registerPlatformAdminRoutes(
       }
       try {
         const actor = actorFromContext(c);
-        const stepUp = await authenticationService.reauthenticate(
+        const stepUp = await authenticationService.requireRecentVerification(
           c.get("resolvedSession"),
-          payload.password,
           c.get("authenticationMetadata") || {},
         );
-        const result = await controlPlaneService
+        const internalResult = await controlPlaneService
           .createPlatformAdministratorInvitation(
             {
               email,
@@ -681,12 +686,19 @@ export function registerPlatformAdminRoutes(
             },
             actor,
           );
+        const result = await clerkWorkforceService.createInvitation({
+          internalInvitation: internalResult,
+          actor,
+          inviterClerkUserId: c.get("resolvedSession")?.externalIdentity?.subject || null,
+        });
         return c.json({
           available: true,
           invitation: result.invitation,
-          token: result.token,
+          invitationUrl: result.invitationUrl,
+          delivery: result.delivery,
+          clerkInvitationId: result.clerkInvitationId,
           auditEventId: result.auditEventId,
-          message: "Platform administrator invitation created. Copy the one-time link now.",
+          message: "Platform administrator invitation created and sent by Clerk.",
         }, 201);
       } catch (error) {
         return platformAdministratorAccessError(
@@ -705,7 +717,7 @@ export function registerPlatformAdminRoutes(
       if (
         typeof controlPlaneService?.revokePlatformAdministratorInvitation
           !== "function"
-        || typeof authenticationService?.reauthenticate !== "function"
+        || typeof authenticationService?.requireRecentVerification !== "function"
       ) {
         return c.json({
           available: false,
@@ -714,7 +726,7 @@ export function registerPlatformAdminRoutes(
         }, 503);
       }
       const payload = await c.req.json().catch(() => ({}));
-      const permittedKeys = new Set(["password", "confirmation"]);
+      const permittedKeys = new Set(["confirmation"]);
       if (Object.keys(payload).some((key) => !permittedKeys.has(key))) {
         return c.json({
           available: false,
@@ -735,9 +747,8 @@ export function registerPlatformAdminRoutes(
       }
       try {
         const actor = actorFromContext(c);
-        const stepUp = await authenticationService.reauthenticate(
+        const stepUp = await authenticationService.requireRecentVerification(
           c.get("resolvedSession"),
-          payload.password,
           c.get("authenticationMetadata") || {},
         );
         const result = await controlPlaneService
@@ -749,6 +760,10 @@ export function registerPlatformAdminRoutes(
             },
             actor,
           );
+        await clerkWorkforceService?.revokeInvitation?.({
+          invitation: result.invitation,
+          requestingClerkUserId: c.get("resolvedSession")?.externalIdentity?.subject || null,
+        });
         return c.json({
           available: true,
           invitation: result.invitation,
@@ -1089,8 +1104,8 @@ export function registerPlatformAdminRoutes(
   });
 
   app.post("/admin/platform/organisations/:id/invite-admin", requirePlatformAdmin, async (c) => {
-    if (!controlPlaneService?.createAdminInvitation) {
-      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Invitations are not configured." }, 404);
+    if (!controlPlaneService?.createAdminInvitation || !clerkWorkforceService?.createInvitation) {
+      return c.json({ available: false, code: "NOT_CONFIGURED", message: "Clerk workforce invitations are not configured." }, 503);
     }
     const actor = actorFromContext(c);
     const organisationId = c.req.param("id");
@@ -1102,19 +1117,25 @@ export function registerPlatformAdminRoutes(
     }
 
     try {
-      const result = await controlPlaneService.createAdminInvitation({
+      const internalInvitation = await controlPlaneService.createAdminInvitation({
         organisationId,
         email,
+        roleKey: "scheme_administrator",
         invitedBy: actor.id,
       }, actor);
+      const result = await clerkWorkforceService.createInvitation({
+        internalInvitation,
+        actor,
+        inviterClerkUserId: c.get("resolvedSession")?.externalIdentity?.subject || null,
+      });
 
-      // We return the raw token so the UI can construct the signup URL
       return c.json({
         available: true,
         invitationId: result.invitationId,
-        token: result.token,
         email: result.email,
         expiresAt: result.expiresAt,
+        invitationUrl: result.invitationUrl,
+        delivery: result.delivery,
       }, 201);
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 400;

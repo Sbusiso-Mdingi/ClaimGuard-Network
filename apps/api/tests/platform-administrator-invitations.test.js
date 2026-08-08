@@ -11,8 +11,10 @@ const invitationId = "12345678-1234-4123-8123-123456789abc";
 function createHarness({ permitted = true } = {}) {
   const calls = {
     create: [],
-    reauthenticate: [],
+    reverify: [],
     revoke: [],
+    clerkCreate: [],
+    clerkRevoke: [],
   };
   const app = new Hono();
 
@@ -27,7 +29,9 @@ function createHarness({ permitted = true } = {}) {
       ),
     });
     c.set("requestId", "request-platform-access-1");
-    c.set("resolvedSession", { sessionId: "session-1" });
+    c.set("resolvedSession", {
+      externalIdentity: { provider: "clerk", subject: "clerk-user-1", reverified: true },
+    });
     c.set("authenticationMetadata", { sourceNetwork: "test" });
     await next();
   });
@@ -89,9 +93,26 @@ function createHarness({ permitted = true } = {}) {
       },
     },
     authenticationService: {
-      async reauthenticate(session, password, metadata) {
-        calls.reauthenticate.push({ session, password, metadata });
+      async requireRecentVerification(session, metadata) {
+        calls.reverify.push({ session, metadata });
         return { reauthenticatedAt: "2026-07-30T09:00:00.000Z" };
+      },
+    },
+    clerkWorkforceService: {
+      async createInvitation(input) {
+        calls.clerkCreate.push(input);
+        return {
+          ...input.internalInvitation,
+          token: undefined,
+          invitation: input.internalInvitation.invitation,
+          invitationUrl: "https://clerk.example/invitations/clerk-invitation-1",
+          delivery: "clerk_email",
+          clerkInvitationId: "clerk-invitation-1",
+        };
+      },
+      async revokeInvitation(input) {
+        calls.clerkRevoke.push(input);
+        return true;
       },
     },
   });
@@ -127,18 +148,17 @@ test("invitation creation requires exact confirmation before reauthentication", 
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         email: "Second@Example.com",
-        password: "correct-password",
         confirmation: "INVITE THE WRONG IDENTITY",
       }),
     },
   );
 
   assert.equal(response.status, 400);
-  assert.equal(calls.reauthenticate.length, 0);
+  assert.equal(calls.reverify.length, 0);
   assert.equal(calls.create.length, 0);
 });
 
-test("invitation creation reauthenticates, audits, and returns the raw token once", async () => {
+test("invitation creation re-verifies, audits, and delegates delivery to Clerk", async () => {
   const { app, calls } = createHarness();
   const response = await app.request(
     "/admin/platform/administrators/invitations",
@@ -147,7 +167,6 @@ test("invitation creation reauthenticates, audits, and returns the raw token onc
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         email: "Second@Example.com",
-        password: "correct-password",
         confirmation:
           "INVITE second@example.com AS PLATFORM ADMINISTRATOR",
       }),
@@ -156,11 +175,15 @@ test("invitation creation reauthenticates, audits, and returns the raw token onc
   const body = await response.json();
 
   assert.equal(response.status, 201);
-  assert.equal(body.token, "raw-token-returned-once");
+  assert.equal(Object.hasOwn(body, "token"), false);
+  assert.equal(body.delivery, "clerk_email");
+  assert.equal(body.clerkInvitationId, "clerk-invitation-1");
+  assert.equal(body.invitationUrl, "https://clerk.example/invitations/clerk-invitation-1");
   assert.equal(body.auditEventId, "audit-create-1");
-  assert.deepEqual(calls.reauthenticate, [{
-    session: { sessionId: "session-1" },
-    password: "correct-password",
+  assert.deepEqual(calls.reverify, [{
+    session: {
+      externalIdentity: { provider: "clerk", subject: "clerk-user-1", reverified: true },
+    },
     metadata: { sourceNetwork: "test" },
   }]);
   assert.deepEqual(calls.create[0], {
@@ -177,6 +200,8 @@ test("invitation creation reauthenticates, audits, and returns the raw token onc
       correlationId: "request-platform-access-1",
     },
   });
+  assert.equal(calls.clerkCreate.length, 1);
+  assert.equal(calls.clerkCreate[0].inviterClerkUserId, "clerk-user-1");
 });
 
 test("pending invitation revocation requires step-up authentication and is audited", async () => {
@@ -187,7 +212,6 @@ test("pending invitation revocation requires step-up authentication and is audit
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        password: "correct-password",
         confirmation: "REVOKE 12345678",
       }),
     },
@@ -197,7 +221,8 @@ test("pending invitation revocation requires step-up authentication and is audit
   assert.equal(response.status, 200);
   assert.equal(body.invitation.status, "revoked");
   assert.equal(body.auditEventId, "audit-revoke-1");
-  assert.equal(calls.reauthenticate.length, 1);
+  assert.equal(calls.reverify.length, 1);
+  assert.equal(calls.clerkRevoke.length, 1);
   assert.deepEqual(calls.revoke[0].input, {
     invitationId,
     revokedBy: "platform-admin-1",

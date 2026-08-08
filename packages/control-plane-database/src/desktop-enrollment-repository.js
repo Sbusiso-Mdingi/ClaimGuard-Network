@@ -87,6 +87,24 @@ function mapAudit(row) {
   };
 }
 
+function mapAuthenticationRequest(row) {
+  if (!row) return null;
+  return {
+    requestId: row.request_id,
+    deviceEnrollmentId: row.device_enrollment_id,
+    organisationId: row.organisation_id,
+    status: row.status,
+    approvedUserId: row.approved_user_id || null,
+    approvedMembershipId: row.approved_membership_id || null,
+    approvedCredentialId: row.approved_credential_id || null,
+    expiresAt: row.expires_at,
+    approvedAt: row.approved_at || null,
+    exchangeStartedAt: row.exchange_started_at || null,
+    consumedAt: row.consumed_at || null,
+    createdAt: row.created_at,
+  };
+}
+
 export function createDesktopEnrollmentRepository(defaultExecutor) {
   return {
     async getPolicy(organisationId, { executor } = {}) {
@@ -358,6 +376,118 @@ export function createDesktopEnrollmentRepository(defaultExecutor) {
         "DELETE FROM desktop_activation_rate_limits WHERE bucket_key = ?",
         [assertDigest(bucketKey, "bucketKey")],
       );
+    },
+
+    async createAuthenticationRequest(input, { executor } = {}) {
+      const requestId = input.requestId || crypto.randomUUID();
+      const db = executorOr(defaultExecutor, executor);
+      await db.execute(
+        `UPDATE desktop_authentication_requests
+         SET status = 'expired'
+         WHERE device_enrollment_id = ?
+           AND status IN ('pending', 'approved')`,
+        [input.deviceEnrollmentId],
+      );
+      await db.execute(
+        `INSERT INTO desktop_authentication_requests
+          (request_id, device_enrollment_id, organisation_id,
+           browser_secret_hash, polling_secret_hash, status, expires_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+        [
+          requestId,
+          input.deviceEnrollmentId,
+          input.organisationId,
+          assertDigest(input.browserSecretHash, "browserSecretHash"),
+          assertDigest(input.pollingSecretHash, "pollingSecretHash"),
+          input.expiresAt,
+        ],
+      );
+      return { requestId, expiresAt: input.expiresAt };
+    },
+
+    async getAuthenticationRequestByBrowserHash(browserSecretHash, { executor, forUpdate = false } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT * FROM desktop_authentication_requests
+         WHERE browser_secret_hash = ?
+         LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+        [assertDigest(browserSecretHash, "browserSecretHash")],
+      );
+      return mapAuthenticationRequest(rows?.[0]);
+    },
+
+    async getAuthenticationRequestByPollingHash(pollingSecretHash, { executor, forUpdate = false } = {}) {
+      const [rows] = await executorOr(defaultExecutor, executor).execute(
+        `SELECT * FROM desktop_authentication_requests
+         WHERE polling_secret_hash = ?
+         LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+        [assertDigest(pollingSecretHash, "pollingSecretHash")],
+      );
+      return mapAuthenticationRequest(rows?.[0]);
+    },
+
+    async rotateAuthenticationBrowserSecret(input, { executor } = {}) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE desktop_authentication_requests
+         SET browser_secret_hash = ?
+         WHERE request_id = ?
+           AND browser_secret_hash = ?
+           AND status IN ('pending', 'approved')
+           AND expires_at > ?`,
+        [
+          assertDigest(input.replacementSecretHash, "replacementSecretHash"),
+          input.requestId,
+          assertDigest(input.currentSecretHash, "currentSecretHash"),
+          input.claimedAt,
+        ],
+      );
+      return Number(result.affectedRows || 0) === 1;
+    },
+
+    async approveAuthenticationRequest(input, { executor } = {}) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE desktop_authentication_requests
+         SET status = 'approved',
+             approved_user_id = ?,
+             approved_membership_id = ?,
+             approved_credential_id = ?,
+             approved_at = ?
+         WHERE request_id = ?
+           AND organisation_id = ?
+           AND status = 'pending'
+           AND expires_at > ?`,
+        [
+          input.userId,
+          input.membershipId,
+          input.credentialId,
+          input.approvedAt,
+          input.requestId,
+          input.organisationId,
+          input.approvedAt,
+        ],
+      );
+      return Number(result.affectedRows || 0) === 1;
+    },
+
+    async beginAuthenticationExchange(requestId, timestamp, { executor } = {}) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE desktop_authentication_requests
+         SET status = 'exchanging', exchange_started_at = ?
+         WHERE request_id = ?
+           AND status = 'approved'
+           AND expires_at > ?`,
+        [timestamp, requestId, timestamp],
+      );
+      return Number(result.affectedRows || 0) === 1;
+    },
+
+    async completeAuthenticationExchange(requestId, timestamp, { failed = false, executor } = {}) {
+      const [result] = await executorOr(defaultExecutor, executor).execute(
+        `UPDATE desktop_authentication_requests
+         SET status = ?, consumed_at = ?
+         WHERE request_id = ? AND status = 'exchanging'`,
+        [failed ? "failed" : "consumed", timestamp, requestId],
+      );
+      return Number(result.affectedRows || 0) === 1;
     },
 
     async recordAudit(input, { executor } = {}) {

@@ -16,6 +16,7 @@ import {
   formatEnumLabel,
 } from "./InvestigatorUI";
 import { PRODUCT_NAME } from "../../lib/productBrand";
+import { useReverifiedApiJson } from "../../hooks/useReverifiedApiJson";
 
 function formatDate(value) {
   if (!value) return "Not available";
@@ -28,8 +29,9 @@ async function copyText(value) {
 }
 
 export function DesktopFleetPolicyEditor({ organisationId }) {
+  const reverifiedApiJson = useReverifiedApiJson();
   const [state, setState] = useState({ status: "loading", snapshot: null, error: "", message: "" });
-  const [form, setForm] = useState({ deviceLimit: "", password: "", confirmation: "" });
+  const [form, setForm] = useState({ deviceLimit: "", confirmation: "" });
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
@@ -61,11 +63,10 @@ export function DesktopFleetPolicyEditor({ organisationId }) {
     setSubmitting(true);
     setState((previous) => ({ ...previous, error: "", message: "" }));
     try {
-      const result = await apiJson(`/admin/desktop/organisations/${encodeURIComponent(organisationId)}/policy`, {
+      const result = await reverifiedApiJson(`/admin/desktop/organisations/${encodeURIComponent(organisationId)}/policy`, {
         method: "PUT",
         body: JSON.stringify({
           deviceLimit: normalizedLimit,
-          password: form.password,
           confirmation: form.confirmation,
         }),
       });
@@ -83,7 +84,7 @@ export function DesktopFleetPolicyEditor({ organisationId }) {
         error: "",
         message: "Licensed desktop allowance updated and audited.",
       }));
-      setForm((previous) => ({ ...previous, password: "", confirmation: "" }));
+      setForm((previous) => ({ ...previous, confirmation: "" }));
     } catch (error) {
       setState((previous) => ({ ...previous, error: error.message, message: "" }));
     } finally {
@@ -110,9 +111,8 @@ export function DesktopFleetPolicyEditor({ organisationId }) {
           <h4 className="font-semibold">Set licensed computer allowance</h4>
           <p className="mt-1 text-sm text-muted-foreground">Only {PRODUCT_NAME} platform administrators can change this value. Reducing it never revokes existing devices.</p>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Licensed computers" hint="Enter an explicit allowance from 1 to 10,000."><Input type="number" min="1" max="10000" value={form.deviceLimit} onChange={(event) => setForm((previous) => ({ ...previous, deviceLimit: event.target.value }))} required /></FormField>
-          <FormField label="Current password"><Input type="password" autoComplete="current-password" value={form.password} onChange={(event) => setForm((previous) => ({ ...previous, password: event.target.value }))} required /></FormField>
           <FormField label="Confirmation" hint={expectedConfirmation ? <span>Type <code>{expectedConfirmation}</code>.</span> : "Enter an allowance first."}><Input value={form.confirmation} onChange={(event) => setForm((previous) => ({ ...previous, confirmation: event.target.value }))} required /></FormField>
         </div>
         {Number.isInteger(normalizedLimit) && normalizedLimit < activeDevices ? <WorkspaceNotice title="This will put the scheme over its allowance" tone="warning">The {activeDevices} active devices will stay authorised; only new enrollment will be blocked.</WorkspaceNotice> : null}
@@ -139,10 +139,11 @@ export function DesktopFleetPolicyEditor({ organisationId }) {
 }
 
 export function DesktopDeviceManagement() {
+  const reverifiedApiJson = useReverifiedApiJson();
   const { identity } = useRole();
   const organisationId = identity?.organisationId;
   const [state, setState] = useState({ status: "loading", snapshot: null, error: "" });
-  const [issue, setIssue] = useState({ expiresInHours: 24, maximumUses: 1, password: "", confirmation: "" });
+  const [issue, setIssue] = useState({ expiresInHours: 24, maximumUses: 1, confirmation: "" });
   const [oneTimeKey, setOneTimeKey] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -164,12 +165,12 @@ export function DesktopDeviceManagement() {
     setSubmitting(true);
     setOneTimeKey(null);
     try {
-      const result = await apiJson(`/admin/desktop/organisations/${encodeURIComponent(organisationId)}/activation-keys`, {
+      const result = await reverifiedApiJson(`/admin/desktop/organisations/${encodeURIComponent(organisationId)}/activation-keys`, {
         method: "POST",
         body: JSON.stringify(issue),
       });
       setOneTimeKey(result.activationKey);
-      setIssue((previous) => ({ ...previous, password: "", confirmation: "" }));
+      setIssue((previous) => ({ ...previous, confirmation: "" }));
       await load();
     } catch (error) {
       setState((previous) => ({ ...previous, error: error.message }));
@@ -180,14 +181,12 @@ export function DesktopDeviceManagement() {
 
   async function revoke(kind, id) {
     const label = kind === "devices" ? "DEVICE" : "KEY";
-    const password = window.prompt("Enter your current password to confirm this administrative action.");
-    if (!password) return;
     const confirmation = window.prompt(`Type REVOKE ${label} ${id} exactly.`);
     if (confirmation !== `REVOKE ${label} ${id}`) return;
     try {
-      await apiJson(`/admin/desktop/organisations/${encodeURIComponent(organisationId)}/${kind}/${encodeURIComponent(id)}/revoke`, {
+      await reverifiedApiJson(`/admin/desktop/organisations/${encodeURIComponent(organisationId)}/${kind}/${encodeURIComponent(id)}/revoke`, {
         method: "POST",
-        body: JSON.stringify({ password, confirmation }),
+        body: JSON.stringify({ confirmation }),
       });
       await load();
     } catch (error) {
@@ -234,7 +233,6 @@ export function DesktopDeviceManagement() {
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Expires in hours"><Input type="number" min="1" max="168" value={issue.expiresInHours} onChange={(event) => setIssue((previous) => ({ ...previous, expiresInHours: Number(event.target.value) }))} /></FormField>
           <FormField label="Maximum uses" hint="Use one unless a controlled batch enrollment is explicitly required."><Input type="number" min="1" max="10000" value={issue.maximumUses} onChange={(event) => setIssue((previous) => ({ ...previous, maximumUses: Number(event.target.value) }))} /></FormField>
-          <FormField label="Current password"><Input type="password" autoComplete="current-password" value={issue.password} onChange={(event) => setIssue((previous) => ({ ...previous, password: event.target.value }))} required /></FormField>
           <FormField label="Confirmation" hint={<span>Type <code>ISSUE DESKTOP KEY</code>.</span>}><Input value={issue.confirmation} onChange={(event) => setIssue((previous) => ({ ...previous, confirmation: event.target.value }))} required /></FormField>
         </div>
         <Button type="submit" className="w-fit" disabled={submitting || enrollmentBlocked || issue.confirmation !== "ISSUE DESKTOP KEY"}>{submitting ? "Issuing…" : "Issue activation key"}</Button>

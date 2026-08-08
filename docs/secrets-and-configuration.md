@@ -103,12 +103,17 @@ Model endpoints, credentials and authentication material must not be stored in t
 - `CONTROL_PLANE_MYSQL_URL`
 - `AUTH_ALLOWED_ORIGINS`
 - `AUTHENTICATION_MODE`
+- `CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY` (Key Vault reference)
+- `CLERK_WEB_ORIGIN`
+- `CLERK_ENTERPRISE_SSO_ENABLED`
 
 ### `claimguard-web`
 
 - `SENTRY_DSN_WEB` (Key Vault reference)
 - `NODE_ENV`
 - `CLAIMGUARD_API_BASE_URL`
+- `CLERK_PUBLISHABLE_KEY`
 - `SCM_DO_BUILD_DURING_DEPLOYMENT`
 - `WEBSITE_RUN_FROM_PACKAGE`
 

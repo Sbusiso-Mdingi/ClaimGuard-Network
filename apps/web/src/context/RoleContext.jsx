@@ -1,5 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiJson, setCsrfToken, setUnauthorizedHandler } from "../lib/apiClient";
+import {
+  apiJson,
+  setAccessTokenProvider,
+  setCsrfToken,
+  setUnauthorizedHandler,
+} from "../lib/apiClient";
+import { useWorkforceIdentity } from "./WorkforceIdentityContext";
 
 const RoleContext = createContext(null);
 
@@ -22,6 +28,7 @@ function sessionIdentity(session) {
 }
 
 export function RoleProvider({ children }) {
+  const workforceIdentity = useWorkforceIdentity();
   const [state, setState] = useState({ status: "loading", session: null, error: null });
 
   const clearSession = useCallback(() => {
@@ -41,55 +48,51 @@ export function RoleProvider({ children }) {
   }, []);
 
   const loadSession = useCallback(async () => {
+    if (workforceIdentity.managed && !workforceIdentity.isLoaded) return;
+    if (workforceIdentity.managed && !workforceIdentity.isSignedIn) {
+      clearSession();
+      return;
+    }
     try {
       const session = await apiJson("/auth/session", { cache: "no-store", skipUnauthorizedHandler: true });
       if (!session.authenticated) return clearSession();
-      const csrf = await apiJson("/auth/csrf", { cache: "no-store", skipUnauthorizedHandler: true });
-      setCsrfToken(csrf.csrfToken);
+      if (!workforceIdentity.managed) {
+        const csrf = await apiJson("/auth/csrf", { cache: "no-store", skipUnauthorizedHandler: true });
+        setCsrfToken(csrf.csrfToken);
+      }
       setState({ status: "authenticated", session, error: null });
     } catch {
       clearSession();
     }
-  }, [clearSession]);
+  }, [clearSession, workforceIdentity.isLoaded, workforceIdentity.isSignedIn, workforceIdentity.managed]);
 
   useEffect(() => {
+    setAccessTokenProvider(workforceIdentity.getToken);
     setUnauthorizedHandler(expireSession);
     loadSession();
-    return () => setUnauthorizedHandler(null);
-  }, [expireSession, loadSession]);
-
-  const login = useCallback(async (credentials) => {
-    setState({ status: "loading", session: null, error: null });
-    try {
-      const session = await apiJson("/auth/login", {
-        method: "POST", body: JSON.stringify(credentials), skipUnauthorizedHandler: true,
-      });
-      setCsrfToken(session.csrfToken);
-      const { csrfToken: _csrfToken, ...safeSession } = session;
-      setState({ status: "authenticated", session: safeSession, error: null });
-      return true;
-    } catch (error) {
-      setCsrfToken(null);
-      setState({ status: "unauthenticated", session: null, error: error.message });
-      return false;
-    }
-  }, []);
+    return () => {
+      setAccessTokenProvider(null);
+      setUnauthorizedHandler(null);
+    };
+  }, [expireSession, loadSession, workforceIdentity.getToken]);
 
   const logout = useCallback(async () => {
-    try { await apiJson("/auth/logout", { method: "POST" }); } catch { /* cookie is still cleared by invalid-session handling */ }
+    if (!workforceIdentity.managed) {
+      try { await apiJson("/auth/logout", { method: "POST" }); } catch { /* test-only legacy session */ }
+    }
     clearSession();
-  }, [clearSession]);
+    await workforceIdentity.signOut?.({ redirectUrl: "/sign-in" });
+  }, [clearSession, workforceIdentity]);
 
   const identity = state.session ? sessionIdentity(state.session) : null;
   const value = useMemo(() => ({
     ...state,
-    mode: "session",
+    mode: workforceIdentity.managed ? "clerk" : "test-session",
     authenticated: state.status === "authenticated",
     identity,
-    login,
     logout,
     reloadSession: loadSession,
-  }), [state, identity, login, logout, loadSession]);
+  }), [state, workforceIdentity.managed, identity, logout, loadSession]);
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
 }
 

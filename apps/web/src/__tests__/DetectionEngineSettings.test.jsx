@@ -3,7 +3,10 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("../lib/apiClient", () => ({ apiJson: vi.fn() }));
+vi.mock("../lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal()),
+  apiJson: vi.fn(),
+}));
 
 import { apiJson } from "../lib/apiClient";
 import { DetectionEngineSettings } from "../features/investigator/DetectionEngineSettings";

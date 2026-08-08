@@ -116,6 +116,146 @@ test("desktop activation and session routes preserve one fixed licensed organisa
   assert.deepEqual(loggedOut, [resolved]);
 });
 
+test("Clerk desktop routes start, inspect, approve, and exchange a device-bound session", async () => {
+  const calls = [];
+  let pending = true;
+  const result = sessionResult();
+  result.actor.credential.authenticationProvider = "oidc";
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("desktopDevice", deviceContext());
+    c.set("resolvedSession", {
+      ...result,
+      externalIdentity: { clerkUserId: "clerk-user-1", reverified: true },
+    });
+    c.set("authenticationMetadata", { correlationId: "request-1" });
+    await next();
+  });
+  registerDesktopRoutes(app, {
+    authenticationConfiguration: {
+      ...authenticationConfiguration,
+      mode: "clerk",
+    },
+    authenticationService: {
+      async requireRecentVerification(resolved, metadata) {
+        calls.push(["reverify", resolved, metadata]);
+      },
+      async logout(resolved) { calls.push(["logout", resolved]); },
+    },
+    desktopEnrollmentService: {
+      async renewEnrollment(device) {
+        calls.push(["renew", device]);
+        return { signedEnrollment: "renewed" };
+      },
+    },
+    clerkDesktopAuthorizationService: {
+      async start(device, metadata) {
+        calls.push(["start", device, metadata]);
+        return {
+          requestId: "request-1",
+          pollingSecret: "p".repeat(43),
+          verificationUrl: "https://work.sequrin.example/desktop/authorize#request=secret",
+          expiresAt: "2026-08-08T10:10:00.000Z",
+          pollingIntervalSeconds: 2,
+        };
+      },
+      async inspect(secret, resolved) {
+        calls.push(["inspect", secret, resolved]);
+        return {
+          requestId: "request-1",
+          status: "pending",
+          licensedOrganisation: { organisationId: "org-alpha", displayName: "Alpha Medical" },
+        };
+      },
+      async claim(secret) {
+        calls.push(["claim", secret]);
+        return {
+          requestId: "request-1",
+          cookieSecret: "c".repeat(43),
+          expiresAt: "2099-08-08T10:10:00.000Z",
+        };
+      },
+      async approve(secret, resolved, metadata) {
+        calls.push(["approve", secret, resolved, metadata]);
+        return { approved: true, requestId: "request-1" };
+      },
+      async poll(secret, device, metadata) {
+        calls.push(["poll", secret, device, metadata]);
+        if (pending) return { pending: true, expiresAt: "2026-08-08T10:10:00.000Z" };
+        return { pending: false, result };
+      },
+    },
+  });
+
+  assert.equal((await app.request("/desktop/auth/login", { method: "POST" })).status, 410);
+  assert.equal((await app.request("/desktop/auth/clerk/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ organisationId: "org-beta" }),
+  })).status, 400);
+  const started = await app.request("/desktop/auth/clerk/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(started.status, 201);
+  assert.equal((await started.json()).requestId, "request-1");
+
+  const browserSecret = "b".repeat(43);
+  assert.equal((await app.request("/auth/desktop/authorizations/inspect", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ browserSecret: "invalid" }),
+  })).status, 400);
+  const claimed = await app.request("/auth/desktop/authorizations/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ browserSecret }),
+  });
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.headers.get("cache-control"), "no-store");
+  assert.match(
+    claimed.headers.get("set-cookie"),
+    /^__Host-sequrin_desktop_authorization=.+; Path=\/; SameSite=Lax; HttpOnly; Secure;/,
+  );
+  const approvalCookie = claimed.headers.get("set-cookie").split(";", 1)[0];
+  assert.equal(approvalCookie.includes(browserSecret), false);
+  assert.equal(JSON.stringify(await claimed.clone().json()).includes("c".repeat(43)), false);
+  const inspected = await app.request("/auth/desktop/authorizations/inspect", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: approvalCookie },
+    body: "{}",
+  });
+  assert.equal(inspected.status, 200);
+  assert.equal((await inspected.json()).licensedOrganisation.organisationId, "org-alpha");
+
+  const approved = await app.request("/auth/desktop/authorizations/approve", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: approvalCookie },
+    body: "{}",
+  });
+  assert.equal(approved.status, 200);
+  assert.equal((await approved.json()).approved, true);
+  assert.match(approved.headers.get("set-cookie"), /Max-Age=0/);
+  assert.equal(calls.filter(([kind]) => kind === "reverify").length, 1);
+
+  const pollingSecret = "p".repeat(43);
+  const pollRequest = () => app.request("/desktop/auth/clerk/poll", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pollingSecret }),
+  });
+  const pendingResponse = await pollRequest();
+  assert.equal(pendingResponse.status, 202);
+  assert.equal((await pendingResponse.json()).status, "pending");
+
+  pending = false;
+  const exchanged = await pollRequest();
+  assert.equal(exchanged.status, 200);
+  assert.match(exchanged.headers.get("set-cookie"), /claim_guard_session=session-secret/);
+  assert.equal((await exchanged.json()).enrollment.signedEnrollment, "renewed");
+});
+
 test("desktop data routes cover bounded sync, cached detail, and optimistic concurrency", async () => {
   const syncInputs = [];
   const updateInputs = [];
@@ -396,7 +536,10 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   });
   registerDesktopAdminRoutes(app, {
     authenticationService: {
-      async reauthenticate(session, password) { calls.push(["reauthenticate", session, password]); },
+      async requireRecentVerification(session) {
+        calls.push(["reverify", session]);
+        return { reauthenticatedAt: "2026-08-08T10:00:00.000Z" };
+      },
     },
     desktopEnrollmentService: {
       async getAdminSnapshot(organisationId) { return { organisationId, devices: [], activationKeys: [] }; },
@@ -422,20 +565,20 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   assert.equal((await app.request("/admin/desktop/organisations/org-alpha/policy", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "SET DESKTOP LIMIT 20" }),
+    body: JSON.stringify({ deviceLimit: 20, confirmation: "SET DESKTOP LIMIT 20" }),
   })).status, 403);
 
   const mismatch = await app.request("/admin/desktop/organisations/org-alpha/activation-keys", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ confirmation: "wrong" }),
   });
   assert.equal(mismatch.status, 400);
 
   const issued = await app.request("/admin/desktop/organisations/org-alpha/activation-keys", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "ISSUE DESKTOP KEY", expiresInHours: 12, maximumUses: 1 }),
+    body: JSON.stringify({ confirmation: "ISSUE DESKTOP KEY", expiresInHours: 12, maximumUses: 1 }),
   });
   assert.equal(issued.status, 201);
   assert.equal((await issued.json()).displayedOnce, true);
@@ -443,31 +586,31 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   const wrongKeyConfirmation = await app.request("/admin/desktop/organisations/org-alpha/activation-keys/key-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ confirmation: "wrong" }),
   });
   assert.equal(wrongKeyConfirmation.status, 400);
 
   const revokedKey = await app.request("/admin/desktop/organisations/org-alpha/activation-keys/key-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "REVOKE KEY key-1", reason: "unused" }),
+    body: JSON.stringify({ confirmation: "REVOKE KEY key-1", reason: "unused" }),
   });
   assert.equal(revokedKey.status, 200);
 
   const wrongDeviceConfirmation = await app.request("/admin/desktop/organisations/org-alpha/devices/device-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ confirmation: "wrong" }),
   });
   assert.equal(wrongDeviceConfirmation.status, 400);
 
   const revokedDevice = await app.request("/admin/desktop/organisations/org-alpha/devices/device-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "REVOKE DEVICE device-1", reason: "lost" }),
+    body: JSON.stringify({ confirmation: "REVOKE DEVICE device-1", reason: "lost" }),
   });
   assert.equal(revokedDevice.status, 200);
-  assert.equal(calls.filter(([kind]) => kind === "reauthenticate").length, 3);
+  assert.equal(calls.filter(([kind]) => kind === "reverify").length, 3);
   assert.equal(calls.find(([kind]) => kind === "issue")[1].organisationId, "org-alpha");
   assert.equal(calls.find(([kind]) => kind === "revoke-device")[2].id, "admin-alpha");
 });
@@ -489,7 +632,10 @@ test("only platform fleet-policy administrators can set a bounded allowance with
   });
   registerDesktopAdminRoutes(app, {
     authenticationService: {
-      async reauthenticate(session, password) { calls.push(["reauthenticate", session, password]); },
+      async requireRecentVerification(session) {
+        calls.push(["reverify", session]);
+        return { reauthenticatedAt: "2026-08-08T10:00:00.000Z" };
+      },
     },
     desktopEnrollmentService: {
       async setFleetPolicy(input, actor) {
@@ -505,14 +651,14 @@ test("only platform fleet-policy administrators can set a bounded allowance with
   const mismatch = await app.request("/admin/desktop/organisations/org-alpha/policy", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ deviceLimit: 20, confirmation: "wrong" }),
   });
   assert.equal(mismatch.status, 400);
 
   const updated = await app.request("/admin/desktop/organisations/org-alpha/policy", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "SET DESKTOP LIMIT 20" }),
+    body: JSON.stringify({ deviceLimit: 20, confirmation: "SET DESKTOP LIMIT 20" }),
   });
   assert.equal(updated.status, 200);
   assert.equal((await updated.json()).usage.overLimit, true);
@@ -520,7 +666,7 @@ test("only platform fleet-policy administrators can set a bounded allowance with
     organisationId: "org-alpha",
     deviceLimit: 20,
   });
-  assert.equal(calls.filter(([kind]) => kind === "reauthenticate").length, 1);
+  assert.equal(calls.filter(([kind]) => kind === "reverify").length, 1);
 });
 
 test("desktop routes fail closed when enrollment or administration is not configured", async () => {

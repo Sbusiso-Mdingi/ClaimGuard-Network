@@ -153,9 +153,9 @@ export function usePlatformAdminLifecycle() {
         method: "POST",
         body: JSON.stringify({ email: inviteEmail }),
       });
-      setInvitationUrl(`${window.location.origin}/auth/signup?token=${payload.token}`);
+      setInvitationUrl(payload.invitationUrl || "");
       setInviteEmail("");
-      setMessage("Invitation created successfully.");
+      setMessage("Clerk workforce invitation sent successfully.");
     } catch (requestError) {
       setError(requestMessage(requestError, "Failed to create invitation."));
     } finally {

@@ -11,11 +11,12 @@ const SECRET = "INVITE_TOKEN_MUST_NEVER_LEAK_123";
 describe("Sentry invitation-token redaction", () => {
   it("redacts token-bearing URLs and bearer material", () => {
     const redacted = redactSensitiveText(
-      `https://web.example/signup?token=${SECRET}&next=/home /auth/invitation/${SECRET} Bearer ${SECRET}`,
+      `https://web.example/signup?token=${SECRET}&next=/home https://web.example/desktop/authorize#request=${SECRET} /auth/invitation/${SECRET} Bearer ${SECRET}`,
     );
 
     expect(redacted).not.toContain(SECRET);
     expect(redacted).toContain("token=[REDACTED]");
+    expect(redacted).toContain("request=[REDACTED]");
     expect(redacted).toContain("/auth/invitation/[REDACTED]");
     expect(redacted).toContain("Bearer [REDACTED]");
   });

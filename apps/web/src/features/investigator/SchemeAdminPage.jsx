@@ -139,7 +139,7 @@ function UserManagementPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [newUser, setNewUser] = useState({ displayName: "", username: "", password: "", roleKey: "claims_analyst" });
+  const [newUser, setNewUser] = useState({ email: "", roleKey: "claims_analyst" });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingDisableUserId, setPendingDisableUserId] = useState(null);
 
@@ -170,9 +170,9 @@ function UserManagementPanel() {
         method: "POST",
         body: JSON.stringify(newUser),
       });
-      setNewUser({ displayName: "", username: "", password: "", roleKey: "claims_analyst" });
+      setNewUser({ email: "", roleKey: "claims_analyst" });
       await loadUsers();
-      setMessage("User created successfully.");
+      setMessage("Clerk workforce invitation sent successfully.");
     } catch (err) {
       setError(err.message || "Failed to create user");
     } finally {
@@ -202,18 +202,12 @@ function UserManagementPanel() {
 
       <form onSubmit={handleCreateUser} className="grid gap-5 rounded-xl border border-border/70 bg-background/30 p-4 sm:p-5">
         <div>
-          <h4 className="font-semibold">Create new user</h4>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">Create a tenant-scoped account and assign its initial {PRODUCT_NAME} role.</p>
+          <h4 className="font-semibold">Invite workforce user</h4>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">Clerk verifies the work email and MFA; {PRODUCT_NAME} assigns the tenant-scoped role after acceptance.</p>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Display name">
-            <Input value={newUser.displayName} onChange={(event) => setNewUser((previous) => ({ ...previous, displayName: event.target.value }))} required />
-          </FormField>
-          <FormField label="Username">
-            <Input value={newUser.username} onChange={(event) => setNewUser((previous) => ({ ...previous, username: event.target.value }))} required />
-          </FormField>
-          <FormField label="Password" hint="Use at least eight characters.">
-            <Input type="password" value={newUser.password} onChange={(event) => setNewUser((previous) => ({ ...previous, password: event.target.value }))} required minLength={8} />
+          <FormField label="Work email">
+            <Input type="email" autoComplete="email" value={newUser.email} onChange={(event) => setNewUser((previous) => ({ ...previous, email: event.target.value }))} required />
           </FormField>
           <FormField label="Role">
             <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={newUser.roleKey} onChange={(event) => setNewUser((previous) => ({ ...previous, roleKey: event.target.value }))}>
@@ -225,7 +219,7 @@ function UserManagementPanel() {
             </select>
           </FormField>
         </div>
-        <Button type="submit" className="w-fit" disabled={isSubmitting}>{isSubmitting ? "Creating..." : "Create user"}</Button>
+        <Button type="submit" className="w-fit" disabled={isSubmitting}>{isSubmitting ? "Sending..." : "Send Clerk invitation"}</Button>
       </form>
 
       <div className="space-y-3">

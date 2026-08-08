@@ -96,7 +96,7 @@ export function operationalPermissions(controlPermissions) {
   )))];
 }
 
-function requestMetadata(request, { trustProxy = false } = {}) {
+export function requestMetadata(request, { trustProxy = false } = {}) {
   const forwarded = trustProxy ? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() : null;
   const source = forwarded || (trustProxy ? request.headers.get("x-real-ip") : null) || "unavailable";
   return {
