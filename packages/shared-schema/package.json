@@ -9,7 +9,7 @@
     "./case-workflow": "./src/case-workflow.js"
   },
   "dependencies": {
-    "zod": "^3.24.0"
+    "zod": "^4.4.3"
   },
   "scripts": {
     "build": "mkdir -p dist && cp src/*.js dist/",
