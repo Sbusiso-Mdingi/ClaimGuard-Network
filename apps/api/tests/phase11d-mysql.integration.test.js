@@ -1814,6 +1814,9 @@ test(
           AUTHENTICATION_MODE:
             "session",
 
+          NODE_ENV:
+            "test",
+
           CONTROL_PLANE_MYSQL_URL:
             controlUrl,
 
