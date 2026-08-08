@@ -129,7 +129,7 @@ function InvestigatorRoutes() {
 function AuthenticationBoundary() {
   const { status, authenticated } = useRole();
   if (status === "loading") return <StatusScreen title="Checking your session" description={`Verifying the secure ${PRODUCT_NAME} server-side session…`} />;
-  if (!authenticated) return <LoginPage />;
+  if (!authenticated) return <Navigate to="/sign-in" replace />;
   return <InvestigatorRoutes />;
 }
 

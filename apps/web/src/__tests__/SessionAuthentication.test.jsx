@@ -9,7 +9,7 @@ beforeEach(() => {
   setCsrfToken(null);
 });
 
-test("never renders a local password login when Clerk is unavailable", async () => {
+test("redirects unauthenticated roots to Clerk and never renders a local password login when Clerk is unavailable", async () => {
   global.fetch = vi.fn((url) => {
     if (String(url).endsWith("/api/auth/session")) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ authenticated: false }) });
@@ -20,6 +20,7 @@ test("never renders a local password login when Clerk is unavailable", async () 
   render(<AppRoot />);
 
   expect(await screen.findByRole("heading", { name: "Workforce sign-in unavailable" })).toBeInTheDocument();
+  expect(window.location.pathname).toBe("/sign-in");
   expect(screen.getByText(/local passwords are not accepted/i)).toBeInTheDocument();
   expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
   expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument();

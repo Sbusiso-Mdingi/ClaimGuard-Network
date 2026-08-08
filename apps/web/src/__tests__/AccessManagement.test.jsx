@@ -117,9 +117,9 @@ describe("Branding", () => {
     );
     render(<AppRoot />);
     await waitFor(() => {
-      expect(screen.queryByText(/checking your session/i)).not.toBeInTheDocument();
+      expect(window.location.pathname).toBe("/sign-in");
     });
-    expect(screen.getAllByText(/Sequrin/i).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/Sequrin/i)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/^ClaimGuard$/i)).not.toBeInTheDocument();
   });
 
