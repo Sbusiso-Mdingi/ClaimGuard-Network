@@ -42,7 +42,7 @@ jobs:
       CLAIMGUARD_ENROLLMENT_VERIFYING_JWK: '{"crv":"Ed25519","x":"Z-Pl3hrFt1YRtFg8ZKb0IfKYZ17BufPmRJLf8VvAsKM","kty":"OKP"}'
     steps:
       - name: Checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
