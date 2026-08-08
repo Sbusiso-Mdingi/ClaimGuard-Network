@@ -50,6 +50,15 @@ export function resolveAuthenticationConfiguration(env = process.env) {
   if (production && allowedOrigins.length === 0) {
     throw new Error("AUTH_ALLOWED_ORIGINS is required for production Clerk mode.");
   }
+  const clerkWebOrigin = env.CLERK_WEB_ORIGIN
+    ? new URL(String(env.CLERK_WEB_ORIGIN).trim()).origin
+    : (production ? null : allowedOrigins[0]);
+  if (mode === "clerk" && !clerkWebOrigin) {
+    throw new Error("CLERK_WEB_ORIGIN is required for production Clerk mode.");
+  }
+  if (mode === "clerk" && !allowedOrigins.includes(clerkWebOrigin)) {
+    throw new Error("CLERK_WEB_ORIGIN must be included in AUTH_ALLOWED_ORIGINS.");
+  }
   const clerkPublishableKey = String(env.CLERK_PUBLISHABLE_KEY || "").trim();
   const clerkSecretKey = String(env.CLERK_SECRET_KEY || "").trim();
   if (mode === "clerk" && (!clerkPublishableKey || !clerkSecretKey)) {
@@ -82,6 +91,7 @@ export function resolveAuthenticationConfiguration(env = process.env) {
     clerk: Object.freeze({
       publishableKey: clerkPublishableKey,
       secretKey: clerkSecretKey,
+      webOrigin: clerkWebOrigin,
       authorizedParties: Object.freeze([...allowedOrigins]),
       // OAuth/social identities stay disallowed even if a dashboard setting is
       // changed accidentally. Enterprise SSO has a separate explicit gate.

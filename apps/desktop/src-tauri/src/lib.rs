@@ -8,6 +8,7 @@ mod secure_store;
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -19,7 +20,7 @@ use enrollment::{
     verify_enrollment, EnrollmentDocument, PublicJwk,
 };
 use error::{DesktopError, DesktopResult};
-use http_client::{DesktopHttpClient, VersionedEnrollment};
+use http_client::{DesktopHttpClient, HttpResponse, VersionedEnrollment};
 use rand::{rngs::OsRng, RngCore};
 use reqwest::Method;
 use secure_store::{
@@ -28,7 +29,8 @@ use secure_store::{
 };
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 #[cfg(target_os = "windows")]
 use tauri_plugin_updater::UpdaterExt;
 use uuid::Uuid;
@@ -324,105 +326,180 @@ async fn activate_desktop(
     .await)
 }
 
+fn complete_desktop_authentication(
+    state: &DesktopState,
+    enrollment: &EnrollmentDocument,
+    signing_key: &SigningKey,
+    response: HttpResponse,
+) -> DesktopResult<Value> {
+    let response_organisation = response
+        .body
+        .pointer("/licensedOrganisation/organisationId")
+        .and_then(Value::as_str)
+        .ok_or(DesktopError::InvalidResponse)?;
+    if response_organisation != enrollment.organisation_id {
+        return Err(DesktopError::OrganisationMismatch);
+    }
+    let thumbprint = public_key_thumbprint(&public_jwk(&signing_key));
+    let renewed = response
+        .body
+        .pointer("/enrollment/signedEnrollment")
+        .and_then(Value::as_str)
+        .ok_or(DesktopError::InvalidResponse)?;
+    let renewed_document = verify_enrollment(
+        renewed,
+        &state.enrollment_verifying_jwk,
+        &state.origin,
+        &thumbprint,
+    )?;
+    if renewed_document.organisation_id != enrollment.organisation_id
+        || renewed_document.device_enrollment_id != enrollment.device_enrollment_id
+    {
+        return Err(DesktopError::OrganisationMismatch);
+    }
+    let session_cookie = response
+        .session_cookie
+        .ok_or(DesktopError::InvalidResponse)?;
+    let client_capabilities = response
+        .body
+        .get("clientCapabilities")
+        .and_then(Value::as_array)
+        .ok_or(DesktopError::InvalidResponse)?;
+    let roles = response
+        .body
+        .get("roles")
+        .and_then(Value::as_array)
+        .ok_or(DesktopError::InvalidResponse)?;
+    if !client_capabilities.iter().all(Value::is_string) || !roles.iter().all(Value::is_string) {
+        return Err(DesktopError::InvalidResponse);
+    }
+    let session_profile = json!({
+        "user": response.body.get("user").cloned().unwrap_or(Value::Null),
+        "account": response.body.get("account").cloned().unwrap_or(Value::Null),
+        "roles": roles,
+        "clientCapabilities": client_capabilities,
+    });
+    let session_profile =
+        serde_json::to_vec(&session_profile).map_err(|_| DesktopError::InvalidResponse)?;
+    state
+        .secure_store
+        .set(ENROLLMENT_DOCUMENT, renewed.as_bytes())?;
+    state
+        .secure_store
+        .set(SESSION_COOKIE, session_cookie.as_bytes())?;
+    state.secure_store.set(SESSION_PROFILE, &session_profile)?;
+    state.locked.store(false, Ordering::SeqCst);
+    state.offline.store(false, Ordering::SeqCst);
+    state.status()
+}
+
 #[derive(Serialize)]
-struct LoginRequest<'a> {
-    username: &'a str,
-    password: &'a str,
+struct DesktopAuthorizationPollRequest<'a> {
+    #[serde(rename = "pollingSecret")]
+    polling_secret: &'a str,
 }
 
 #[tauri::command]
-async fn desktop_login(
-    username: String,
-    password: String,
+async fn desktop_clerk_login(
+    app: AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<Value, String> {
-    command_result(async {
-        if username.trim().is_empty() || username.len() > 320 || password.len() > 4096 {
-            return Err(DesktopError::ServerRejected(
-                "The account could not be authorised for the organisation licensed on this device.".into(),
-            ));
+    command_result(
+        async {
+            let (enrollment, signing_key, _) = state.load_enrollment()?;
+            state.secure_store.delete(SESSION_COOKIE)?;
+            state.secure_store.delete(SESSION_PROFILE)?;
+            state.locked.store(true, Ordering::SeqCst);
+
+            let started = state
+                .http
+                .enrolled(
+                    Method::POST,
+                    "/desktop/auth/clerk/start",
+                    b"{}".to_vec(),
+                    &enrollment,
+                    &signing_key,
+                    None,
+                )
+                .await?;
+            let polling_secret = Zeroizing::new(
+                started
+                    .body
+                    .get("pollingSecret")
+                    .and_then(Value::as_str)
+                    .filter(|value| value.len() == 43)
+                    .ok_or(DesktopError::InvalidResponse)?
+                    .to_owned(),
+            );
+            let verification_url = Zeroizing::new(
+                started
+                    .body
+                    .get("verificationUrl")
+                    .and_then(Value::as_str)
+                    .ok_or(DesktopError::InvalidResponse)?
+                    .to_owned(),
+            );
+            let parsed_verification_url = url::Url::parse(verification_url.as_str())
+                .map_err(|_| DesktopError::InvalidResponse)?;
+            let loopback = matches!(
+                parsed_verification_url.host_str(),
+                Some("localhost" | "127.0.0.1" | "::1")
+            );
+            if parsed_verification_url.scheme() != "https"
+                && !(parsed_verification_url.scheme() == "http" && loopback)
+            {
+                return Err(DesktopError::InvalidResponse);
+            }
+            let expires_at = started
+                .body
+                .get("expiresAt")
+                .and_then(Value::as_str)
+                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                .ok_or(DesktopError::InvalidResponse)?;
+            let interval_seconds = started
+                .body
+                .get("pollingIntervalSeconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(2)
+                .clamp(2, 10);
+
+            app.opener()
+                .open_url(verification_url.as_str(), None::<&str>)
+                .map_err(|_| DesktopError::BuildConfiguration)?;
+
+            while Utc::now().timestamp_millis() < expires_at.timestamp_millis() {
+                let body = serde_json::to_vec(&DesktopAuthorizationPollRequest {
+                    polling_secret: polling_secret.as_str(),
+                })
+                .map_err(|_| DesktopError::InvalidResponse)?;
+                let response = state
+                    .http
+                    .enrolled(
+                        Method::POST,
+                        "/desktop/auth/clerk/poll",
+                        body,
+                        &enrollment,
+                        &signing_key,
+                        None,
+                    )
+                    .await?;
+                if response.body.get("status").and_then(Value::as_str) == Some("pending") {
+                    tokio::time::sleep(Duration::from_secs(interval_seconds)).await;
+                    continue;
+                }
+                return complete_desktop_authentication(
+                    &state,
+                    &enrollment,
+                    &signing_key,
+                    response,
+                );
+            }
+            Err(DesktopError::ServerRejected(
+                "DESKTOP_AUTHORIZATION_EXPIRED:The one-time Clerk sign-in request expired.".into(),
+            ))
         }
-        let password = Zeroizing::new(password);
-        let (enrollment, signing_key, _) = state.load_enrollment()?;
-        let body = Zeroizing::new(
-            serde_json::to_vec(&LoginRequest {
-                username: username.trim(),
-                password: password.as_str(),
-            })
-            .map_err(|_| DesktopError::InvalidResponse)?,
-        );
-        let existing_cookie = state.secure_store.get(SESSION_COOKIE)?;
-        let existing_cookie = existing_cookie
-            .as_deref()
-            .and_then(|value| std::str::from_utf8(value).ok());
-        let response = state
-            .http
-            .enrolled(
-                Method::POST,
-                "/desktop/auth/login",
-                body.to_vec(),
-                &enrollment,
-                &signing_key,
-                existing_cookie,
-            )
-            .await?;
-        let response_organisation = response
-            .body
-            .pointer("/licensedOrganisation/organisationId")
-            .and_then(Value::as_str)
-            .ok_or(DesktopError::InvalidResponse)?;
-        if response_organisation != enrollment.organisation_id {
-            return Err(DesktopError::OrganisationMismatch);
-        }
-        let thumbprint = public_key_thumbprint(&public_jwk(&signing_key));
-        let renewed = response
-            .body
-            .pointer("/enrollment/signedEnrollment")
-            .and_then(Value::as_str)
-            .ok_or(DesktopError::InvalidResponse)?;
-        let renewed_document = verify_enrollment(
-            renewed,
-            &state.enrollment_verifying_jwk,
-            &state.origin,
-            &thumbprint,
-        )?;
-        if renewed_document.organisation_id != enrollment.organisation_id
-            || renewed_document.device_enrollment_id != enrollment.device_enrollment_id
-        {
-            return Err(DesktopError::OrganisationMismatch);
-        }
-        let session_cookie = response.session_cookie.ok_or(DesktopError::InvalidResponse)?;
-        let client_capabilities = response
-            .body
-            .get("clientCapabilities")
-            .and_then(Value::as_array)
-            .ok_or(DesktopError::InvalidResponse)?;
-        let roles = response
-            .body
-            .get("roles")
-            .and_then(Value::as_array)
-            .ok_or(DesktopError::InvalidResponse)?;
-        if !client_capabilities.iter().all(Value::is_string) || !roles.iter().all(Value::is_string) {
-            return Err(DesktopError::InvalidResponse);
-        }
-        let session_profile = json!({
-            "user": response.body.get("user").cloned().unwrap_or(Value::Null),
-            "account": response.body.get("account").cloned().unwrap_or(Value::Null),
-            "roles": roles,
-            "clientCapabilities": client_capabilities,
-        });
-        let session_profile = serde_json::to_vec(&session_profile)
-            .map_err(|_| DesktopError::InvalidResponse)?;
-        state
-            .secure_store
-            .set(ENROLLMENT_DOCUMENT, renewed.as_bytes())?;
-        state.secure_store.set(SESSION_COOKIE, session_cookie.as_bytes())?;
-        state.secure_store.set(SESSION_PROFILE, &session_profile)?;
-        state.locked.store(false, Ordering::SeqCst);
-        state.offline.store(false, Ordering::SeqCst);
-        state.status()
-    }
-    .await)
+        .await,
+    )
 }
 
 #[tauri::command]
@@ -1135,6 +1212,7 @@ fn reset_desktop(confirmation: String, state: State<'_, DesktopState>) -> Result
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let (origin, enrollment_verifying_jwk) = trusted_configuration()
@@ -1169,7 +1247,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             desktop_status,
             activate_desktop,
-            desktop_login,
+            desktop_clerk_login,
             desktop_logout,
             lock_desktop,
             synchronize_desktop,

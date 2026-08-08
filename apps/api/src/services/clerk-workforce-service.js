@@ -89,29 +89,36 @@ export function createClerkWorkforceService({
       || (invitation.invitationType === "platform_administrator"
         ? "platform_administrator"
         : "scheme_administrator");
-    const clerkInvitation = await clerkClient.organizations.createOrganizationInvitation({
-      organizationId: mapping.clerkOrganisationId,
-      emailAddress: invitation.email,
-      role: clerkRole(roleKey),
-      expiresInDays: invitationDays(invitation.expiresAt),
-      inviterUserId: inviterClerkUserId || undefined,
-      redirectUrl: signUpRedirectUrl,
-      privateMetadata: {
-        claimGuardInvitationId: invitation.invitationId,
-        claimGuardRoleKey: roleKey,
-      },
-    });
+    let clerkInvitation = null;
     try {
+      clerkInvitation = await clerkClient.organizations.createOrganizationInvitation({
+        organizationId: mapping.clerkOrganisationId,
+        emailAddress: invitation.email,
+        role: clerkRole(roleKey),
+        expiresInDays: invitationDays(invitation.expiresAt),
+        inviterUserId: inviterClerkUserId || undefined,
+        redirectUrl: signUpRedirectUrl,
+        privateMetadata: {
+          claimGuardInvitationId: invitation.invitationId,
+          claimGuardRoleKey: roleKey,
+        },
+      });
       await controlPlaneService.attachClerkInvitation({
         invitationId: invitation.invitationId,
         externalInvitationId: clerkInvitation.id,
       }, actor);
     } catch (error) {
-      await clerkClient.organizations.revokeOrganizationInvitation({
-        organizationId: mapping.clerkOrganisationId,
-        invitationId: clerkInvitation.id,
-        requestingUserId: inviterClerkUserId || undefined,
-      }).catch(() => {});
+      if (clerkInvitation?.id) {
+        await clerkClient.organizations.revokeOrganizationInvitation({
+          organizationId: mapping.clerkOrganisationId,
+          invitationId: clerkInvitation.id,
+          requestingUserId: inviterClerkUserId || undefined,
+        }).catch(() => {});
+      }
+      await controlPlaneService.cancelUndeliveredClerkInvitation?.({
+        invitationId: invitation.invitationId,
+        reason: clerkInvitation?.id ? "clerk_binding_failed" : "clerk_delivery_failed",
+      }, actor).catch(() => {});
       throw error;
     }
     return {
@@ -194,6 +201,34 @@ export function createClerkWorkforceService({
             "INVITATION_EXPIRED",
           );
         }
+        if (invitation.roleKey === "platform_administrator") {
+          if (!invitation.invitedBy) {
+            throw new ControlPlaneConflictError(
+              "The platform administrator invitation has no accountable inviter.",
+              "PLATFORM_ADMINISTRATOR_INVITER_REQUIRED",
+            );
+          }
+          const inviter = await repositories.identity.getSafeUser(invitation.invitedBy);
+          const inviterMembership = await repositories.identity
+            .getMembershipForUserOrganisation({
+              userId: invitation.invitedBy,
+              organisationId: mappedOrganisation.organisationId,
+            }, { lockForUpdate: true });
+          const inviterRoles = inviterMembership
+            ? await repositories.identity.listMembershipRoles(inviterMembership.membershipId)
+            : [];
+          if (
+            !inviter
+            || inviter.status !== "active"
+            || inviterMembership?.status !== "active"
+            || !inviterRoles.includes("platform_administrator")
+          ) {
+            throw new ControlPlaneConflictError(
+              "The inviting administrator no longer has active platform authority.",
+              "PLATFORM_ADMINISTRATOR_INVITER_INACTIVE",
+            );
+          }
+        }
       }
 
       if (!user) {
@@ -204,6 +239,12 @@ export function createClerkWorkforceService({
         });
       } else if (user.status === "invited") {
         user = await repositories.identity.activateInvitedUser(user.userId);
+      }
+      if (invitation?.roleKey === "platform_administrator" && user.userId === invitation.invitedBy) {
+        throw new ControlPlaneConflictError(
+          "A platform administrator invitation must create a distinct identity.",
+          "DISTINCT_PLATFORM_ADMINISTRATOR_REQUIRED",
+        );
       }
       if (user.status !== "active") {
         throw new ControlPlaneConflictError(

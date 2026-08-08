@@ -1,5 +1,14 @@
 import '@testing-library/jest-dom'
 import { configure } from '@testing-library/dom'
+import { vi } from 'vitest'
+
+vi.mock('@clerk/react', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    useReverification: (request) => request,
+  }
+})
 
 configure({ asyncUtilTimeout: 5_000 })
 

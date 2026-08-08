@@ -5,7 +5,7 @@
 1. ClaimGuard platform administration confirms that the scheme has an explicit licensed allowance from 1 to 10,000.
 2. Scheme administrator opens Desktop device management for the current scheme.
 3. Review device allowance, active count, key lifetime, and offline-grace policy. If the scheme is at or over its allowance, revoke an unused device or request a licensed increase.
-4. Re-enter the administrator password and type `ISSUE DESKTOP KEY`.
+4. Complete Clerk re-verification and type `ISSUE DESKTOP KEY`.
 5. Transfer the displayed key through an approved one-time channel. It is never shown again.
 6. Verify a `desktop_device.activated` success event and the expected installation/device entry.
 
@@ -29,7 +29,7 @@ A revoked installation is not permanently banned. If the organisation deliberate
 
 ## Lost or Stolen Device
 
-Revoke immediately; do not wait for the device to reconnect. Invalidate affected user sessions/passwords according to identity incident policy. Record the last seen/offline-grace expiry, ensure device encryption/EDR remote actions are applied, and assess whether process memory, pagefile, backups, or an unlocked Windows session may have exposed data.
+Revoke immediately; do not wait for the device to reconnect. Revoke affected Clerk sessions and disable the internal membership according to identity incident policy. Record the last seen/offline-grace expiry, ensure device encryption/EDR remote actions are applied, and assess whether process memory, pagefile, backups, or an unlocked Windows session may have exposed data.
 
 ## Local Cache Failure or Organisation Change
 

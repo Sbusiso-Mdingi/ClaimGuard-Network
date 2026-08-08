@@ -105,7 +105,7 @@ export function createCaseActionIdempotencyKey({
 export const desktopBridge = Object.freeze({
   status: () => invokeDesktop("desktop_status"),
   activate: (activationKey) => invokeDesktop("activate_desktop", { activationKey }),
-  login: (username, password) => invokeDesktop("desktop_login", { username, password }),
+  login: () => invokeDesktop("desktop_clerk_login"),
   logout: () => invokeDesktop("desktop_logout"),
   lock: () => invokeDesktop("lock_desktop"),
   sync: () => invokeDesktop("synchronize_desktop"),

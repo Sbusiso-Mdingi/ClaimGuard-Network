@@ -8,6 +8,7 @@ import {
   IDENTITY_AUTHORITY_HEADERS,
   LEGACY_SERVICE_IDENTITY_HEADERS,
   operationalPermissions,
+  parseCookieHeader,
   requestMetadata,
 } from "./auth-context.js";
 import { ForbiddenError } from "../application-errors.js";
@@ -182,6 +183,47 @@ export function createClerkAuthenticationProvider({
             correlationId: metadata.correlationId,
           }),
         };
+      }
+
+      const desktopSessionSecret = request.headers.has("dpop")
+        ? parseCookieHeader(request.headers.get("cookie"))
+            .get(configuration.cookie.name) || null
+        : null;
+      if (desktopSessionSecret) {
+        try {
+          const resolvedSession = await authenticationService.resolveSession(
+            desktopSessionSecret,
+            metadata,
+          );
+          const { actor } = resolvedSession;
+          return {
+            resolvedSession,
+            metadata,
+            authContext: createAuthenticatedAuthContext({
+              userId: actor.user.userId,
+              displayName: actor.user.displayName,
+              roles: actor.roles,
+              permissions: operationalPermissions(actor.permissions),
+              tenantId: actorOperationalTenantId(actor),
+              organisationId: actor.organisation.organisationId,
+              membershipId: actor.membership.membershipId,
+              organisation: actor.organisation,
+              source: "clerk_desktop_session",
+              actorType: "user",
+              authenticationVersion: actor.authenticationVersion,
+              authorizationVersion: actor.authorizationVersion,
+              correlationId: metadata.correlationId,
+            }),
+          };
+        } catch (error) {
+          if (error?.code === ACCESS_ERROR_CODE.AUTHORIZATION_VERSION_STALE) throw error;
+          return {
+            authContext: createAnonymousAuthContext({ source: "invalid_desktop_session" }),
+            resolvedSession: null,
+            metadata,
+            dataPlaneOrganisationToRetire: error?.organisationId || null,
+          };
+        }
       }
 
       const bearer = bearerValue(request);

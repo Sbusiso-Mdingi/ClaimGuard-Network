@@ -3,7 +3,10 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("../lib/apiClient", () => ({ apiJson: vi.fn() }));
+vi.mock("../lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal()),
+  apiJson: vi.fn(),
+}));
 vi.mock("../context/RoleContext", () => ({
   useRole: () => ({
     identity: {
@@ -76,7 +79,7 @@ describe("SchemeAdminPage", () => {
     expect(screen.getByText("No users found.")).toBeInTheDocument();
   });
 
-  test("serializes the complete new-user payload as JSON", async () => {
+  test("serializes the Clerk workforce invitation without local credentials", async () => {
     apiJson.mockImplementation((path, options) => {
       if (path === "/admin/scheme/overview") return Promise.resolve(overviewResponse);
       if (path === "/admin/scheme/users" && options?.method === "POST") {
@@ -90,25 +93,21 @@ describe("SchemeAdminPage", () => {
     const user = userEvent.setup();
 
     await screen.findByText("No users found.");
-    await user.type(screen.getByLabelText(/Display name/i), "Test Analyst");
-    await user.type(screen.getByLabelText(/Username/i), "analyst@ubuntu.example");
-    await user.type(screen.getByLabelText(/Password/i), "StrongPass123!");
+    await user.type(screen.getByLabelText(/Work email/i), "analyst@ubuntu.example");
     await user.selectOptions(screen.getByLabelText(/Role/i), "fraud_analyst");
-    await user.click(screen.getByRole("button", { name: /Create user/i }));
+    await user.click(screen.getByRole("button", { name: /Send Clerk invitation/i }));
 
     await waitFor(() => {
       expect(apiJson).toHaveBeenCalledWith("/admin/scheme/users", {
         method: "POST",
         body: JSON.stringify({
-          displayName: "Test Analyst",
-          username: "analyst@ubuntu.example",
-          password: "StrongPass123!",
+          email: "analyst@ubuntu.example",
           roleKey: "fraud_analyst",
         }),
       });
     });
 
-    expect(await screen.findByText("User created successfully.")).toBeInTheDocument();
+    expect(await screen.findByText("Clerk workforce invitation sent successfully.")).toBeInTheDocument();
   });
 
   test("shows an actionable overview error without hiding user administration", async () => {

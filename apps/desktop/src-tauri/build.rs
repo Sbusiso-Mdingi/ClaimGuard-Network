@@ -3,7 +3,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "desktop_status",
             "activate_desktop",
-            "desktop_login",
+            "desktop_clerk_login",
             "desktop_logout",
             "lock_desktop",
             "synchronize_desktop",

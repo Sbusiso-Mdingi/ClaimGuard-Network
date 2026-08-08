@@ -80,17 +80,27 @@ function sessionApp(options = {}) {
   return { app, service };
 }
 
-test("authentication configuration is session-only and rejects demo credential exposure", () => {
-  const session = resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control" });
-  assert.equal(session.mode, "session");
+test("authentication configuration defaults to Clerk and restricts local sessions to tests", () => {
+  const session = resolveAuthenticationConfiguration({
+    CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control",
+    CLERK_PUBLISHABLE_KEY: "pk_test_example",
+    CLERK_SECRET_KEY: "sk_test_example",
+  });
+  assert.equal(session.mode, "clerk");
+  assert.equal(session.clerk.webOrigin, "http://localhost:3002");
   assert.equal(Object.hasOwn(session, "internalServiceToken"), false);
   assert.equal(Object.hasOwn(session, "internalServiceOrganisationIds"), false);
   assert.equal(Object.hasOwn(session, "internalServiceAllowedRoles"), false);
   assert.equal(Object.hasOwn(session, "demoCredentialsVisible"), false);
   assert.equal(Object.hasOwn(session, "demoCredentials"), false);
-  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "hybrid" }), /exactly session/);
-  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "legacy_headers" }), /exactly session/);
-  assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production" }), /AUTH_ALLOWED_ORIGINS/);
+  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "hybrid" }), /exactly clerk/);
+  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "legacy_headers" }), /exactly clerk/);
+  assert.throws(() => resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "session", CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control" }), /test-only/);
+  assert.equal(resolveAuthenticationConfiguration({ AUTHENTICATION_MODE: "session", NODE_ENV: "test", CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control" }).mode, "session");
+  assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production", CLERK_PUBLISHABLE_KEY: "pk_test_example", CLERK_SECRET_KEY: "sk_test_example" }), /AUTH_ALLOWED_ORIGINS/);
+  assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production", AUTH_ALLOWED_ORIGINS: "https://work.sequrin.example", CLERK_PUBLISHABLE_KEY: "pk_test_example", CLERK_SECRET_KEY: "sk_test_example" }), /CLERK_WEB_ORIGIN/);
+  assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production", AUTH_ALLOWED_ORIGINS: "https://work.sequrin.example", CLERK_WEB_ORIGIN: "https://other.sequrin.example", CLERK_PUBLISHABLE_KEY: "pk_test_example", CLERK_SECRET_KEY: "sk_test_example" }), /included in AUTH_ALLOWED_ORIGINS/);
+  assert.equal(resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEPLOYMENT_CLASS: "production", AUTH_ALLOWED_ORIGINS: "https://work.sequrin.example,https://api.sequrin.example", CLERK_WEB_ORIGIN: "https://work.sequrin.example", CLERK_PUBLISHABLE_KEY: "pk_test_example", CLERK_SECRET_KEY: "sk_test_example" }).clerk.webOrigin, "https://work.sequrin.example");
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEMO_CREDENTIALS_VISIBLE: "true" }), /no longer supported/);
   assert.throws(() => resolveAuthenticationConfiguration({ CONTROL_PLANE_MYSQL_URL: "mysql://u:p@localhost/control", DEMO_CREDENTIALS_JSON: "[]" }), /no longer supported/);
 });

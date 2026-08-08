@@ -394,6 +394,109 @@ export function createControlPlaneAuthenticationService({
       };
     },
 
+    async createExternalSession(
+      { organisationId, userId, credentialId },
+      metadata = {},
+    ) {
+      const timestamp = now();
+      const references = { organisationId, userId, credentialId };
+      const reject = async (reason) => {
+        await recordEvent(
+          "external_authentication_failure",
+          "failure",
+          metadata,
+          references,
+          reason,
+        );
+        throw new AuthenticationRejectedError(reason);
+      };
+      const [organisation, user, membership, credential, bridge] = await Promise.all([
+        authenticationRepository.getOrganisationById(organisationId),
+        authenticationRepository.getUser(userId),
+        authenticationRepository.getMembership({ userId, organisationId }),
+        authenticationRepository.getCredentialById(credentialId),
+        authenticationRepository.getLegacyTenantBridge(organisationId),
+      ]);
+      if (!validOrganisation(organisation)) return reject("external_organisation_unavailable");
+      if (!user || user.status !== "active") return reject("user_inactive");
+      if (!validMembership(membership, timestamp)) return reject("membership_inactive");
+      if (
+        !credential
+        || credential.userId !== userId
+        || credential.organisationId !== organisationId
+        || credential.authenticationProvider !== "oidc"
+        || !credential.externalSubject
+        || credential.status !== "active"
+      ) {
+        return reject("external_credential_inactive");
+      }
+      if (!validVersion(user.authenticationVersion)) {
+        return reject("authentication_version_unavailable");
+      }
+      if (!validVersion(membership.authorizationVersion)) {
+        return reject("authorization_version_unavailable");
+      }
+      if (!validLegacyBridge(organisation, bridge)) {
+        return reject("legacy_tenant_bridge_unavailable");
+      }
+      const authorization = await resolveAuthority({
+        organisationId,
+        userId,
+        membershipId: membership.membershipId,
+        asOf: timestamp,
+      });
+      if (authorization.permissions.length === 0) return reject("authorization_unavailable");
+
+      const bearerSecret = secureToken(randomBytes);
+      const csrfToken = secureToken(randomBytes);
+      const absoluteExpiresAt = new Date(timestamp.getTime() + absoluteTimeoutMs);
+      const idleExpiresAt = new Date(Math.min(
+        timestamp.getTime() + idleTimeoutMs,
+        absoluteExpiresAt.getTime(),
+      ));
+      const session = {
+        hashedBearerSecret: sha256(bearerSecret),
+        csrfTokenHash: sha256(csrfToken),
+        signingKeyId: "opaque-v1",
+        userId,
+        organisationId,
+        membershipId: membership.membershipId,
+        credentialId,
+        issuedAt: timestamp,
+        lastActivityAt: timestamp,
+        idleExpiresAt,
+        absoluteExpiresAt,
+        authenticationVersion: user.authenticationVersion,
+        authorizationVersion: membership.authorizationVersion,
+        clientMetadata: {
+          sourceNetworkHash: metadata.sourceNetworkHash || null,
+          userAgentHash: metadata.userAgentHash || null,
+          source: "clerk_desktop_authorization",
+        },
+      };
+      const created = await authenticationRepository.createSession(session);
+      session.sessionId = created.sessionId;
+      await recordEvent(
+        "external_authentication_success",
+        "success",
+        metadata,
+        references,
+      );
+      return {
+        bearerSecret,
+        csrfToken,
+        session,
+        actor: actorProjection({
+          organisation,
+          user,
+          membership,
+          credential,
+          authorization,
+          bridge,
+        }),
+      };
+    },
+
     async login({ organisationSlug, username, password, requiredOrganisationId = null }, metadata = {}) {
       let normalizedSlug;
       let normalizedUsername;

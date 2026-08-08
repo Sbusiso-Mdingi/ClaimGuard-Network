@@ -3,11 +3,14 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("../lib/apiClient", () => ({
+vi.mock("../lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal()),
   apiJson: vi.fn(),
-  ApiError: class ApiError extends Error {},
-  safeApiErrorMessage: (error, fallback) => error?.message || fallback,
 }));
+vi.mock("../hooks/useReverifiedApiJson", async () => {
+  const { apiJson } = await import("../lib/apiClient");
+  return { useReverifiedApiJson: () => apiJson };
+});
 
 import { apiJson } from "../lib/apiClient";
 import { PlatformAdministratorAccessPanel } from "../features/investigator/PlatformAdministratorAccessPanel";
@@ -68,10 +71,10 @@ describe("PlatformAdministratorAccessPanel", () => {
             email: "second@example.com",
             status: "pending",
           },
-          token: "one-time-token",
+          invitationUrl: "https://clerk.example/invitations/clerk-invitation-1",
           auditEventId: "audit-create-1",
           message:
-            "Platform administrator invitation created. Copy the one-time link now.",
+            "Platform administrator invitation created and delivered by Clerk.",
         });
       }
       return Promise.reject(new Error(`Unexpected request: ${path}`));
@@ -99,10 +102,6 @@ describe("PlatformAdministratorAccessPanel", () => {
       screen.getByRole("dialog", { name: "Invite second@example.com" }),
     ).toBeInTheDocument();
     await user.type(
-      screen.getByLabelText("Current password"),
-      "correct-password",
-    );
-    await user.type(
       screen.getByLabelText("Confirmation"),
       "INVITE second@example.com AS PLATFORM ADMINISTRATOR",
     );
@@ -118,7 +117,6 @@ describe("PlatformAdministratorAccessPanel", () => {
           skipUnauthorizedHandler: true,
           body: JSON.stringify({
             email: "second@example.com",
-            password: "correct-password",
             confirmation:
               "INVITE second@example.com AS PLATFORM ADMINISTRATOR",
           }),
@@ -127,7 +125,7 @@ describe("PlatformAdministratorAccessPanel", () => {
     });
     expect(await screen.findByText(/Audit event audit-create-1/)).toBeInTheDocument();
     expect(
-      screen.getByText(/\/auth\/signup\?token=one-time-token/),
+      screen.getByText("https://clerk.example/invitations/clerk-invitation-1"),
     ).toBeInTheDocument();
     expect(await screen.findByText("second@example.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();

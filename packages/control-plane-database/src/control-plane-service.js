@@ -947,6 +947,52 @@ export function createControlPlaneService({ pool, repositories }) {
       });
     },
 
+    async cancelUndeliveredClerkInvitation(
+      { invitationId, reason = "clerk_delivery_failed" },
+      actor,
+    ) {
+      return withControlPlaneTransaction(pool, async (executor) => {
+        const [rows] = await executor.execute(
+          `SELECT invitation_id, organisation_id, status
+           FROM admin_invitations
+           WHERE invitation_id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [invitationId],
+        );
+        const invitation = rows?.[0] || null;
+        if (!invitation || invitation.status !== "pending") return false;
+
+        await executor.execute(
+          `UPDATE admin_invitations
+           SET status = 'revoked',
+               revoked_at = UTC_TIMESTAMP(3),
+               revoked_by = ?
+           WHERE invitation_id = ?
+             AND status = 'pending'`,
+          [actor?.id || null, invitationId],
+        );
+        await audit(executor, {
+          actorType: actor?.type || "system",
+          actorId: actor?.id || null,
+          organisationScopeId: invitation.organisation_id,
+          action: "workforce_invitation.delivery_failed",
+          targetType: "admin_invitation",
+          targetId: invitationId,
+          beforeSummary: { status: "pending" },
+          afterSummary: {
+            status: "revoked",
+            provider: "clerk",
+            reason: String(reason || "clerk_delivery_failed").slice(0, 64),
+          },
+          correlationId: actor?.correlationId || null,
+          outcome: "failure",
+          source: actor?.source || "clerk-workforce-service",
+        });
+        return true;
+      });
+    },
+
     async listInvitations(organisationId) {
       const [rows] = await pool.execute(
         `SELECT invitation_id, organisation_id, invitation_type, role_key, email, status,

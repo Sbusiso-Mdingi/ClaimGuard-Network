@@ -40,9 +40,9 @@ function session({ userId, displayName, role, capabilities, organisation = MEDIC
       userStatus: "active",
       membershipStatus: "active",
       credentialStatus: "active",
-      authenticationProvider: "local_password",
-      passwordChangeAvailable: true,
-      passwordMinLength: organisation.organisationType === "platform" ? 12 : 8,
+      authenticationProvider: "oidc",
+      passwordChangeAvailable: false,
+      passwordMinLength: null,
     }),
     sessionActivity: Object.freeze({
       issuedAt: "2026-08-01T08:00:00Z",

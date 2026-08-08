@@ -82,12 +82,16 @@ export function registerDesktopRoutes(app, {
   desktopSyncService = null,
   authenticationService = null,
   authenticationConfiguration = null,
+  clerkDesktopAuthorizationService = null,
   claimsReadRepository = null,
   desktopSyncRepository = null,
   investigationService = null,
   identityRepository = null,
 } = {}) {
   const enforceEvidenceBodyLimit = createEvidenceUploadBodyLimit();
+  const clerkSecret = (value) => (
+    typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null
+  );
   app.post("/desktop/activate", async (c) => {
     if (!desktopEnrollmentService?.activate) {
       return c.json({ available: false, code: "DESKTOP_ACTIVATION_UNAVAILABLE", message: "Desktop activation is not configured." }, 503);
@@ -158,6 +162,199 @@ export function registerDesktopRoutes(app, {
         code: "DESKTOP_AUTHENTICATION_FAILED",
         message: "The account could not be authorised for the organisation licensed on this device.",
       }, 401);
+    }
+  });
+
+  app.post("/desktop/auth/clerk/start", async (c) => {
+    if (
+      authenticationConfiguration?.mode !== "clerk"
+      || !clerkDesktopAuthorizationService?.start
+    ) {
+      return c.json({
+        available: false,
+        code: "CLERK_DESKTOP_AUTHENTICATION_UNAVAILABLE",
+        message: "Clerk desktop sign-in is not configured.",
+      }, 503);
+    }
+    const device = c.get("desktopDevice") || null;
+    if (!device) {
+      return c.json({
+        available: false,
+        code: "DEVICE_PROOF_REQUIRED",
+        message: "This desktop device could not be verified.",
+      }, 401);
+    }
+    const payload = await c.req.json().catch(() => ({}));
+    if (Object.keys(payload).length > 0) {
+      return c.json({
+        available: false,
+        code: "DESKTOP_AUTHORIZATION_INPUT_INVALID",
+        message: "The desktop sign-in request is invalid.",
+      }, 400);
+    }
+    try {
+      const result = await clerkDesktopAuthorizationService.start(
+        device,
+        c.get("authenticationMetadata") || {},
+      );
+      return c.json({ available: true, ...result }, 201);
+    } catch (error) {
+      return desktopError(
+        c,
+        error,
+        "Desktop sign-in could not be started.",
+        "DESKTOP_AUTHORIZATION_START_FAILED",
+      );
+    }
+  });
+
+  app.post("/auth/desktop/authorizations/inspect", async (c) => {
+    const resolvedIdentity = c.get("resolvedSession") || null;
+    if (!resolvedIdentity?.externalIdentity || !clerkDesktopAuthorizationService?.inspect) {
+      return c.json({
+        available: false,
+        code: "UNAUTHENTICATED",
+        message: "Clerk workforce authentication is required.",
+      }, 401);
+    }
+    const payload = await c.req.json().catch(() => ({}));
+    const browserSecret = clerkSecret(payload.browserSecret);
+    if (!browserSecret || Object.keys(payload).some((key) => key !== "browserSecret")) {
+      return c.json({
+        available: false,
+        code: "DESKTOP_AUTHORIZATION_INPUT_INVALID",
+        message: "The desktop sign-in request is invalid.",
+      }, 400);
+    }
+    try {
+      const result = await clerkDesktopAuthorizationService.inspect(
+        browserSecret,
+        resolvedIdentity,
+      );
+      return c.json({ available: true, ...result });
+    } catch (error) {
+      return desktopError(
+        c,
+        error,
+        "The desktop sign-in request could not be inspected.",
+        "DESKTOP_AUTHORIZATION_INSPECTION_FAILED",
+      );
+    }
+  });
+
+  app.post("/auth/desktop/authorizations/approve", async (c) => {
+    const resolvedIdentity = c.get("resolvedSession") || null;
+    if (!resolvedIdentity?.externalIdentity || !clerkDesktopAuthorizationService?.approve) {
+      return c.json({
+        available: false,
+        code: "UNAUTHENTICATED",
+        message: "Clerk workforce authentication is required.",
+      }, 401);
+    }
+    const payload = await c.req.json().catch(() => ({}));
+    const browserSecret = clerkSecret(payload.browserSecret);
+    if (!browserSecret || Object.keys(payload).some((key) => key !== "browserSecret")) {
+      return c.json({
+        available: false,
+        code: "DESKTOP_AUTHORIZATION_INPUT_INVALID",
+        message: "The desktop sign-in request is invalid.",
+      }, 400);
+    }
+    try {
+      await authenticationService.requireRecentVerification(
+        resolvedIdentity,
+        c.get("authenticationMetadata") || {},
+      );
+      const result = await clerkDesktopAuthorizationService.approve(
+        browserSecret,
+        resolvedIdentity,
+        c.get("authenticationMetadata") || {},
+      );
+      return c.json({ available: true, ...result });
+    } catch (error) {
+      return desktopError(
+        c,
+        error,
+        "The desktop sign-in request could not be approved.",
+        "DESKTOP_AUTHORIZATION_APPROVAL_FAILED",
+      );
+    }
+  });
+
+  app.post("/desktop/auth/clerk/poll", async (c) => {
+    if (
+      authenticationConfiguration?.mode !== "clerk"
+      || !clerkDesktopAuthorizationService?.poll
+      || !desktopEnrollmentService?.renewEnrollment
+    ) {
+      return c.json({
+        available: false,
+        code: "CLERK_DESKTOP_AUTHENTICATION_UNAVAILABLE",
+        message: "Clerk desktop sign-in is not configured.",
+      }, 503);
+    }
+    const device = c.get("desktopDevice") || null;
+    if (!device) {
+      return c.json({
+        available: false,
+        code: "DEVICE_PROOF_REQUIRED",
+        message: "This desktop device could not be verified.",
+      }, 401);
+    }
+    const payload = await c.req.json().catch(() => ({}));
+    const pollingSecret = clerkSecret(payload.pollingSecret);
+    if (!pollingSecret || Object.keys(payload).some((key) => key !== "pollingSecret")) {
+      return c.json({
+        available: false,
+        code: "DESKTOP_AUTHORIZATION_INPUT_INVALID",
+        message: "The desktop sign-in request is invalid.",
+      }, 400);
+    }
+    let result = null;
+    try {
+      const exchange = await clerkDesktopAuthorizationService.poll(
+        pollingSecret,
+        device,
+        c.get("authenticationMetadata") || {},
+      );
+      if (exchange.pending) {
+        return c.json({
+          available: true,
+          status: "pending",
+          expiresAt: exchange.expiresAt,
+        }, 202);
+      }
+      result = exchange.result;
+      const enrollment = await desktopEnrollmentService.renewEnrollment(device);
+      const maxAgeSeconds = Math.max(
+        0,
+        (new Date(result.session.absoluteExpiresAt).getTime() - Date.now()) / 1000,
+      );
+      c.header(
+        "Set-Cookie",
+        serializeCookie(authenticationConfiguration, result.bearerSecret, { maxAgeSeconds }),
+      );
+      return c.json({
+        ...safeSessionResponse(result, authenticationConfiguration),
+        licensedOrganisation: {
+          organisationId: device.organisationId,
+          displayName: device.organisationDisplayName,
+        },
+        enrollment,
+      });
+    } catch (error) {
+      if (result) {
+        await authenticationService.logout(
+          result,
+          c.get("authenticationMetadata") || {},
+        ).catch(() => {});
+      }
+      return desktopError(
+        c,
+        error,
+        "The desktop account could not be authorised.",
+        "DESKTOP_AUTHORIZATION_FAILED",
+      );
     }
   });
 

@@ -396,7 +396,10 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   });
   registerDesktopAdminRoutes(app, {
     authenticationService: {
-      async reauthenticate(session, password) { calls.push(["reauthenticate", session, password]); },
+      async requireRecentVerification(session) {
+        calls.push(["reverify", session]);
+        return { reauthenticatedAt: "2026-08-08T10:00:00.000Z" };
+      },
     },
     desktopEnrollmentService: {
       async getAdminSnapshot(organisationId) { return { organisationId, devices: [], activationKeys: [] }; },
@@ -422,20 +425,20 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   assert.equal((await app.request("/admin/desktop/organisations/org-alpha/policy", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "SET DESKTOP LIMIT 20" }),
+    body: JSON.stringify({ deviceLimit: 20, confirmation: "SET DESKTOP LIMIT 20" }),
   })).status, 403);
 
   const mismatch = await app.request("/admin/desktop/organisations/org-alpha/activation-keys", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ confirmation: "wrong" }),
   });
   assert.equal(mismatch.status, 400);
 
   const issued = await app.request("/admin/desktop/organisations/org-alpha/activation-keys", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "ISSUE DESKTOP KEY", expiresInHours: 12, maximumUses: 1 }),
+    body: JSON.stringify({ confirmation: "ISSUE DESKTOP KEY", expiresInHours: 12, maximumUses: 1 }),
   });
   assert.equal(issued.status, 201);
   assert.equal((await issued.json()).displayedOnce, true);
@@ -443,31 +446,31 @@ test("desktop administration routes require scope, step-up, and exact destructiv
   const wrongKeyConfirmation = await app.request("/admin/desktop/organisations/org-alpha/activation-keys/key-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ confirmation: "wrong" }),
   });
   assert.equal(wrongKeyConfirmation.status, 400);
 
   const revokedKey = await app.request("/admin/desktop/organisations/org-alpha/activation-keys/key-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "REVOKE KEY key-1", reason: "unused" }),
+    body: JSON.stringify({ confirmation: "REVOKE KEY key-1", reason: "unused" }),
   });
   assert.equal(revokedKey.status, 200);
 
   const wrongDeviceConfirmation = await app.request("/admin/desktop/organisations/org-alpha/devices/device-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ confirmation: "wrong" }),
   });
   assert.equal(wrongDeviceConfirmation.status, 400);
 
   const revokedDevice = await app.request("/admin/desktop/organisations/org-alpha/devices/device-1/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: "secret", confirmation: "REVOKE DEVICE device-1", reason: "lost" }),
+    body: JSON.stringify({ confirmation: "REVOKE DEVICE device-1", reason: "lost" }),
   });
   assert.equal(revokedDevice.status, 200);
-  assert.equal(calls.filter(([kind]) => kind === "reauthenticate").length, 3);
+  assert.equal(calls.filter(([kind]) => kind === "reverify").length, 3);
   assert.equal(calls.find(([kind]) => kind === "issue")[1].organisationId, "org-alpha");
   assert.equal(calls.find(([kind]) => kind === "revoke-device")[2].id, "admin-alpha");
 });
@@ -489,7 +492,10 @@ test("only platform fleet-policy administrators can set a bounded allowance with
   });
   registerDesktopAdminRoutes(app, {
     authenticationService: {
-      async reauthenticate(session, password) { calls.push(["reauthenticate", session, password]); },
+      async requireRecentVerification(session) {
+        calls.push(["reverify", session]);
+        return { reauthenticatedAt: "2026-08-08T10:00:00.000Z" };
+      },
     },
     desktopEnrollmentService: {
       async setFleetPolicy(input, actor) {
@@ -505,14 +511,14 @@ test("only platform fleet-policy administrators can set a bounded allowance with
   const mismatch = await app.request("/admin/desktop/organisations/org-alpha/policy", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "wrong" }),
+    body: JSON.stringify({ deviceLimit: 20, confirmation: "wrong" }),
   });
   assert.equal(mismatch.status, 400);
 
   const updated = await app.request("/admin/desktop/organisations/org-alpha/policy", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ deviceLimit: 20, password: "secret", confirmation: "SET DESKTOP LIMIT 20" }),
+    body: JSON.stringify({ deviceLimit: 20, confirmation: "SET DESKTOP LIMIT 20" }),
   });
   assert.equal(updated.status, 200);
   assert.equal((await updated.json()).usage.overLimit, true);
@@ -520,7 +526,7 @@ test("only platform fleet-policy administrators can set a bounded allowance with
     organisationId: "org-alpha",
     deviceLimit: 20,
   });
-  assert.equal(calls.filter(([kind]) => kind === "reauthenticate").length, 1);
+  assert.equal(calls.filter(([kind]) => kind === "reverify").length, 1);
 });
 
 test("desktop routes fail closed when enrollment or administration is not configured", async () => {

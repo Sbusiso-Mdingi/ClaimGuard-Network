@@ -28,4 +28,4 @@ SQLite `integrity_check` runs when the cache opens. A binding mismatch, failed A
 
 ## Memory Handling Limitations
 
-Activation keys and passwords are moved into Rust `Zeroizing` buffers immediately after IPC receipt and are never persisted or logged. Network serialization and Tauri/JavaScript/allocator internals can create short-lived copies that cannot be reliably zeroized from application code. Do not enable request-body logging, heap dumps, or routine crash dumps on production workstations. Treat any captured process memory as sensitive and rotate affected user credentials/unused activation keys.
+Activation keys and opaque session material are moved into Rust `Zeroizing` buffers immediately after IPC receipt and are never persisted in the WebView or logged. Clerk authentication occurs only in the system browser. Network serialization and Tauri/allocator internals can create short-lived copies that cannot be reliably zeroized from application code. Do not enable request-body logging, heap dumps, or routine crash dumps on production workstations. Treat any captured process memory as sensitive and revoke affected Clerk sessions and unused activation keys.

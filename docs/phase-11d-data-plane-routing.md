@@ -98,10 +98,14 @@ Medical-scheme organisations cannot use `platform_none`.
 
 ## API configuration
 
-The API session runtime uses:
+The API Clerk workforce runtime uses:
 
 ```text
-AUTHENTICATION_MODE=session
+AUTHENTICATION_MODE=clerk
+CLERK_PUBLISHABLE_KEY=pk_...
+CLERK_SECRET_KEY=<secret reference>
+CLERK_WEB_ORIGIN=https://work.sequrin.example
+AUTH_ALLOWED_ORIGINS=https://work.sequrin.example,https://api.sequrin.example
 
 CONTROL_PLANE_MYSQL_URL=mysql://.../claimguard_control
 MYSQL_URL=mysql://.../claimguard_operational
@@ -117,7 +121,7 @@ DATA_PLANE_POOL_DRAIN_TIMEOUT_MS=10000
 
 `CONTROL_PLANE_MYSQL_URL` and `MYSQL_URL` must identify different databases.
 
-The API supports both `legacy_shared` and `private_database` adapters in session mode. Route resolution determines which adapter is used; callers cannot select a database or route through request headers, hostnames, slugs, or payload fields.
+The API supports both `legacy_shared` and `private_database` adapters after Clerk workforce authentication. Route resolution determines which adapter is used; callers cannot select a database or route through request headers, hostnames, slugs, or payload fields.
 
 The API’s supported schema allowlist is controlled by `DATA_PLANE_SUPPORTED_SCHEMA_VERSIONS`. When omitted, it defaults to the canonical operational schema export; an explicit override must be kept equal to that contract during a single-version rollout.
 
@@ -344,6 +348,6 @@ The deployment migration step retrieves control-plane and operational database U
 
 ## Rollback
 
-Authentication mode remains session-only for all environments.
+Authentication remains Clerk-only at runtime. Do not enable the test-only local session mode as a rollback.
 
 Do not use compatibility shortcuts as a substitute for repairing an incompatible route, database, mapping, or schema.
