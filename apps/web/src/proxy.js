@@ -12,6 +12,56 @@ const hopByHopHeaders = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
   "transfer-encoding", "upgrade", "host", "content-length",
 ]);
+const localRequestOrigin = "http://request.invalid";
+const clerkFrontendApiOrigin = "https://frontend-api.clerk.dev";
+const safePathSegment = /^[A-Za-z0-9._~-]+$/;
+
+function parseLocalRequestUrl(value) {
+  const rawUrl = String(value || "/");
+  if (!rawUrl.startsWith("/") || rawUrl.startsWith("//") || rawUrl.includes("\\") || rawUrl.includes("#")) {
+    throw new Error("The proxy request URL must be a local absolute path.");
+  }
+
+  const queryIndex = rawUrl.indexOf("?");
+  const rawPath = queryIndex === -1 ? rawUrl : rawUrl.slice(0, queryIndex);
+  const rawQuery = queryIndex === -1 ? "" : rawUrl.slice(queryIndex + 1);
+  const parsed = new URL(localRequestOrigin);
+  parsed.pathname = sanitizeProxyPath(rawPath);
+  if (rawQuery) parsed.search = `?${rawQuery}`;
+  return parsed;
+}
+
+function sanitizeProxyPath(pathname) {
+  if (!pathname.startsWith("/")) throw new Error("The proxy path must be absolute.");
+  if (pathname === "/") return pathname;
+
+  const segments = pathname.slice(1).split("/");
+  return `/${segments.map((segment, index) => {
+    if (!segment && index === segments.length - 1) return "";
+    if (!segment) throw new Error("The proxy path must not contain empty segments.");
+
+    let decoded;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw new Error("The proxy path contains invalid encoding.");
+    }
+    if (decoded === "." || decoded === ".." || !safePathSegment.test(decoded)) {
+      throw new Error("The proxy path contains a disallowed segment.");
+    }
+    return encodeURIComponent(decoded);
+  }).join("/")}`;
+}
+
+function buildFixedOriginUrl(origin, pathname, search = "") {
+  const target = new URL(origin);
+  const expectedOrigin = target.origin;
+  target.pathname = sanitizeProxyPath(pathname);
+  target.search = search;
+  target.hash = "";
+  if (target.origin !== expectedOrigin) throw new Error("The proxy destination origin changed unexpectedly.");
+  return target;
+}
 
 export function buildUpstreamHeaders(req, { trustProxy = false } = {}) {
   const headers = new Headers();
@@ -52,10 +102,7 @@ export function normalizeClientIp(value) {
 
 export function resolveOriginalClientIp(req, { trustProxy = false } = {}) {
   if (trustProxy) {
-    const platformClientIp = normalizeClientIp(req.headers?.["x-client-ip"]);
-    if (platformClientIp) return platformClientIp;
-    const forwardedClientIp = normalizeClientIp(req.headers?.["x-forwarded-for"]);
-    if (forwardedClientIp) return forwardedClientIp;
+    return normalizeClientIp(req.headers?.["x-client-ip"]);
   }
   return normalizeClientIp(req.socket?.remoteAddress);
 }
@@ -113,7 +160,20 @@ async function forwardUpstreamResponse(upstreamResponse, res) {
 
 export async function proxyApiRequest(req, res, { baseUrl, trustProxy = false, fetchImpl = fetch } = {}) {
   if (!baseUrl) throw new Error("A proxy base URL is required.");
-  const upstreamUrl = new URL(req.url.replace(/^\/api/, ""), baseUrl);
+  const parsedBaseUrl = new URL(baseUrl);
+  if (!["http:", "https:"].includes(parsedBaseUrl.protocol) || parsedBaseUrl.username || parsedBaseUrl.password) {
+    throw new Error("The proxy base URL must be an HTTP(S) origin without credentials.");
+  }
+  if ((parsedBaseUrl.pathname && parsedBaseUrl.pathname !== "/") || parsedBaseUrl.search || parsedBaseUrl.hash) {
+    throw new Error("The proxy base URL must not include a path, query string, or fragment.");
+  }
+
+  const incomingUrl = parseLocalRequestUrl(req.url);
+  if (incomingUrl.pathname !== "/api" && !incomingUrl.pathname.startsWith("/api/")) {
+    throw new Error("The request is outside the configured API proxy path.");
+  }
+  const upstreamPath = incomingUrl.pathname.slice("/api".length) || "/";
+  const upstreamUrl = buildFixedOriginUrl(parsedBaseUrl.origin, upstreamPath, incomingUrl.search);
   const method = (req.method || "GET").toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
   const upstreamResponse = await fetchImpl(upstreamUrl, {
@@ -133,22 +193,23 @@ export async function proxyClerkFrontendApiRequest(
     proxyUrl,
     secretKey,
     trustProxy = false,
-    frontendApiBaseUrl = "https://frontend-api.clerk.dev",
     fetchImpl = fetch,
   } = {},
 ) {
   const parsedProxyUrl = new URL(proxyUrl);
-  const incomingUrl = new URL(req.url || "/", parsedProxyUrl.origin);
+  const incomingUrl = parseLocalRequestUrl(req.url);
   const proxyPath = parsedProxyUrl.pathname.replace(/\/$/, "");
   if (
-    incomingUrl.origin !== parsedProxyUrl.origin
-    || (incomingUrl.pathname !== proxyPath && !incomingUrl.pathname.startsWith(`${proxyPath}/`))
+    incomingUrl.pathname !== proxyPath && !incomingUrl.pathname.startsWith(`${proxyPath}/`)
   ) {
     throw new Error("The request is outside the configured Clerk proxy path.");
   }
 
   const upstreamPath = incomingUrl.pathname.slice(proxyPath.length) || "/";
-  const upstreamUrl = new URL(`${upstreamPath}${incomingUrl.search}`, frontendApiBaseUrl);
+  if (upstreamPath !== "/v1" && !upstreamPath.startsWith("/v1/")) {
+    throw new Error("The request is outside the supported Clerk Frontend API path.");
+  }
+  const upstreamUrl = buildFixedOriginUrl(clerkFrontendApiOrigin, upstreamPath, incomingUrl.search);
   const method = (req.method || "GET").toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
   const upstreamResponse = await fetchImpl(upstreamUrl, {

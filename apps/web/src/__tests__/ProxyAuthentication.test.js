@@ -62,6 +62,19 @@ test("proxy preserves multiple Set-Cookie values and required attributes", async
   expect(responseHeaders.get("set-cookie")[0]).toMatch(/Secure; HttpOnly; Path=\/; SameSite=Lax/);
 });
 
+test("API proxy pins the upstream origin and rejects traversal or scheme-relative targets", async () => {
+  const fetchImpl = vi.fn();
+  const options = { baseUrl: "https://api.example", fetchImpl };
+
+  await expect(proxyApiRequest({
+    url: "//attacker.example/api/health", method: "GET", headers: {},
+  }, {}, options)).rejects.toThrow(/local absolute path/);
+  await expect(proxyApiRequest({
+    url: "/api/claims/%2e%2e/admin", method: "GET", headers: {},
+  }, {}, options)).rejects.toThrow(/disallowed segment/);
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
 test("Clerk proxy overwrites security headers and preserves browser authentication material", () => {
   const headers = buildClerkFrontendApiHeaders({
     headers: {
@@ -96,6 +109,17 @@ test("Clerk proxy normalizes Azure client address forms", () => {
   expect(normalizeClientIp("203.0.113.24:43120")).toBe("203.0.113.24");
   expect(normalizeClientIp("[2001:db8::24]:43120")).toBe("2001:db8::24");
   expect(normalizeClientIp("2001:db8::24")).toBe("2001:db8::24");
+});
+
+test("Clerk proxy fails closed when Azure's trusted client address header is absent", () => {
+  expect(() => buildClerkFrontendApiHeaders({
+    headers: { "x-forwarded-for": "198.51.100.9" },
+    socket: { remoteAddress: "192.0.2.10" },
+  }, {
+    proxyUrl: "https://claimguard-web.azurewebsites.net/__clerk",
+    secretKey: "sk_live_server_only",
+    trustProxy: true,
+  })).toThrow(/original client IP is unavailable/);
 });
 
 test("Clerk proxy forwards the exact path, query, redirect, and cookies", async () => {
@@ -144,4 +168,24 @@ test("Clerk proxy rejects requests outside its configured path", async () => {
     proxyUrl: "https://claimguard-web.azurewebsites.net/__clerk",
     secretKey: "sk_live_server_only",
   })).rejects.toThrow(/outside the configured Clerk proxy path/);
+});
+
+test("Clerk proxy rejects scheme-relative, traversal, and non-v1 destinations", async () => {
+  const options = {
+    proxyUrl: "https://claimguard-web.azurewebsites.net/__clerk",
+    secretKey: "sk_live_server_only",
+    fetchImpl: vi.fn(),
+  };
+  const request = { method: "GET", headers: {}, socket: { remoteAddress: "192.0.2.10" } };
+
+  await expect(proxyClerkFrontendApiRequest({
+    ...request, url: "//attacker.example/__clerk/v1/client",
+  }, {}, options)).rejects.toThrow(/local absolute path/);
+  await expect(proxyClerkFrontendApiRequest({
+    ...request, url: "/__clerk/v1/client/%2e%2e/admin",
+  }, {}, options)).rejects.toThrow(/disallowed segment/);
+  await expect(proxyClerkFrontendApiRequest({
+    ...request, url: "/__clerk/internal/metadata",
+  }, {}, options)).rejects.toThrow(/supported Clerk Frontend API path/);
+  expect(options.fetchImpl).not.toHaveBeenCalled();
 });
